@@ -58,8 +58,9 @@ class GPTree:
         while not node.is_leaf:
             node = node.children[int(np.random.binomial(1, node.prob_func(x)))]
 
-        # Add new point
+        # Add new point and register residual
         node.add_training_data(x, y)
+        node.register_residual(x, y)
 
         # Retrain GP? The node will decide based Nbar and/or its buffer of training points
         if allow_training:

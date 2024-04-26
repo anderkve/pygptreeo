@@ -44,6 +44,10 @@ class GPNode(Node):
         self.overlap = 0.001       # 'o' in the DLGP article
         self.name = name
 
+        self.keep_n_residuals = 25
+        self.residuals = np.zeros(self.keep_n_residuals)
+        self.sigma_preds = np.zeros(self.keep_n_residuals)
+
         print(f"Created node {self.name}")
 
 
@@ -92,8 +96,15 @@ class GPNode(Node):
             child.parent = self
             child.init_training_set(n_features)
 
+        # Copy the registered residuals and prediction uncertainties
+        self.left.residuals = self.residuals.copy()
+        self.right.residuals = self.residuals.copy()
 
-    def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True):
+        self.left.sigma_preds = self.sigma_preds.copy()
+        self.right.sigma_preds = self.sigma_preds.copy()
+
+
+    def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True, register_residual=True):
         """ Add a single training sample to the training set of the node. """
         self.my_X_data = np.append(self.my_X_data, x, axis=0)
         self.my_y_data = np.append(self.my_y_data, y, axis=0)
@@ -244,7 +255,22 @@ class GPNode(Node):
         return ptilde
 
 
-    def predict(self, x, return_std=True):
+    def predict(self, x: np.ndarray, return_std=True):
         """ Evaluate the prediction from this node's GP at input point x. """
         mu_pred, sigma_pred = self.my_GPR.predict(x, return_std=return_std)
         return mu_pred, sigma_pred
+
+
+    def register_residual(self, x: np.ndarray, y: float):
+        """ Register the residual between prediction and true value at for this data point. """
+        mu_pred, sigma_pred = self.predict(x, return_std=True)
+
+        self.residuals = self.residuals[:-1]
+        self.residuals = np.insert(self.residuals, 0, y - mu_pred)
+
+        self.sigma_preds = self.sigma_preds[:-1]
+        self.sigma_preds = np.insert(self.sigma_preds, 0, sigma_pred)
+
+        print(f"DEBUG: {self.name}:  self.residuals = {self.residuals}")
+
+
