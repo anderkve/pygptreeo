@@ -44,9 +44,10 @@ class GPNode(Node):
         self.overlap = 0.001       # 'o' in the DLGP article
         self.name = name
 
-        self.keep_n_residuals = 25
-        self.residuals = np.zeros(self.keep_n_residuals)
-        self.sigma_preds = np.zeros(self.keep_n_residuals)
+        self.n_points_pred_perf = 25
+        self.residuals = np.zeros(self.n_points_pred_perf)
+        self.mu_preds = np.zeros(self.n_points_pred_perf)
+        self.sigma_preds = np.zeros(self.n_points_pred_perf)
 
         print(f"Created node {self.name}")
 
@@ -96,15 +97,18 @@ class GPNode(Node):
             child.parent = self
             child.init_training_set(n_features)
 
-        # Copy the registered residuals and prediction uncertainties
+        # Copy the registered residuals and predictions
         self.left.residuals = self.residuals.copy()
         self.right.residuals = self.residuals.copy()
+
+        self.left.mu_preds = self.mu_preds.copy()
+        self.right.mu_preds = self.mu_preds.copy()
 
         self.left.sigma_preds = self.sigma_preds.copy()
         self.right.sigma_preds = self.sigma_preds.copy()
 
 
-    def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True, register_residual=True):
+    def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True):
         """ Add a single training sample to the training set of the node. """
         self.my_X_data = np.append(self.my_X_data, x, axis=0)
         self.my_y_data = np.append(self.my_y_data, y, axis=0)
@@ -261,16 +265,16 @@ class GPNode(Node):
         return mu_pred, sigma_pred
 
 
-    def register_residual(self, x: np.ndarray, y: float):
+    def register_pred_perf(self, x: np.ndarray, y: float):
         """ Register the residual between prediction and true value at for this data point. """
         mu_pred, sigma_pred = self.predict(x, return_std=True)
 
         self.residuals = self.residuals[:-1]
         self.residuals = np.insert(self.residuals, 0, y - mu_pred)
 
+        self.mu_preds = self.mu_preds[:-1]
+        self.mu_preds = np.insert(self.mu_preds, 0, mu_pred)
+
         self.sigma_preds = self.sigma_preds[:-1]
         self.sigma_preds = np.insert(self.sigma_preds, 0, sigma_pred)
-
-        print(f"DEBUG: {self.name}:  self.residuals = {self.residuals}")
-
 

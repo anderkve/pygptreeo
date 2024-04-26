@@ -60,7 +60,7 @@ class GPTree:
 
         # Add new point and register residual
         node.add_training_data(x, y)
-        node.register_residual(x, y)
+        node.register_pred_perf(x, y)
 
         # Retrain GP? The node will decide based Nbar and/or its buffer of training points
         if allow_training:
