@@ -50,8 +50,8 @@ live_update = bool(int(sys.argv[6]))
 x_min = 0.0
 x_max = 1.0
 
-# X_input = np.random.uniform(x_min, x_max, n_dims * n_pts).reshape(n_pts, n_dims)
-X_input = np.random.normal(0.4, 0.1, n_dims * n_pts).reshape(n_pts, n_dims)
+X_input = np.random.uniform(x_min, x_max, n_dims * n_pts).reshape(n_pts, n_dims)
+# X_input = np.random.normal(0.4, 0.1, n_dims * n_pts).reshape(n_pts, n_dims)
 y_input = target(X_input.T)
 
 
@@ -86,6 +86,7 @@ gpt = GPTree(
     theta=theta, 
     split_position_method='median',
     retrain_every_n_points=retrain_step,
+    use_calibrated_sigma=True,
 )
 
 

@@ -29,6 +29,7 @@ class GPTree:
                  GPR: Optional[GaussianProcessRegressor] = Default_GPR(),
                  Nbar: Optional[int] = 100,
                  theta: Optional[float] = 0.0001,
+                 use_calibrated_sigma: Optional[bool] = True,
                  **kwargs):
         
         self.GPR = GPR
@@ -37,6 +38,8 @@ class GPTree:
         self.theta = theta
 
         self.n_features = 0
+
+        self.use_calibrated_sigma = use_calibrated_sigma
 
         self.first_point = True
 
@@ -58,9 +61,13 @@ class GPTree:
         while not node.is_leaf:
             node = node.children[int(np.random.binomial(1, node.prob_func(x)))]
 
-        # Add new point and register residual
+        # Add new point and register prediction performance
         node.add_training_data(x, y)
         node.register_pred_perf(x, y)
+
+        # Update the uncertainty scaler for this node?
+        if self.use_calibrated_sigma:
+            node.update_sigma_scaler()
 
         # Retrain GP? The node will decide based Nbar and/or its buffer of training points
         if allow_training:
@@ -218,7 +225,7 @@ class GPTree:
         
             for leaf, ptilde in zip(leaves, pred_leaf_probs):
 
-                mu_leaf, sigma_leaf = leaf.predict(x, return_std=True)
+                mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
 
                 # mean_DLGP[i] += ptilde*mu_leaf[0]
                 mean_DLGP[i] += ptilde*mu_leaf
@@ -263,7 +270,7 @@ class GPTree:
             if np.all(ptilde == 0.0):
                 continue
 
-            mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True)
+            mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
             mu_leaf = mu_leaf.reshape(mean_DLGP.shape)
             sigma_leaf = sigma_leaf.reshape(mean_DLGP.shape)
 
@@ -282,7 +289,7 @@ class GPTree:
             ptilde = leaf.marg_prob(X_test)
             ptilde = ptilde.reshape(mean_DLGP.shape)
 
-            mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True)
+            mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
             res.append((mu_leaf, sigma_leaf, ptilde))
         return res
     

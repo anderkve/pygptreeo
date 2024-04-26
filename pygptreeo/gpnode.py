@@ -3,6 +3,7 @@ from binarytree import Node
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern, ExpSineSquared, ConstantKernel, WhiteKernel
 from typing import Callable, Optional, Type, Union
+from scipy.optimize import root_scalar
 from copy import deepcopy
 from sys import float_info
 
@@ -45,9 +46,12 @@ class GPNode(Node):
         self.name = name
 
         self.n_points_pred_perf = 25
-        self.residuals = np.zeros(self.n_points_pred_perf)
-        self.mu_preds = np.zeros(self.n_points_pred_perf)
-        self.sigma_preds = np.zeros(self.n_points_pred_perf)
+        self.residuals = np.array([])
+        self.mu_preds = np.array([])
+        self.sigma_preds = np.array([])
+
+        self.sigma_scaler = 10
+        self.sigma_scaler_init = 10
 
         print(f"Created node {self.name}")
 
@@ -97,7 +101,7 @@ class GPNode(Node):
             child.parent = self
             child.init_training_set(n_features)
 
-        # Copy the registered residuals and predictions
+        # Copy important numbers over to the child nodes
         self.left.residuals = self.residuals.copy()
         self.right.residuals = self.residuals.copy()
 
@@ -106,6 +110,13 @@ class GPNode(Node):
 
         self.left.sigma_preds = self.sigma_preds.copy()
         self.right.sigma_preds = self.sigma_preds.copy()
+
+        self.left.sigma_scaler = self.sigma_scaler
+        self.right.sigma_scaler = self.sigma_scaler
+
+        sigma_scaler_init = np.max(np.abs(self.residuals) / self.sigma_preds)
+        self.left.sigma_scaler_init = sigma_scaler_init
+        self.right.sigma_scaler_init = sigma_scaler_init
 
 
     def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True):
@@ -259,22 +270,55 @@ class GPNode(Node):
         return ptilde
 
 
-    def predict(self, x: np.ndarray, return_std=True):
+    def predict(self, x: np.ndarray, return_std=True, use_calibrated_sigma=False):
         """ Evaluate the prediction from this node's GP at input point x. """
         mu_pred, sigma_pred = self.my_GPR.predict(x, return_std=return_std)
+
+        if use_calibrated_sigma:
+            sigma_pred = sigma_pred * self.sigma_scaler
+
         return mu_pred, sigma_pred
 
 
     def register_pred_perf(self, x: np.ndarray, y: float):
         """ Register the residual between prediction and true value at for this data point. """
-        mu_pred, sigma_pred = self.predict(x, return_std=True)
+        mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False)
 
-        self.residuals = self.residuals[:-1]
+        keep_n_points = self.n_points_pred_perf - 1
+
+        self.residuals = self.residuals[:keep_n_points]
         self.residuals = np.insert(self.residuals, 0, y - mu_pred)
 
-        self.mu_preds = self.mu_preds[:-1]
+        self.mu_preds = self.mu_preds[:keep_n_points]
         self.mu_preds = np.insert(self.mu_preds, 0, mu_pred)
 
-        self.sigma_preds = self.sigma_preds[:-1]
+        self.sigma_preds = self.sigma_preds[:keep_n_points]
         self.sigma_preds = np.insert(self.sigma_preds, 0, sigma_pred)
+
+
+    def update_sigma_scaler(self):
+        """ Update the scaling factor for the prediction uncertainty. """
+        target_coverage = 0.68
+
+        # Before we have collected self.n_points_pred_perf points, just set the 
+        # self.sigma_scaler such that all residuals are covered 
+        if self.residuals.shape[0] < self.n_points_pred_perf:
+            self.sigma_scaler = np.max(np.abs(self.residuals) / self.sigma_preds)
+            self.sigma_scaler_init = self.sigma_scaler
+            return 
+
+        def coverage_deviation(x):
+            deviation = np.sum(np.abs(self.residuals) < x * self.sigma_preds) / self.n_points_pred_perf - target_coverage
+            return deviation
+
+        max_attemts = 2
+        attempt = 1
+        x_bracket = [0.0, 2 * self.sigma_scaler_init]
+        while attempt <= max_attemts:
+            sol = root_scalar(coverage_deviation, x0=self.sigma_scaler_init, bracket=x_bracket, maxiter=50)
+            if sol.converged:
+                self.sigma_scaler = np.max([sol.root, 1e-9])
+                break
+            x_bracket[1] *= 2
+            attempt += 1
 
