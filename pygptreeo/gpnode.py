@@ -114,9 +114,8 @@ class GPNode(Node):
         self.left.sigma_scaler = self.sigma_scaler
         self.right.sigma_scaler = self.sigma_scaler
 
-        sigma_scaler_init = np.max(np.abs(self.residuals) / self.sigma_preds)
-        self.left.sigma_scaler_init = sigma_scaler_init
-        self.right.sigma_scaler_init = sigma_scaler_init
+        self.left.sigma_scaler_init = self.sigma_scaler_init
+        self.right.sigma_scaler_init = self.sigma_scaler_init
 
 
     def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True):
@@ -311,14 +310,14 @@ class GPNode(Node):
             deviation = np.sum(np.abs(self.residuals) < x * self.sigma_preds) / self.n_points_pred_perf - target_coverage
             return deviation
 
-        max_attemts = 2
-        attempt = 1
+        # Make sure we start from a range that brackets the root of coverage_deviation
         x_bracket = [0.0, 2 * self.sigma_scaler_init]
-        while attempt <= max_attemts:
-            sol = root_scalar(coverage_deviation, x0=self.sigma_scaler_init, bracket=x_bracket, maxiter=50)
-            if sol.converged:
-                self.sigma_scaler = np.max([sol.root, 1e-9])
-                break
-            x_bracket[1] *= 2
-            attempt += 1
+        while coverage_deviation(x_bracket[0]) * coverage_deviation(x_bracket[1]) > 0:
+            self.sigma_scaler_init *= 2
+            x_bracket[1] = 2 * self.sigma_scaler_init
+            # print(f"DEBUG: Node {self.name}:  x_bracket: {x_bracket}")
 
+        sol = root_scalar(coverage_deviation, x0=self.sigma_scaler_init, bracket=x_bracket, maxiter=50)
+        if sol.converged:
+            self.sigma_scaler = np.max([sol.root, 1e-9])
+            # print(f"DEBUG: Node {self.name}:  sigma_scaler: {self.sigma_scaler}")
