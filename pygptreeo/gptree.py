@@ -40,6 +40,7 @@ class GPTree:
 
         self.first_point = True
 
+
     def update_tree(self, x: np.ndarray, y: float, allow_training=True):
         """ Algorithm 1 in DLGP article, with some tweaks of our own """
 
@@ -216,7 +217,7 @@ class GPTree:
         
             for leaf, ptilde in zip(leaves, pred_leaf_probs):
 
-                mu_leaf, sigma_leaf = leaf.my_GPR.predict(x, return_std=True)
+                mu_leaf, sigma_leaf = leaf.predict(x, return_std=True)
 
                 # mean_DLGP[i] += ptilde*mu_leaf[0]
                 mean_DLGP[i] += ptilde*mu_leaf
@@ -261,7 +262,7 @@ class GPTree:
             if np.all(ptilde == 0.0):
                 continue
 
-            mu_leaf, sigma_leaf = leaf.my_GPR.predict(X_test, return_std=True)
+            mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True)
             mu_leaf = mu_leaf.reshape(mean_DLGP.shape)
             sigma_leaf = sigma_leaf.reshape(mean_DLGP.shape)
 
@@ -280,7 +281,7 @@ class GPTree:
             ptilde = leaf.marg_prob(X_test)
             ptilde = ptilde.reshape(mean_DLGP.shape)
 
-            mu_leaf, sigma_leaf = leaf.my_GPR.predict(X_test, return_std=True)
+            mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True)
             res.append((mu_leaf, sigma_leaf, ptilde))
         return res
     

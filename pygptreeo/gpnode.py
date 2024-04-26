@@ -51,11 +51,13 @@ class GPNode(Node):
     @property
     def num_training_points(self):
         return self.value
+
     
     # such that the value of a node is the number of training points
     @num_training_points.setter
     def num_training_points(self, value):
         self.value = value
+
 
     def init_training_set(self, n_features: int):
         """ Initialize the training set of the node. """
@@ -64,6 +66,7 @@ class GPNode(Node):
         self.n_features = n_features
         self.num_buffer_points = 0
         self.num_training_points = 0
+
 
     def generate_children(self, GPR: Type[GaussianProcessRegressor], n_features: int):
         """ Grow the GPtree by adding two GPNodes as children of the current GPNode. """
@@ -89,6 +92,7 @@ class GPNode(Node):
             child.parent = self
             child.init_training_set(n_features)
 
+
     def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True):
         """ Add a single training sample to the training set of the node. """
         self.my_X_data = np.append(self.my_X_data, x, axis=0)
@@ -96,6 +100,7 @@ class GPNode(Node):
         self.num_training_points += 1
         if increment_buffer:
             self.num_buffer_points += 1
+
         
     def split_training_data(self):
         """ Assign the training samples of a node to its child nodes. """
@@ -104,12 +109,15 @@ class GPNode(Node):
             y = y.reshape((1, 1))
             child = self.children[int(np.random.binomial(1, self.prob_func(x)))]
             child.add_training_data(x, y, increment_buffer=False)
+
         
     def delete_training_data(self):
         del self.my_X_data, self.my_y_data
 
+
     def delete_my_GPR(self):
         del self.my_GPR
+
 
     def fit_my_GPR(self, force_training=False):
         """ Fit the GP of the node with sklearn. """
@@ -181,6 +189,7 @@ class GPNode(Node):
             did_train = True
         return did_train
 
+
     def compute_split_position_and_overlap(self, theta: float):
         """ Find the position of the dividing hyperplane and the size of the overlapping region. """
 
@@ -208,6 +217,7 @@ class GPNode(Node):
 
         self.overlap = theta*w[self.split_index]
 
+
     def prob_func(self, x: np.array):
         """ The default probability function as suggested in the DLGP article. """
         prob = (x[:, self.split_index] - self.split_position)/self.overlap + 0.5
@@ -217,6 +227,7 @@ class GPNode(Node):
         prob.shape = (x.shape[0], 1)
 
         return prob
+
     
     def marg_prob(self, x: np.ndarray):
         """ Compute the marginal probability that a test point x belongs to this node. """
@@ -231,3 +242,9 @@ class GPNode(Node):
                 ptilde *= node.prob_func(x)
             
         return ptilde
+
+
+    def predict(self, x, return_std=True):
+        """ Evaluate the prediction from this node's GP at input point x. """
+        mu_pred, sigma_pred = self.my_GPR.predict(x, return_std=return_std)
+        return mu_pred, sigma_pred
