@@ -34,11 +34,16 @@ class GPNode(Node):
         self.is_leaf = True
         
         self.num_training_points = 0
+        self.num_test_points = 0
         self.num_buffer_points = 0
 
         self.my_X_data = None
         self.my_y_data = None
         self.n_features = None
+
+        self.my_X_data_test = None
+        self.my_y_data_test = None
+        self.train_test_split = 0.5
 
         self.split_index = 0       # 'j' in the DLGP article
         self.split_position = 0.0  # 's' in the DLGP article
@@ -72,9 +77,12 @@ class GPNode(Node):
         """ Initialize the training set of the node. """
         self.my_X_data = np.array([]).reshape((0, n_features))
         self.my_y_data = np.array([]).reshape((0, 1))
+        self.my_X_data_test = np.array([]).reshape((0, n_features))
+        self.my_y_data_test = np.array([]).reshape((0, 1))
         self.n_features = n_features
         self.num_buffer_points = 0
         self.num_training_points = 0
+        self.num_test_points = 0
 
 
     def generate_children(self, GPR: Type[GaussianProcessRegressor], n_features: int):
@@ -120,9 +128,16 @@ class GPNode(Node):
 
     def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True):
         """ Add a single training sample to the training set of the node. """
-        self.my_X_data = np.append(self.my_X_data, x, axis=0)
-        self.my_y_data = np.append(self.my_y_data, y, axis=0)
-        self.num_training_points += 1
+        # Add to training or testing
+        frac = self.num_training_points / self.Nbar
+        if frac >= self.train_test_split:
+            self.my_X_data_test = np.append(self.my_X_data_test, x, axis=0)
+            self.my_y_data_test = np.append(self.my_y_data_test, y, axis=0)
+            self.num_test_points += 1
+        else:
+            self.my_X_data = np.append(self.my_X_data, x, axis=0)
+            self.my_y_data = np.append(self.my_y_data, y, axis=0)
+            self.num_training_points += 1
         if increment_buffer:
             self.num_buffer_points += 1
 
@@ -135,9 +150,16 @@ class GPNode(Node):
             child = self.children[int(np.random.binomial(1, self.prob_func(x)))]
             child.add_training_data(x, y, increment_buffer=False)
 
+        for x, y in zip(self.my_X_data_test, self.my_y_data_test):
+            x = x.reshape((1, x.shape[0]))
+            y = y.reshape((1, 1))
+            child = self.children[int(np.random.binomial(1, self.prob_func(x)))]
+            child.add_training_data(x, y, increment_buffer=False)
+
         
     def delete_training_data(self):
         del self.my_X_data, self.my_y_data
+        del self.my_X_data_test, self.my_y_data_test
 
 
     def delete_my_GPR(self):
@@ -148,7 +170,7 @@ class GPNode(Node):
         """ Fit the GP of the node with sklearn. """
         did_train = False
         # Only train the GP if the buffer is full, the node is full, or if force_training=True
-        if (self.num_buffer_points == self.retrain_every_n_points) or (self.num_training_points == self.Nbar) or force_training:
+        if (self.num_buffer_points == self.retrain_every_n_points) or (self.num_training_points + self.num_test_points == self.Nbar) or force_training:
             self.num_buffer_points = 0
 
             x_max_vals = [np.max(self.my_X_data[:,i]) for i in range(self.n_features)]
@@ -165,11 +187,15 @@ class GPNode(Node):
             # TODO: Make this code more efficient. It should be unnecessary to copy the
             #       entire my_GPR object like we do below...
             best_lml = float_info.max
+            best_chi2 = float_info.max
+            best_avg_rel_errs = float_info.max
+            best_rmse = float_info.max
+            best_frac_below = 0.0
             temp_GPR = self.my_GPR
+            n_kernels = len(self.my_GPR.kernel_alternatives)
             for kernel in self.my_GPR.kernel_alternatives:
 
                 params = kernel.get_params(deep=True)
-
                 # Example params dict: 
                 # params: {
                 #     'k1': 1**2, 
@@ -187,19 +213,65 @@ class GPNode(Node):
                         new_params[k] = use_bounds
                     elif k[-14:] == "__length_scale":
                         new_params[k] = use_init_points
+
                 kernel.set_params(**new_params)
 
                 temp_GPR.kernel = kernel
                 temp_GPR.fit(self.my_X_data, self.my_y_data)
 
+                if n_kernels == 1:
+                    break
+                
                 lml = temp_GPR.log_marginal_likelihood_value_
                 theta = temp_GPR.kernel_.theta
                 # print(f"kernel: {kernel}   lml: {lml}   theta: {theta}   exp(theta): {np.exp(theta)}")
 
+                y_predict_test, y_predict_std_test = temp_GPR.predict(self.my_X_data_test, return_std=True)
+                y_predict_test = y_predict_test.reshape(self.num_test_points,1)
+
+                # chi2 = np.sum( (y_predict_test - self.my_y_data_test)**2 / y_predict_std_test**2 )
+
+                rel_errs = np.abs( (y_predict_test - self.my_y_data_test) / self.my_y_data_test )
+                avg_rel_errs = np.average(rel_errs)
+
+                frac_below = rel_errs[rel_errs < 0.01].shape[0] / self.num_test_points
+
+                rmse = np.sqrt( 1./self.num_test_points * np.sum( (y_predict_test - self.my_y_data_test)**2 ) )
+
+                print(f"  avg_rel_errs:{avg_rel_errs: .3e}  rmse:{rmse: .3e}  frac_below:{frac_below: .3e}  lml:{lml: .3e}  theta: {theta}   exp(theta): {np.exp(theta)}  kernel: {kernel}  pts: {self.my_X_data.shape, self.my_X_data_test.shape}")
+
+                # # Keep this kernel?
+                # if lml < best_lml:
+                #     self.my_GPR = deepcopy(temp_GPR)
+                #     best_lml = lml
+
+                # # Keep this kernel?
+                # if chi2 < best_chi2:
+                #     self.my_GPR = deepcopy(temp_GPR)
+                #     best_chi2 = chi2
+
                 # Keep this kernel?
-                if lml < best_lml:
+                if avg_rel_errs < best_avg_rel_errs:
                     self.my_GPR = deepcopy(temp_GPR)
-                    best_lml = lml
+                    best_avg_rel_errs = avg_rel_errs
+
+                # # Keep this kernel?
+                # if frac_below > best_frac_below:
+                #     self.my_GPR = deepcopy(temp_GPR)
+                #     best_frac_below = frac_below
+
+                # # Keep this kernel?
+                # if rmse < best_rmse:
+                #     self.my_GPR = deepcopy(temp_GPR)
+                #     best_rmse = rmse
+
+
+            # Combine data
+            # _Anders
+            X_data_complete = np.append(self.my_X_data, self.my_X_data_test, axis=0)
+            y_data_complete = np.append(self.my_y_data, self.my_y_data_test, axis=0)
+            self.my_GPR.fit(X_data_complete, y_data_complete)
+
 
             x_range_strs = []
             for i in range(self.n_features):

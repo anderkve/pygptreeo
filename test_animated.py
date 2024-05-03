@@ -5,7 +5,7 @@ from matplotlib.animation import FuncAnimation
 import seaborn as sns
 from pygptreeo import GPTree
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel
+from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel, RationalQuadratic
 import sys
 
 from warnings import simplefilter
@@ -54,18 +54,27 @@ X_input = np.random.uniform(x_min, x_max, n_dims * n_pts).reshape(n_pts, n_dims)
 # X_input = np.random.normal(0.4, 0.1, n_dims * n_pts).reshape(n_pts, n_dims)
 y_input = target(X_input.T)
 
-
+n_test_pts = int(0.1*n_pts)
+X_test = np.random.uniform(x_min, x_max, n_dims * n_test_pts).reshape(n_test_pts, n_dims)
+y_test = target(X_test.T)
 
 
 class my_GPR_class(GaussianProcessRegressor):
     def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=True, copy_X_train=True, n_targets=None, random_state=None):
         super().__init__()
         self.kernel_alternatives = [
+            # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * ( RBF(length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e0)]*n_dims) + RBF(length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-1, 1e3)]*n_dims) ),
+            # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=0.1, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims) + ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * RBF(length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
+            # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=0.1, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
+            # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=0.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
             ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
-            # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * RBF(length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
+            ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=2.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
+            # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-8,1e1)),
+            ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * RBF(length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
         ]
 
         self.kernel = self.kernel_alternatives[0]
+        # self.kernel = self.kernel_alternatives[1]
         self.min_length_scale = 0.001
 
         self.alpha = alpha
@@ -327,6 +336,25 @@ def update_plots(point_i, n_last_points):
     #     plt.savefig(f"plot__{point_i}_pts.png")
 
 
+def compute_test_scores():
+    # print("Computing predictions for all test points")
+    y_predict_test, y_predict_std_test = gpt.predict(X_test)
+    y_predict_test =  y_predict_test.reshape(n_test_pts,)
+    y_predict_std_test =  y_predict_std_test.reshape(n_test_pts,)
+
+    # print("Computing test scores")
+    rmse = np.sqrt( 1./n_test_pts * np.sum( (y_predict_test - y_test)**2 ) )
+    rel_errs = np.abs( (y_predict_test - y_test) / y_test )
+    frac_below_01 = rel_errs[rel_errs < 0.1].shape[0] / n_test_pts
+    frac_below_005 = rel_errs[rel_errs < 0.05].shape[0] / n_test_pts
+    frac_below_001 = rel_errs[rel_errs < 0.01].shape[0] / n_test_pts
+    print()
+    print(f"Test score: RMSE:              {rmse}")
+    print(f"Test score: Rel. err. < 0.10:  {frac_below_01}")
+    print(f"Test score: Rel. err. < 0.05:  {frac_below_005}")
+    print(f"Test score: Rel. err. < 0.01:  {frac_below_001}")
+
+
 
 # Feed in training data one point at a time
 point_i = 0
@@ -350,11 +378,16 @@ for x,y in zip(X_input, y_input):
 
     # if (live_update) and (point_i % Nbar == 0):
     if (live_update) and (update_count == update_step):
+        compute_test_scores()
         n_last_points = Nbar * update_step
         update_plots(point_i, n_last_points)
         update_count = 0
 
-update_plots(point_i, n_pts-1)
+
+
+# Compute overall test score
+print()
+compute_test_scores()
 
 print()
 print("Done.")
@@ -362,9 +395,12 @@ print()
 # print(gpt.root)
 # print()
 
+
+update_plots(point_i, n_pts-1)
+
 if live_update:
     plt.ioff()
 
-plt.show()
-# plt.savefig("plot.png")
+# plt.show()
+plt.savefig("plot.png")
 

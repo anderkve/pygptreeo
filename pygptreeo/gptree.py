@@ -74,7 +74,7 @@ class GPTree:
             did_retrain = node.fit_my_GPR()
 
         # If the node is full, generate child nodes
-        if node.num_training_points == node.Nbar:
+        if node.num_training_points + node.num_test_points == node.Nbar:
 
             # Create child nodes. Each child node gets a copy of the current parent GP.
             node.generate_children(self.GPR, self.n_features)
