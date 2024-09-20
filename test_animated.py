@@ -95,7 +95,8 @@ gpt = GPTree(
     theta=theta, 
     split_position_method='median',
     retrain_every_n_points=retrain_step,
-    use_calibrated_sigma=True,
+    # use_calibrated_sigma=True,
+    use_calibrated_sigma=False,
 )
 
 
@@ -297,29 +298,33 @@ if live_update:
 # Function for updating plots
 def update_plots(point_i, n_last_points):
 
+    std_scaler = 1
+    if point_i==0: 
+        std_scaler = 10
+
     # Plot 1
     y_predict_plot_1, y_predict_std_plot_1 = gpt.predict(X_predict_plot_1, show_progress=False)
     plot_1.set_ydata(y_predict_plot_1)
-    plot_1_std_up.set_ydata(y_predict_plot_1 + y_predict_std_plot_1)
-    plot_1_std_dn.set_ydata(y_predict_plot_1 - y_predict_std_plot_1)
+    plot_1_std_up.set_ydata(y_predict_plot_1 + y_predict_std_plot_1 * std_scaler)
+    plot_1_std_dn.set_ydata(y_predict_plot_1 - y_predict_std_plot_1 * std_scaler)
 
     # Plot 2
     y_predict_plot_2, y_predict_std_plot_2 = gpt.predict(X_predict_plot_2, show_progress=False)
     plot_2.set_ydata(y_predict_plot_2)
-    plot_2_std_up.set_ydata(y_predict_plot_2 + y_predict_std_plot_2)
-    plot_2_std_dn.set_ydata(y_predict_plot_2 - y_predict_std_plot_2)
+    plot_2_std_up.set_ydata(y_predict_plot_2 + y_predict_std_plot_2 * std_scaler)
+    plot_2_std_dn.set_ydata(y_predict_plot_2 - y_predict_std_plot_2 * std_scaler)
 
     # Plot 3
     y_predict_plot_3, y_predict_std_plot_3 = gpt.predict(X_predict_plot_3, show_progress=False)
     plot_3.set_ydata(y_predict_plot_3)
-    plot_3_std_up.set_ydata(y_predict_plot_3 + y_predict_std_plot_3)
-    plot_3_std_dn.set_ydata(y_predict_plot_3 - y_predict_std_plot_3)
+    plot_3_std_up.set_ydata(y_predict_plot_3 + y_predict_std_plot_3 * std_scaler)
+    plot_3_std_dn.set_ydata(y_predict_plot_3 - y_predict_std_plot_3 * std_scaler)
 
     # Plot 4
     y_predict_plot_4, y_predict_std_plot_4 = gpt.predict(X_predict_plot_4, show_progress=False)
     plot_4.set_ydata(y_predict_plot_4)
-    plot_4_std_up.set_ydata(y_predict_plot_4 + y_predict_std_plot_4)
-    plot_4_std_dn.set_ydata(y_predict_plot_4 - y_predict_std_plot_4)
+    plot_4_std_up.set_ydata(y_predict_plot_4 + y_predict_std_plot_4 * std_scaler)
+    plot_4_std_dn.set_ydata(y_predict_plot_4 - y_predict_std_plot_4 * std_scaler)
 
     # Plot 5
     scat = plot_5.get_offsets()
@@ -331,6 +336,8 @@ def update_plots(point_i, n_last_points):
     # Draw plots
     plt.draw()
     plt.pause(0.01)
+    plt.savefig("plot__{:05}_pts.png".format(point_i))
+    # plt.savefig(f"plot__{point_i}_pts.png")
 
     # if point_i % 1000 == 0:
     #     plt.savefig(f"plot__{point_i}_pts.png")
@@ -359,6 +366,10 @@ def compute_test_scores():
 # Feed in training data one point at a time
 point_i = 0
 update_count = 0
+
+n_last_points = 0
+update_plots(point_i, n_last_points)
+
 for x,y in zip(X_input, y_input):
 
     point_i += 1
@@ -382,6 +393,9 @@ for x,y in zip(X_input, y_input):
         n_last_points = Nbar * update_step
         update_plots(point_i, n_last_points)
         update_count = 0
+
+n_last_points = Nbar * update_step
+update_plots(point_i, n_last_points)
 
 
 
