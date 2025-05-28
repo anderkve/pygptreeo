@@ -57,6 +57,7 @@ class GPTree:
                  Nbar: Optional[int] = 100,
                  theta: Optional[float] = 0.0001,
                  use_calibrated_sigma: Optional[bool] = True,
+                 split_dimension_criteria: Optional[str] = 'max_spread', # New parameter
                  **kwargs):
         """Initializes the GPTree.
 
@@ -74,10 +75,12 @@ class GPTree:
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method` and `retrain_every_n_points`.
+            split_dimension_criteria (Optional[str]): Method to select split
+                dimension. Defaults to 'max_spread'.
         """
         
         self.GPR = GPR
-        self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, **kwargs)  # Initialize root node of the GPTree
+        self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria, **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 

@@ -46,7 +46,8 @@ class GPNode(Node):
                  Nbar: Optional[int] = 100,
                  split_position_method='median', 
                  retrain_every_n_points=1,
-                 name="0"):
+                 name="0",
+                 split_dimension_criteria='max_spread'): # New parameter
         """Initializes a GPNode.
 
         Args:
@@ -65,6 +66,8 @@ class GPNode(Node):
                 retrained. Defaults to 1.
             name (str): A string identifier for the node, often representing its
                 path from the root (e.g., "0", "01"). Defaults to "0".
+            split_dimension_criteria (str): The method used to determine the
+                split dimension. Defaults to 'max_spread'.
         """
         
         super().__init__(*args)
@@ -77,6 +80,7 @@ class GPNode(Node):
 
         self.split_position_method = split_position_method
         self.retrain_every_n_points = retrain_every_n_points
+        self.split_dimension_criteria = split_dimension_criteria
         
         self.is_left = None
         self.is_leaf = True
@@ -143,6 +147,7 @@ class GPNode(Node):
             'Nbar': self.Nbar,
             'split_position_method': self.split_position_method,
             'retrain_every_n_points': self.retrain_every_n_points,
+            'split_dimension_criteria': self.split_dimension_criteria,
         }
 
         # Create child nodes with a copy of the parent GP
@@ -327,29 +332,75 @@ class GPNode(Node):
                 in the chosen split dimension.
         """
 
-        # TODO: Introduce alternative ways to choose the split index, 
-        #       e.g. max spread per lengthscale, principal component, random, ...
-        #       Currently this is using the "max spread" approach.
-        w = np.empty(self.n_features)
-        for i in range(self.n_features):
-            w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
-        self.split_index = np.argmax(w)
+        # Determine the split index based on the chosen criteria
+        if self.split_dimension_criteria == 'max_spread':
+            if self.my_X_data.shape[0] > 0:
+                w = np.empty(self.n_features)
+                for i in range(self.n_features):
+                    w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
+                self.split_index = np.argmax(w)
+            else:
+                self.split_index = 0 # Default to 0 if no data
+        elif self.split_dimension_criteria == 'max_variance':
+            if self.my_X_data.shape[0] > 1:
+                variances = np.var(self.my_X_data, axis=0)
+                self.split_index = np.argmax(variances)
+            else: # Fallback for single data point or no variance
+                if self.my_X_data.shape[0] > 0:
+                    w = np.empty(self.n_features)
+                    for i in range(self.n_features):
+                        w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
+                    self.split_index = np.argmax(w)
+                else:
+                    self.split_index = 0 # Default to 0 if no data
+        elif self.split_dimension_criteria == 'random':
+            if self.n_features > 0:
+                self.split_index = np.random.randint(0, self.n_features)
+            else:
+                self.split_index = 0 # Default to 0 if no features
+        else:
+            raise ValueError(f"Unknown split_dimension_criteria: {self.split_dimension_criteria}")
+
+        # Calculate spread for the chosen split_index, used for overlap calculation
+        # and potentially for split_position if data is scarce for other methods.
+        if self.my_X_data.shape[0] > 0:
+            current_dim_spread = np.max(self.my_X_data[:, self.split_index]) - np.min(self.my_X_data[:, self.split_index])
+        else:
+            current_dim_spread = 0.0 # Default if no data
 
         # TODO: Introduce alternative ways to compute the split position, e.g. median
-
         self.split_position = None
-        if self.split_position_method == 'median':
-            self.split_position = np.median(self.my_X_data[:, self.split_index])
+        if self.my_X_data.shape[0] == 0: # No data, place split in the middle (0 if not scaled) or handle as error?
+            self.split_position = 0.0 
+        elif self.split_position_method == 'median':
+            if self.my_X_data.shape[0] > 0:
+                self.split_position = np.median(self.my_X_data[:, self.split_index])
+            else: # Should not happen if split_index logic is robust
+                self.split_position = 0.0
         elif self.split_position_method == 'mean':
-            self.split_position = np.mean(self.my_X_data[:, self.split_index])
+            if self.my_X_data.shape[0] > 0:
+                self.split_position = np.mean(self.my_X_data[:, self.split_index])
+            else: # Should not happen
+                self.split_position = 0.0
         elif self.split_position_method == 'random':
-            self.split_position = np.random.uniform(np.min(self.my_X_data[:, self.split_index]), np.max(self.my_X_data[:, self.split_index]), 1) 
+            if self.my_X_data.shape[0] > 0:
+                min_val = np.min(self.my_X_data[:, self.split_index])
+                max_val = np.max(self.my_X_data[:, self.split_index])
+                if min_val == max_val: # All points are the same
+                    self.split_position = min_val
+                else:
+                    self.split_position = np.random.uniform(min_val, max_val, 1)[0]
+            else: # Should not happen
+                self.split_position = 0.0
         elif self.split_position_method == 'randomchoice':
-            self.split_position = np.random.choice(self.my_X_data[:, self.split_index])
+            if self.my_X_data.shape[0] > 0:
+                self.split_position = np.random.choice(self.my_X_data[:, self.split_index])
+            else: # Should not happen
+                self.split_position = 0.0
         else:
             raise ValueError(f"Unknown split_position_method argument: '{self.split_position_method}'. The valid options are 'median', 'mean', 'random' and 'randomchoice'")
 
-        self.overlap = theta*w[self.split_index]
+        self.overlap = theta * current_dim_spread
 
 
     def prob_func(self, x: np.array):

@@ -120,6 +120,53 @@ class my_GPR_class(GaussianProcessRegressor):
         self.random_state = random_state
 
 
+# Make sure to use the global n_dims from example.py for data generation
+
+def test_split_criteria():
+    print("\nTesting Split Dimension Criteria...\n")
+    
+    n_pts_test = 50 
+    Nbar_test = 10 
+    
+    # Use a fixed seed for reproducibility of test data
+    np.random.seed(42) 
+    # Ensure X_test_data uses the global n_dims from example.py
+    # (n_dims is available from the outer scope of example.py)
+    X_test_data = np.random.rand(n_pts_test, n_dims) 
+    y_test_data = np.sum(X_test_data, axis=1).reshape(-1, 1) 
+
+    criteria_to_test = ['max_spread', 'max_variance', 'random']
+    
+    for criterion in criteria_to_test:
+        print(f"--- Testing criterion: {criterion} ---")
+        try:
+            # my_GPR_class is defined in the global scope of example.py
+            gpr_instance_for_test = my_GPR_class()
+
+            gpt_test = GPTree(
+                GPR=gpr_instance_for_test, 
+                Nbar=Nbar_test,
+                split_dimension_criteria=criterion,
+                retrain_every_n_points=Nbar_test 
+            )
+            
+            gpt_test.fit(X_test_data, y_test_data, show_progress=False)
+            
+            print(f"Successfully trained GPTree with criterion: {criterion}")
+            if gpt_test.root and not gpt_test.root.is_leaf:
+                print(f"Root node split on dimension: {gpt_test.root.split_index} using {criterion}")
+            elif gpt_test.root and gpt_test.root.is_leaf:
+                print(f"Root node did not split with Nbar={Nbar_test} (capacity) and {n_pts_test} points using {criterion}. It remained a leaf.")
+            else:
+                print(f"No root node OR root node is None after fit for {criterion}.")
+
+        except Exception as e:
+            print(f"Error during testing criterion {criterion}: {e}")
+            import traceback
+            traceback.print_exc() 
+        print(f"--- End Test for {criterion} ---\n")
+
+
 mygpr = my_GPR_class()
 
 # Construct GPTree
@@ -154,4 +201,6 @@ for x,y in zip(X_input, y_input):
 print()
 print("Done.")
 print()
+
+test_split_criteria() # Add this call
 
