@@ -1,13 +1,51 @@
+"""Provides a collection of common benchmark target functions.
+
+These functions are typically used for testing optimization and regression
+algorithms. The input `x` for each function is generally expected to be
+a 1-D NumPy array representing a point in a d-dimensional space, with
+values in each dimension initially scaled to the `[0,1]` range. This
+input is then mapped to the function's standard domain before computation.
+"""
 import numpy as np
 
 
 def Eggholder_2d(x):
+    """Computes the 2-dimensional Eggholder function.
+
+    This is a helper function used by the N-dimensional `Eggholder` function.
+    It is known for its complex landscape with many local minima.
+
+    Args:
+        x (np.ndarray): A 1-D NumPy array of length 2, representing a point
+            in 2D space (e.g., `[x0, x1]`). Values are assumed to be
+            already scaled to the function's standard domain (typically [-512, 512]).
+
+    Returns:
+        float: The value of the 2D Eggholder function at point `x`.
+    """
     term1 = -(x[1] + 47) * np.sin(np.sqrt(np.abs(x[1] + x[0]/2. + 47.)))
     term2 = -x[0] * np.sin(np.sqrt(np.abs(x[0] - (x[1] + 47.))))
     func = term1 + term2
     return func
 
 def Eggholder(x):
+    """Computes the N-dimensional Eggholder function.
+
+    The Eggholder function is a common benchmark for optimization algorithms,
+    characterized by a large number of local minima, making it challenging
+    to optimize. This implementation expects input `x` to be a 1-D NumPy array
+    with values in the range `[0,1]` for each dimension. These values are then
+    scaled to the standard Eggholder domain of `[-512, 512]` for each dimension.
+    The N-dimensional function is computed by summing 2D Eggholder results
+    for adjacent pairs of dimensions.
+
+    Args:
+        x (np.ndarray): A 1-D NumPy array where each element `x[i]` represents
+            the value for the i-th dimension. Values are expected to be in `[0,1]`.
+
+    Returns:
+        float: The value of the N-dimensional Eggholder function at point `x`.
+    """
     xmin, xmax = -512, 512
     x = xmin + x*(xmax - xmin)
     dim = len(x)
@@ -20,6 +58,28 @@ def Eggholder(x):
 
 
 def Himmelblau(x):
+    """Computes the N-dimensional Himmelblau function.
+
+    The Himmelblau function is often used as a benchmark for optimization.
+    It has a relatively small number of local minima (typically 4 in its 2D form).
+    This implementation expects input `x` to be a 1-D NumPy array with values
+    in the range `[0,1]` for each dimension. These values are then scaled to
+    the standard Himmelblau domain of `[-5, 5]`. The N-dimensional version
+    is constructed by summing 2D Himmelblau-like terms for adjacent pairs of
+    dimensions. The result is log-transformed and shifted to have a minimum of zero
+    for known dimensionalities (2 to 6).
+
+    Args:
+        x (np.ndarray): A 1-D NumPy array where each element `x[i]` represents
+            the value for the i-th dimension. Values are expected to be in `[0,1]`.
+
+    Returns:
+        float: The value of the N-dimensional Himmelblau function at point `x`.
+
+    Raises:
+        Exception: If the dimensionality is greater than 6 and the minimum
+            value for that dimensionality is not predefined.
+    """
     xmin, xmax = -5, 5
     x = xmin + x*(xmax - xmin)
     dim = len(x)
@@ -47,6 +107,23 @@ def Himmelblau(x):
 
 
 def Rosenbrock(x):
+    """Computes the N-dimensional Rosenbrock function.
+
+    The Rosenbrock function, also known as Rosenbrock's valley or Rosenbrock's
+    banana function, is a non-convex function used as a performance test problem
+    for optimization algorithms. It has a global minimum inside a long, narrow,
+    parabolic-shaped flat valley.
+    This implementation expects input `x` to be a 1-D NumPy array with values
+    in the range `[0,1]` for each dimension. These values are then scaled to
+    the domain `[-5, 10]`.
+
+    Args:
+        x (np.ndarray): A 1-D NumPy array where each element `x[i]` represents
+            the value for the i-th dimension. Values are expected to be in `[0,1]`.
+
+    Returns:
+        float: The value of the N-dimensional Rosenbrock function at point `x`.
+    """
     xmin, xmax = -5, 10
     x = xmin + x*(xmax - xmin)
     dim = len(x)
@@ -59,6 +136,22 @@ def Rosenbrock(x):
 
 
 def Rastrigin(x):
+    """Computes the N-dimensional Rastrigin function.
+
+    The Rastrigin function is a non-convex function used as a performance test
+    problem for optimization algorithms. It is known for having many local
+    minima, arranged in a regular grid. It has a global minimum at x_i = 0.
+    This implementation expects input `x` to be a 1-D NumPy array with values
+    in the range `[0,1]` for each dimension. These values are then scaled to
+    the standard Rastrigin domain of `[-5.12, 5.12]`.
+
+    Args:
+        x (np.ndarray): A 1-D NumPy array where each element `x[i]` represents
+            the value for the i-th dimension. Values are expected to be in `[0,1]`.
+
+    Returns:
+        float: The value of the N-dimensional Rastrigin function at point `x`.
+    """
     xmin, xmax = -5.12, 5.12
     x = xmin + x*(xmax - xmin)
     dim = len(x)
@@ -71,6 +164,21 @@ def Rastrigin(x):
 
 
 def Levy(x):
+    """Computes the N-dimensional Levy function.
+
+    The Levy function is a benchmark problem for global optimization. It is
+    characterized by many local minima.
+    This implementation expects input `x` to be a 1-D NumPy array with values
+    in the range `[0,1]` for each dimension. These values are then scaled to
+    the standard Levy domain of `[-10, 10]`.
+
+    Args:
+        x (np.ndarray): A 1-D NumPy array where each element `x[i]` represents
+            the value for the i-th dimension. Values are expected to be in `[0,1]`.
+
+    Returns:
+        float: The value of the N-dimensional Levy function at point `x`.
+    """
     xmin, xmax = -10, 10
     x = xmin + x*(xmax - xmin)
     dim = len(x)
@@ -93,6 +201,21 @@ def Levy(x):
 
 
 def Custom(x):
+    """Computes a custom composite function.
+
+    This function is a weighted sum of other benchmark functions defined in
+    this module: Rastrigin, Eggholder, and Levy. It serves as an example of
+    how more complex target functions can be constructed. The input `x` is
+    passed to each component function, which assumes `x` contains values in
+    `[0,1]` for each dimension before their respective domain scaling.
+
+    Args:
+        x (np.ndarray): A 1-D NumPy array where each element `x[i]` represents
+            the value for the i-th dimension. Values are expected to be in `[0,1]`.
+
+    Returns:
+        float: The value of the custom composite function at point `x`.
+    """
     func = 0
     func += Rastrigin(x)
     func += Eggholder(x) / 6.

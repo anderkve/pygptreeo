@@ -1,3 +1,20 @@
+"""Basic example script demonstrating the usage of the GPTree class.
+
+This script showcases how to set up and use the `GPTree` from the
+`pygptreeo` library for a regression task. It performs the following steps:
+1.  Defines or imports a target function (e.g., Eggholder, Himmelblau).
+2.  Sets up parameters for the `GPTree` and the custom GPR (`my_GPR_class`).
+3.  Initializes a `GPTree` instance with the custom GPR.
+4.  Generates random input data (`X_input`) and corresponding target
+    values (`y_input`).
+5.  Iterates through the data points:
+    a.  Makes a prediction using the current state of the `GPTree`.
+    b.  Updates the `GPTree` with the new data point.
+    c.  Prints a comparison of the true and predicted values.
+
+The example also defines a custom GPR class `my_GPR_class` to illustrate
+how specific kernel configurations can be passed to the `GPTree`.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -53,6 +70,37 @@ y_input = target(X_input.T)
 
 
 class my_GPR_class(GaussianProcessRegressor):
+    """Custom Gaussian Process Regressor for use with GPTree.
+
+    This class inherits from `sklearn.gaussian_process.GaussianProcessRegressor`
+    and is tailored for this example to define specific kernel configurations
+    and default parameters for the GPR instances used within the `GPTree`.
+
+    Attributes:
+        kernel_alternatives (list): A list of scikit-learn kernel objects.
+            The `GPNode` within `GPTree` will iterate through these kernels
+            during its fitting process and select the one that maximizes
+            the log-marginal-likelihood.
+        min_length_scale (float): A minimum bound for the kernel's length
+            scale hyperparameters. This is used by `GPNode` to constrain
+            the kernel optimization.
+        kernel: The default kernel to be used. Initially set to the first
+            kernel in `kernel_alternatives`.
+        alpha (float or ndarray): Value added to the diagonal of the kernel
+            matrix during fitting. Passed to `GaussianProcessRegressor`.
+        optimizer (str or callable): The optimizer used for fitting the
+            kernel's hyperparameters. Passed to `GaussianProcessRegressor`.
+        n_restarts_optimizer (int): The number of times the optimizer is
+            restarted. Passed to `GaussianProcessRegressor`.
+        normalize_y (bool): Whether the target values y are normalized before
+            fitting. Passed to `GaussianProcessRegressor`.
+        copy_X_train (bool): If True, a persistent copy of the training data
+            is stored. Passed to `GaussianProcessRegressor`.
+        n_targets (int): The number of dimensions of the target values.
+            Passed to `GaussianProcessRegressor`.
+        random_state (int, RandomState instance or None): Controls the
+            randomness of the initialization. Passed to `GaussianProcessRegressor`.
+    """
     def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=True, copy_X_train=True, n_targets=None, random_state=None):
         super().__init__()
         self.kernel_alternatives = [

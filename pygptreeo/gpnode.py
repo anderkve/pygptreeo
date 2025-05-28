@@ -12,12 +12,64 @@ from pygptreeo.default_gpr import Default_GPR
 np.set_printoptions(suppress=True)
 
 class GPNode(Node):
+    """Represents a node within the GPTree structure.
+
+    Each GPNode is responsible for a specific region of the input space.
+    It holds the training data relevant to this region, manages its own
+    Gaussian Process Regressor (my_GPR) to model the data, handles the
+    splitting process into child nodes when it becomes too full or complex,
+    and makes local predictions within its domain.
+
+    Attributes:
+        my_GPR (sklearn.gaussian_process.GaussianProcessRegressor): The GPR
+            instance associated with this node.
+        Nbar (int): The maximum number of training points this node can hold
+            before it attempts to split.
+        my_X_data (numpy.ndarray): Training data features for this node.
+        my_y_data (numpy.ndarray): Training data targets for this node.
+        split_index (int): The feature index used for splitting this node.
+        split_position (float): The value at which the split occurs along the
+            `split_index` feature.
+        children (list[GPNode]): A list containing the left and right child
+            nodes after a split. None if it's a leaf node.
+        is_leaf (bool): True if the node is a leaf node (has no children),
+            False otherwise.
+        parent (GPNode): The parent node in the tree. None for the root node.
+        value (int): Inherited from binarytree.Node, stores num_training_points.
+        name (str): A string identifier for the node (e.g., "0", "01", "010").
+        split_position_method (str): Method used to determine split point.
+        retrain_every_n_points (int): Frequency of GPR retraining.
+        overlap (float): The size of the overlapping region with sibling nodes.
+    """
     def __init__(self, *args, 
                  my_GPR: GaussianProcessRegressor, 
                  Nbar: Optional[int] = 100,
                  split_position_method='median', 
                  retrain_every_n_points=1,
                  name="0"):
+        
+                 split_position_method='median', 
+                 retrain_every_n_points=1,
+                 name="0"):
+        """Initializes a GPNode.
+
+        Args:
+            *args: Arguments passed to the `binarytree.Node` parent class constructor.
+                Typically, the first argument is the initial `value` for the node,
+                which corresponds to `num_training_points`.
+            my_GPR (sklearn.gaussian_process.GaussianProcessRegressor): The
+                Gaussian Process Regressor instance to be used by this node.
+            Nbar (Optional[int]): The maximum number of training points this node
+                can hold before it considers splitting. Defaults to 100.
+            split_position_method (str): The method used to determine the split
+                position when the node splits. Valid options include 'median',
+                'mean', 'random', 'randomchoice'. Defaults to 'median'.
+            retrain_every_n_points (int): Specifies how many new data points
+                should be accumulated in the buffer before the node's GPR is
+                retrained. Defaults to 1.
+            name (str): A string identifier for the node, often representing its
+                path from the root (e.g., "0", "01"). Defaults to "0".
+        """
         
         super().__init__(*args)
 
@@ -59,12 +111,22 @@ class GPNode(Node):
     # Override the "value" attribute of Node parent class 
     @property
     def num_training_points(self):
+        """int: The number of training points currently held by this node."""
         return self.value
 
     
     # such that the value of a node is the number of training points
     @num_training_points.setter
     def num_training_points(self, value):
+        """Sets the number of training points for this node.
+
+        This also updates the `value` attribute inherited from the
+        `binarytree.Node` parent class, which is used for display
+        purposes in the tree structure.
+
+        Args:
+            value (int): The new number of training points.
+        """
         self.value = value
 
 
@@ -137,15 +199,47 @@ class GPNode(Node):
 
         
     def delete_training_data(self):
+        """Deletes the training data (my_X_data, my_y_data) from the node.
+
+        This is typically called on a parent node after its data has been
+        successfully split and passed down to its children. This helps to
+        reduce memory consumption as the tree grows, as only leaf nodes
+        or nodes about to be split actively need to store their full datasets.
+        """
         del self.my_X_data, self.my_y_data
 
 
     def delete_my_GPR(self):
+        """Deletes the Gaussian Process Regressor (my_GPR) instance from the node.
+
+        This method is typically called on a node after it has been split and
+        is no longer a leaf node. Non-leaf nodes usually do not need to
+        maintain their GPR model once their responsibilities have been passed
+        to their children, thus saving memory.
+        """
         del self.my_GPR
 
 
     def fit_my_GPR(self, force_training=False):
-        """ Fit the GP of the node with sklearn. """
+        """Fits the node's Gaussian Process Regressor (GPR) to its local data.
+
+        Training is triggered if the number of new points in the buffer
+        (`num_buffer_points`) reaches `retrain_every_n_points`, if the node
+        is full (`num_training_points == Nbar`), or if `force_training` is True.
+
+        The method iterates through `kernel_alternatives` defined in the GPR
+        object (e.g., `Default_GPR`). For each kernel, it adjusts the
+        length scale bounds and initial points based on the current data ranges
+        in the node. The kernel that yields the best (lowest)
+        log-marginal-likelihood (LML) is selected for `self.my_GPR`.
+
+        Args:
+            force_training (bool): If True, the GPR is retrained even if the
+                usual buffer or fullness conditions are not met. Defaults to False.
+
+        Returns:
+            bool: True if the GPR was trained in this call, False otherwise.
+        """
         did_train = False
         # Only train the GP if the buffer is full, the node is full, or if force_training=True
         if (self.num_buffer_points == self.retrain_every_n_points) or (self.num_training_points == self.Nbar) or force_training:
@@ -216,7 +310,26 @@ class GPNode(Node):
 
 
     def compute_split_position_and_overlap(self, theta: float):
-        """ Find the position of the dividing hyperplane and the size of the overlapping region. """
+        """Computes the split dimension, position, and overlap for node splitting.
+
+        This method determines which feature dimension (`self.split_index`) to
+        split on, typically by selecting the dimension with the maximum spread
+        (range of values) in the node's current training data (`self.my_X_data`).
+
+        The actual split position (`self.split_position`) along this dimension is
+        then calculated based on the `self.split_position_method` (e.g., median,
+        mean of the data in `self.my_X_data[:, self.split_index]`).
+
+        The `overlap` region's size (`self.overlap`) is calculated as a product
+        of the `theta` parameter (passed from the `GPTree` during the split
+        operation, representing a fraction of the spread) and the spread (`w`)
+        of the chosen `split_index`.
+
+        Args:
+            theta (float): A parameter provided by the `GPTree` that determines
+                the extent of the overlap. It's a fraction of the data range
+                in the chosen split dimension.
+        """
 
         # TODO: Introduce alternative ways to choose the split index, 
         #       e.g. max spread per lengthscale, principal component, random, ...
@@ -270,7 +383,24 @@ class GPNode(Node):
 
 
     def predict(self, x: np.ndarray, return_std=True, use_calibrated_sigma=False):
-        """ Evaluate the prediction from this node's GP at input point x. """
+        """Evaluates the prediction from this node's GPR at input point(s) x.
+
+        Args:
+            x (np.ndarray): The input point(s) at which to make predictions.
+                Shape should be (n_samples, n_features).
+            return_std (bool): Whether to return the standard deviation of the
+                prediction. Defaults to True.
+            use_calibrated_sigma (bool): If True, the returned `sigma_pred`
+                (standard deviation) is scaled by the node's `self.sigma_scaler`
+                attribute. This scaler is intended to calibrate the uncertainty
+                estimates. Defaults to False.
+
+        Returns:
+            tuple:
+                - mu_pred (np.ndarray): The mean prediction(s).
+                - sigma_pred (np.ndarray): The standard deviation of the
+                  prediction(s). Only returned if `return_std` is True.
+        """
         mu_pred, sigma_pred = self.my_GPR.predict(x, return_std=return_std)
 
         if use_calibrated_sigma:

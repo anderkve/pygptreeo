@@ -1,3 +1,40 @@
+"""Animated visualization of the GPTree learning process.
+
+This script demonstrates the capabilities of the GPTree by providing an
+animated visualization as it learns a target function incrementally.
+It performs the following main actions:
+
+1.  **Setup**:
+    *   Takes command-line arguments to configure the test, including:
+        *   `target_name`: The name of the target function to learn (e.g., 'eggholder', 'himmelblau').
+        *   `n_pts`: Total number of training points to generate and process.
+        *   `Nbar`: GPTree parameter for max points per leaf node.
+        *   `retrain_step`: GPTree parameter for retraining frequency in GPNode.
+        *   `update_step`: Frequency (in terms of Nbar multiples) for updating plots.
+        *   `live_update`: Boolean (0 or 1) to enable/disable live plot updates.
+    *   Initializes the selected target function and a `GPTree` instance,
+        optionally with a custom GPR configuration (`my_GPR_class`).
+    *   Generates a set of 2D random training data points (`X_input`, `y_input`).
+
+2.  **Plotting Setup**:
+    *   Creates a Matplotlib figure with multiple subplots to display:
+        *   Four 1D slices of the true target function versus the GPTree's
+          current predictions and uncertainty bounds.
+        *   A 2D scatter plot showing the locations of training data points used so far.
+        *   A 2D contour plot of the true target function for reference.
+
+3.  **Incremental Learning and Animation**:
+    *   Feeds the training data points to the `GPTree` one by one using
+      `gpt.update_tree()`.
+    *   Periodically (controlled by `update_step`), the `update_plots`
+      function is called to refresh the visualizations with the GPTree's
+      latest predictions and the newly added training data.
+    *   If `live_update` is enabled, plots are updated interactively.
+      Otherwise, a final plot is shown after all points are processed.
+
+The script is primarily intended for visualizing how the GPTree adapts its
+predictions and structure as it encounters more data.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -58,6 +95,39 @@ y_input = target(X_input.T)
 
 
 class my_GPR_class(GaussianProcessRegressor):
+    """Custom Gaussian Process Regressor for use with GPTree in this script.
+
+    This class inherits from `sklearn.gaussian_process.GaussianProcessRegressor`
+    and is tailored for this visualization script to define specific kernel
+    configurations and default parameters for the GPR instances used within
+    the `GPTree`.
+
+    Attributes:
+        kernel_alternatives (list): A list of scikit-learn kernel objects.
+            The `GPNode` within `GPTree` will iterate through these kernels
+            during its fitting process and select the one that maximizes
+            the log-marginal-likelihood. In this script, it's typically
+            a Matern kernel.
+        min_length_scale (float): A minimum bound for the kernel's length
+            scale hyperparameters. This is used by `GPNode` to constrain
+            the kernel optimization.
+        kernel: The default kernel to be used. Initially set to the first
+            kernel in `kernel_alternatives`.
+        alpha (float or ndarray): Value added to the diagonal of the kernel
+            matrix during fitting. Passed to `GaussianProcessRegressor`.
+        optimizer (str or callable): The optimizer used for fitting the
+            kernel's hyperparameters. Passed to `GaussianProcessRegressor`.
+        n_restarts_optimizer (int): The number of times the optimizer is
+            restarted. Passed to `GaussianProcessRegressor`.
+        normalize_y (bool): Whether the target values y are normalized before
+            fitting. Passed to `GaussianProcessRegressor`.
+        copy_X_train (bool): If True, a persistent copy of the training data
+            is stored. Passed to `GaussianProcessRegressor`.
+        n_targets (int): The number of dimensions of the target values.
+            Passed to `GaussianProcessRegressor`.
+        random_state (int, RandomState instance or None): Controls the
+            randomness of the initialization. Passed to `GaussianProcessRegressor`.
+    """
     def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=True, copy_X_train=True, n_targets=None, random_state=None):
         super().__init__()
         self.kernel_alternatives = [
@@ -287,6 +357,27 @@ if live_update:
 
 # Function for updating plots
 def update_plots(point_i, n_last_points):
+    """Updates the Matplotlib plots with new data and GPTree predictions.
+
+    This function is called periodically during the training loop to refresh
+    the visualizations. It queries the global `gpt` object for its current
+    predictions on predefined slices of the input space and updates the
+    corresponding line plots (mean prediction and uncertainty bounds).
+    It also updates a scatter plot to show the locations of the most recent
+    training points.
+
+    Args:
+        point_i (int): The total number of training points processed so far by
+            the `GPTree`. This is used, for example, in plot titles.
+        n_last_points (int): The number of most recent training data points
+            from `X_input` to display on the scatter plot (ax5).
+
+    Note:
+        This function relies on several globally defined Matplotlib axes objects
+        (ax1, ax2, etc.), plot line objects (plot_1, plot_1_std_up, etc.),
+        and the global `gpt` (GPTree instance) and `X_input` (training data)
+        variables.
+    """
 
     # Plot 1
     y_predict_plot_1, y_predict_std_plot_1 = gpt.predict(X_predict_plot_1, show_progress=False)

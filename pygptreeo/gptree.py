@@ -6,24 +6,51 @@ from sklearn.utils import resample
 from typing import Callable, Optional, Type, Union
 from copy import deepcopy
 from tqdm import tqdm
+import joblib # Ensure joblib is imported
 
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 
 
 class GPTree:
-    """ Class for GPTree regression (only scalar target functions implemented).
-    
-        Attributes
-        ----------
-        Nbar: Optional[int] = 100
-            Maximum number of training points that each node can have.
+    """Implements the GPTree for dynamic learning and regression.
 
-        theta: Optional[float] = 0.0001
-            Parameter in probability function when assigning training samples to nodes.
+    The GPTree class provides the core logic for a dynamically growing tree
+    structure where each node (a GPNode instance) contains a Gaussian Process
+    Regressor (GPR). Its primary purpose is to learn a function on the fly from
+    a stream of data points (x, y) by adaptively partitioning the input space.
+    As data points are added, the tree grows by splitting nodes that become
+    too full, and the GPRs within the nodes are updated to model the local
+    data distribution.
 
-        Methods
-        -------
+    Attributes:
+        root (GPNode): The root node of the GPTree.
+        GPR (sklearn.gaussian_process.GaussianProcessRegressor): The base GPR
+            configuration used as a template for the GPR in each new GPNode.
+        Nbar (int): The maximum number of training points a GPNode can hold
+            before it attempts to split.
+        theta (float): A parameter that influences the size of the overlapping
+            region between sibling GPNodes after a split. The overlap is
+            calculated as theta * range_of_split_dimension.
+        use_calibrated_sigma (bool): If True, the sigma (standard deviation)
+            from GPNode predictions will be scaled using the node's calibrated
+            sigma_scaler. This is intended to provide better uncertainty estimates.
+        n_features (int): The number of features in the input data X.
+            Automatically determined from the first data point.
+        first_point (bool): A flag indicating if the next point to be processed
+            is the first one. Used for initial setup like determining n_features.
+
+    Methods:
+        fit(X_train, y_train, show_progress=False, shuffle=True, forward_GPR_to_next_leaf=False):
+            Constructs the tree from a batch of training data.
+        update_tree(x, y, allow_training=True):
+            Adds a single data point to the tree, potentially causing node
+            splits and GPR retraining.
+        predict(X_test, mode='recursive', show_progress=False):
+            Predicts target values for X_test using the ensemble of GPRs in
+            the leaf nodes.
+        save(path):
+            Saves the trained GPTree object to a file.
     """
     def __init__(self,
                  GPR: Optional[GaussianProcessRegressor] = Default_GPR(),
@@ -31,6 +58,23 @@ class GPTree:
                  theta: Optional[float] = 0.0001,
                  use_calibrated_sigma: Optional[bool] = True,
                  **kwargs):
+        """Initializes the GPTree.
+
+        Args:
+            GPR (Optional[GaussianProcessRegressor]): The Gaussian Process
+                Regressor instance to be used as a template for nodes.
+                Defaults to `Default_GPR()`.
+            Nbar (Optional[int]): Maximum number of training points a node
+                can hold before splitting. Defaults to 100.
+            theta (Optional[float]): Parameter influencing the overlap region
+                between sibling nodes. The overlap is calculated as
+                theta * range_of_split_dimension. Defaults to 0.0001.
+            use_calibrated_sigma (Optional[bool]): If True, enables sigma
+                calibration in GPNode predictions. Defaults to True.
+            **kwargs: Additional keyword arguments passed to the constructor
+                of the root `GPNode`. These can include parameters like
+                `split_position_method` and `retrain_every_n_points`.
+        """
         
         self.GPR = GPR
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, **kwargs)  # Initialize root node of the GPTree
@@ -45,7 +89,31 @@ class GPTree:
 
 
     def update_tree(self, x: np.ndarray, y: float, allow_training=True):
-        """ Algorithm 1 in DLGP article, with some tweaks of our own """
+        """Updates the tree structure and node GPRs with a new data point (x, y).
+
+        This method implements a process similar to Algorithm 1 in the DLGP
+        (Deep Locally-Weighted Gaussian Processes) article, with some modifications.
+        It navigates from the root to find an appropriate leaf node for the new
+        data point `x` based on the probabilistic splitting functions of intermediate
+        nodes. The point is added to the chosen leaf's training data.
+
+        If `allow_training` is True, the leaf node's GPR may be retrained based
+        on its buffer conditions (e.g., `retrain_every_n_points`) or if it becomes
+        full. If the node's capacity `Nbar` is reached, it splits into two
+        child nodes, its data is partitioned, and its own GPR and data are
+        typically deleted to save memory.
+
+        Args:
+            x (np.ndarray): The new input data point (features), expected as a
+                1D array or a 2D array with one row.
+            y (float): The corresponding target value for the data point.
+            allow_training (bool): If True (default), the GPR model in the
+                selected leaf node can be retrained if its conditions
+                (e.g., buffer full, node full) are met. If False, GPR retraining
+                is suppressed during this update. This is useful, for example,
+                during the initial `fit` method where tree construction is the
+                priority before a final training pass on all leaves.
+        """
 
         # The first input point is used to determine self.n_features
         if self.first_point:
@@ -174,7 +242,29 @@ class GPTree:
         
         global sum_probs, collection_done
         def collect_leaves(x: np.ndarray, current_node: GPNode, current_prob: float):
-            """ Recursive function to collect contributing leaves for prediction at single test point x.  """
+            """Recursively traverses the tree to find relevant leaf nodes for prediction.
+
+            This helper function is called by `predict_recursive` for a single test
+            point `x`. It navigates down the tree from `current_node`, calculating
+            the probability of taking each path. If a path's probability is non-zero,
+            it continues traversal.
+
+            When a leaf node is reached, it's added to the `leaves` list (in the
+            outer scope of `predict_recursive`), and its accumulated probability
+            (`current_prob`) is added to `pred_leaf_probs` (also in the outer scope).
+
+            The traversal uses `sum_probs` and `collection_done` (global variables
+            within `predict_recursive`'s scope) for early stopping: if the sum of
+            probabilities of collected leaves reaches or exceeds 1.0, the search
+            is considered complete.
+
+            Args:
+                x (np.ndarray): The single test point (1-row numpy array) for which
+                    leaf nodes are being collected.
+                current_node (GPNode): The GPNode from which to continue the traversal.
+                current_prob (float): The accumulated probability of reaching the
+                    `current_node` from the root.
+            """
 
             global sum_probs, collection_done
 
@@ -307,4 +397,12 @@ class GPTree:
 
 
     def save(self, path: str):
+        """Saves the trained GPTree object to a file using joblib.
+
+        This method serializes the entire GPTree instance, including its
+        structure (all GPNodes) and the trained GPR models within each node.
+
+        Args:
+            path (str): The file path where the GPTree object will be saved.
+        """
         joblib.dump(self, path)
