@@ -47,10 +47,6 @@ class GPNode(Node):
                  split_position_method='median', 
                  retrain_every_n_points=1,
                  name="0"):
-        
-                 split_position_method='median', 
-                 retrain_every_n_points=1,
-                 name="0"):
         """Initializes a GPNode.
 
         Args:
