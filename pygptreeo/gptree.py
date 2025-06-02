@@ -155,20 +155,27 @@ class GPTree:
             # Compute parameters for the probability function 
             node.compute_split_position_and_overlap(self.theta)
 
-                # jules gradual splitting: Added conditional data splitting
-                if node.splitting_strategy == 'gradual':
-                    # jules gradual splitting: In gradual splitting, both children inherit all parent data
-                    # self.n_features should be correct here.
-                    # node.my_X_data is (N, n_features), node.my_y_data is (N, 1)
-                    for i in range(node.my_X_data.shape[0]):
-                        x_parent_point = node.my_X_data[i].reshape((1, self.n_features))
-                        y_parent_point = node.my_y_data[i].reshape((1, 1)) # Ensure y is (1,1) for add_training_data
+            # jules gradual splitting: NOW pass parent's split info to children
+            if node.children: # Should always be true here
+                node.children[0].parent_split_index = node.split_index
+                node.children[0].parent_split_position = node.split_position
+                node.children[1].parent_split_index = node.split_index
+                node.children[1].parent_split_position = node.split_position
 
-                        for child_node in node.children:
-                            child_node.add_training_data(x_parent_point, y_parent_point, increment_buffer=False)
-                else:
-                    # jules gradual splitting: Standard splitting
-                    node.split_training_data()
+            # jules gradual splitting: Added conditional data splitting
+            if node.splitting_strategy == 'gradual':
+                # jules gradual splitting: In gradual splitting, both children inherit all parent data
+                # self.n_features should be correct here.
+                # node.my_X_data is (N, n_features), node.my_y_data is (N, 1)
+                for i in range(node.my_X_data.shape[0]):
+                    x_parent_point = node.my_X_data[i].reshape((1, self.n_features))
+                    y_parent_point = node.my_y_data[i].reshape((1, 1)) # Ensure y is (1,1) for add_training_data
+
+                    for child_node in node.children:
+                        child_node.add_training_data(x_parent_point, y_parent_point, increment_buffer=False)
+            else:
+                # jules gradual splitting: Standard splitting
+                node.split_training_data()
 
             # Retrain the child-node GPs?
             """ for child in node.children:

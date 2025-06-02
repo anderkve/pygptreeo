@@ -160,12 +160,6 @@ class GPNode(Node):
         self.left = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "0", **node_config_kwargs)
         self.right = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "1", **node_config_kwargs)
         
-        # jules gradual splitting: Pass parent's split info to children
-        self.left.parent_split_index = self.split_index
-        self.left.parent_split_position = self.split_position
-        self.right.parent_split_index = self.split_index
-        self.right.parent_split_position = self.split_position
-
         self.left.is_left = True
         self.right.is_left = False
 
