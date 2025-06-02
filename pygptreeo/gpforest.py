@@ -28,7 +28,8 @@ class GPForest:
     def __init__(self,
                  GPR: Optional[Union[GaussianProcessRegressor, list]] = Default_GPR(),
                  Nbar: Optional[Union[int, list]] = 100,
-                 theta: Optional[Union[float, list]] = 0.0001):
+                 theta: Optional[Union[float, list]] = 0.0001,
+                 use_standard_scaling: Optional[Union[bool, list]] = False): # jules standard scaling: Add use_standard_scaling parameter
         """Initializes the GPForest.
 
         Args:
@@ -45,6 +46,9 @@ class GPForest:
                 of sibling nodes overlap. Can be a float (applying to all
                 trees) or a list of floats (one for each tree).
                 Defaults to 0.0001.
+            use_standard_scaling (Optional[Union[bool, list]]): Whether to use standard
+                scaling in GPNodes. Can be a boolean (applying to all trees) or a
+                list of booleans (one for each tree). Defaults to False. # jules standard scaling: Add docstring for use_standard_scaling
         Raises:
             AssertionError: If `Nbar` and `theta` are lists of different lengths.
         """
@@ -52,6 +56,7 @@ class GPForest:
         self.GPR = GPR
         self.Nbar = Nbar
         self.theta = theta
+        self.use_standard_scaling = use_standard_scaling # jules standard scaling: Store use_standard_scaling
 
         self.GPTrees = []
 
@@ -69,6 +74,12 @@ class GPForest:
         if type(self.GPR) == GaussianProcessRegressor or type(self.GPR) == Default_GPR:
             self.GPR = self.num_GPTrees*[self.GPR]
 
+        # jules standard scaling: Ensure use_standard_scaling is a list of correct length
+        if isinstance(self.use_standard_scaling, bool):
+            self.use_standard_scaling = [self.use_standard_scaling] * self.num_GPTrees
+
+        assert len(self.use_standard_scaling) == self.num_GPTrees, "use_standard_scaling list must have the same number of elements as Nbar/theta"
+
 
     def fit(self, X_train: np.ndarray, y_train: np.ndarray, show_progress: Optional[bool]=False):
         """Builds and trains all GPTrees in the forest.
@@ -85,7 +96,11 @@ class GPForest:
         """
 
         for i in tqdm(range(self.num_GPTrees), disable=not show_progress, desc='Building forest'):
-            self.GPTrees.append(GPTree(self.GPR[i], self.Nbar[i], self.theta[i]))
+            # jules standard scaling: Pass use_standard_scaling to GPTree constructor
+            self.GPTrees.append(GPTree(GPR=self.GPR[i],
+                                       Nbar=self.Nbar[i],
+                                       theta=self.theta[i],
+                                       use_standard_scaling=self.use_standard_scaling[i]))
         
         for i in tqdm(range(self.num_GPTrees), disable=not show_progress, desc='Training GPTrees'):
             self.GPTrees[i].fit(X_train, y_train, shuffle=True)

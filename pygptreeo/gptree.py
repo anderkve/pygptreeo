@@ -58,6 +58,7 @@ class GPTree:
                  theta: Optional[float] = 0.0001,
                  use_calibrated_sigma: Optional[bool] = True,
                  split_dimension_criteria: Optional[str] = 'max_spread', # New parameter
+                 use_standard_scaling: bool = False, # jules standard scaling: Add use_standard_scaling parameter
                  **kwargs):
         """Initializes the GPTree.
 
@@ -72,15 +73,18 @@ class GPTree:
                 theta * range_of_split_dimension. Defaults to 0.0001.
             use_calibrated_sigma (Optional[bool]): If True, enables sigma
                 calibration in GPNode predictions. Defaults to True.
+            split_dimension_criteria (Optional[str]): Method to select split
+                dimension. Defaults to 'max_spread'.
+            use_standard_scaling (bool): Whether to use standard scaling in GPNodes.
+                Defaults to False. # jules standard scaling: Add docstring for use_standard_scaling
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method` and `retrain_every_n_points`.
-            split_dimension_criteria (Optional[str]): Method to select split
-                dimension. Defaults to 'max_spread'.
         """
         
         self.GPR = GPR
-        self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria, **kwargs)  # Initialize root node of the GPTree
+        # jules standard scaling: Pass use_standard_scaling to root GPNode constructor
+        self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria, use_standard_scaling=use_standard_scaling, **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 

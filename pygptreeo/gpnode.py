@@ -1,6 +1,7 @@
 import numpy as np
 from binarytree import Node
 from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.preprocessing import StandardScaler # jules standard scaling: Import StandardScaler
 from sklearn.gaussian_process.kernels import Matern, ExpSineSquared, ConstantKernel, WhiteKernel
 from typing import Callable, Optional, Type, Union
 from scipy.optimize import root_scalar
@@ -47,7 +48,8 @@ class GPNode(Node):
                  split_position_method='median', 
                  retrain_every_n_points=1,
                  name="0",
-                 split_dimension_criteria='max_spread'): # New parameter
+                 split_dimension_criteria='max_spread', # New parameter
+                 use_standard_scaling: bool = False): # jules standard scaling: Add use_standard_scaling parameter
         """Initializes a GPNode.
 
         Args:
@@ -68,6 +70,8 @@ class GPNode(Node):
                 path from the root (e.g., "0", "01"). Defaults to "0".
             split_dimension_criteria (str): The method used to determine the
                 split dimension. Defaults to 'max_spread'.
+            use_standard_scaling (bool): Whether to use standard scaling on X data
+                before fitting the GPR and predicting. Defaults to False.
         """
         
         super().__init__(*args)
@@ -96,6 +100,10 @@ class GPNode(Node):
         self.split_position = 0.0  # 's' in the DLGP article
         self.overlap = 0.001       # 'o' in the DLGP article
         self.name = name
+
+        # jules standard scaling: Initialize scaler and store use_standard_scaling
+        self.use_standard_scaling = use_standard_scaling
+        self.scaler = None
 
         self.n_points_pred_perf = 25
         self.residuals = np.array([])
@@ -148,6 +156,7 @@ class GPNode(Node):
             'split_position_method': self.split_position_method,
             'retrain_every_n_points': self.retrain_every_n_points,
             'split_dimension_criteria': self.split_dimension_criteria,
+            'use_standard_scaling': self.use_standard_scaling, # jules standard scaling: Pass use_standard_scaling to children
         }
 
         # Create child nodes with a copy of the parent GP
@@ -244,7 +253,18 @@ class GPNode(Node):
         did_train = False
         # Only train the GP if the buffer is full, the node is full, or if force_training=True
         if (self.num_buffer_points == self.retrain_every_n_points) or (self.num_training_points == self.Nbar) or force_training:
+            if self.my_X_data is None or self.my_X_data.shape[0] < 1: # Cannot train if no data
+                return False
             self.num_buffer_points = 0
+
+            # jules standard scaling: Prepare data for GPR fitting (scale if needed)
+            X_to_fit = self.my_X_data
+            if self.use_standard_scaling:
+                self.scaler = StandardScaler()
+                # Fit on a copy to avoid changing self.my_X_data if it's used elsewhere or for re-fitting scaler later
+                self.scaler.fit(self.my_X_data)
+                X_to_fit = self.scaler.transform(self.my_X_data)
+            # jules standard scaling: end of scaling block
 
             x_max_vals = [np.max(self.my_X_data[:,i]) for i in range(self.n_features)]
             x_min_vals = [np.min(self.my_X_data[:,i]) for i in range(self.n_features)]
@@ -285,7 +305,8 @@ class GPNode(Node):
                 kernel.set_params(**new_params)
 
                 temp_GPR.kernel = kernel
-                temp_GPR.fit(self.my_X_data, self.my_y_data)
+                # jules standard scaling: Use X_to_fit (which might be scaled)
+                temp_GPR.fit(X_to_fit, self.my_y_data)
 
                 lml = temp_GPR.log_marginal_likelihood_value_
                 theta = temp_GPR.kernel_.theta
@@ -448,7 +469,13 @@ class GPNode(Node):
                 - sigma_pred (np.ndarray): The standard deviation of the
                   prediction(s). Only returned if `return_std` is True.
         """
-        mu_pred, sigma_pred = self.my_GPR.predict(x, return_std=return_std)
+        # jules standard scaling: Prepare data for GPR prediction (scale if needed)
+        x_to_predict = x
+        if self.use_standard_scaling and self.scaler is not None:
+            x_to_predict = self.scaler.transform(x)
+        # jules standard scaling: end of scaling block
+
+        mu_pred, sigma_pred = self.my_GPR.predict(x_to_predict, return_std=return_std)
 
         if use_calibrated_sigma:
             sigma_pred = sigma_pred * self.sigma_scaler
