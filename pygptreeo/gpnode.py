@@ -47,7 +47,8 @@ class GPNode(Node):
                  split_position_method='median', 
                  retrain_every_n_points=1,
                  name="0",
-                 split_dimension_criteria='max_spread'): # New parameter
+                 split_dimension_criteria='max_spread', # New parameter
+                 splitting_strategy: Optional[str] = 'standard'): # jules gradual splitting: Added splitting_strategy, parent_split_index, and parent_split_position attributes
         """Initializes a GPNode.
 
         Args:
@@ -81,7 +82,11 @@ class GPNode(Node):
         self.split_position_method = split_position_method
         self.retrain_every_n_points = retrain_every_n_points
         self.split_dimension_criteria = split_dimension_criteria
+        self.splitting_strategy = splitting_strategy
         
+        self.parent_split_index = None
+        self.parent_split_position = None
+
         self.is_left = None
         self.is_leaf = True
         
@@ -148,12 +153,19 @@ class GPNode(Node):
             'split_position_method': self.split_position_method,
             'retrain_every_n_points': self.retrain_every_n_points,
             'split_dimension_criteria': self.split_dimension_criteria,
+            'splitting_strategy': self.splitting_strategy,
         }
 
         # Create child nodes with a copy of the parent GP
         self.left = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "0", **node_config_kwargs)
         self.right = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "1", **node_config_kwargs)
         
+        # jules gradual splitting: Pass parent's split info to children
+        self.left.parent_split_index = self.split_index
+        self.left.parent_split_position = self.split_position
+        self.right.parent_split_index = self.split_index
+        self.right.parent_split_position = self.split_position
+
         self.left.is_left = True
         self.right.is_left = False
 
@@ -183,6 +195,24 @@ class GPNode(Node):
 
     def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True):
         """ Add a single training sample to the training set of the node. """
+        # jules gradual splitting: Logic to discard furthest point for gradual splitting
+        if self.splitting_strategy == 'gradual' and            self.num_training_points == self.Nbar and            self.parent_split_index is not None and            self.my_X_data is not None and self.my_X_data.shape[0] > 0: # Ensure data exists
+
+            # Calculate distances from the parent's split position along the parent's split dimension
+            distances = np.abs(self.my_X_data[:, self.parent_split_index] - self.parent_split_position)
+
+            # Find the index of the point that is furthest away
+            index_to_discard = np.argmax(distances)
+
+            # Remove the point from my_X_data and my_y_data
+            self.my_X_data = np.delete(self.my_X_data, index_to_discard, axis=0)
+            self.my_y_data = np.delete(self.my_y_data, index_to_discard, axis=0)
+
+            # Decrement training points count as one point was removed
+            self.num_training_points -= 1
+            # Note: num_buffer_points is not decremented here, as it tracks points added since last retrain.
+            # The discarded point was part of the initial set from parent.
+
         self.my_X_data = np.append(self.my_X_data, x, axis=0)
         self.my_y_data = np.append(self.my_y_data, y, axis=0)
         self.num_training_points += 1
