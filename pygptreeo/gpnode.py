@@ -44,12 +44,13 @@ class GPNode(Node):
     """
     def __init__(self, *args, 
                  my_GPR: GaussianProcessRegressor, 
-                 Nbar: Optional[int] = 100,
+                 Nbar: int = 100,
                  split_position_method='median', 
                  retrain_every_n_points=1,
                  name="0",
                  split_dimension_criteria='max_spread', # New parameter
-                 use_standard_scaling: bool = False): # jules standard scaling: Add use_standard_scaling parameter
+                 use_standard_scaling=False, # jules standard scaling: Add use_standard_scaling parameter
+                 scaler=None): # jules standard scaling: Add use_standard_scaling parameter
         """Initializes a GPNode.
 
         Args:
@@ -103,7 +104,7 @@ class GPNode(Node):
 
         # jules standard scaling: Initialize scaler and store use_standard_scaling
         self.use_standard_scaling = use_standard_scaling
-        self.scaler = None
+        self.scaler = scaler
 
         self.n_points_pred_perf = 25
         self.residuals = np.array([])
@@ -157,6 +158,7 @@ class GPNode(Node):
             'retrain_every_n_points': self.retrain_every_n_points,
             'split_dimension_criteria': self.split_dimension_criteria,
             'use_standard_scaling': self.use_standard_scaling, # jules standard scaling: Pass use_standard_scaling to children
+            'scaler': deepcopy(self.scaler), # jules standard scaling: Pass use_standard_scaling to children
         }
 
         # Create child nodes with a copy of the parent GP
@@ -252,7 +254,7 @@ class GPNode(Node):
         """
         did_train = False
         # Only train the GP if the buffer is full, the node is full, or if force_training=True
-        if (self.num_buffer_points == self.retrain_every_n_points) or (self.num_training_points == self.Nbar) or force_training:
+        if (self.num_buffer_points >= self.retrain_every_n_points) or (self.num_training_points >= self.Nbar) or force_training:
             if self.my_X_data is None or self.my_X_data.shape[0] < 1: # Cannot train if no data
                 return False
             self.num_buffer_points = 0
@@ -519,9 +521,7 @@ class GPNode(Node):
         while coverage_deviation(x_bracket[0]) * coverage_deviation(x_bracket[1]) > 0:
             self.sigma_scaler_init *= 2
             x_bracket[1] = 2 * self.sigma_scaler_init
-            # print(f"DEBUG: Node {self.name}:  x_bracket: {x_bracket}")
 
         sol = root_scalar(coverage_deviation, x0=self.sigma_scaler_init, bracket=x_bracket, maxiter=50)
         if sol.converged:
             self.sigma_scaler = np.max([sol.root, 1e-9])
-            # print(f"DEBUG: Node {self.name}:  sigma_scaler: {self.sigma_scaler}")
