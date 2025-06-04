@@ -1,9 +1,9 @@
 import unittest
 import numpy as np
-import sys
-import os
 
 # Add project root to Python path to allow direct import of pygptreeo
+import sys
+import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from pygptreeo.gptree import GPTree
@@ -120,8 +120,6 @@ class TestGPTree(unittest.TestCase):
             for child in gpt.root.children:
                 if child.is_leaf: # Only fit GPR if it's a leaf and has data
                     if child.num_training_points > 0:
-                        # Ensure GPRs in leaf nodes are trained if update_tree didn't force it sufficiently
-                        # This might be redundant if update_tree's allow_training=True and node.fit_my_GPR() are effective
                         with warnings.catch_warnings():
                             warnings.filterwarnings("ignore", category=ConvergenceWarning)
                             warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -152,19 +150,14 @@ class TestGPTree(unittest.TestCase):
         # For now, just checking shapes and NaNs is a good start.
         # np.testing.assert_allclose(y_pred_rec, y_pred_loop, rtol=1e-5, atol=1e-5, err_msg="Recursive and loop predictions are not close.")
 
-    def test_predict_empty_tree(self):
-        """Test prediction with an empty tree (no data added)."""
+    def test_predict_minimal_tree(self):
+        """Test prediction with a minimal tree (single data point added)."""
         gpt = GPTree(GPR=self.gpr_1d_template, Nbar=10)
         X_test = np.array([[0.5]])
 
         # Prediction on an empty tree is problematic because n_features is not set.
         # GPTree.update_tree sets n_features from the first data point.
-        # If predict is called before update_tree, it might fail or behave unexpectedly.
-        # Current behavior: GPNode.prob_func might raise error if self.split_index is accessed before split.
-        # Root node's GPR might not be properly initializable without n_features.
-
         # Let's add one point to define n_features, then predict.
-        # This is more of a test of prediction on a tree with one point.
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
             warnings.filterwarnings("ignore", category=RuntimeWarning)

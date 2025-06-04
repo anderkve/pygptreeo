@@ -1,8 +1,7 @@
 import unittest
 import numpy as np
 
-# Attempt to import GPNode and Default_GPR from the correct locations
-# Assuming the tests directory is at the same level as the pygptreeo directory
+# Add project root to Python path to allow direct import of pygptreeo
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -14,15 +13,11 @@ from sklearn.gaussian_process.kernels import RBF
 import warnings
 from sklearn.exceptions import ConvergenceWarning
 
-class TestGPNode(unittest.TestCase): # Renamed class for broader scope
+class TestGPNode(unittest.TestCase):
 
     def setUp(self):
         """Set up common resources for tests."""
         self.default_gpr_instance = Default_GPR()
-        # Re-initialize kernel for Default_GPR for n_features=1 if needed by tests
-        # Many tests will use 1D data for simplicity.
-        # Default_GPR's kernel_alternatives might be initialized with n_dims from example.py
-        # For isolated node tests, we often want to define n_features explicitly or implicitly.
 
         # A simple kernel for 1D data
         kernel_1d = 1.0 * RBF(length_scale=1.0, length_scale_bounds=(1e-2, 1e2))
@@ -159,6 +154,7 @@ class TestGPNode(unittest.TestCase): # Renamed class for broader scope
             did_train_forced = node.fit_my_GPR(force_training=True)
         self.assertTrue(did_train_forced, "GPR should train when force_training is True")
         self.assertEqual(node.num_buffer_points, 0, "Buffer should be reset after forced training")
+
 
 if __name__ == '__main__':
     unittest.main()
