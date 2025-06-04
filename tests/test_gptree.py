@@ -12,6 +12,9 @@ from pygptreeo.default_gpr import Default_GPR
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel
 
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+
 class TestGPTree(unittest.TestCase):
 
     def setUp(self):
@@ -93,6 +96,7 @@ class TestGPTree(unittest.TestCase):
         self.assertEqual(str(gpt.root.my_GPR.kernel), str(sklearn_gpr.kernel))
 
 
+    # @ignore_warnings(category=ConvergenceWarning)
     def test_predict_basic_1d(self):
         """Test basic prediction with a 1D GPTree that has undergone at least one split."""
         custom_nbar = 2 # Ensure a split
@@ -105,7 +109,10 @@ class TestGPTree(unittest.TestCase):
         for i in range(X_train.shape[0]):
             x_sample = X_train[i:i+1, :]
             y_sample = y_train[i:i+1, :]
-            gpt.update_tree(x_sample, y_sample, allow_training=True) # Ensure leaf GPRs are trained
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                gpt.update_tree(x_sample, y_sample, allow_training=True) # Ensure leaf GPRs are trained
 
         # Ensure tree has split for a more meaningful predict test
         self.assertFalse(gpt.root.is_leaf, "Root should have split for this test.")
@@ -113,10 +120,12 @@ class TestGPTree(unittest.TestCase):
             for child in gpt.root.children:
                 if child.is_leaf: # Only fit GPR if it's a leaf and has data
                     if child.num_training_points > 0:
-                         # Ensure GPRs in leaf nodes are trained if update_tree didn't force it sufficiently
-                         # This might be redundant if update_tree's allow_training=True and node.fit_my_GPR() are effective
-                        child.fit_my_GPR(force_training=True)
-
+                        # Ensure GPRs in leaf nodes are trained if update_tree didn't force it sufficiently
+                        # This might be redundant if update_tree's allow_training=True and node.fit_my_GPR() are effective
+                        with warnings.catch_warnings():
+                            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                            warnings.filterwarnings("ignore", category=RuntimeWarning)
+                            child.fit_my_GPR(force_training=True)
 
         X_test = np.array([[0.15], [0.5], [0.85]])
 
@@ -156,8 +165,11 @@ class TestGPTree(unittest.TestCase):
 
         # Let's add one point to define n_features, then predict.
         # This is more of a test of prediction on a tree with one point.
-        gpt.update_tree(np.array([[0.1]]), np.array([[1.0]]))
-        gpt.root.fit_my_GPR(force_training=True) # Ensure the single node GPR is trained
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            gpt.update_tree(np.array([[0.1]]), np.array([[1.0]]))
+            gpt.root.fit_my_GPR(force_training=True) # Ensure the single node GPR is trained
 
         y_pred, y_std = gpt.predict(X_test)
         self.assertEqual(y_pred.shape, (X_test.shape[0], 1))
@@ -165,6 +177,7 @@ class TestGPTree(unittest.TestCase):
         self.assertFalse(np.isnan(y_pred).any())
         self.assertFalse(np.isnan(y_std).any())
 
+    # @ignore_warnings(category=ConvergenceWarning)
     def test_update_tree_single_point_1d(self):
         """Test adding a single 1D data point to an empty tree."""
         gpt = GPTree(GPR=self.gpr_1d_template, Nbar=10)
@@ -172,7 +185,10 @@ class TestGPTree(unittest.TestCase):
         x_sample = np.array([[0.5]])
         y_sample = np.array([[1.0]]) # GPTree expects y to be 2D array for a single sample
 
-        gpt.update_tree(x_sample, y_sample)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            gpt.update_tree(x_sample, y_sample)
 
         self.assertFalse(gpt.first_point, "first_point flag should be False after first point.")
         self.assertEqual(gpt.n_features, 1, "n_features should be set to 1 for 1D data.")
@@ -182,6 +198,7 @@ class TestGPTree(unittest.TestCase):
         self.assertTrue(np.array_equal(gpt.root.my_y_data, y_sample), "Root node's y data incorrect.")
         self.assertTrue(gpt.root.is_leaf, "Root node should still be a leaf.")
 
+    # @ignore_warnings(category=ConvergenceWarning)
     def test_update_tree_multiple_points_no_split_2d(self):
         """Test adding multiple 2D data points, not enough to cause a split."""
         custom_nbar = 5
@@ -193,7 +210,10 @@ class TestGPTree(unittest.TestCase):
         for i in range(X_train.shape[0]):
             x_sample = X_train[i:i+1, :]
             y_sample = y_train[i:i+1, :]
-            gpt.update_tree(x_sample, y_sample)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                gpt.update_tree(x_sample, y_sample)
 
         self.assertEqual(gpt.n_features, 2, "n_features should be set to 2 for 2D data.")
         self.assertEqual(gpt.root.num_training_points, 3, f"Root node should have 3 training points, got {gpt.root.num_training_points}.")
@@ -201,6 +221,7 @@ class TestGPTree(unittest.TestCase):
         self.assertTrue(np.array_equal(gpt.root.my_X_data, X_train))
         self.assertTrue(np.array_equal(gpt.root.my_y_data, y_train))
 
+    # @ignore_warnings(category=ConvergenceWarning)
     def test_update_tree_causes_split_1d(self):
         """Test adding 1D data points until Nbar is reached and a split occurs."""
         custom_nbar = 3 # Small Nbar to trigger split easily
@@ -213,12 +234,18 @@ class TestGPTree(unittest.TestCase):
 
         # Add points up to Nbar - 1
         for i in range(custom_nbar - 1):
-            gpt.update_tree(X_train[i:i+1, :], y_train[i:i+1, :])
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                gpt.update_tree(X_train[i:i+1, :], y_train[i:i+1, :])
             self.assertTrue(gpt.root.is_leaf, f"Root should be leaf before Nbar reached (point {i+1})")
             self.assertEqual(gpt.root.num_training_points, i + 1)
 
         # Add the Nbar-th point - this should trigger the split
-        gpt.update_tree(X_train[custom_nbar-1:custom_nbar-1+1, :], y_train[custom_nbar-1:custom_nbar-1+1, :])
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            gpt.update_tree(X_train[custom_nbar-1:custom_nbar-1+1, :], y_train[custom_nbar-1:custom_nbar-1+1, :])
 
         self.assertFalse(gpt.root.is_leaf, "Root node should have split and no longer be a leaf.")
         self.assertIsNotNone(gpt.root.children, "Root node should have children after split.")
@@ -244,7 +271,10 @@ class TestGPTree(unittest.TestCase):
         self.assertTrue(hasattr(right_child, 'my_GPR') and right_child.my_GPR is not None, "Right child should have a GPR instance.")
 
         # Add one more point, it should go to one of the children
-        gpt.update_tree(X_train[custom_nbar:custom_nbar+1, :], y_train[custom_nbar:custom_nbar+1, :])
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            gpt.update_tree(X_train[custom_nbar:custom_nbar+1, :], y_train[custom_nbar:custom_nbar+1, :])
         total_points_in_children_after_one_more = left_child.num_training_points + right_child.num_training_points
         self.assertEqual(total_points_in_children_after_one_more, custom_nbar + 1,
                          "Total points in children should be Nbar + 1 after one more point.")

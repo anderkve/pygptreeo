@@ -11,6 +11,9 @@ from pygptreeo.gpnode import GPNode
 from pygptreeo.default_gpr import Default_GPR
 from sklearn.gaussian_process.kernels import RBF
 
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+
 class TestGPNode(unittest.TestCase): # Renamed class for broader scope
 
     def setUp(self):
@@ -111,7 +114,10 @@ class TestGPNode(unittest.TestCase): # Renamed class for broader scope
         y_sample1 = np.array([[1.0]])
         node.add_training_data(x_sample1, y_sample1)
 
-        did_train = node.fit_my_GPR() # Should train as num_buffer_points (1) == retrain_every_n_points (1)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            did_train = node.fit_my_GPR() # Should train as num_buffer_points (1) == retrain_every_n_points (1)
         self.assertTrue(did_train, "GPR should have been trained")
         self.assertIsNotNone(node.my_GPR.kernel_.theta, "GPR kernel theta should be set after fitting")
         self.assertEqual(node.num_buffer_points, 0, "Buffer should be reset after training")
@@ -124,7 +130,10 @@ class TestGPNode(unittest.TestCase): # Renamed class for broader scope
         self.assertEqual(node.num_training_points, 2)
         self.assertEqual(node.num_buffer_points, 1) # Incremented after add
 
-        did_train_again = node.fit_my_GPR()
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            did_train_again = node.fit_my_GPR()
         self.assertTrue(did_train_again, "GPR should have been trained again")
         self.assertEqual(node.num_buffer_points, 0, "Buffer should be reset after training again")
 
@@ -138,10 +147,16 @@ class TestGPNode(unittest.TestCase): # Renamed class for broader scope
         y_sample = np.array([[1.5]])
         node.add_training_data(x_sample, y_sample) # num_buffer_points = 1
 
-        did_train_normal = node.fit_my_GPR() # Should not train as buffer (1) < retrain_every_n_points (5)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            did_train_normal = node.fit_my_GPR() # Should not train as buffer (1) < retrain_every_n_points (5)
         self.assertFalse(did_train_normal, "GPR should not train with insufficient buffer points")
 
-        did_train_forced = node.fit_my_GPR(force_training=True)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            did_train_forced = node.fit_my_GPR(force_training=True)
         self.assertTrue(did_train_forced, "GPR should train when force_training is True")
         self.assertEqual(node.num_buffer_points, 0, "Buffer should be reset after forced training")
 

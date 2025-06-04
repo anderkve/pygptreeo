@@ -132,7 +132,7 @@ class GPTree:
         node = self.root
         # while node.children:
         while not node.is_leaf:
-            node = node.children[int(np.random.binomial(1, node.prob_func(x)))]
+            node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
 
         # Add new point and register prediction performance
         node.add_training_data(x, y)

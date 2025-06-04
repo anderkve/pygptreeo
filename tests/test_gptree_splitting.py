@@ -18,6 +18,9 @@ except ImportError:
     from pygptreeo.gpnode import GPNode
     from pygptreeo.default_gpr import Default_GPR
 
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+
 
 class TestGradualSplitting(unittest.TestCase):
     # jules gradual splitting test: Test cases for the 'gradual' splitting strategy
@@ -43,7 +46,10 @@ class TestGradualSplitting(unittest.TestCase):
         # jules gradual splitting test: Add Nbar points (root node gets full)
         for i in range(nbar):
             # Pass y as (1,1) as expected by GPNode.add_training_data via GPTree.update_tree
-            tree.update_tree(initial_X_data[i].reshape(1, -1), initial_y_data[i].reshape(1, 1))
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                tree.update_tree(initial_X_data[i].reshape(1, -1), initial_y_data[i].reshape(1, 1))
 
         # jules gradual splitting test: After Nbar points, the root node should have Nbar points AND should have split.
         # self.assertEqual(tree.root.num_training_points, nbar, "Root node should have Nbar points before split")

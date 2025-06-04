@@ -219,7 +219,7 @@ class GPNode(Node):
         for x, y in zip(self.my_X_data, self.my_y_data):
             x = x.reshape((1, x.shape[0]))
             y = y.reshape((1, 1))
-            child = self.children[int(np.random.binomial(1, self.prob_func(x)))]
+            child = self.children[int(np.random.binomial(1, self.prob_func(x)[0][0]))]
             child.add_training_data(x, y, increment_buffer=False)
 
         
