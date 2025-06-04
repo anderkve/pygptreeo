@@ -39,7 +39,7 @@ class TestGPTree(unittest.TestCase):
         self.assertIsNotNone(gpt.root, "GPTree root should be initialized.")
         self.assertIsInstance(gpt.root, GPNode, "Root should be a GPNode instance.")
         self.assertIsInstance(gpt.GPR, Default_GPR, "Default GPR should be Default_GPR instance.")
-        self.assertEqual(gpt.Nbar, 100, "Default Nbar should be 100.")
+        self.assertEqual(gpt.root.Nbar, 100, "Default Nbar should be 100.")
         self.assertEqual(gpt.theta, 0.0001, "Default theta should be 0.0001.")
         self.assertTrue(gpt.first_point, "first_point flag should be True initially.")
         self.assertEqual(gpt.n_features, 0, "n_features should be 0 initially.")
@@ -58,7 +58,7 @@ class TestGPTree(unittest.TestCase):
 
         self.assertIsNotNone(gpt.root, "GPTree root should be initialized.")
         self.assertIsInstance(gpt.root, GPNode, "Root should be a GPNode instance.")
-        self.assertEqual(gpt.Nbar, custom_nbar)
+        self.assertEqual(gpt.root.Nbar, custom_nbar)
         self.assertEqual(gpt.theta, custom_theta)
         self.assertFalse(gpt.use_calibrated_sigma, "use_calibrated_sigma should be False.")
 
@@ -85,16 +85,13 @@ class TestGPTree(unittest.TestCase):
         sklearn_gpr.min_length_scale = 0.001
 
         gpt = GPTree(GPR=sklearn_gpr, Nbar=75)
-        self.assertEqual(gpt.Nbar, 75)
+        self.assertEqual(gpt.root.Nbar, 75)
         self.assertIsInstance(gpt.GPR, GaussianProcessRegressor)
         self.assertTrue(gpt.GPR.normalize_y)
         self.assertIsInstance(gpt.root.my_GPR, GaussianProcessRegressor)
         self.assertTrue(gpt.root.my_GPR.normalize_y)
         self.assertEqual(str(gpt.root.my_GPR.kernel), str(sklearn_gpr.kernel))
 
-
-if __name__ == '__main__':
-    unittest.main()
 
     def test_predict_basic_1d(self):
         """Test basic prediction with a 1D GPTree that has undergone at least one split."""
@@ -251,3 +248,7 @@ if __name__ == '__main__':
         total_points_in_children_after_one_more = left_child.num_training_points + right_child.num_training_points
         self.assertEqual(total_points_in_children_after_one_more, custom_nbar + 1,
                          "Total points in children should be Nbar + 1 after one more point.")
+
+
+if __name__ == '__main__':
+    unittest.main()
