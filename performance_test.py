@@ -17,9 +17,6 @@ how specific kernel configurations can be passed to the `GPTree`.
 """
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from matplotlib.animation import FuncAnimation
-import seaborn as sns
 from pygptreeo import GPTree
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel
@@ -41,7 +38,6 @@ target_dict = {
     'custom': Custom,
 }
 
-# plt.rcParams['text.usetex'] = True
 
 def is_within_percentage(value, target, percentage):
     if target == 0: # Avoid division by zero if target is 0

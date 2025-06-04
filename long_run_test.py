@@ -1,27 +1,9 @@
 """Performance test script for GPTree focusing on long runs and CSV output.
 
-This script evaluates the performance of `GPTree` from the `pygptreeo`
-library over an extended number of data points. It performs the following steps:
-1. Defines or imports a target function.
-2. Sets up parameters for `GPTree` and a custom GPR.
-3. Initializes a `GPTree` instance.
-4. Generates input data (`X_input`) and target values (`y_input`).
-5. Iterates through the data points:
-    a. Makes a prediction using `GPTree`.
-    b. Updates the `GPTree` with the new data point.
-    c. Measures time taken for prediction and tree update.
-    d. Stores results (coordinates, true y, predicted y, uncertainty, timings).
-6. Writes buffered results to a CSV file in batches of 2000.
-7. Ensures all data is written to CSV upon completion.
-
 The script uses a custom GPR class `my_GPR_class` for specific kernel
 configurations, similar to `example.py`.
 """
 import numpy as np
-# import matplotlib.pyplot as plt
-# import matplotlib.gridspec as gridspec
-# from matplotlib.animation import FuncAnimation
-# import seaborn as sns
 from pygptreeo import GPTree
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel
@@ -43,8 +25,6 @@ target_dict = {
     'levy': Levy,
     'custom': Custom,
 }
-
-# plt.rcParams['text.usetex'] = True
 
 np.random.seed(512312)
 # np.random.seed(49235)
@@ -105,7 +85,7 @@ class my_GPR_class(GaussianProcessRegressor):
         random_state (int, RandomState instance or None): Controls the
             randomness of the initialization. Passed to `GaussianProcessRegressor`.
     """
-    def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=True, copy_X_train=True, n_targets=None, random_state=None):
+    def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=False, copy_X_train=True, n_targets=None, random_state=None):
         super().__init__()
         self.kernel_alternatives = [
             ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
@@ -135,12 +115,12 @@ gpt = GPTree(
     split_dimension_criteria='max_variance',
     retrain_every_n_points=retrain_step,
     use_calibrated_sigma=True,
-    # splitting_strategy='gradual',
-    splitting_strategy='standard',
+    splitting_strategy='gradual',
+    # splitting_strategy='standard',
 )
 
 results_buffer = []
-csv_file_name = "long_run_results.csv"
+csv_file_name = "run_output.csv"
 csv_header = ["x_coordinates", "true_y", "predicted_y", "prediction_uncertainty", "predict_time_s", "update_tree_time_s"]
 
 with open(csv_file_name, 'w', newline='') as f:
@@ -169,15 +149,17 @@ for x,y in zip(X_input, y_input):
     update_tree_time = end_update_time - start_update_time
 
     # Convert x to a string representation, handling multi-dimensional case
-    x_coords_str = ";".join(map(str, x[0]))
+    x_coords_list = [f"{xi:.4e}" for xi in x[0]]
+    x_coords_str = ";".join(x_coords_list)
+    # x_coords_str = ";".join(map(str, x[0]))
 
     current_result = [
         x_coords_str,
-        y[0][0],
-        y_pred[0][0],
-        y_pred_std[0][0],
-        predict_time,
-        update_tree_time
+        f"{y[0][0]:.6e}",
+        f"{y_pred[0][0]:.6e}",
+        f"{y_pred_std[0][0]:.6e}",
+        f"{predict_time:.3e}",
+        f"{update_tree_time:.3e}"
     ]
     results_buffer.append(current_result)
 

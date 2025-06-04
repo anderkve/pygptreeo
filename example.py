@@ -1,25 +1,9 @@
 """Basic example script demonstrating the usage of the GPTree class.
 
-This script showcases how to set up and use the `GPTree` from the
-`pygptreeo` library for a regression task. It performs the following steps:
-1.  Defines or imports a target function (e.g., Eggholder, Himmelblau).
-2.  Sets up parameters for the `GPTree` and the custom GPR (`my_GPR_class`).
-3.  Initializes a `GPTree` instance with the custom GPR.
-4.  Generates random input data (`X_input`) and corresponding target
-    values (`y_input`).
-5.  Iterates through the data points:
-    a.  Makes a prediction using the current state of the `GPTree`.
-    b.  Updates the `GPTree` with the new data point.
-    c.  Prints a comparison of the true and predicted values.
-
 The example also defines a custom GPR class `my_GPR_class` to illustrate
 how specific kernel configurations can be passed to the `GPTree`.
 """
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from matplotlib.animation import FuncAnimation
-import seaborn as sns
 from pygptreeo import GPTree
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel
@@ -39,8 +23,6 @@ target_dict = {
     'levy': Levy,
     'custom': Custom,
 }
-
-# plt.rcParams['text.usetex'] = True
 
 np.random.seed(512312)
 # np.random.seed(49235)
@@ -101,7 +83,7 @@ class my_GPR_class(GaussianProcessRegressor):
         random_state (int, RandomState instance or None): Controls the
             randomness of the initialization. Passed to `GaussianProcessRegressor`.
     """
-    def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=True, copy_X_train=True, n_targets=None, random_state=None):
+    def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=False, copy_X_train=True, n_targets=None, random_state=None):
         super().__init__()
         self.kernel_alternatives = [
             ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
@@ -131,8 +113,8 @@ gpt = GPTree(
     split_dimension_criteria='max_variance',
     retrain_every_n_points=retrain_step,
     use_calibrated_sigma=True,
-    # splitting_strategy='gradual',
-    splitting_strategy='standard',
+    splitting_strategy='gradual',
+    # splitting_strategy='standard',
 )
 
 
