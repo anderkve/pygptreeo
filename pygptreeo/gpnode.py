@@ -48,7 +48,7 @@ class GPNode(Node):
                  retrain_every_n_points=1,
                  name="0",
                  split_dimension_criteria='max_spread',
-                 splitting_strategy: Optional[str] = 'standard'): # jules gradual splitting: Added splitting_strategy, parent_split_index, and parent_split_position attributes
+                 splitting_strategy: Optional[str] = 'standard'):
         """Initializes a GPNode.
 
         Args:
@@ -189,8 +189,7 @@ class GPNode(Node):
 
     def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True):
         """ Add a single training sample to the training set of the node. """
-        # jules gradual splitting: Logic to discard furthest point for gradual splitting
-        if self.splitting_strategy == 'gradual' and            self.num_training_points == self.Nbar and            self.parent_split_index is not None and            self.my_X_data is not None and self.my_X_data.shape[0] > 0: # Ensure data exists
+        if (self.splitting_strategy == 'gradual' and self.num_training_points >= self.Nbar):
 
             # Calculate distances from the parent's split position along the parent's split dimension
             distances = np.abs(self.my_X_data[:, self.parent_split_index] - self.parent_split_position)
@@ -250,7 +249,7 @@ class GPNode(Node):
 
         Training is triggered if the number of new points in the buffer
         (`num_buffer_points`) reaches `retrain_every_n_points`, if the node
-        is full (`num_training_points == Nbar`), or if `force_training` is True.
+        is full (`num_training_points >= Nbar`), or if `force_training` is True.
 
         The method iterates through `kernel_alternatives` defined in the GPR
         object (e.g., `Default_GPR`). For each kernel, it adjusts the
@@ -267,7 +266,7 @@ class GPNode(Node):
         """
         did_train = False
         # Only train the GP if the buffer is full, the node is full, or if force_training=True
-        if (self.num_buffer_points == self.retrain_every_n_points) or (self.num_training_points == self.Nbar) or force_training:
+        if (self.num_buffer_points == self.retrain_every_n_points) or (self.num_training_points >= self.Nbar) or force_training:
             self.num_buffer_points = 0
 
             x_max_vals = [np.max(self.my_X_data[:,i]) for i in range(self.n_features)]

@@ -58,7 +58,7 @@ class GPTree:
                  theta: Optional[float] = 0.0001,
                  use_calibrated_sigma: Optional[bool] = True,
                  split_dimension_criteria: Optional[str] = 'max_spread',
-                 splitting_strategy: Optional[str] = 'standard', # jules gradual splitting: Added splitting_strategy parameter
+                 splitting_strategy: Optional[str] = 'standard',
                  **kwargs):
         """Initializes the GPTree.
 
@@ -147,7 +147,7 @@ class GPTree:
             did_retrain = node.fit_my_GPR()
 
         # If the node is full, generate child nodes
-        if node.num_training_points == node.Nbar:
+        if node.num_training_points >= node.Nbar:
 
             # Create child nodes. Each child node gets a copy of the current parent GP.
             node.generate_children(self.GPR, self.n_features)
@@ -155,18 +155,14 @@ class GPTree:
             # Compute parameters for the probability function 
             node.compute_split_position_and_overlap(self.theta)
 
-            # jules gradual splitting: NOW pass parent's split info to children
-            if node.children: # Should always be true here
-                node.children[0].parent_split_index = node.split_index
-                node.children[0].parent_split_position = node.split_position
-                node.children[1].parent_split_index = node.split_index
-                node.children[1].parent_split_position = node.split_position
+            # Now pass parent's split info to children
+            node.children[0].parent_split_index = node.split_index
+            node.children[0].parent_split_position = node.split_position
+            node.children[1].parent_split_index = node.split_index
+            node.children[1].parent_split_position = node.split_position
 
-            # jules gradual splitting: Added conditional data splitting
             if node.splitting_strategy == 'gradual':
-                # jules gradual splitting: In gradual splitting, both children inherit all parent data
-                # self.n_features should be correct here.
-                # node.my_X_data is (N, n_features), node.my_y_data is (N, 1)
+                # In gradual splitting, both children inherit all parent data.
                 for i in range(node.my_X_data.shape[0]):
                     x_parent_point = node.my_X_data[i].reshape((1, self.n_features))
                     y_parent_point = node.my_y_data[i].reshape((1, 1)) # Ensure y is (1,1) for add_training_data
@@ -174,13 +170,12 @@ class GPTree:
                     for child_node in node.children:
                         child_node.add_training_data(x_parent_point, y_parent_point, increment_buffer=False)
             else:
-                # jules gradual splitting: Standard splitting
+                # Standard splitting
                 node.split_training_data()
 
             # Retrain the child-node GPs?
-            """ for child in node.children:
-                child.fit_my_GPR()
-                pass """
+            # for child in node.children:
+            #     child.fit_my_GPR()
 
             # GP and training data of non-leaf nodes is not needed
             node.delete_training_data()
