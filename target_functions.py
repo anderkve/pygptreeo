@@ -26,6 +26,7 @@ def Eggholder_2d(x):
     term1 = -(x[1] + 47) * np.sin(np.sqrt(np.abs(x[1] + x[0]/2. + 47.)))
     term2 = -x[0] * np.sin(np.sqrt(np.abs(x[0] - (x[1] + 47.))))
     func = term1 + term2
+    func += 959.6407
     return func
 
 def Eggholder(x):
@@ -54,6 +55,7 @@ def Eggholder(x):
     for i in range(dim-1):
         func += Eggholder_2d(x[i:i+2])
 
+    print(f"DEBUG: func: {func}")
     return func
 
 

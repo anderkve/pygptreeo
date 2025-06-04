@@ -26,11 +26,11 @@ from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, Consta
 import sys
 import time
 
-from warnings import simplefilter
-from sklearn.exceptions import ConvergenceWarning
-simplefilter("ignore", category=ConvergenceWarning)
+# from warnings import simplefilter
+# from sklearn.exceptions import ConvergenceWarning
+# simplefilter("ignore", category=ConvergenceWarning)
 
-from example_target_functions import Eggholder, Himmelblau, Rosenbrock, Rastrigin, Levy, Custom
+from target_functions import Eggholder, Himmelblau, Rosenbrock, Rastrigin, Levy, Custom
 
 target_dict = {
     'eggholder': Eggholder,
@@ -47,7 +47,7 @@ def is_within_percentage(value, target, percentage):
     if target == 0: # Avoid division by zero if target is 0
         # If target is 0, value must also be 0 to be 'within percentage'
         return value == 0
-    return np.abs(value - target) <= (percentage / 100.0) * np.abs(target)
+    return (np.abs(value - target) / np.abs(target)) <= (0.01 * percentage)
 
 np.random.seed(512312)
 # np.random.seed(49235)
@@ -58,15 +58,17 @@ np.random.seed(512312)
 # Test settings
 #
 
+make_plot = True
+
 target_name = "eggholder"
 target = target_dict[target_name]
 
-n_dims = 2
+n_dims = 3
 n_pts = 300000
 
-Nbar = 100
+Nbar = 200
 theta = 1e-4
-retrain_step = 100
+retrain_step = 200
 
 x_min = 0.0
 x_max = 1.0
@@ -108,16 +110,14 @@ class my_GPR_class(GaussianProcessRegressor):
         random_state (int, RandomState instance or None): Controls the
             randomness of the initialization. Passed to `GaussianProcessRegressor`.
     """
-    def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=True, copy_X_train=True, n_targets=None, random_state=None):
+    def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=1, normalize_y=False, copy_X_train=True, n_targets=None, random_state=None):
         super().__init__()
         self.kernel_alternatives = [
             ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
             # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * RBF(length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
         ]
-
         self.kernel = self.kernel_alternatives[0]
         self.min_length_scale = 0.001
-
         self.alpha = alpha
         self.optimizer = optimizer
         self.n_restarts_optimizer = n_restarts_optimizer
@@ -125,6 +125,8 @@ class my_GPR_class(GaussianProcessRegressor):
         self.copy_X_train = copy_X_train
         self.n_targets = n_targets
         self.random_state = random_state
+
+
 
 mygpr = my_GPR_class()
 
@@ -144,13 +146,6 @@ gpt = GPTree(
 # Initialize for plotting
 fig, axs = plt.subplots(5, 1, figsize=(10, 15), sharex=True)
 fig.suptitle('Performance metrics', fontsize=16)
-
-# axs[0].set_ylabel('Avg. prediction time per point (s)')
-# axs[1].set_ylabel('Avg. update time per point (s)')
-# axs[2].set_ylabel('RMSE')
-# axs[3].set_ylabel('Accuracy (<5% error)')
-# axs[4].set_ylabel('Coverage (within uncertainty)')
-# axs[4].set_xlabel('Number of Points Processed')
 
 # Data storage for plots
 points_processed_history = []
@@ -185,13 +180,30 @@ for x,y in zip(X_input, y_input):
     x = x.reshape((1, x.shape[0]))
     y = y.reshape((1,1))
 
+    if not make_plot:
+
+        # Compute prediction
+        y_pred, y_pred_std = gpt.predict(x, show_progress=False)
+
+        # Update tree
+        gpt.update_tree(x, y)
+
+        # Print point summary
+        abs_err = np.abs(y_pred[0][0] - y[0][0])
+        rel_err = abs_err / np.max([np.abs(y[0][0]), 1e-10])
+        print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]:.4e}  y_pred: {y_pred[0][0]:.4e}  y_pred_std: {y_pred_std[0][0]:.3e}  abs_err: {abs_err:.3e}  rel_err: {rel_err:.3e}")
+
+        continue
+
+    # OK, we have make_plot = True
+
     # Compute prediction
     start_time = time.time()
     y_pred, y_pred_std = gpt.predict(x, show_progress=False)
     predict_time = time.time() - start_time
     current_batch_predict_times.append(predict_time)
 
-    # Update gpt with training point
+    # Update tree
     start_time = time.time()
     gpt.update_tree(x, y)
     update_time = time.time() - start_time
@@ -254,7 +266,9 @@ for x,y in zip(X_input, y_input):
         axs[2].plot(points_processed_history, nrmse_history, marker='.')
         axs[2].set_ylabel('Batch NRMSE')
         axs[2].set_title('Batch NRMSE')
-        axs[2].set_ylim([0.0, 0.1])
+        axs[2].set_ylim([0.001, 1.0])
+        # axs[2].set_ylim([0.0, np.max([0.1, np.max(nrmse_history)])])
+        axs[2].set_yscale('log')
 
         axs[3].clear()
         axs[3].plot(points_processed_history, within_1_percent_history, marker='.', label="within 1%")
@@ -300,10 +314,12 @@ for x,y in zip(X_input, y_input):
         current_batch_predicted_values.clear()
         current_batch_predicted_std_devs.clear()
 
-    # Print point summary comparing predicted y to true y
+    # Print point summary
     abs_err = np.abs(y_pred[0][0] - y[0][0])
     rel_err = abs_err / np.max([np.abs(y[0][0]), 1e-10])
     print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]:.4e}  y_pred: {y_pred[0][0]:.4e}  y_pred_std: {y_pred_std[0][0]:.3e}  abs_err: {abs_err:.3e}  rel_err: {rel_err:.3e}")
+
+
 
 print()
 print("Done.")
