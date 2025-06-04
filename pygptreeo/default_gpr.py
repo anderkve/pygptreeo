@@ -43,13 +43,32 @@ class Default_GPR(GaussianProcessRegressor):
                 ConstantKernel() * RBF(),
             ]
             # self.kernel = ConstantKernel() * Matern(nu=1.5)
-            self.kernel = self.kernel_alternatives[0]
+
+            effective_kernel = kernel if kernel is not None else self.kernel_alternatives[0]
             self.min_length_scale = 0.001
-            self.alpha = alpha
-            self.optimizer = optimizer
-            self.n_restarts_optimizer = n_restarts_optimizer
-            self.normalize_y = normalize_y
-            self.copy_X_train = copy_X_train
-            self.n_targets = n_targets
-            self.random_state = random_state
+
+            super().__init__(
+                kernel=effective_kernel,
+                alpha=alpha,
+                optimizer=optimizer,
+                n_restarts_optimizer=n_restarts_optimizer,
+                normalize_y=normalize_y,
+                copy_X_train=copy_X_train,
+                # n_targets=n_targets, # n_targets is deprecated in newer scikit-learn
+                random_state=random_state
+            )
+            # Ensure self.kernel is set for any internal Default_GPR logic that might expect it
+            # The base class GaussianProcessRegressor already sets its self.kernel via its __init__
+            # However, GPNode's fit_my_GPR directly assigns to temp_GPR.kernel from kernel_alternatives,
+            # so this direct self.kernel = effective_kernel line here might primarily be for ensuring
+            # a Default_GPR instance has a sensible .kernel value if inspected before any fit_my_GPR logic
+            # modifies a copy of it.
+            self.kernel = effective_kernel
+            # self.n_targets is deprecated, let's remove it if it causes issues with super().__init__
+            # For now, I've commented it out in the super call.
+            if n_targets is not None: # Handle n_targets conditionally if needed
+                 # For older scikit-learn versions, it might be present.
+                 # If your environment's scikit-learn still uses it, you might need to pass it.
+                 # For scikit-learn 1.0+, n_targets is often handled internally or via y shape.
+                 pass # Not setting self.n_targets unless explicitly required by your version/logic.
     

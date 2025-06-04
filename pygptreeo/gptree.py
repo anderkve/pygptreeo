@@ -7,6 +7,8 @@ from typing import Callable, Optional, Type, Union
 from copy import deepcopy
 from tqdm import tqdm
 import joblib # Ensure joblib is imported
+from copy import deepcopy # Add this import
+from sklearn.gaussian_process import GaussianProcessRegressor # For type checking
 
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
@@ -59,30 +61,77 @@ class GPTree:
                  use_calibrated_sigma: Optional[bool] = True,
                  split_dimension_criteria: Optional[str] = 'max_spread',
                  splitting_strategy: Optional[str] = 'standard',
+                 n_GPs_per_node: int = 1,
                  **kwargs):
         """Initializes the GPTree.
 
         Args:
-            GPR (Optional[GaussianProcessRegressor]): The Gaussian Process
-                Regressor instance to be used as a template for nodes.
-                Defaults to `Default_GPR()`.
-            Nbar (Optional[int]): Maximum number of training points a node
-                can hold before splitting. Defaults to 100.
-            theta (Optional[float]): Parameter influencing the overlap region
-                between sibling nodes. The overlap is calculated as
-                theta * range_of_split_dimension. Defaults to 0.0001.
-            use_calibrated_sigma (Optional[bool]): If True, enables sigma
-                calibration in GPNode predictions. Defaults to True.
-            **kwargs: Additional keyword arguments passed to the constructor
-                of the root `GPNode`. These can include parameters like
-                `split_position_method` and `retrain_every_n_points`.
-            split_dimension_criteria (Optional[str]): Method to select split
-                dimension. Defaults to 'max_spread'.
+            GPR (Optional[GaussianProcessRegressor]): A Gaussian Process Regressor instance or class
+                to be used as a template for GPRs in the tree nodes. Defaults to `Default_GPR()`.
+                This template is deepcopied for each GP in each node.
+            Nbar (Optional[int]): Maximum number of training points a node can hold before it
+                considers splitting. Defaults to 100.
+            theta (Optional[float]): Parameter influencing the overlap region between sibling nodes
+                after a split. The overlap size is `theta * range_of_data_in_split_dimension`.
+                Defaults to 0.0001.
+            use_calibrated_sigma (Optional[bool]): If True, enables scaling of predictive standard
+                deviations in GPNodes using their `sigma_scaler` attribute. Defaults to True.
+            split_dimension_criteria (Optional[str]): Method used by GPNodes to determine the
+                feature dimension for splitting. Valid options include 'max_spread', 'max_variance',
+                'random'. Defaults to 'max_spread'.
+            splitting_strategy (Optional[str]): Strategy used by GPNodes for data handling
+                post-split (e.g., 'standard', 'gradual'). Defaults to 'standard'.
+            n_GPs_per_node (Optional[int]): The number of Gaussian Process Regressors to be
+                instantiated and managed within each GPNode of the tree. Defaults to 1.
+                This parameter is passed to each GPNode.
+            **kwargs: Additional keyword arguments that are filtered. Arguments relevant to
+                `sklearn.gaussian_process.GaussianProcessRegressor` are used if `GPR` is a class type
+                to instantiate the `GPR_template`. Remaining arguments are passed to the constructor
+                of the root `GPNode` (e.g., `split_position_method`, `retrain_every_n_points`).
         """
         
-        self.GPR = GPR
+        self.GPR_template = GPR
         self.splitting_strategy = splitting_strategy
-        self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria, splitting_strategy=self.splitting_strategy, **kwargs)  # Initialize root node of the GPTree
+        self.n_GPs_per_node = n_GPs_per_node
+
+        # Instantiate the GPR template if it's a class type
+        if isinstance(self.GPR_template, type) and issubclass(self.GPR_template, GaussianProcessRegressor):
+            # Pass only GPR-specific kwargs if possible, or all if they are distinct enough
+            # For Default_GPR, it doesn't take many args in its __init__ other than sklearn's
+            gpr_init_kwargs = {k: v for k, v in kwargs.items() if k in GaussianProcessRegressor().get_params().keys()}
+            base_gpr_instance = self.GPR_template(**gpr_init_kwargs)
+        elif isinstance(self.GPR_template, GaussianProcessRegressor):
+            base_gpr_instance = self.GPR_template
+        else:
+            # Fallback or error if GPR is not a class or instance
+            base_gpr_instance = Default_GPR() # Default fallback
+            warnings.warn("GPR argument was not a class or instance of GaussianProcessRegressor. Using Default_GPR().", RuntimeWarning)
+
+        # Ensure base_gpr_instance has kernel_alternatives and min_length_scale
+        # This is particularly for plain sklearn GPRs; Default_GPR handles this itself.
+        if not hasattr(base_gpr_instance, 'kernel_alternatives'):
+            if hasattr(base_gpr_instance, 'kernel') and base_gpr_instance.kernel is not None:
+                base_gpr_instance.kernel_alternatives = [base_gpr_instance.kernel]
+            else: # Default kernel if none present
+                default_kernel = ConstantKernel(1.0) * Matern(nu=1.5)
+                base_gpr_instance.kernel = default_kernel
+                base_gpr_instance.kernel_alternatives = [default_kernel]
+        if not hasattr(base_gpr_instance, 'min_length_scale'):
+            base_gpr_instance.min_length_scale = 0.001 # A sensible default
+
+        gpr_list_for_root = [deepcopy(base_gpr_instance) for _ in range(self.n_GPs_per_node)]
+
+        # Filter kwargs for GPNode constructor to avoid passing GPR instantiation args
+        gpnode_kwargs = {k: v for k, v in kwargs.items() if k not in GaussianProcessRegressor().get_params().keys()}
+
+        # GPNode expects value as the first positional argument if provided through *args
+        self.root = GPNode(0, # value for n_points, passed as first positional arg
+                           my_GPRs=gpr_list_for_root,
+                           Nbar=Nbar,
+                           split_dimension_criteria=split_dimension_criteria,
+                           splitting_strategy=self.splitting_strategy,
+                           n_GPs_per_node=self.n_GPs_per_node,
+                           **gpnode_kwargs)
 
         self.theta = theta
 
@@ -129,68 +178,70 @@ class GPTree:
         # Find a leaf node for the new (x,y) point
         # - Start from the root node
         # - For each level, pick a branch according node.prob_func(x), until a leaf node is reached
-        node = self.root
-        # while node.children:
-        while not node.is_leaf:
-            node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
+        current_node = self.root # Renamed 'node' to 'current_node' for clarity
+        # while current_node.children: # This was the old check
+        while not current_node.is_leaf: # Correct check for leaf
+            current_node = current_node.children[int(np.random.binomial(1, current_node.prob_func(x)[0][0]))]
 
         # DEBUG
-        # node._print_debug_status()
+        # current_node._print_debug_status()
 
         # Add new point and register prediction performance
-        node.store_point(x, y, remove_shared=True)
-        node.register_pred_perf(x, y)
+        current_node.store_point(x, y, remove_shared=True)
+        current_node.register_pred_perf(x, y)
 
         # Update the uncertainty scaler for this node?
         if self.use_calibrated_sigma:
-            node.update_sigma_scaler()
+            current_node.update_sigma_scaler()
 
-        # Retrain GP? The node will decide based Nbar and/or its buffer of training points
+        # Retrain GP? The current_node will decide based Nbar and/or its buffer of training points
         if allow_training:
-            did_retrain = node.fit_my_GPR()
+            did_retrain = current_node.fit_my_GPR()
 
-        # If the node is full, generate child nodes
-        if node.n_points >= node.Nbar:
-            # Create child nodes. Each child node gets a copy of the current parent GP.
-            node.generate_children(self.GPR, self.n_features)
+        # If the current_node is full, generate child nodes
+        if current_node.n_points >= current_node.Nbar:
+            # Create child nodes. Each child node gets a copy of the current parent GP list.
+            # The GPR_template (self.GPR_template) is passed but GPNode.generate_children
+            # currently uses deepcopy(self.my_GPRs).
+            current_node.generate_children(GPR=self.GPR_template, n_features=self.n_features)
             
             # Compute parameters for the probability function 
-            node.compute_split_position_and_overlap(self.theta)
+            current_node.compute_split_position_and_overlap(self.theta)
 
             # Now pass parent's split info to children
-            node.children[0].parent_split_index = node.split_index
-            node.children[0].parent_split_position = node.split_position
-            node.children[1].parent_split_index = node.split_index
-            node.children[1].parent_split_position = node.split_position
+            current_node.children[0].parent_split_index = current_node.split_index
+            current_node.children[0].parent_split_position = current_node.split_position
+            current_node.children[1].parent_split_index = current_node.split_index
+            current_node.children[1].parent_split_position = current_node.split_position
 
-            if node.splitting_strategy == 'gradual':
+            if current_node.splitting_strategy == 'gradual':
 
                 # First distribute data as usual between the two child nodes
-                node.split_training_data()
+                current_node.split_training_data()
 
                 # Since we are doing gradual splitting, give 
                 # each child a copy of the other child's data
-                order = node.children[1].my_X_data[:,node.split_index].argsort()
-                node.children[0].shared_X_data = node.children[1].my_X_data[order]
-                node.children[0].shared_y_data = node.children[1].my_y_data[order]
-                node.children[0].n_shared_points = node.children[0].shared_X_data.shape[0]
+                order = current_node.children[1].my_X_data[:,current_node.split_index].argsort()
+                current_node.children[0].shared_X_data = current_node.children[1].my_X_data[order]
+                current_node.children[0].shared_y_data = current_node.children[1].my_y_data[order]
+                current_node.children[0].n_shared_points = current_node.children[0].shared_X_data.shape[0]
 
-                order = node.children[0].my_X_data[:,node.split_index].argsort()[::-1]
-                node.children[1].shared_X_data = node.children[0].my_X_data[order]
-                node.children[1].shared_y_data = node.children[0].my_y_data[order]
-                node.children[1].n_shared_points = node.children[1].shared_X_data.shape[0]
+                order = current_node.children[0].my_X_data[:,current_node.split_index].argsort()[::-1]
+                current_node.children[1].shared_X_data = current_node.children[0].my_X_data[order]
+                current_node.children[1].shared_y_data = current_node.children[0].my_y_data[order]
+                current_node.children[1].n_shared_points = current_node.children[1].shared_X_data.shape[0]
 
             else:
                 # Standard splitting
-                node.split_training_data()
+                current_node.split_training_data()
 
             # Retrain the child-node GPs?
-            # for child in node.children:
+            # for child in current_node.children:
             #     child.fit_my_GPR()
 
             # GP and training data of non-leaf nodes is not needed
-            node.delete_data(delete_own_data=True, delete_shared_data=True)
-            node.delete_my_GPR()
+            current_node.delete_data(delete_own_data=True, delete_shared_data=True)
+            current_node.delete_my_GPRs() # Changed from delete_my_GPR
 
 
     def fit(self, X_train: np.ndarray, y_train: np.ndarray, show_progress: Optional[bool]=False, shuffle: Optional[bool]=True, 
@@ -232,10 +283,13 @@ class GPTree:
         
         # Train all the leaves
         for i, leaf in tqdm(enumerate(self.root.leaves), total=len(self.root.leaves), disable=not show_progress, desc="Training"):
-            # leaf.is_leaf = True
-            leaf.fit_my_GPR()
+            # leaf.is_leaf = True # This should already be true for leaves
+            leaf.fit_my_GPR() # This will fit all GPs in leaf.my_GPRs
             if forward_GPR_to_next_leaf and i != len(self.root.leaves) - 1:
-                self.root.leaves[i+1].my_GPR = deepcopy(leaf.my_GPR)
+                # This logic needs care with multiple GPRs.
+                # Do we copy all GPRs, or just the first?
+                # For now, let's assume we copy the whole list of GPRs.
+                self.root.leaves[i+1].my_GPRs = deepcopy(leaf.my_GPRs)
 
             
             """ kernel = leaf.my_GPR.kernel_
@@ -347,13 +401,14 @@ class GPTree:
 
                 mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
 
-                # mean_DLGP[i] += ptilde*mu_leaf[0]
-                mean_DLGP[i] += ptilde*mu_leaf
-                var_DLGP[i] += ptilde*(sigma_leaf*sigma_leaf + mu_leaf*mu_leaf)
+                # mean_DLGP[i] += ptilde*mu_leaf[0] # Old comment
+                # mu_leaf and sigma_leaf are (1,1) from GPNode.predict for a single x
+                mean_DLGP[i, 0] += ptilde * mu_leaf[0, 0]
+                var_DLGP[i, 0] += ptilde * (sigma_leaf[0, 0]**2 + mu_leaf[0, 0]**2)
             
-            var_DLGP[i] += -mean_DLGP[i]*mean_DLGP[i]
+            var_DLGP[i, 0] += -mean_DLGP[i, 0]**2 # Corrected calculation for variance
         
-        return mean_DLGP, np.sqrt(var_DLGP)
+        return mean_DLGP, np.sqrt(np.maximum(0, var_DLGP)) # Ensure var_DLGP is not negative due to float errors
 
 
     def predict_loop(self, X_test: np.ndarray, show_progress: Optional[bool]=False):
