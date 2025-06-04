@@ -119,7 +119,7 @@ class TestGPTree(unittest.TestCase):
         if gpt.root.children: # Check if children exist
             for child in gpt.root.children:
                 if child.is_leaf: # Only fit GPR if it's a leaf and has data
-                    if child.num_training_points > 0:
+                    if child.n_points > 0:
                         with warnings.catch_warnings():
                             warnings.filterwarnings("ignore", category=ConvergenceWarning)
                             warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -186,7 +186,7 @@ class TestGPTree(unittest.TestCase):
         self.assertFalse(gpt.first_point, "first_point flag should be False after first point.")
         self.assertEqual(gpt.n_features, 1, "n_features should be set to 1 for 1D data.")
         self.assertIsNotNone(gpt.root.my_X_data, "Root node's my_X_data should be initialized.")
-        self.assertEqual(gpt.root.num_training_points, 1, "Root node should have 1 training point.")
+        self.assertEqual(gpt.root.n_points, 1, "Root node should have 1 training point.")
         self.assertTrue(np.array_equal(gpt.root.my_X_data, x_sample), "Root node's X data incorrect.")
         self.assertTrue(np.array_equal(gpt.root.my_y_data, y_sample), "Root node's y data incorrect.")
         self.assertTrue(gpt.root.is_leaf, "Root node should still be a leaf.")
@@ -209,7 +209,7 @@ class TestGPTree(unittest.TestCase):
                 gpt.update_tree(x_sample, y_sample)
 
         self.assertEqual(gpt.n_features, 2, "n_features should be set to 2 for 2D data.")
-        self.assertEqual(gpt.root.num_training_points, 3, f"Root node should have 3 training points, got {gpt.root.num_training_points}.")
+        self.assertEqual(gpt.root.n_points, 3, f"Root node should have 3 training points, got {gpt.root.n_points}.")
         self.assertTrue(gpt.root.is_leaf, "Root node should still be a leaf as Nbar not reached.")
         self.assertTrue(np.array_equal(gpt.root.my_X_data, X_train))
         self.assertTrue(np.array_equal(gpt.root.my_y_data, y_train))
@@ -232,7 +232,7 @@ class TestGPTree(unittest.TestCase):
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
                 gpt.update_tree(X_train[i:i+1, :], y_train[i:i+1, :])
             self.assertTrue(gpt.root.is_leaf, f"Root should be leaf before Nbar reached (point {i+1})")
-            self.assertEqual(gpt.root.num_training_points, i + 1)
+            self.assertEqual(gpt.root.n_points, i + 1)
 
         # Add the Nbar-th point - this should trigger the split
         with warnings.catch_warnings():
@@ -250,10 +250,10 @@ class TestGPTree(unittest.TestCase):
 
         # Check if original root node's GPR and data are deleted (as per current GPTree.update_tree logic)
         self.assertFalse(hasattr(gpt.root, 'my_GPR'), "Split parent node should not have my_GPR.") # This will fail if GPNode.delete_my_GPR() is not called or effective
-        self.assertFalse(hasattr(gpt.root, 'my_X_data'), "Split parent node should not have my_X_data.") # This will fail if GPNode.delete_training_data() is not called or effective
+        self.assertFalse(hasattr(gpt.root, 'my_X_data'), "Split parent node should not have my_X_data.") # This will fail if GPNode.delete_data() is not called or effective
 
         # Check that data is distributed (total points in children should be custom_nbar)
-        total_points_in_children = left_child.num_training_points + right_child.num_training_points
+        total_points_in_children = left_child.n_points + right_child.n_points
         self.assertEqual(total_points_in_children, custom_nbar,
                          f"Total points in children ({total_points_in_children}) should equal Nbar ({custom_nbar}).")
 
@@ -268,7 +268,7 @@ class TestGPTree(unittest.TestCase):
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
             warnings.filterwarnings("ignore", category=RuntimeWarning)
             gpt.update_tree(X_train[custom_nbar:custom_nbar+1, :], y_train[custom_nbar:custom_nbar+1, :])
-        total_points_in_children_after_one_more = left_child.num_training_points + right_child.num_training_points
+        total_points_in_children_after_one_more = left_child.n_points + right_child.n_points
         self.assertEqual(total_points_in_children_after_one_more, custom_nbar + 1,
                          "Total points in children should be Nbar + 1 after one more point.")
 

@@ -31,7 +31,7 @@ class TestGPNode(unittest.TestCase):
         try:
             node = GPNode(0, my_GPR=self.default_gpr_instance, Nbar=50, name="init_node_1")
             self.assertIsNotNone(node, "Node should not be None")
-            self.assertEqual(node.value, 0, "Node value should be 0 (num_training_points)")
+            self.assertEqual(node.value, 0, "Node value should be 0 (n_points)")
             self.assertEqual(node.Nbar, 50, "Nbar should be set to 50")
             self.assertTrue(node.is_leaf, "A new node should be a leaf")
             self.assertIsNone(node.children, "A new node should not have children")
@@ -42,10 +42,10 @@ class TestGPNode(unittest.TestCase):
     def test_gpnode_creation_custom_params(self):
         """Test GPNode creation with some custom parameters."""
         try:
-            # Note: GPNode value is num_training_points, which is managed internally by add_training_data.
+            # Note: GPNode value is n_points, which is managed internally by store_point.
             # Direct initialization of value in constructor is for binarytree.Node, but GPNode overrides it.
             node = GPNode(0, my_GPR=Default_GPR(normalize_y=False), Nbar=100, split_position_method='mean', name="custom_node_1")
-            self.assertEqual(node.num_training_points, 0)
+            self.assertEqual(node.n_points, 0)
             self.assertEqual(node.Nbar, 100)
             self.assertEqual(node.split_position_method, 'mean')
             self.assertEqual(node.name, "custom_node_1")
@@ -62,8 +62,8 @@ class TestGPNode(unittest.TestCase):
         self.assertEqual(node.my_X_data.shape, (0, n_features), "my_X_data shape incorrect")
         self.assertEqual(node.my_y_data.shape, (0, 1), "my_y_data shape incorrect")
         self.assertEqual(node.n_features, n_features, "n_features not set correctly")
-        self.assertEqual(node.num_training_points, 0, "num_training_points should be 0")
-        self.assertEqual(node.num_buffer_points, 0, "num_buffer_points should be 0")
+        self.assertEqual(node.n_points, 0, "n_points should be 0")
+        self.assertEqual(node.n_points_since_retrain, 0, "n_points_since_retrain should be 0")
 
     def test_gpnode_add_single_training_data(self):
         """Test adding a single data point to GPNode."""
@@ -74,10 +74,10 @@ class TestGPNode(unittest.TestCase):
         x_sample = np.array([[0.5]])
         y_sample = np.array([[1.0]]) # Ensure y is 2D as per typical usage in GPTree
 
-        node.add_training_data(x_sample, y_sample) # y should be float or (1,1) array for GPNode
+        node.store_point(x_sample, y_sample) # y should be float or (1,1) array for GPNode
 
-        self.assertEqual(node.num_training_points, 1, "num_training_points should be 1")
-        self.assertEqual(node.num_buffer_points, 1, "num_buffer_points should be 1")
+        self.assertEqual(node.n_points, 1, "n_points should be 1")
+        self.assertEqual(node.n_points_since_retrain, 1, "n_points_since_retrain should be 1")
         self.assertTrue(np.array_equal(node.my_X_data, x_sample), "my_X_data not stored correctly")
         self.assertTrue(np.array_equal(node.my_y_data, y_sample), "my_y_data not stored correctly")
 
@@ -91,10 +91,10 @@ class TestGPNode(unittest.TestCase):
         y_data = [np.array([[1.0]]), np.array([[2.0]]), np.array([[3.0]])] # Ensure y is 2D
 
         for x, y in zip(x_data, y_data):
-            node.add_training_data(x, y)
+            node.store_point(x, y)
 
-        self.assertEqual(node.num_training_points, 3)
-        self.assertEqual(node.num_buffer_points, 3)
+        self.assertEqual(node.n_points, 3)
+        self.assertEqual(node.n_points_since_retrain, 3)
         self.assertTrue(np.array_equal(node.my_X_data, np.vstack(x_data)))
         self.assertTrue(np.array_equal(node.my_y_data, np.vstack(y_data)))
 
@@ -107,30 +107,30 @@ class TestGPNode(unittest.TestCase):
         # Add enough data to trigger a fit (retrain_every_n_points = 1)
         x_sample1 = np.array([[0.1]])
         y_sample1 = np.array([[1.0]])
-        node.add_training_data(x_sample1, y_sample1)
+        node.store_point(x_sample1, y_sample1)
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
             warnings.filterwarnings("ignore", category=RuntimeWarning)
-            did_train = node.fit_my_GPR() # Should train as num_buffer_points (1) == retrain_every_n_points (1)
+            did_train = node.fit_my_GPR() # Should train as n_points_since_retrain (1) == retrain_every_n_points (1)
         self.assertTrue(did_train, "GPR should have been trained")
         self.assertIsNotNone(node.my_GPR.kernel_.theta, "GPR kernel theta should be set after fitting")
-        self.assertEqual(node.num_buffer_points, 0, "Buffer should be reset after training")
+        self.assertEqual(node.n_points_since_retrain, 0, "Buffer should be reset after training")
 
         # Add another point
         x_sample2 = np.array([[0.2]])
         y_sample2 = np.array([[2.0]])
-        node.add_training_data(x_sample2, y_sample2)
+        node.store_point(x_sample2, y_sample2)
 
-        self.assertEqual(node.num_training_points, 2)
-        self.assertEqual(node.num_buffer_points, 1) # Incremented after add
+        self.assertEqual(node.n_points, 2)
+        self.assertEqual(node.n_points_since_retrain, 1) # Incremented after add
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
             warnings.filterwarnings("ignore", category=RuntimeWarning)
             did_train_again = node.fit_my_GPR()
         self.assertTrue(did_train_again, "GPR should have been trained again")
-        self.assertEqual(node.num_buffer_points, 0, "Buffer should be reset after training again")
+        self.assertEqual(node.n_points_since_retrain, 0, "Buffer should be reset after training again")
 
     def test_gpnode_fit_my_gpr_force_training(self):
         """Test GPR fitting with force_training=True."""
@@ -140,7 +140,7 @@ class TestGPNode(unittest.TestCase):
 
         x_sample = np.array([[0.5]])
         y_sample = np.array([[1.5]])
-        node.add_training_data(x_sample, y_sample) # num_buffer_points = 1
+        node.store_point(x_sample, y_sample) # n_points_since_retrain = 1
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -153,7 +153,7 @@ class TestGPNode(unittest.TestCase):
             warnings.filterwarnings("ignore", category=RuntimeWarning)
             did_train_forced = node.fit_my_GPR(force_training=True)
         self.assertTrue(did_train_forced, "GPR should train when force_training is True")
-        self.assertEqual(node.num_buffer_points, 0, "Buffer should be reset after forced training")
+        self.assertEqual(node.n_points_since_retrain, 0, "Buffer should be reset after forced training")
 
 
 if __name__ == '__main__':

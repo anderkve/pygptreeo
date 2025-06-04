@@ -55,11 +55,11 @@ target_name = "eggholder"
 target = target_dict[target_name]
 
 n_dims = 2
-n_pts = 10000
+n_pts = 1000
 
-Nbar = 200
+Nbar = 100
 theta = 1e-4
-retrain_step = 200
+retrain_step = 20
 
 x_min = 0.0
 x_max = 1.0
@@ -175,8 +175,11 @@ gpt = GPTree(
     Nbar=Nbar,
     theta=theta, 
     split_position_method='median',
+    split_dimension_criteria='max_variance',
     retrain_every_n_points=retrain_step,
     use_calibrated_sigma=True,
+    # splitting_strategy='gradual',
+    splitting_strategy='standard',
 )
 
 
@@ -199,8 +202,13 @@ for x,y in zip(X_input, y_input):
     print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]}  y_pred: {y_pred[0][0]}  y_pred_std: {y_pred_std[0][0]}")
 
 print()
+print(gpt.root)
+print()
 print("Done.")
 print()
 
-test_split_criteria() # Add this call
+
+
+
+# test_split_criteria() 
 

@@ -123,7 +123,7 @@ class GPTree:
         # The first input point is used to determine self.n_features
         if self.first_point:
             self.n_features = x.size
-            self.root.init_training_set(self.n_features)
+            self.root.init_data_set(self.n_features)
             self.first_point = False
 
         # Find a leaf node for the new (x,y) point
@@ -134,8 +134,11 @@ class GPTree:
         while not node.is_leaf:
             node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
 
+        # DEBUG
+        # node._print_debug_status()
+
         # Add new point and register prediction performance
-        node.add_training_data(x, y)
+        node.store_point(x, y, remove_shared=True)
         node.register_pred_perf(x, y)
 
         # Update the uncertainty scaler for this node?
@@ -147,8 +150,7 @@ class GPTree:
             did_retrain = node.fit_my_GPR()
 
         # If the node is full, generate child nodes
-        if node.num_training_points >= node.Nbar:
-
+        if node.n_points >= node.Nbar:
             # Create child nodes. Each child node gets a copy of the current parent GP.
             node.generate_children(self.GPR, self.n_features)
             
@@ -162,13 +164,22 @@ class GPTree:
             node.children[1].parent_split_position = node.split_position
 
             if node.splitting_strategy == 'gradual':
-                # In gradual splitting, both children inherit all parent data.
-                for i in range(node.my_X_data.shape[0]):
-                    x_parent_point = node.my_X_data[i].reshape((1, self.n_features))
-                    y_parent_point = node.my_y_data[i].reshape((1, 1)) # Ensure y is (1,1) for add_training_data
 
-                    for child_node in node.children:
-                        child_node.add_training_data(x_parent_point, y_parent_point, increment_buffer=False)
+                # First distribute data as usual between the two child nodes
+                node.split_training_data()
+
+                # Since we are doing gradual splitting, give 
+                # each child a copy of the other child's data
+                order = node.children[1].my_X_data[:,node.split_index].argsort()
+                node.children[0].shared_X_data = node.children[1].my_X_data[order]
+                node.children[0].shared_y_data = node.children[1].my_y_data[order]
+                node.children[0].n_shared_points = node.children[0].shared_X_data.shape[0]
+
+                order = node.children[0].my_X_data[:,node.split_index].argsort()[::-1]
+                node.children[1].shared_X_data = node.children[0].my_X_data[order]
+                node.children[1].shared_y_data = node.children[0].my_y_data[order]
+                node.children[1].n_shared_points = node.children[1].shared_X_data.shape[0]
+
             else:
                 # Standard splitting
                 node.split_training_data()
@@ -178,7 +189,7 @@ class GPTree:
             #     child.fit_my_GPR()
 
             # GP and training data of non-leaf nodes is not needed
-            node.delete_training_data()
+            node.delete_data(delete_own_data=True, delete_shared_data=True)
             node.delete_my_GPR()
 
 
@@ -207,7 +218,7 @@ class GPTree:
         """
         self.n_features = X_train.shape[1]
         N = X_train.shape[0]
-        self.root.init_training_set(self.n_features)
+        self.root.init_data_set(self.n_features)
 
         if shuffle:
             X_train, y_train = resample(X_train, y_train, replace=False)

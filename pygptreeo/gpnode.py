@@ -6,6 +6,7 @@ from typing import Callable, Optional, Type, Union
 from scipy.optimize import root_scalar
 from copy import deepcopy
 from sys import float_info
+import warnings
 
 from pygptreeo.default_gpr import Default_GPR
 
@@ -35,7 +36,7 @@ class GPNode(Node):
         is_leaf (bool): True if the node is a leaf node (has no children),
             False otherwise.
         parent (GPNode): The parent node in the tree. None for the root node.
-        value (int): Inherited from binarytree.Node, stores num_training_points.
+        value (int): Inherited from binarytree.Node, stores n_points.
         name (str): A string identifier for the node (e.g., "0", "01", "010").
         split_position_method (str): Method used to determine split point.
         retrain_every_n_points (int): Frequency of GPR retraining.
@@ -54,7 +55,7 @@ class GPNode(Node):
         Args:
             *args: Arguments passed to the `binarytree.Node` parent class constructor.
                 Typically, the first argument is the initial `value` for the node,
-                which corresponds to `num_training_points`.
+                which corresponds to `n_points`.
             my_GPR (sklearn.gaussian_process.GaussianProcessRegressor): The
                 Gaussian Process Regressor instance to be used by this node.
             Nbar (Optional[int]): The maximum number of training points this node
@@ -90,12 +91,16 @@ class GPNode(Node):
         self.is_left = None
         self.is_leaf = True
         
-        self.num_training_points = 0
-        self.num_buffer_points = 0
+        self.n_points = 0
+        self.n_points_since_retrain = 0
 
         self.my_X_data = None
         self.my_y_data = None
         self.n_features = None
+
+        self.shared_X_data = None
+        self.shared_y_data = None
+        self.n_shared_points = 0
 
         self.split_index = 0       # 'j' in the DLGP article
         self.split_position = 0.0  # 's' in the DLGP article
@@ -113,16 +118,20 @@ class GPNode(Node):
         print(f"Created node {self.name}")
 
 
+    def _print_debug_status(self):
+        print(f"DEBUG: node {self.name}:  retrain_every_n_points: {self.retrain_every_n_points}  n_points_since_retrain: {self.n_points_since_retrain}  n_points: {self.n_points}  my_X_data.shape: {self.my_X_data.shape}  n_points: {self.n_points}  shared_X_data.shape: {self.shared_X_data.shape}  n_shared_points: {self.n_shared_points}", flush=True)
+
+
     # Override the "value" attribute of Node parent class 
     @property
-    def num_training_points(self):
+    def n_points(self):
         """int: The number of training points currently held by this node."""
         return self.value
 
     
     # such that the value of a node is the number of training points
-    @num_training_points.setter
-    def num_training_points(self, value):
+    @n_points.setter
+    def n_points(self, value):
         """Sets the number of training points for this node.
 
         This also updates the `value` attribute inherited from the
@@ -135,13 +144,19 @@ class GPNode(Node):
         self.value = value
 
 
-    def init_training_set(self, n_features: int):
+    def init_data_set(self, n_features: int):
         """ Initialize the training set of the node. """
+        self.n_features = n_features
+
         self.my_X_data = np.array([]).reshape((0, n_features))
         self.my_y_data = np.array([]).reshape((0, 1))
-        self.n_features = n_features
-        self.num_buffer_points = 0
-        self.num_training_points = 0
+
+        self.shared_X_data = np.array([]).reshape((0, n_features))
+        self.shared_y_data = np.array([]).reshape((0, 1))
+
+        self.n_points_since_retrain = 0
+        self.n_points = 0
+        self.n_shared_points = 0
 
 
     def generate_children(self, GPR: Type[GaussianProcessRegressor], n_features: int):
@@ -168,7 +183,7 @@ class GPNode(Node):
 
         for child in self.children:
             child.parent = self
-            child.init_training_set(n_features)
+            child.init_data_set(n_features)
 
         # Copy important numbers over to the child nodes
         self.left.residuals = self.residuals.copy()
@@ -187,50 +202,74 @@ class GPNode(Node):
         self.right.sigma_scaler_init = self.sigma_scaler_init
 
 
-    def add_training_data(self, x: np.ndarray, y: float, increment_buffer=True):
-        """ Add a single training sample to the training set of the node. """
-        if (self.splitting_strategy == 'gradual' and self.num_training_points >= self.Nbar):
+    def delete_point(self, index=-1, shared_point=True):
+        """ Remove a single data point from the node. """
+        if shared_point and self.n_shared_points > 0:
+            self.shared_X_data = np.delete(self.shared_X_data, index, axis=0)
+            self.shared_y_data = np.delete(self.shared_y_data, index, axis=0)
+            self.n_shared_points -= 1
+        elif (not shared_point) and self.n_points > 0:
+            self.my_X_data = np.delete(self.my_X_data, index, axis=0)
+            self.my_y_data = np.delete(self.my_y_data, index, axis=0)
+            self.n_points -= 1
+        else:
+            warnings.warn(f"Node {self.name}: No point left to delete.", RuntimeWarning)
 
-            # Calculate distances from the parent's split position along the parent's split dimension
-            distances = np.abs(self.my_X_data[:, self.parent_split_index] - self.parent_split_position)
+        # if remove_shared and self.n_shared_points > 0:
+        #     distances = np.abs(self.shared_X_data[:, self.parent_split_index] - self.parent_split_position)
+        #     index_to_discard = np.argmax(distances)
+        #     self.shared_X_data = np.delete(self.shared_X_data, index_to_discard, axis=0)
+        #     self.shared_y_data = np.delete(self.shared_y_data, index_to_discard, axis=0)
+        #     self.n_shared_points -= 1
 
-            # Find the index of the point that is furthest away
-            index_to_discard = np.argmax(distances)
 
-            # Remove the point from my_X_data and my_y_data
-            self.my_X_data = np.delete(self.my_X_data, index_to_discard, axis=0)
-            self.my_y_data = np.delete(self.my_y_data, index_to_discard, axis=0)
 
-            # Decrement training points count as one point was removed
-            self.num_training_points -= 1
-            # Note: num_buffer_points is not decremented here, as it tracks points added since last retrain.
-            # The discarded point was part of the initial set from parent.
+    def store_point(self, x: np.ndarray, y: float, increment_buffer=True, shared_point=False, remove_shared=True):
+        """ Add a single data point to the node. """
+        # Note: Points are added to the beginning of the arrays (using np.vstack)
+        if shared_point:
+            self.shared_X_data = np.vstack((x, self.shared_X_data))
+            self.shared_y_data = np.vstack((y, self.shared_y_data))
+            # self.shared_X_data = np.append(self.shared_X_data, x, axis=0)
+            # self.shared_y_data = np.append(self.shared_y_data, y, axis=0)
+            self.n_shared_points += 1
+        else:
+            self.my_X_data = np.vstack((x, self.my_X_data))
+            self.my_y_data = np.vstack((y, self.my_y_data))
+            # self.my_X_data = np.append(self.my_X_data, x, axis=0)
+            # self.my_y_data = np.append(self.my_y_data, y, axis=0)
+            self.n_points += 1
+            if increment_buffer:
+                self.n_points_since_retrain += 1
 
-        self.my_X_data = np.append(self.my_X_data, x, axis=0)
-        self.my_y_data = np.append(self.my_y_data, y, axis=0)
-        self.num_training_points += 1
-        if increment_buffer:
-            self.num_buffer_points += 1
+        if remove_shared and self.n_shared_points > 0:
+            self.delete_point(shared_point=True)
 
-        
+    
     def split_training_data(self):
         """ Assign the training samples of a node to its child nodes. """
         for x, y in zip(self.my_X_data, self.my_y_data):
             x = x.reshape((1, x.shape[0]))
             y = y.reshape((1, 1))
             child = self.children[int(np.random.binomial(1, self.prob_func(x)[0][0]))]
-            child.add_training_data(x, y, increment_buffer=False)
+            child.store_point(x, y, increment_buffer=False)
 
         
-    def delete_training_data(self):
-        """Deletes the training data (my_X_data, my_y_data) from the node.
+    def delete_data(self, delete_own_data=True, delete_shared_data=True):
+        """Deletes the data (my_X_data, my_y_data, and possibly shared_X_data, shared_y_data) from the node.
 
         This is typically called on a parent node after its data has been
         successfully split and passed down to its children. This helps to
         reduce memory consumption as the tree grows, as only leaf nodes
         or nodes about to be split actively need to store their full datasets.
         """
-        del self.my_X_data, self.my_y_data
+        if delete_own_data:
+            del self.my_X_data
+            del self.my_y_data
+
+        if delete_shared_data:
+            del self.shared_X_data
+            del self.shared_y_data
 
 
     def delete_my_GPR(self):
@@ -248,8 +287,8 @@ class GPNode(Node):
         """Fits the node's Gaussian Process Regressor (GPR) to its local data.
 
         Training is triggered if the number of new points in the buffer
-        (`num_buffer_points`) reaches `retrain_every_n_points`, if the node
-        is full (`num_training_points >= Nbar`), or if `force_training` is True.
+        (`n_points_since_retrain`) reaches `retrain_every_n_points`, if the node
+        is full (`n_points >= Nbar`), or if `force_training` is True.
 
         The method iterates through `kernel_alternatives` defined in the GPR
         object (e.g., `Default_GPR`). For each kernel, it adjusts the
@@ -266,13 +305,18 @@ class GPNode(Node):
         """
         did_train = False
         # Only train the GP if the buffer is full, the node is full, or if force_training=True
-        if (self.num_buffer_points == self.retrain_every_n_points) or (self.num_training_points >= self.Nbar) or force_training:
-            self.num_buffer_points = 0
+        if (self.n_points_since_retrain >= self.retrain_every_n_points) or (self.n_points >= self.Nbar) or force_training:
+            self.n_points_since_retrain = 0
 
-            x_max_vals = [np.max(self.my_X_data[:,i]) for i in range(self.n_features)]
-            x_min_vals = [np.min(self.my_X_data[:,i]) for i in range(self.n_features)]
+            # Combine own points and shared points
+            X_train = np.vstack((self.my_X_data, self.shared_X_data))
+            y_train = np.vstack((self.my_y_data, self.shared_y_data))
+
+            # Get x ranges
+            x_max_vals = [np.max(X_train[:,i]) for i in range(self.n_features)]
+            x_min_vals = [np.min(X_train[:,i]) for i in range(self.n_features)]
             x_ranges = [x_max_vals[i] - x_min_vals[i] for i in range(self.n_features)]
-            # x_ranges = [np.max(self.my_X_data[:,i])-np.min(self.my_X_data[:,i]) for i in range(self.n_features)]
+            # x_ranges = [np.max(X_train[:,i])-np.min(X_train[:,i]) for i in range(self.n_features)]
 
             use_bounds = [(np.max([self.my_GPR.min_length_scale, 0.01*x_ranges[i]]), np.max([10*self.my_GPR.min_length_scale, 10*x_ranges[i]])) for i in range(self.n_features)]
             use_init_points = [0.1*x_ranges[i] for i in range(self.n_features)]
@@ -308,7 +352,7 @@ class GPNode(Node):
                 kernel.set_params(**new_params)
 
                 temp_GPR.kernel = kernel
-                temp_GPR.fit(self.my_X_data, self.my_y_data)
+                temp_GPR.fit(X_train, y_train)
 
                 lml = temp_GPR.log_marginal_likelihood_value_
                 theta = temp_GPR.kernel_.theta
@@ -515,9 +559,7 @@ class GPNode(Node):
         while coverage_deviation(x_bracket[0]) * coverage_deviation(x_bracket[1]) > 0:
             self.sigma_scaler_init *= 2
             x_bracket[1] = 2 * self.sigma_scaler_init
-            # print(f"DEBUG: Node {self.name}:  x_bracket: {x_bracket}")
 
         sol = root_scalar(coverage_deviation, x0=self.sigma_scaler_init, bracket=x_bracket, maxiter=50)
         if sol.converged:
             self.sigma_scaler = np.max([sol.root, 1e-9])
-            # print(f"DEBUG: Node {self.name}:  sigma_scaler: {self.sigma_scaler}")

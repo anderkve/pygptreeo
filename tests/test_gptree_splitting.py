@@ -36,7 +36,7 @@ class TestGradualSplitting(unittest.TestCase):
 
         # Add Nbar points (root node gets full)
         for i in range(nbar):
-            # Pass y as (1,1) as expected by GPNode.add_training_data via GPTree.update_tree
+            # Pass y as (1,1) as expected by GPNode.store_point via GPTree.update_tree
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=ConvergenceWarning)
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -55,8 +55,8 @@ class TestGradualSplitting(unittest.TestCase):
         child1, child2 = tree.root.children
 
         # Each child should inherit all data when using the 'gradual' mode
-        self.assertEqual(child1.num_training_points, nbar, "Child 1 should have Nbar points (all parent data)")
-        self.assertEqual(child2.num_training_points, nbar, "Child 2 should have Nbar points (all parent data)")
+        self.assertEqual(child1.n_points, nbar, "Child 1 should have Nbar points (all parent data)")
+        self.assertEqual(child2.n_points, nbar, "Child 2 should have Nbar points (all parent data)")
 
         np.testing.assert_array_almost_equal(np.sort(child1.my_X_data, axis=0), np.sort(initial_X_data, axis=0),
                                              err_msg="Child 1 X_data mismatch (should have all parent data)")
@@ -88,11 +88,11 @@ class TestGradualSplitting(unittest.TestCase):
         new_X_point_val = np.array([[0.1]])   # Shape (1,1) - new distinct point
         new_y_point_val = np.array([[0.11]])  # Shape (1,1)
 
-        # Call add_training_data directly on child1 to test discard logic without further tree splits
-        child1.add_training_data(new_X_point_val, new_y_point_val)
+        # Call store_point directly on child1 to test discard logic without further tree splits
+        child1.store_point(new_X_point_val, new_y_point_val)
 
         # Verification of discard
-        self.assertEqual(child1.num_training_points, nbar,
+        self.assertEqual(child1.n_points, nbar,
                          "Child 1 should still have Nbar points after adding new point (due to discard)")
 
         # Verify the correct point was discarded from child1
@@ -110,7 +110,7 @@ class TestGradualSplitting(unittest.TestCase):
                         f"The new point y={new_y_point_val[0]} should be present in Child 1. Child data: {child1.my_y_data}")
 
         # Verify child2's data remains unchanged (still initial_X_data)
-        self.assertEqual(child2.num_training_points, nbar, "Child 2 should still have Nbar points")
+        self.assertEqual(child2.n_points, nbar, "Child 2 should still have Nbar points")
         np.testing.assert_array_almost_equal(np.sort(child2.my_X_data, axis=0), np.sort(initial_X_data, axis=0),
                                              err_msg="Child 2 X_data should remain unchanged (all parent data)")
         np.testing.assert_array_almost_equal(np.sort(child2.my_y_data, axis=0), np.sort(initial_y_data, axis=0),
