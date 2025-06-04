@@ -47,7 +47,7 @@ class GPNode(Node):
                  split_position_method='median', 
                  retrain_every_n_points=1,
                  name="0",
-                 split_dimension_criteria='max_spread', # New parameter
+                 split_dimension_criteria='max_spread',
                  splitting_strategy: Optional[str] = 'standard'): # jules gradual splitting: Added splitting_strategy, parent_split_index, and parent_split_position attributes
         """Initializes a GPNode.
 

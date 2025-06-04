@@ -57,7 +57,7 @@ class GPTree:
                  Nbar: Optional[int] = 100,
                  theta: Optional[float] = 0.0001,
                  use_calibrated_sigma: Optional[bool] = True,
-                 split_dimension_criteria: Optional[str] = 'max_spread', # New parameter
+                 split_dimension_criteria: Optional[str] = 'max_spread',
                  splitting_strategy: Optional[str] = 'standard', # jules gradual splitting: Added splitting_strategy parameter
                  **kwargs):
         """Initializes the GPTree.
