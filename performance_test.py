@@ -62,11 +62,11 @@ target_name = "eggholder"
 target = target_dict[target_name]
 
 n_dims = 2
-n_pts = 100000
+n_pts = 300000
 
 Nbar = 100
 theta = 1e-4
-retrain_step = 20
+retrain_step = 100
 
 x_min = 0.0
 x_max = 1.0
@@ -126,54 +126,6 @@ class my_GPR_class(GaussianProcessRegressor):
         self.n_targets = n_targets
         self.random_state = random_state
 
-
-# Make sure to use the global n_dims from example.py for data generation
-
-def test_split_criteria():
-    print("\nTesting Split Dimension Criteria...\n")
-
-    n_pts_test = 50
-    Nbar_test = 10
-
-    # Use a fixed seed for reproducibility of test data
-    np.random.seed(42)
-    # Ensure X_test_data uses the global n_dims from example.py
-    # (n_dims is available from the outer scope of example.py)
-    X_test_data = np.random.rand(n_pts_test, n_dims)
-    y_test_data = np.sum(X_test_data, axis=1).reshape(-1, 1)
-
-    criteria_to_test = ['max_spread', 'max_variance', 'random']
-
-    for criterion in criteria_to_test:
-        print(f"--- Testing criterion: {criterion} ---")
-        try:
-            # my_GPR_class is defined in the global scope of example.py
-            gpr_instance_for_test = my_GPR_class()
-
-            gpt_test = GPTree(
-                GPR=gpr_instance_for_test,
-                Nbar=Nbar_test,
-                split_dimension_criteria=criterion,
-                retrain_every_n_points=Nbar_test
-            )
-
-            gpt_test.fit(X_test_data, y_test_data, show_progress=False)
-
-            print(f"Successfully trained GPTree with criterion: {criterion}")
-            if gpt_test.root and not gpt_test.root.is_leaf:
-                print(f"Root node split on dimension: {gpt_test.root.split_index} using {criterion}")
-            elif gpt_test.root and gpt_test.root.is_leaf:
-                print(f"Root node did not split with Nbar={Nbar_test} (capacity) and {n_pts_test} points using {criterion}. It remained a leaf.")
-            else:
-                print(f"No root node OR root node is None after fit for {criterion}.")
-
-        except Exception as e:
-            print(f"Error during testing criterion {criterion}: {e}")
-            import traceback
-            traceback.print_exc()
-        print(f"--- End Test for {criterion} ---\n")
-
-
 mygpr = my_GPR_class()
 
 # Construct GPTree
@@ -185,27 +137,31 @@ gpt = GPTree(
     split_dimension_criteria='max_variance',
     retrain_every_n_points=retrain_step,
     use_calibrated_sigma=True,
-    # splitting_strategy='gradual',
-    splitting_strategy='standard',
+    splitting_strategy='gradual',
+    # splitting_strategy='standard',
 )
 
 # Initialize for plotting
 fig, axs = plt.subplots(5, 1, figsize=(10, 15), sharex=True)
-fig.suptitle('Performance Metrics Over Time', fontsize=16)
+fig.suptitle('Performance metrics', fontsize=16)
 
-axs[0].set_ylabel('Predict Time (s)')
-axs[1].set_ylabel('Update Time (s)')
-axs[2].set_ylabel('RMSE')
-axs[3].set_ylabel('Accuracy (<5% error)')
-axs[4].set_ylabel('Coverage (within uncertainty)')
-axs[4].set_xlabel('Number of Points Processed')
+# axs[0].set_ylabel('Avg. prediction time per point (s)')
+# axs[1].set_ylabel('Avg. update time per point (s)')
+# axs[2].set_ylabel('RMSE')
+# axs[3].set_ylabel('Accuracy (<5% error)')
+# axs[4].set_ylabel('Coverage (within uncertainty)')
+# axs[4].set_xlabel('Number of Points Processed')
 
 # Data storage for plots
 points_processed_history = []
-predict_times_history = []
-update_times_history = []
-rmse_history = []
-accuracy_5_percent_history = []
+avg_predict_times_history = []
+avg_update_times_history = []
+nrmse_history = []
+within_1_percent_history = []
+within_2_percent_history = []
+within_4_percent_history = []
+within_8_percent_history = []
+within_16_percent_history = []
 coverage_history = []
 
 # Data storage for current batch
@@ -215,8 +171,9 @@ current_batch_actual_values = []
 current_batch_predicted_values = []
 current_batch_predicted_std_devs = []
 
-# Plotting update frequency
-plot_update_frequency = 2000
+# Batch size and plot update frequency
+batch_size = 2000
+plot_update_frequency = batch_size
 
 
 # Run through points one point at a time
@@ -245,57 +202,78 @@ for x,y in zip(X_input, y_input):
 
     if point_i % plot_update_frequency == 0 and point_i > 0:
         # Calculate metrics for the last 'plot_update_frequency' points
-        total_predict_time_batch = np.sum(current_batch_predict_times)
-        total_update_time_batch = np.sum(current_batch_update_times)
+        avg_predict_time_batch = np.sum(current_batch_predict_times) / float(batch_size)
+        avg_update_time_batch = np.sum(current_batch_update_times) / float(batch_size)
 
         actual_vals = np.array(current_batch_actual_values)
         predicted_vals = np.array(current_batch_predicted_values)
         std_devs = np.array(current_batch_predicted_std_devs)
 
-        # RMSE
-        rmse_batch = np.sqrt(np.mean((actual_vals - predicted_vals)**2))
+        # NRMSE
+        nrmse_batch = np.sqrt(np.mean((actual_vals - predicted_vals)**2)) / (np.max(actual_vals) - np.min(actual_vals))
 
         # Accuracy (within 5% of true value)
-        within_5_percent_flags = [is_within_percentage(p, a, 5) for p, a in zip(predicted_vals, actual_vals)]
-        accuracy_5_percent_batch = np.mean(within_5_percent_flags)
+        within_1_percent_flags = [is_within_percentage(p, a, 1) for p, a in zip(predicted_vals, actual_vals)]
+        within_2_percent_flags = [is_within_percentage(p, a, 2) for p, a in zip(predicted_vals, actual_vals)]
+        within_4_percent_flags = [is_within_percentage(p, a, 4) for p, a in zip(predicted_vals, actual_vals)]
+        within_8_percent_flags = [is_within_percentage(p, a, 8) for p, a in zip(predicted_vals, actual_vals)]
+        within_16_percent_flags = [is_within_percentage(p, a, 16) for p, a in zip(predicted_vals, actual_vals)]
+        within_1_percent_batch = np.mean(within_1_percent_flags)
+        within_2_percent_batch = np.mean(within_2_percent_flags)
+        within_4_percent_batch = np.mean(within_4_percent_flags)
+        within_8_percent_batch = np.mean(within_8_percent_flags)
+        within_16_percent_batch = np.mean(within_16_percent_flags)
 
         # Empirical Coverage
         coverage_batch = np.mean(np.abs(actual_vals - predicted_vals) <= std_devs)
 
         # Append to history for plotting
         points_processed_history.append(point_i)
-        predict_times_history.append(total_predict_time_batch)
-        update_times_history.append(total_update_time_batch)
-        rmse_history.append(rmse_batch)
-        accuracy_5_percent_history.append(accuracy_5_percent_batch)
+        avg_predict_times_history.append(avg_predict_time_batch)
+        avg_update_times_history.append(avg_update_time_batch)
+        nrmse_history.append(nrmse_batch)
+        within_1_percent_history.append(within_1_percent_batch)
+        within_2_percent_history.append(within_2_percent_batch)
+        within_4_percent_history.append(within_4_percent_batch)
+        within_8_percent_history.append(within_8_percent_batch)
+        within_16_percent_history.append(within_16_percent_batch)
         coverage_history.append(coverage_batch)
 
         # Update plots
         axs[0].clear()
-        axs[0].plot(points_processed_history, predict_times_history, marker='.')
-        axs[0].set_ylabel('Predict Time (s)')
-        axs[0].set_title('Predict Time per Batch')
+        axs[0].plot(points_processed_history, avg_predict_times_history, marker='.')
+        axs[0].set_ylabel('Time (s)')
+        axs[0].set_title('Avg. predict time per point')
 
         axs[1].clear()
-        axs[1].plot(points_processed_history, update_times_history, marker='.')
-        axs[1].set_ylabel('Update Time (s)')
-        axs[1].set_title('Update Time per Batch')
+        axs[1].plot(points_processed_history, avg_update_times_history, marker='.')
+        axs[1].set_ylabel('Time (s)')
+        axs[1].set_title('Avg. update time per point')
 
         axs[2].clear()
-        axs[2].plot(points_processed_history, rmse_history, marker='.')
-        axs[2].set_ylabel('RMSE')
-        axs[2].set_title('RMSE per Batch')
+        axs[2].plot(points_processed_history, nrmse_history, marker='.')
+        axs[2].set_ylabel('Batch NRMSE')
+        axs[2].set_title('Batch NRMSE')
+        axs[2].set_ylim([0.0, 0.1])
 
         axs[3].clear()
-        axs[3].plot(points_processed_history, accuracy_5_percent_history, marker='.')
-        axs[3].set_ylabel('Accuracy (<5% error)')
-        axs[3].set_title('Fraction of Predictions within 5% Error')
+        axs[3].plot(points_processed_history, within_1_percent_history, marker='.', label="within 1%")
+        axs[3].plot(points_processed_history, within_2_percent_history, marker='.', label="within 2%")
+        axs[3].plot(points_processed_history, within_4_percent_history, marker='.', label="within 4%")
+        axs[3].plot(points_processed_history, within_8_percent_history, marker='.', label="within 8%")
+        axs[3].plot(points_processed_history, within_16_percent_history, marker='.', label="within 16%")
+        axs[3].legend()
+        axs[3].set_ylabel('Fraction within error threshold')
+        axs[3].set_title('Fraction within error threshold')
+        axs[3].set_ylim([0, 1])
 
         axs[4].clear()
         axs[4].plot(points_processed_history, coverage_history, marker='.')
+        axs[4].plot([points_processed_history[0], points_processed_history[-1]], [0.68, 0.68], '--')
         axs[4].set_ylabel('Coverage')
-        axs[4].set_title('Empirical Coverage of Prediction Uncertainty')
-        axs[4].set_xlabel('Number of Points Processed') # X-label only on the last plot
+        axs[4].set_title('Empirical coverage of prediction uncertainty')
+        axs[4].set_xlabel('Number of points processed') # X-label only on the last plot
+        axs[4].set_ylim([0, 1])
 
         # Remove x-axis labels from other subplots if they were set
         for i in range(4):
@@ -304,15 +282,16 @@ for x,y in zip(X_input, y_input):
         for ax_idx, ax in enumerate(axs):
             ax.grid(True)
             # Re-apply y-labels as clear() might remove them
-            if ax_idx == 0: ax.set_ylabel('Predict Time (s)')
-            elif ax_idx == 1: ax.set_ylabel('Update Time (s)')
-            elif ax_idx == 2: ax.set_ylabel('RMSE')
-            elif ax_idx == 3: ax.set_ylabel('Accuracy (<5% error)')
+            if ax_idx == 0: ax.set_ylabel('Time (s)')
+            elif ax_idx == 1: ax.set_ylabel('Time (s)')
+            elif ax_idx == 2: ax.set_ylabel('Batch NRMSE')
+            elif ax_idx == 3: ax.set_ylabel('Fraction within error threshold')
             elif ax_idx == 4: ax.set_ylabel('Coverage')
 
 
         plt.tight_layout(rect=[0, 0, 1, 0.96])
-        plt.pause(0.01)
+        plt.savefig("plot.png")
+        # plt.pause(0.01)
 
         # Reset batch lists
         current_batch_predict_times.clear()
@@ -322,16 +301,11 @@ for x,y in zip(X_input, y_input):
         current_batch_predicted_std_devs.clear()
 
     # Print point summary comparing predicted y to true y
-    # print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]}  y_pred: {y_pred[0][0]}  y_pred_std: {y_pred_std[0][0]}")
+    abs_err = np.abs(y_pred[0][0] - y[0][0])
+    rel_err = abs_err / np.max([np.abs(y[0][0]), 1e-10])
+    print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]:.4e}  y_pred: {y_pred[0][0]:.4e}  y_pred_std: {y_pred_std[0][0]:.3e}  abs_err: {abs_err:.3e}  rel_err: {rel_err:.3e}")
 
-print()
-print(gpt.root)
 print()
 print("Done.")
 print()
 
-
-
-
-# test_split_criteria()
-plt.show()
