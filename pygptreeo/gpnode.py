@@ -22,7 +22,7 @@ class GPNode(Node):
     and makes local predictions within its domain.
 
     Attributes:
-        my_GPR (sklearn.gaussian_process.GaussianProcessRegressor): The GPR
+        my_GPR (Default_GPR): The GPR
             instance associated with this node.
         Nbar (int): The maximum number of training points this node can hold
             before it attempts to split.
@@ -43,20 +43,23 @@ class GPNode(Node):
         overlap (float): The size of the overlapping region with sibling nodes.
     """
     def __init__(self, *args, 
-                 my_GPR: GaussianProcessRegressor, 
+                 my_GPR: Default_GPR, 
                  Nbar: Optional[int] = 100,
                  split_position_method='median', 
                  retrain_every_n_points=1,
                  name="0",
                  split_dimension_criteria='max_spread',
-                 splitting_strategy: Optional[str] = 'standard'):
+                 splitting_strategy: Optional[str] = 'standard',
+                 n_GPs_per_node: Optional[int] = 1,
+                 n_train: Optional[int] = None,
+                 ):
         """Initializes a GPNode.
 
         Args:
             *args: Arguments passed to the `binarytree.Node` parent class constructor.
                 Typically, the first argument is the initial `value` for the node,
                 which corresponds to `n_points`.
-            my_GPR (sklearn.gaussian_process.GaussianProcessRegressor): The
+            my_GPR (Default_GPR): The
                 Gaussian Process Regressor instance to be used by this node.
             Nbar (Optional[int]): The maximum number of training points this node
                 can hold before it considers splitting. Defaults to 100.
@@ -79,6 +82,9 @@ class GPNode(Node):
         self.my_GPR = my_GPR
         self.parent = None
         self.children = None
+
+        self.n_GPs_per_node = n_GPs_per_node
+        self.n_train = n_train
 
         self.split_position_method = split_position_method
         self.retrain_every_n_points = retrain_every_n_points
@@ -169,6 +175,8 @@ class GPNode(Node):
             'retrain_every_n_points': self.retrain_every_n_points,
             'split_dimension_criteria': self.split_dimension_criteria,
             'splitting_strategy': self.splitting_strategy,
+            'n_GPs_per_node': self.n_GPs_per_node,
+            'n_train': self.n_train
         }
 
         # Create child nodes with a copy of the parent GP
@@ -215,14 +223,6 @@ class GPNode(Node):
         else:
             warnings.warn(f"Node {self.name}: No point left to delete.", RuntimeWarning)
 
-        # if remove_shared and self.n_shared_points > 0:
-        #     distances = np.abs(self.shared_X_data[:, self.parent_split_index] - self.parent_split_position)
-        #     index_to_discard = np.argmax(distances)
-        #     self.shared_X_data = np.delete(self.shared_X_data, index_to_discard, axis=0)
-        #     self.shared_y_data = np.delete(self.shared_y_data, index_to_discard, axis=0)
-        #     self.n_shared_points -= 1
-
-
 
     def store_point(self, x: np.ndarray, y: float, increment_buffer=True, shared_point=False, remove_shared=True):
         """ Add a single data point to the node. """
@@ -230,14 +230,10 @@ class GPNode(Node):
         if shared_point:
             self.shared_X_data = np.vstack((x, self.shared_X_data))
             self.shared_y_data = np.vstack((y, self.shared_y_data))
-            # self.shared_X_data = np.append(self.shared_X_data, x, axis=0)
-            # self.shared_y_data = np.append(self.shared_y_data, y, axis=0)
             self.n_shared_points += 1
         else:
             self.my_X_data = np.vstack((x, self.my_X_data))
             self.my_y_data = np.vstack((y, self.my_y_data))
-            # self.my_X_data = np.append(self.my_X_data, x, axis=0)
-            # self.my_y_data = np.append(self.my_y_data, y, axis=0)
             self.n_points += 1
             if increment_buffer:
                 self.n_points_since_retrain += 1
@@ -304,23 +300,44 @@ class GPNode(Node):
             bool: True if the GPR was trained in this call, False otherwise.
         """
         did_train = False
+        MIN_SAMPLES_FOR_VALIDATION = 5
+        
         # Only train the GP if the buffer is full, the node is full, or if force_training=True
         if (self.n_points_since_retrain >= self.retrain_every_n_points) or (self.n_points >= self.Nbar) or force_training:
             self.n_points_since_retrain = 0
 
-            # Combine own points and shared points
-            X_train = np.vstack((self.my_X_data, self.shared_X_data))
-            y_train = np.vstack((self.my_y_data, self.shared_y_data))
+            gp_rmse_scores = [] 
+
+            # Full data set
+            X_data_full = np.vstack((self.my_X_data, self.shared_X_data))
+            y_data_full = np.vstack((self.my_y_data, self.shared_y_data))
+
+            # Train-validation split
+            X_train, X_validate, y_train, y_validate = (None, None, None, None)
+
+            validate_fraction = 0.2
+            if int(X_data_full.shape[0] * validate_fraction) < MIN_SAMPLES_FOR_VALIDATION:
+                warnings.warn(f"Node {self.name}: Insufficient data ({X_data_full.shape[0]} points) for train-validation split. Training on all data. RMSE will be NaN.", RuntimeWarning)
+                X_train_gpr = X_data_full
+                y_train_gpr = y_data_full
+                gp_rmse_scores = [np.nan] * self.n_GPs_per_node
+            else:
+                X_train, X_validate, y_train, y_validate = train_test_split(
+                    X_data_full, y_data_full, test_size=validate_fraction
+                    # X_data_full, y_data_full, test_size=validate_fraction, random_state=42 # Fixed random_state for reproducibility
+                )
 
             # Get x ranges
             x_max_vals = [np.max(X_train[:,i]) for i in range(self.n_features)]
             x_min_vals = [np.min(X_train[:,i]) for i in range(self.n_features)]
             x_ranges = [x_max_vals[i] - x_min_vals[i] for i in range(self.n_features)]
-            # x_ranges = [np.max(X_train[:,i])-np.min(X_train[:,i]) for i in range(self.n_features)]
 
             use_bounds = [(np.max([self.my_GPR.min_length_scale, 0.01*x_ranges[i]]), np.max([10*self.my_GPR.min_length_scale, 10*x_ranges[i]])) for i in range(self.n_features)]
             use_init_points = [0.1*x_ranges[i] for i in range(self.n_features)]
 
+            # _Anders
+
+            
 
             # Loop over kernel alternatives
             # TODO: Only try the alternative kernels with a certain probability?
