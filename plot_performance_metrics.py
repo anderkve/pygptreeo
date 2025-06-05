@@ -66,8 +66,10 @@ def plot_metrics(csv_file_path):
     true_y_for_ratio = df['true_y'].replace(0, np.nan)
     abs_percentage_error = abs(df['predicted_y'] - df['true_y']) / abs(true_y_for_ratio)
     within_1_percent = abs_percentage_error < 0.01
+    within_10_percent = abs_percentage_error < 0.10
     # Calculate mean on the boolean series (True=1, False=0)
     fraction_within_1_percent = within_1_percent.rolling(window=window_size, min_periods=min_p).mean()
+    fraction_within_10_percent = within_10_percent.rolling(window=window_size, min_periods=min_p).mean()
 
     # Metric 5: Empirical coverage of prediction uncertainty
     abs_error = abs(df['predicted_y'] - df['true_y'])
@@ -78,51 +80,53 @@ def plot_metrics(csv_file_path):
     print("Metrics calculated.")
 
     # Create figure and subplots
-    fig, axes = plt.subplots(5, 1, sharex=True, figsize=(10, 15))
-    fig.suptitle("PyGPTreeo Performance Metrics", fontsize=16)
+    fig, axes = plt.subplots(5, 1, sharex=True, figsize=(15, 15))
+    fig.suptitle("PyGPTreeo performance metrics", fontsize=16)
 
     # Plot 1: Average prediction time
-    axes[0].plot(processed_points, avg_predict_time, label="Avg. Predict Time (last 2000 pts)")
+    axes[0].plot(processed_points, avg_predict_time, label="Avg. predict time (last 2000 pts)", linewidth=2.0)
     axes[0].set_ylabel("Time (s)")
-    axes[0].set_title("Average Prediction Time per Point")
+    axes[0].set_title("Average prediction time per point")
     axes[0].grid(True)
     axes[0].legend()
 
     # Plot 2: Average tree update time
-    axes[1].plot(processed_points, avg_update_time, label="Avg. Update Time (last 2000 pts)", color='orange')
+    axes[1].plot(processed_points, avg_update_time, label="Avg. update time (last 2000 pts)", color='orange', linewidth=2.0)
     axes[1].set_ylabel("Time (s)")
-    axes[1].set_title("Average Tree Update Time per Point")
+    axes[1].set_title("Average tree update time per point")
     axes[1].grid(True)
     axes[1].legend()
 
     # Plot 3: RMSE
-    axes[2].plot(processed_points, rmse, label="RMSE (last 2000 pts)", color='green')
+    axes[2].plot(processed_points, rmse, label="RMSE (last 2000 pts)", color='green', linewidth=2.0)
     axes[2].set_ylabel("RMSE")
-    axes[2].set_title("RMSE for Predictions")
+    axes[2].set_title("RMSE for predictions")
     axes[2].grid(True)
     axes[2].legend()
 
     # Plot 4: Fraction of predictions within 1% of true value
-    axes[3].plot(processed_points, fraction_within_1_percent, label="Fraction < 1% Error (last 2000 pts)", color='red')
+    axes[3].plot(processed_points, fraction_within_1_percent, label="Fraction < 1% Error (last 2000 pts)", color='red', linewidth=2.0)
+    axes[3].plot(processed_points, fraction_within_10_percent, label="Fraction < 10% Error (last 2000 pts)", color='orange', linewidth=2.0)
     axes[3].set_ylabel("Fraction")
-    axes[3].set_title("Fraction of Predictions within 1% of True Value")
+    axes[3].set_title("Fraction of predictions within x% of true value")
     axes[3].grid(True)
     axes[3].legend()
 
     # Plot 5: Empirical coverage of prediction uncertainty
-    axes[4].plot(processed_points, empirical_coverage, label="Empirical Coverage (last 2000 pts)", color='purple')
+    axes[4].plot(processed_points, empirical_coverage, label="Empirical coverage (last 2000 pts)", color='purple', linewidth=2.0)
+    axes[4].plot([processed_points[0], processed_points[-1]], [0.68, 0.68], "--", color='black', linewidth=2.0)
     axes[4].set_ylabel("Fraction")
-    axes[4].set_title("Empirical Coverage of Prediction Uncertainty")
+    axes[4].set_title("Empirical coverage of prediction uncertainty")
     axes[4].grid(True)
     axes[4].legend()
 
     # Common X-axis label
-    axes[-1].set_xlabel("Total Points Processed")
+    axes[-1].set_xlabel("Total points processed")
 
     plt.tight_layout(rect=[0, 0, 1, 0.96]) # Adjust layout to make space for suptitle
 
     output_plot_file = "performance_metrics.png"
-    plt.savefig(output_plot_file)
+    plt.savefig(output_plot_file, dpi=300)
     print(f"Plot saved to {output_plot_file}")
     # plt.show() # Optionally display the plot
 

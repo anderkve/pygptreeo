@@ -39,11 +39,11 @@ target_name = "eggholder"
 target = target_dict[target_name]
 
 n_dims = 2
-n_pts = 2500
+n_pts = 100000
 
 Nbar = 100
 theta = 1e-4
-retrain_step = 20
+retrain_step = 100
 
 x_min = 0.0
 x_max = 1.0
