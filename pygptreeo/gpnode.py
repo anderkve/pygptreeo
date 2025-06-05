@@ -9,6 +9,7 @@ from sys import float_info
 import warnings
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
+from sklearn.utils import resample
 
 from pygptreeo.default_gpr import Default_GPR
 
@@ -55,7 +56,8 @@ class GPNode(Node):
                  name="0",
                  split_dimension_criteria='max_spread',
                  splitting_strategy: Optional[str] = 'standard',
-                 n_GPs_per_node: int = 1):
+                 n_GPs_per_node: int = 1,
+                 n_train: Optional[int] = None):
         """Initializes a GPNode.
 
         Args:
@@ -84,9 +86,11 @@ class GPNode(Node):
                 should manage. Defaults to 1. If `len(my_GPRs)` does not match
                 `n_GPs_per_node`, behavior might vary based on method (e.g. fitting might
                 train all GPRs in `my_GPRs`, prediction might use all in `my_GPRs` for PoE).
+            n_train (Optional[int]): The number of training points. Stored as an attribute.
         """
         
         super().__init__(*args)
+        self.n_train = n_train
 
         self.Nbar = Nbar
         self.n_GPs_per_node = n_GPs_per_node
@@ -187,6 +191,7 @@ class GPNode(Node):
             'retrain_every_n_points': self.retrain_every_n_points,
             'split_dimension_criteria': self.split_dimension_criteria,
             'splitting_strategy': self.splitting_strategy,
+            'n_train': self.n_train,
         }
 
         # Create child nodes with a copy of the parent GP
@@ -381,162 +386,234 @@ class GPNode(Node):
             use_bounds = [(np.max([min_ls_for_bounds, 0.01*x_ranges[i]]), np.max([10*min_ls_for_bounds, 10*x_ranges[i]])) for i in range(self.n_features)]
             use_init_points = [0.1*x_ranges[i] if x_ranges[i] > 0 else min_ls_for_bounds for i in range(self.n_features)]
 
+            # Initialize self.gp_rmse_scores as a list to store RMSEs of initial GPRs
+            self.gp_rmse_scores = []
 
             if self.n_GPs_per_node == 1:
-                if X_train_gpr.shape[0] == 0: # Already checked, but good for safety
+                if X_train_gpr.shape[0] == 0:
                     warnings.warn(f"Node {self.name}, GP 0: No training data. This GP will not be trained.", RuntimeWarning)
-                    self.gp_rmse_scores = [np.nan]
-                    return False
+                    self.gp_rmse_scores.append(np.nan)
+                    # No need to return False yet, final GP might still be creatable if logic allows, though unlikely here
+                else:
+                    X_subset_for_this_gp, y_subset_for_this_gp = X_train_gpr, y_train_gpr
+                    if self.n_train is not None and 0 < self.n_train < X_train_gpr.shape[0]:
+                        X_subset_for_this_gp, y_subset_for_this_gp = resample(
+                            X_train_gpr, y_train_gpr, replace=False, n_samples=self.n_train, random_state=42
+                        )
 
-                best_lml = float_info.max
-                # temp_GPR = self.my_GPRs[0] # This should be a deepcopy for kernel trials
+                    best_lml = float_info.max
+                    successfully_fitted_this_gp = False
+                    for kernel_idx, kernel in enumerate(self.my_GPRs[0].kernel_alternatives):
+                        params = kernel.get_params(deep=True)
+                        new_params = {}
+                        for k,v in params.items():
+                            if k.endswith("__length_scale_bounds"): new_params[k] = use_bounds
+                            elif k.endswith("__length_scale"): new_params[k] = use_init_points
+                        current_kernel_alternative = deepcopy(kernel)
+                        current_kernel_alternative.set_params(**new_params)
 
-                for kernel_idx, kernel in enumerate(self.my_GPRs[0].kernel_alternatives):
-                    params = kernel.get_params(deep=True)
-                    new_params = {}
-                    for k,v in params.items():
-                        if k.endswith("__length_scale_bounds"): new_params[k] = use_bounds
-                        elif k.endswith("__length_scale"): new_params[k] = use_init_points
-                    current_kernel_alternative = deepcopy(kernel)
-                    current_kernel_alternative.set_params(**new_params)
+                        temp_GPR_instance = deepcopy(self.my_GPRs[0])
+                        temp_GPR_instance.kernel = current_kernel_alternative
 
-                    temp_GPR_instance = deepcopy(self.my_GPRs[0])
-                    temp_GPR_instance.kernel = current_kernel_alternative
+                        try:
+                            temp_GPR_instance.fit(X_subset_for_this_gp, y_subset_for_this_gp)
+                            lml = temp_GPR_instance.log_marginal_likelihood_value_
+                            if lml < best_lml:
+                                self.my_GPRs[0] = deepcopy(temp_GPR_instance)
+                                best_lml = lml
+                                successfully_fitted_this_gp = True
+                        except Exception as e:
+                            print(f"Node {self.name}, GP 0, Kernel {kernel_idx}: Error during GPR fit with kernel {current_kernel_alternative}. Error: {e}")
 
-                    try:
-                        temp_GPR_instance.fit(X_train_gpr, y_train_gpr)
-                        lml = temp_GPR_instance.log_marginal_likelihood_value_
-                        if lml < best_lml:
-                            self.my_GPRs[0] = deepcopy(temp_GPR_instance)
-                            best_lml = lml
-                    except Exception as e:
-                        print(f"Node {self.name}, GP 0, Kernel {kernel_idx}: Error during GPR fit with kernel {current_kernel_alternative}. Error: {e}")
-
-                if X_val is not None and X_val.shape[0] > 0 and hasattr(self.my_GPRs[0], 'kernel_'):
-                    try:
-                        y_pred_val, _ = self.my_GPRs[0].predict(X_val, return_std=True) # Ensure predict can handle return_std like this
-                        y_pred_val = np.asarray(y_pred_val).reshape(-1,1) # Ensure shape for mean_squared_error
-                        rmse = np.sqrt(mean_squared_error(y_val, y_pred_val))
-                        self.gp_rmse_scores = [rmse]
-                    except Exception as e:
-                        print(f"Node {self.name}, GP 0: Error during RMSE calculation. Error: {e}")
-                        self.gp_rmse_scores = [np.nan]
-                else: # Validation skipped or GPR not successfully fit
-                     self.gp_rmse_scores = [np.nan]
+                    if X_val is not None and X_val.shape[0] > 0 and successfully_fitted_this_gp:
+                        try:
+                            y_pred_val, _ = self.my_GPRs[0].predict(X_val, return_std=True)
+                            y_pred_val = np.asarray(y_pred_val).reshape(-1,1)
+                            rmse = np.sqrt(mean_squared_error(y_val, y_pred_val))
+                            self.gp_rmse_scores.append(rmse)
+                        except Exception as e:
+                            print(f"Node {self.name}, GP 0: Error during RMSE calculation. Error: {e}")
+                            self.gp_rmse_scores.append(np.nan)
+                    else:
+                        self.gp_rmse_scores.append(np.nan)
 
             else: # n_GPs_per_node > 1
                 n_total_points_in_train_gpr = X_train_gpr.shape[0]
                 if n_total_points_in_train_gpr == 0:
                     warnings.warn(f"Node {self.name}: No training data for multi-GP. No GPs will be trained.", RuntimeWarning)
                     self.gp_rmse_scores = [np.nan] * self.n_GPs_per_node
-                    return False
+                else:
+                    MIN_POINTS_PER_GP_FOR_PARTITIONING = 2
+                    partition_data_among_gps = (n_total_points_in_train_gpr >= self.n_GPs_per_node * MIN_POINTS_PER_GP_FOR_PARTITIONING)
 
-                MIN_POINTS_PER_GP_FOR_PARTITIONING = 2
-                partition_data_among_gps = (n_total_points_in_train_gpr >= self.n_GPs_per_node * MIN_POINTS_PER_GP_FOR_PARTITIONING)
-
-                gp_data_indices_list = []
-                if partition_data_among_gps:
-                    indices = np.arange(n_total_points_in_train_gpr)
-                    np.random.shuffle(indices)
-                    gp_data_indices_list = np.array_split(indices, self.n_GPs_per_node)
-
-                temp_rmse_scores = []
-                for i in range(self.n_GPs_per_node):
-                    X_subset_for_this_gp, y_subset_for_this_gp = None, None
-
+                    gp_data_indices_list = []
                     if partition_data_among_gps:
-                        gp_indices = gp_data_indices_list[i]
-                        if len(gp_indices) == 0:
-                            warnings.warn(f"Node {self.name}, GP {i}: No data points assigned after partitioning. This GP will not be trained. RMSE will be NaN.", RuntimeWarning)
-                            temp_rmse_scores.append(np.nan)
+                        indices = np.arange(n_total_points_in_train_gpr)
+                        np.random.shuffle(indices) # Shuffle before splitting for more random partitions
+                        gp_data_indices_list = np.array_split(indices, self.n_GPs_per_node)
+
+                    for i in range(self.n_GPs_per_node):
+                        X_pool_for_gp_i, y_pool_for_gp_i = X_train_gpr, y_train_gpr
+                        if partition_data_among_gps:
+                            gp_indices = gp_data_indices_list[i]
+                            if len(gp_indices) == 0:
+                                warnings.warn(f"Node {self.name}, GP {i}: No data points assigned after partitioning. This GP will not be trained. RMSE will be NaN.", RuntimeWarning)
+                                self.gp_rmse_scores.append(np.nan)
+                                continue
+                            X_pool_for_gp_i = X_train_gpr[gp_indices]
+                            y_pool_for_gp_i = y_train_gpr[gp_indices]
+
+                        X_subset_for_this_gp, y_subset_for_this_gp = X_pool_for_gp_i, y_pool_for_gp_i
+                        if self.n_train is not None and 0 < self.n_train < X_pool_for_gp_i.shape[0]:
+                            X_subset_for_this_gp, y_subset_for_this_gp = resample(
+                                X_pool_for_gp_i, y_pool_for_gp_i, replace=False, n_samples=self.n_train, random_state=42+i # Vary random state per GP
+                            )
+
+                        if X_subset_for_this_gp.shape[0] == 0:
+                            warnings.warn(f"Node {self.name}, GP {i}: Final X_subset_for_this_gp is empty. This GP will not be trained. RMSE will be NaN.", RuntimeWarning)
+                            self.gp_rmse_scores.append(np.nan)
                             continue
-                        X_subset_for_this_gp = X_train_gpr[gp_indices]
-                        y_subset_for_this_gp = y_train_gpr[gp_indices]
-                    else:
-                        X_subset_for_this_gp = X_train_gpr
-                        y_subset_for_this_gp = y_train_gpr
 
-                    if X_subset_for_this_gp.shape[0] == 0:
-                        warnings.warn(f"Node {self.name}, GP {i}: Final X_subset_for_this_gp is empty. This GP will not be trained. RMSE will be NaN.", RuntimeWarning)
-                        temp_rmse_scores.append(np.nan)
-                        continue
+                        current_gp_to_train = self.my_GPRs[i]
+                        best_lml_for_this_gp = float_info.max
+                        successfully_fitted_this_gp = False
 
-                    current_gp_to_train = self.my_GPRs[i]
-                    best_lml_for_this_gp = float_info.max
-
-                    successfully_fitted_this_gp = False
-                    if not hasattr(current_gp_to_train, 'kernel_alternatives') or not current_gp_to_train.kernel_alternatives:
-                        warnings.warn(f"Node {self.name}, GP {i}: No kernel alternatives found. Fitting with current kernel.", RuntimeWarning)
-                        try:
-                            if current_gp_to_train.kernel is None:
-                                warnings.warn(f"Node {self.name}, GP {i}: Kernel is None. Assigning a default Matern kernel.", RuntimeWarning)
-                                current_gp_to_train.kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=1.5) + WhiteKernel(noise_level=1.0)
-
-                            gpr_copy_for_fit = deepcopy(current_gp_to_train)
-                            gpr_copy_for_fit.fit(X_subset_for_this_gp, y_subset_for_this_gp)
-                            self.my_GPRs[i] = gpr_copy_for_fit
-                            successfully_fitted_this_gp = True
-                        except Exception as e:
-                            print(f"Node {self.name}, GP {i}: Error during GPR fit with current kernel: {e}")
-                    else:
-                        temp_gpr_for_kernel_search = deepcopy(current_gp_to_train)
-                        for kernel_idx, kernel_alt in enumerate(current_gp_to_train.kernel_alternatives):
-                            params = kernel_alt.get_params(deep=True)
-                            new_kernel_params = {}
-                            for k, v_param in params.items():
-                                if k.endswith("__length_scale_bounds"): new_kernel_params[k] = use_bounds
-                                elif k.endswith("__length_scale"): new_kernel_params[k] = use_init_points
-
-                            current_kernel_to_try = deepcopy(kernel_alt)
-                            current_kernel_to_try.set_params(**new_kernel_params)
-
-                            gpr_instance_for_this_kernel = deepcopy(temp_gpr_for_kernel_search)
-                            gpr_instance_for_this_kernel.kernel = current_kernel_to_try
-
+                        if not hasattr(current_gp_to_train, 'kernel_alternatives') or not current_gp_to_train.kernel_alternatives:
+                            warnings.warn(f"Node {self.name}, GP {i}: No kernel alternatives found. Fitting with current kernel.", RuntimeWarning)
                             try:
-                                gpr_instance_for_this_kernel.fit(X_subset_for_this_gp, y_subset_for_this_gp)
-                                lml = gpr_instance_for_this_kernel.log_marginal_likelihood_value_
-                                if lml < best_lml_for_this_gp:
-                                    self.my_GPRs[i] = deepcopy(gpr_instance_for_this_kernel)
-                                    best_lml_for_this_gp = lml
-                                    successfully_fitted_this_gp = True
-                            except Exception as e:
-                                pass
+                                if current_gp_to_train.kernel is None:
+                                    warnings.warn(f"Node {self.name}, GP {i}: Kernel is None. Assigning a default Matern kernel.", RuntimeWarning)
+                                    current_gp_to_train.kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=1.5) + WhiteKernel(noise_level=1.0)
 
-                    if X_val is not None and X_val.shape[0] > 0 and successfully_fitted_this_gp:
-                        try:
-                            y_pred_val_i, _ = self.my_GPRs[i].predict(X_val, return_std=True)
-                            y_pred_val_i = np.asarray(y_pred_val_i).reshape(-1,1)
-                            rmse_i = np.sqrt(mean_squared_error(y_val, y_pred_val_i))
-                            temp_rmse_scores.append(rmse_i)
-                        except Exception as e:
-                            print(f"Node {self.name}, GP {i}: Error during RMSE calculation. Error: {e}")
-                            temp_rmse_scores.append(np.nan)
-                    else:
-                        temp_rmse_scores.append(np.nan)
-                self.gp_rmse_scores = temp_rmse_scores
+                                gpr_copy_for_fit = deepcopy(current_gp_to_train)
+                                gpr_copy_for_fit.fit(X_subset_for_this_gp, y_subset_for_this_gp)
+                                self.my_GPRs[i] = gpr_copy_for_fit
+                                successfully_fitted_this_gp = True
+                            except Exception as e:
+                                print(f"Node {self.name}, GP {i}: Error during GPR fit with current kernel: {e}")
+                        else:
+                            temp_gpr_for_kernel_search = deepcopy(current_gp_to_train)
+                            for kernel_idx, kernel_alt in enumerate(current_gp_to_train.kernel_alternatives):
+                                params = kernel_alt.get_params(deep=True)
+                                new_kernel_params = {}
+                                for k, v_param in params.items():
+                                    if k.endswith("__length_scale_bounds"): new_kernel_params[k] = use_bounds
+                                    elif k.endswith("__length_scale"): new_kernel_params[k] = use_init_points
+
+                                current_kernel_to_try = deepcopy(kernel_alt)
+                                current_kernel_to_try.set_params(**new_kernel_params)
+
+                                gpr_instance_for_this_kernel = deepcopy(temp_gpr_for_kernel_search)
+                                gpr_instance_for_this_kernel.kernel = current_kernel_to_try
+
+                                try:
+                                    gpr_instance_for_this_kernel.fit(X_subset_for_this_gp, y_subset_for_this_gp)
+                                    lml = gpr_instance_for_this_kernel.log_marginal_likelihood_value_
+                                    if lml < best_lml_for_this_gp:
+                                        self.my_GPRs[i] = deepcopy(gpr_instance_for_this_kernel)
+                                        best_lml_for_this_gp = lml
+                                        successfully_fitted_this_gp = True
+                                except Exception as e:
+                                    # print(f"Node {self.name}, GP {i}, Kernel {kernel_idx}: Error during GPR fit with kernel {current_kernel_to_try}. Error: {e}")
+                                    pass
+
+                        if X_val is not None and X_val.shape[0] > 0 and successfully_fitted_this_gp:
+                            try:
+                                y_pred_val_i, _ = self.my_GPRs[i].predict(X_val, return_std=True)
+                                y_pred_val_i = np.asarray(y_pred_val_i).reshape(-1,1)
+                                rmse_i = np.sqrt(mean_squared_error(y_val, y_pred_val_i))
+                                self.gp_rmse_scores.append(rmse_i)
+                            except Exception as e:
+                                print(f"Node {self.name}, GP {i}: Error during RMSE calculation. Error: {e}")
+                                self.gp_rmse_scores.append(np.nan)
+                        else:
+                            self.gp_rmse_scores.append(np.nan)
+
+            # Select best initial GP
+            best_gp_index = 0
+            if not self.gp_rmse_scores: # Empty list
+                warnings.warn(f"Node {self.name}: No RMSE scores available for initial GPs. Defaulting to GP at index 0.", RuntimeWarning)
+            else:
+                # Replace NaNs with a large number for argmin, but only if there are non-NaNs
+                # If all are NaN, argmin([np.nan, np.nan]) raises error.
+                # np.nanargmin behaves correctly if all are NaN, returning 0.
+                # However, let's be explicit.
+                if all(np.isnan(score) for score in self.gp_rmse_scores):
+                    warnings.warn(f"Node {self.name}: All initial GP RMSEs are NaN. Defaulting to GP at index 0.", RuntimeWarning)
+                    best_gp_index = 0
+                else:
+                    try:
+                        best_gp_index = np.nanargmin(self.gp_rmse_scores)
+                    except ValueError: # Should be caught by all(np.isnan(...))
+                         warnings.warn(f"Node {self.name}: Error finding best GP index from RMSEs {self.gp_rmse_scores}. Defaulting to 0.", RuntimeWarning)
+                         best_gp_index = 0
+
+
+            best_initial_gp = self.my_GPRs[best_gp_index]
+
+            # Create and train final GP
+            if X_train_gpr.shape[0] > 0:
+                if hasattr(best_initial_gp, 'kernel_') and best_initial_gp.kernel_ is not None:
+                    final_gp = deepcopy(self.my_GPRs[0]) # Use first GP as template for type and non-kernel params
+                    final_gp.kernel = deepcopy(best_initial_gp.kernel_)
+                    final_gp.optimizer = None # Disable hyperparameter optimization
+
+                    try:
+                        final_gp.fit(X_train_gpr, y_train_gpr)
+
+                        final_gp_rmse = np.nan
+                        if X_val is not None and X_val.shape[0] > 0:
+                            try:
+                                y_pred_val_final, _ = final_gp.predict(X_val, return_std=True)
+                                y_pred_val_final = np.asarray(y_pred_val_final).reshape(-1,1)
+                                final_gp_rmse = np.sqrt(mean_squared_error(y_val, y_pred_val_final))
+                            except Exception as e:
+                                print(f"Node {self.name}, Final GP: Error during RMSE calculation. Error: {e}")
+
+                        self.gp_rmse_scores.append(final_gp_rmse) # Add RMSE of the final GP
+                        self.my_GPRs.append(final_gp) # Add the final GP to the list
+
+                    except Exception as e:
+                        print(f"Node {self.name}: Error during final GP training. Error: {e}")
+                        # self.gp_rmse_scores.append(np.nan) # If final GP fails, its RMSE is NaN
+
+                else:
+                    warnings.warn(f"Node {self.name}: Best initial GP (index {best_gp_index}) has no fitted kernel. Skipping final GP creation.", RuntimeWarning)
+                    # self.gp_rmse_scores.append(np.nan) # Add a NaN for the final GP's slot if it's not created
+            else:
+                warnings.warn(f"Node {self.name}: X_train_gpr is empty. Skipping final GP creation.", RuntimeWarning)
+                # self.gp_rmse_scores.append(np.nan) # Add a NaN for the final GP's slot
+
 
             # Print statements
             x_range_strs = [f"({x_min_vals[i_f]:.2e},{x_max_vals[i_f]:.2e})" for i_f in range(self.n_features)]
             x_range_str = "[" + ", ".join(x_range_strs) + "]"
 
-            rmse_print_str = "N/A"
-            if self.gp_rmse_scores:
-                if all(np.isnan(s) for s in self.gp_rmse_scores):
-                    rmse_print_str = "NaN (validation skipped or failed)"
+            # RMSE print string needs to handle initial GPs and the final one
+            rmse_print_parts = []
+            num_initial_gps = self.n_GPs_per_node
+            for i in range(num_initial_gps):
+                if i < len(self.gp_rmse_scores) and not np.isnan(self.gp_rmse_scores[i]):
+                    rmse_print_parts.append(f"GP{i}_RMSE: {self.gp_rmse_scores[i]:.3f}")
                 else:
-                    rmse_print_str = ", ".join([f"{s:.3f}" if not np.isnan(s) else "NaN" for s in self.gp_rmse_scores])
+                    rmse_print_parts.append(f"GP{i}_RMSE: NaN")
 
+            if len(self.my_GPRs) > num_initial_gps: # Final GP was added
+                 final_gp_rmse_idx = num_initial_gps # RMSE for final GP is at this index in gp_rmse_scores
+                 if final_gp_rmse_idx < len(self.gp_rmse_scores) and not np.isnan(self.gp_rmse_scores[final_gp_rmse_idx]):
+                     rmse_print_parts.append(f"FinalGP_RMSE: {self.gp_rmse_scores[final_gp_rmse_idx]:.3f}")
+                 else:
+                     rmse_print_parts.append("FinalGP_RMSE: NaN")
 
-            if self.n_GPs_per_node == 1:
-                kernel_str = str(self.my_GPRs[0].kernel_) if hasattr(self.my_GPRs[0], 'kernel_') else 'N/A'
-                print(f"Trained node {self.name} (1 GP): x_range: {x_range_str} RMSE: [{rmse_print_str}] kernel: {kernel_str}")
-            else:
-                print(f"Trained node {self.name} ({self.n_GPs_per_node} GPs): x_range: {x_range_str} RMSEs: [{rmse_print_str}]")
-                for i, gp in enumerate(self.my_GPRs):
-                    kernel_str = str(gp.kernel_) if hasattr(gp, 'kernel_') and gp.kernel_ is not None else \
-                                 (str(gp.kernel) + " (default, not optimized)" if hasattr(gp, 'kernel') and gp.kernel is not None else "Not trained")
-                    print(f"  GP {i} kernel: {kernel_str}")
+            rmse_print_str = ", ".join(rmse_print_parts)
+
+            print(f"Trained node {self.name} ({len(self.my_GPRs)} GPs total): x_range: {x_range_str} [{rmse_print_str}]")
+            for i, gp in enumerate(self.my_GPRs):
+                gp_label = f"Initial GP {i}" if i < num_initial_gps else f"Final GP (from GP{best_gp_index})"
+                kernel_str = str(gp.kernel_) if hasattr(gp, 'kernel_') and gp.kernel_ is not None else \
+                             (str(gp.kernel) + " (default, not optimized)" if hasattr(gp, 'kernel') and gp.kernel is not None else "Not trained")
+                print(f"  {gp_label} kernel: {kernel_str}")
+
 
             did_train = True
         return did_train
@@ -662,15 +739,11 @@ class GPNode(Node):
 
 
     def predict(self, x: np.ndarray, return_std=True, use_calibrated_sigma=False):
-        """Evaluates the prediction from this node's GPR(s) at input point(s) x.
+        """Evaluates the prediction from this node's final GPR at input point(s) x.
 
-        If `self.n_GPs_per_node == 1` (and `self.my_GPRs` contains at least one GPR),
-        this method uses `self.my_GPRs[0]` for prediction.
-        If `self.n_GPs_per_node > 1` (and `self.my_GPRs` contains corresponding GPRs),
-        it combines predictions from all GPRs in `self.my_GPRs` using the
-        Product of Experts (PoE) method. Each expert (GP) provides a mean and
-        variance, and these are combined to yield a single predictive mean and variance.
-        Untrained GPRs (those without a `kernel_` attribute) are skipped in PoE.
+        The method attempts to use the last GPR in `self.my_GPRs`, which is
+        expected to be the "final GP" trained on all node data with a selected kernel.
+        Fallbacks are in place if this GP is not available or trained.
 
         Args:
             x (np.ndarray): The input point(s) at which to make predictions.
@@ -679,9 +752,7 @@ class GPNode(Node):
                 prediction. Defaults to True.
             use_calibrated_sigma (bool): If True, the returned `sigma_pred`
                 (standard deviation) is scaled by the node's `self.sigma_scaler`
-                attribute. For PoE, this scaling is applied to the final combined
-                standard deviation.
-                # TODO: Revisit calibration for PoE; fine-grained per-expert calibration might be better.
+                attribute.
 
         Returns:
             tuple:
@@ -689,90 +760,63 @@ class GPNode(Node):
                 - sigma_pred (np.ndarray): The standard deviation of the
                   prediction(s). Only returned if `return_std` is True.
         """
-        if self.n_GPs_per_node == 1:
-            # Standard prediction using the single GPR
-            if not self.my_GPRs: # Should not happen if initialized correctly
-                warnings.warn(f"Node {self.name}: No GPRs available for prediction.", RuntimeWarning)
-                return (np.zeros((x.shape[0], 1)), np.ones((x.shape[0], 1))) if return_std else np.zeros((x.shape[0], 1))
+        predicting_gp = None
 
-            mu_pred_temp, sigma_pred_temp = self.my_GPRs[0].predict(x, return_std=return_std)
+        if not self.my_GPRs:
+            warnings.warn(f"Node {self.name}: No GPRs available for prediction. Returning default predictions.", RuntimeWarning)
+            # Default predictions handled below if predicting_gp remains None
+        # Check if final GP exists (list length is n_GPs_per_node + 1)
+        elif len(self.my_GPRs) == self.n_GPs_per_node + 1:
+            predicting_gp = self.my_GPRs[-1]
+        elif self.my_GPRs: # Final GP does not exist, fallback to first initial GP if available
+            warnings.warn(f"Node {self.name}: Final GP not found (expected {self.n_GPs_per_node + 1} GPRs, found {len(self.my_GPRs)}). Using first GPR from initial set for prediction.", RuntimeWarning)
+            predicting_gp = self.my_GPRs[0]
+        else: # Should be caught by 'if not self.my_GPRs:'
+            warnings.warn(f"Node {self.name}: Unexpected state of my_GPRs. Returning default predictions.", RuntimeWarning)
+            # Default predictions handled below
 
-            mu_pred = np.asarray(mu_pred_temp).reshape(-1, 1)
+        if predicting_gp is None or not hasattr(predicting_gp, 'kernel_') or predicting_gp.kernel_ is None:
+            if predicting_gp is None and self.my_GPRs : #This means it fell through the logic above without assigning (e.g. my_GPRs not empty but failed other conditions)
+                 warnings.warn(f"Node {self.name}: No valid GPR selected for prediction (my_GPRs has {len(self.my_GPRs)} elements). Returning default predictions.", RuntimeWarning)
+            elif predicting_gp: # GP was selected but not trained
+                 warnings.warn(f"Node {self.name}: Selected GPR for prediction (type: {type(predicting_gp)}) is not trained. Returning default predictions.", RuntimeWarning)
+            # If predicting_gp is None and self.my_GPRs is empty, the first warning already covered it.
+
+            mu_pred = np.zeros((x.shape[0], 1))
+            sigma_pred = np.ones((x.shape[0], 1)) if return_std else None
+
             if return_std:
-                if sigma_pred_temp is not None:
-                    sigma_pred = np.asarray(sigma_pred_temp).reshape(-1, 1)
-                else: # Should not happen if GPR works correctly and return_std=True
-                    sigma_pred = np.ones_like(mu_pred)
-                    warnings.warn(f"Node {self.name}: GPR predict() returned None for std even when return_std=True. Using np.ones_like(mu_pred).", RuntimeWarning)
+                return mu_pred, sigma_pred
             else:
-                sigma_pred = None
-        else:
-            # Product of Experts (PoE) for multiple GPRs
-            # Initialize sums as 2D column vectors
-            sum_of_precisions = np.zeros((x.shape[0], 1))
-            sum_of_weighted_means = np.zeros((x.shape[0], 1))
+                return mu_pred
 
-            active_experts = 0
-            for i, gp in enumerate(self.my_GPRs):
-                try:
-                    # Ensure each GP was actually trained (has kernel_)
-                    if not hasattr(gp, 'kernel_') or gp.kernel_ is None:
-                        warnings.warn(f"Node {self.name}, GP {i}: Has not been trained (no kernel_). Skipping in PoE.", RuntimeWarning)
-                        continue # Skip this GP if it wasn't trained
-
-                    mu_i, sigma_i = gp.predict(x, return_std=True)
-
-                    # Ensure mu_i and sigma_i are 2D column vectors
-                    mu_i = np.asarray(mu_i).reshape(-1, 1)
-                    sigma_i = np.asarray(sigma_i).reshape(-1, 1)
-
-                    var_i = sigma_i**2 + float_info.epsilon  # Add epsilon for numerical stability
-                    prec_i = 1.0 / var_i # This will also be a 2D column vector
-
-                    sum_of_precisions += prec_i
-                    sum_of_weighted_means += mu_i * prec_i # Element-wise multiplication
-                    active_experts +=1
-                except Exception as e:
-                    warnings.warn(f"Node {self.name}, GP {i}: Error during prediction. Error: {e}. Skipping this GP in PoE.", RuntimeWarning)
-                    continue # Skip this GP if prediction fails
-
-            if active_experts == 0:
-                 warnings.warn(f"Node {self.name}: No active experts for PoE prediction. Returning zeros.", RuntimeWarning)
-                 mu_pred = np.zeros((x.shape[0], 1)) # Ensure 2D
-                 sigma_pred = np.ones((x.shape[0], 1)) if return_std else None # Default to high uncertainty, ensure 2D
-            elif np.any(sum_of_precisions == 0):
-                # This case should ideally be rare if epsilon is added to variance
-                # and active_experts > 0. Could happen if all sigmas were huge.
-                warnings.warn(f"Node {self.name}: Sum of precisions is zero for some inputs in PoE. PoE results might be unstable. Returning mean of means.", RuntimeWarning)
-                # Fallback: average of means, and average of variances (less ideal but better than NaN)
-                # This part needs careful consideration for a robust fallback.
-                # For now, if sum_of_precisions is 0, it implies all variances were effectively infinite.
-                # We might return the mean of the first expert or an average.
-                # Let's use the first valid expert's prediction as a simple fallback or average if sum_prec is 0.
-                # For simplicity, if sum_of_precisions is zero, let's take the prediction of the first GP as a fallback.
-                # A more robust fallback might average the means and variances.
-                # For now, returning a highly uncertain prediction.
-                mu_pred = sum_of_weighted_means / (sum_of_precisions + float_info.epsilon) # Avoid direct division by zero
-                sigma_pred = np.full((x.shape[0], 1), np.sqrt(1.0 / float_info.epsilon)) if return_std else None # Ensure 2D
-
+        # Proceed with prediction using the chosen predicting_gp
+        try:
+            mu_pred_temp, sigma_pred_temp = predicting_gp.predict(x, return_std=return_std)
+        except Exception as e:
+            warnings.warn(f"Node {self.name}: Error during GPR predict call: {e}. Returning default predictions.", RuntimeWarning)
+            mu_pred = np.zeros((x.shape[0], 1))
+            sigma_pred = np.ones((x.shape[0], 1)) if return_std else None
+            if return_std:
+                return mu_pred, sigma_pred
             else:
-                combined_var = 1.0 / sum_of_precisions
-                combined_mean = combined_var * sum_of_weighted_means
-                mu_pred = combined_mean
-                sigma_pred = np.sqrt(combined_var) if return_std else None # Will be (N,1)
+                return mu_pred
 
-        if return_std and sigma_pred is None: # Should ideally not happen if logic above is correct
-             sigma_pred = np.ones((x.shape[0],1)) # Fallback uncertainty, ensure 2D
-
-        if use_calibrated_sigma and return_std and sigma_pred is not None:
-            sigma_pred = sigma_pred * self.sigma_scaler
-            # TODO: Revisit calibration for PoE; fine-grained per-expert calibration might be better.
+        mu_pred = np.asarray(mu_pred_temp).reshape(-1, 1)
 
         if return_std:
+            if sigma_pred_temp is not None:
+                sigma_pred = np.asarray(sigma_pred_temp).reshape(-1, 1)
+            else:
+                # This case should ideally be handled by the GPR itself if return_std=True
+                sigma_pred = np.ones_like(mu_pred)
+                warnings.warn(f"Node {self.name}: GPR predict() returned None for std even when return_std=True. Using np.ones_like(mu_pred).", RuntimeWarning)
+
+            if use_calibrated_sigma and sigma_pred is not None: # Ensure sigma_pred is not None before scaling
+                sigma_pred = sigma_pred * self.sigma_scaler
             return mu_pred, sigma_pred
         else:
             return mu_pred
-
 
     def register_pred_perf(self, x: np.ndarray, y: float):
         """ Register the residual between prediction and true value at for this data point. """

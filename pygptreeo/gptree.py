@@ -62,6 +62,7 @@ class GPTree:
                  split_dimension_criteria: Optional[str] = 'max_spread',
                  splitting_strategy: Optional[str] = 'standard',
                  n_GPs_per_node: int = 1,
+                 n_train: Optional[int] = None,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -88,11 +89,13 @@ class GPTree:
                 `sklearn.gaussian_process.GaussianProcessRegressor` are used if `GPR` is a class type
                 to instantiate the `GPR_template`. Remaining arguments are passed to the constructor
                 of the root `GPNode` (e.g., `split_position_method`, `retrain_every_n_points`).
+            n_train (Optional[int]): The number of training points to pass to the GPNodes.
         """
         
         self.GPR_template = GPR
         self.splitting_strategy = splitting_strategy
         self.n_GPs_per_node = n_GPs_per_node
+        self.n_train = n_train
 
         # Instantiate the GPR template if it's a class type
         if isinstance(self.GPR_template, type) and issubclass(self.GPR_template, GaussianProcessRegressor):
@@ -131,6 +134,7 @@ class GPTree:
                            split_dimension_criteria=split_dimension_criteria,
                            splitting_strategy=self.splitting_strategy,
                            n_GPs_per_node=self.n_GPs_per_node,
+                           n_train=self.n_train,
                            **gpnode_kwargs)
 
         self.theta = theta

@@ -616,6 +616,285 @@ class TestGPNodeMultiGP(unittest.TestCase):
         for child in parent_node.children:
             self.assertIsNone(child.gp_rmse_scores, "Child node's gp_rmse_scores should be None after creation.")
 
+class TestGPNodeNewTrainingLogic(unittest.TestCase):
+    def setUp(self):
+        self.n_features = 1
+        # Define a base kernel and alternatives for the template GPR
+        base_kernel = ConstantKernel(1.0, constant_value_bounds="fixed") * RBF(1.0, length_scale_bounds="fixed") + WhiteKernel(0.1, noise_level_bounds="fixed")
+        self.gpr_template = Default_GPR(kernel=base_kernel, random_state=0)
+
+        self.gpr_template.kernel_alternatives = [
+            ConstantKernel(1.0, constant_value_bounds="fixed") * RBF(length_scale=ls, length_scale_bounds="fixed") + WhiteKernel(0.1, noise_level_bounds="fixed") for ls in [0.5, 1.0, 2.0]
+        ]
+        self.gpr_template.min_length_scale = 0.001
+
+        self.X_full = np.array([[float(i)] for i in range(20)])
+        self.y_full = np.array([[float(i * 1.5)] for i in range(20)])
+
+        warnings.simplefilter('ignore', ConvergenceWarning)
+        warnings.simplefilter('ignore', RuntimeWarning)
+
+    def _initialize_node_with_data(self, node):
+        node.init_data_set(self.n_features)
+        for i in range(self.X_full.shape[0]):
+            # Ensure y is float for store_point
+            node.store_point(self.X_full[i:i+1], float(self.y_full[i, 0]), increment_buffer=True, shared_point=False)
+
+    def test_n_train_usage_single_gp(self):
+        """Test n_train usage when n_GPs_per_node is 1."""
+        n_train_val = 5
+        node = GPNode(0, my_GPRs=[deepcopy(self.gpr_template)], Nbar=30,
+                        n_GPs_per_node=1, n_train=n_train_val, name="n_train_single_node")
+        self._initialize_node_with_data(node)
+
+        # The GPR instance is node.my_GPRs[0]
+        # We need to mock its fit method.
+        # Since fit_my_GPR deepcopies GPRs for kernel search, we need to patch globally or ensure the mock targets the right instance.
+        # For simplicity, let's assume the *final* selected GPR (after kernel search) is what we care about for n_train.
+        # However, n_train sampling happens *before* kernel search, on X_subset_for_this_gp.
+        # The kernel search loop itself uses this X_subset_for_this_gp.
+
+        # Patching fit on the specific instance that will be used in the kernel search loop.
+        # The initial GPR in my_GPRs is the one whose alternatives are looped through.
+        # A copy of this GPR is made for each alternative, and that copy is fit.
+        # This makes direct mocking of a specific instance's fit tricky if that instance is copied.
+
+        # Let's patch GaussianProcessRegressor.fit globally to inspect calls.
+        with patch('sklearn.gaussian_process.GaussianProcessRegressor.fit', return_value=None) as mock_gpr_fit_global:
+            node.fit_my_GPR(force_training=True)
+
+            # In the case of n_GPs_per_node=1, the initial GPR (node.my_GPRs[0]) is trained.
+            # The n_train sampling is applied to X_train_gpr to create X_subset_for_this_gp.
+            # All kernel alternative fits for this initial GPR should use X_subset_for_this_gp.
+            # The final GP is then trained on full X_train_gpr.
+
+            # We expect fit to be called for each kernel alternative, plus one for the final GP.
+            # The calls for kernel alternatives should use n_train_val samples.
+            # The call for the final GP should use X_train_gpr.shape[0] samples.
+
+            # X_train_gpr size is 0.8 * 20 = 16
+            expected_X_train_gpr_size = 16
+
+            # Check calls related to the initial GPR's kernel search
+            # Number of kernel alternatives is 3.
+            self.assertTrue(mock_gpr_fit_global.call_count >= len(self.gpr_template.kernel_alternatives))
+
+            # All calls for kernel alternatives should use n_train_val samples
+            # These are the first len(self.gpr_template.kernel_alternatives) calls
+            for i in range(len(self.gpr_template.kernel_alternatives)):
+                call_args = mock_gpr_fit_global.call_args_list[i]
+                # self is the GPR instance, args[0] is X, args[1] is y
+                self.assertEqual(call_args[0][0].shape[0], n_train_val,
+                                 f"Initial GP kernel alternative {i} fit with incorrect number of samples.")
+
+            # The last call (or one of the later calls if more GPRs) should be the final GP.
+            # If only 1 initial GP, it's len(alternatives) calls for initial, then 1 for final.
+            if len(node.my_GPRs) == 2: # Initial + Final GP
+                 final_gp_fit_call_args = mock_gpr_fit_global.call_args_list[len(self.gpr_template.kernel_alternatives)]
+                 self.assertEqual(final_gp_fit_call_args[0][0].shape[0], expected_X_train_gpr_size,
+                                  "Final GP fit with incorrect number of samples.")
+
+    def test_n_train_usage_multiple_gps(self):
+        """Test n_train usage when n_GPs_per_node > 1."""
+        n_gps_per_node_val = 2
+        n_train_val = 3 # n_train per initial GP's partition/data pool
+
+        gpr_list = [deepcopy(self.gpr_template) for _ in range(n_gps_per_node_val)]
+        node = GPNode(0, my_GPRs=gpr_list, Nbar=30,
+                        n_GPs_per_node=n_gps_per_node_val, n_train=n_train_val, name="n_train_multi_node")
+        self._initialize_node_with_data(node)
+
+        with patch('sklearn.gaussian_process.GaussianProcessRegressor.fit', return_value=None) as mock_gpr_fit_global:
+            node.fit_my_GPR(force_training=True)
+
+            # X_train_gpr size is 0.8 * 20 = 16
+            # For 2 GPs, each partition of X_train_gpr will be 16 / 2 = 8 points.
+            # Since n_train_val (3) < partition size (8), each initial GP should be trained on 3 points.
+
+            expected_X_train_gpr_size = 16
+            expected_partition_size_approx = expected_X_train_gpr_size / n_gps_per_node_val # 8
+
+            # Number of kernel alternatives for each initial GP
+            num_alternatives = len(self.gpr_template.kernel_alternatives) # 3
+
+            # Total calls for initial GPs = n_gps_per_node_val * num_alternatives
+            # Then one call for the final GP
+
+            self.assertTrue(mock_gpr_fit_global.call_count >= n_gps_per_node_val * num_alternatives)
+
+            for i in range(n_gps_per_node_val): # For each initial GP
+                for k_idx in range(num_alternatives): # For each kernel alternative of that GP
+                    call_index = i * num_alternatives + k_idx
+                    call_args = mock_gpr_fit_global.call_args_list[call_index]
+                    # X_pool_for_gp_i will be approx expected_partition_size_approx
+                    # So, n_train_val should be used as it's smaller.
+                    self.assertEqual(call_args[0][0].shape[0], n_train_val,
+                                     f"Initial GP {i}, kernel alternative {k_idx} fit with incorrect number of samples.")
+
+            if len(node.my_GPRs) == n_gps_per_node_val + 1: # Check if final GP was added
+                final_gp_call_idx = n_gps_per_node_val * num_alternatives
+                final_gp_fit_call_args = mock_gpr_fit_global.call_args_list[final_gp_call_idx]
+                self.assertEqual(final_gp_fit_call_args[0][0].shape[0], expected_X_train_gpr_size,
+                                 "Final GP fit with incorrect number of samples for multi-GP case.")
+
+    def test_final_gp_properties_single_init_gp(self):
+        """Test final GP properties with a single initial GP."""
+        n_gps_per_node_val = 1
+        node = GPNode(0, my_GPRs=[deepcopy(self.gpr_template)], Nbar=30,
+                        n_GPs_per_node=n_gps_per_node_val, n_train=None, name="final_gp_single_node")
+        self._initialize_node_with_data(node)
+
+        # Store the params of the kernel that should be chosen for the initial GP
+        # For this test, let's assume the first kernel alternative is chosen (or any specific one)
+        # Actual kernel selection depends on LML, which is hard to mock perfectly without running fit.
+        # We will instead check if *a* kernel from alternatives was chosen and passed.
+
+        # Let actual fitting run
+        node.fit_my_GPR(force_training=True)
+
+        self.assertEqual(len(node.my_GPRs), n_gps_per_node_val + 1, "Should have initial GP(s) + 1 final GP.")
+        self.assertEqual(len(node.gp_rmse_scores), n_gps_per_node_val + 1, "Should have RMSEs for initial GP(s) + 1 final GP.")
+
+        final_gp = node.my_GPRs[-1]
+        self.assertIsNone(final_gp.optimizer, "Final GP's optimizer should be None.")
+
+        initial_gp_fitted_kernel_params = node.my_GPRs[0].kernel_.get_params()
+        final_gp_kernel_params = final_gp.kernel.get_params() # Kernel before its own fit
+        self.assertEqual(initial_gp_fitted_kernel_params, final_gp_kernel_params,
+                         "Final GP's kernel should be a deepcopy of the best initial GP's fitted kernel.")
+
+        # Check that the final GP was trained on the full X_train_gpr data
+        # X_train_gpr size is 0.8 * 20 = 16
+        expected_X_train_gpr_size = 16
+        self.assertTrue(hasattr(final_gp, 'X_train_'), "Final GP should have X_train_ attribute after fitting.")
+        self.assertEqual(final_gp.X_train_.shape[0], expected_X_train_gpr_size,
+                         "Final GP not trained on the full X_train_gpr (post-validation split).")
+
+    def test_final_gp_properties_multiple_init_gps(self):
+        """Test final GP properties with multiple initial GPs."""
+        n_gps_per_node_val = 2
+        gpr_list = [deepcopy(self.gpr_template) for _ in range(n_gps_per_node_val)]
+        node = GPNode(0, my_GPRs=gpr_list, Nbar=30,
+                        n_GPs_per_node=n_gps_per_node_val, n_train=None, name="final_gp_multi_node")
+        self._initialize_node_with_data(node)
+
+        node.fit_my_GPR(force_training=True)
+
+        self.assertEqual(len(node.my_GPRs), n_gps_per_node_val + 1)
+        self.assertEqual(len(node.gp_rmse_scores), n_gps_per_node_val + 1)
+
+        final_gp = node.my_GPRs[-1]
+        self.assertIsNone(final_gp.optimizer)
+
+        # Determine the best initial GP based on recorded RMSE scores
+        # Note: np.nanargmin raises ValueError if all are NaN. GPNode's logic defaults to index 0 in such cases.
+        best_initial_gp_index = 0
+        if not all(np.isnan(s) for s in node.gp_rmse_scores[:n_gps_per_node_val]):
+            try:
+                best_initial_gp_index = np.nanargmin(node.gp_rmse_scores[:n_gps_per_node_val])
+            except ValueError: # Should be caught by all(np.isnan(...))
+                pass # Keep default 0
+
+        best_initial_gp_fitted_kernel_params = node.my_GPRs[best_initial_gp_index].kernel_.get_params()
+        final_gp_kernel_params = final_gp.kernel.get_params()
+        self.assertEqual(best_initial_gp_fitted_kernel_params, final_gp_kernel_params,
+                         "Final GP's kernel should be a deepcopy of the best initial GP's fitted kernel (multi-GP case).")
+
+        expected_X_train_gpr_size = 16
+        self.assertTrue(hasattr(final_gp, 'X_train_'), "Final GP should have X_train_ attribute after fitting (multi-GP case).")
+        self.assertEqual(final_gp.X_train_.shape[0], expected_X_train_gpr_size,
+                         "Final GP not trained on the full X_train_gpr (multi-GP case).")
+
+    def test_prediction_uses_final_gp(self):
+        """Test that node.predict() uses the final GP."""
+        n_gps_per_node_val = 1
+        node = GPNode(0, my_GPRs=[deepcopy(self.gpr_template)], Nbar=30,
+                        n_GPs_per_node=n_gps_per_node_val, n_train=None, name="predict_final_gp_node")
+        self._initialize_node_with_data(node)
+
+        node.fit_my_GPR(force_training=True) # This will create initial and final GPs
+
+        self.assertEqual(len(node.my_GPRs), n_gps_per_node_val + 1, "Node should have initial + final GPRs.")
+
+        initial_gp = node.my_GPRs[0]
+        final_gp = node.my_GPRs[1] # The final GP
+
+        # Ensure both GPs are "trained" enough to have predict method available
+        # fit_my_GPR should have done this. If not, these mocks are on non-callable attributes.
+        # It's safer to ensure they are callable or mock them regardless.
+        if not callable(getattr(initial_gp, 'predict', None)):
+            initial_gp.predict = MagicMock()
+        if not callable(getattr(final_gp, 'predict', None)):
+            final_gp.predict = MagicMock(return_value=(np.array([[0.0]]), np.array([[1.0]])))
+
+
+        with patch.object(initial_gp, 'predict', wraps=initial_gp.predict) as mock_initial_predict, \
+             patch.object(final_gp, 'predict', wraps=final_gp.predict) as mock_final_predict:
+
+            # Set a specific return value for the final_gp.predict to ensure it's called
+            mock_final_predict.return_value = (np.array([[123.0]]), np.array([[0.5]]))
+
+            test_x = np.array([[0.5]])
+            mu, sigma = node.predict(test_x, return_std=True)
+
+            mock_final_predict.assert_called_once_with(test_x, return_std=True)
+            mock_initial_predict.assert_not_called()
+            self.assertEqual(mu[0,0], 123.0) # Check if the final_gp's mock return value was used
+
+    def test_optimizer_disabled_for_final_gp_fit(self):
+        """Test that the final GP is fitted with optimizer=None."""
+        n_gps_per_node_val = 1
+        node = GPNode(0, my_GPRs=[deepcopy(self.gpr_template)], Nbar=30,
+                        n_GPs_per_node=n_gps_per_node_val, n_train=None, name="final_gp_optimizer_node")
+        self._initialize_node_with_data(node)
+
+        # We need to inspect the GPR instance passed to the 'fit' method for the final GP.
+        # The GPR instance itself will have its optimizer attribute set to None.
+
+        # Mock the fit method of GaussianProcessRegressor instances
+        # to check the optimizer attribute of the instance being fitted.
+
+        original_gpr_fit = GaussianProcessRegressor.fit
+        mock_calls = []
+
+        def fit_spy(gpr_instance, X, y):
+            # Record the optimizer state of the gpr_instance at the time of call
+            mock_calls.append({'optimizer': gpr_instance.optimizer,
+                               'X_shape': X.shape,
+                               'is_final_candidate': (X.shape[0] == 16) # Assuming 16 is full X_train_gpr
+                              })
+            # Call the original fit method to ensure GPRs are actually trained
+            # so that kernel_ attributes are set, etc.
+            return original_gpr_fit(gpr_instance, X, y)
+
+        with patch('sklearn.gaussian_process.GaussianProcessRegressor.fit', side_effect=fit_spy) as mock_gpr_fit:
+            node.fit_my_GPR(force_training=True)
+
+        self.assertTrue(len(node.my_GPRs) == n_gps_per_node_val + 1, "Final GP was not created.")
+
+        # The last GPR added is the "final_gp". Its training call should be among the last.
+        # The final GP is trained on X_train_gpr (16 samples in this setup).
+        # Initial GP kernel search uses n_train samples or X_train_gpr if n_train is None.
+        # If n_train is None, initial GP search also uses 16 samples.
+        # The critical check is the `optimizer` attribute of the instance *during its fit call*.
+
+        final_gp_fit_call_info = None
+        # The final GP is a new instance, trained last.
+        # It is trained on the full X_train_gpr (16 points).
+        # The kernel search for the initial GP (if n_train=None) also uses 16 points.
+        # We identify the final GP's fit call by checking the instance's optimizer attribute was None.
+
+        found_final_gp_fit = False
+        for call_info in mock_calls:
+            # The final GP should have its optimizer set to None when its .fit() is called.
+            # And it's trained on the full X_train_gpr (16 points here).
+            if call_info['optimizer'] is None and call_info['X_shape'][0] == 16:
+                found_final_gp_fit = True
+                break
+
+        self.assertTrue(found_final_gp_fit,
+                        "The fit method for the final GP was not called with optimizer=None or on the correct data size.")
+
 
 if __name__ == '__main__':
     unittest.main()
