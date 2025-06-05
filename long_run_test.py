@@ -1,19 +1,21 @@
-"""Basic example script demonstrating the usage of the GPTree class.
+"""Performance test script for GPTree focusing on long runs and CSV output.
 
-The example also defines a custom GPR class `my_GPR_class` to illustrate
-how specific kernel configurations can be passed to the `GPTree`.
+The script uses a custom GPR class `my_GPR_class` for specific kernel
+configurations, similar to `example.py`.
 """
 import numpy as np
 from pygptreeo import GPTree
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel
 import sys
+import csv
+import time
 
 from warnings import simplefilter
 from sklearn.exceptions import ConvergenceWarning
 simplefilter("ignore", category=ConvergenceWarning)
 
-from example_target_functions import Eggholder, Himmelblau, Rosenbrock, Rastrigin, Levy, Custom
+from target_functions import Eggholder, Himmelblau, Rosenbrock, Rastrigin, Levy, Custom
 
 target_dict = {
     'eggholder': Eggholder,
@@ -37,11 +39,11 @@ target_name = "eggholder"
 target = target_dict[target_name]
 
 n_dims = 2
-n_pts = 1000
+n_pts = 100000
 
 Nbar = 100
 theta = 1e-4
-retrain_step = 20
+retrain_step = 100
 
 x_min = 0.0
 x_max = 1.0
@@ -106,9 +108,9 @@ mygpr = my_GPR_class()
 
 # Construct GPTree
 gpt = GPTree(
-    GPR=my_GPR_class(), 
+    GPR=my_GPR_class(),
     Nbar=Nbar,
-    theta=theta, 
+    theta=theta,
     split_position_method='median',
     split_dimension_criteria='max_variance',
     retrain_every_n_points=retrain_step,
@@ -117,6 +119,13 @@ gpt = GPTree(
     # splitting_strategy='standard',
 )
 
+results_buffer = []
+csv_file_name = "run_output.csv"
+csv_header = ["x_coordinates", "true_y", "predicted_y", "prediction_uncertainty", "predict_time_s", "update_tree_time_s"]
+
+with open(csv_file_name, 'w', newline='') as f:
+    writer = csv.writer(f)
+    writer.writerow(csv_header)
 
 # Run through points one point at a time
 point_i = 0
@@ -128,19 +137,45 @@ for x,y in zip(X_input, y_input):
     y = y.reshape((1,1))
 
     # Compute prediction
+    start_predict_time = time.perf_counter()
     y_pred, y_pred_std = gpt.predict(x, show_progress=False)
+    end_predict_time = time.perf_counter()
+    predict_time = end_predict_time - start_predict_time
 
     # Update gpt with training point
+    start_update_time = time.perf_counter()
     gpt.update_tree(x, y)
+    end_update_time = time.perf_counter()
+    update_tree_time = end_update_time - start_update_time
 
-    # Print point summary comparing predicted y to true y
-    print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]}  y_pred: {y_pred[0][0]}  y_pred_std: {y_pred_std[0][0]}")
+    # Convert x to a string representation, handling multi-dimensional case
+    x_coords_list = [f"{xi:.4e}" for xi in x[0]]
+    x_coords_str = ";".join(x_coords_list)
+    # x_coords_str = ";".join(map(str, x[0]))
 
-print()
-print(gpt.root)
-print()
-print("Done.")
-print()
+    current_result = [
+        x_coords_str,
+        f"{y[0][0]:.6e}",
+        f"{y_pred[0][0]:.6e}",
+        f"{y_pred_std[0][0]:.6e}",
+        f"{predict_time:.3e}",
+        f"{update_tree_time:.3e}"
+    ]
+    results_buffer.append(current_result)
 
+    if len(results_buffer) >= 2000:
+        with open(csv_file_name, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerows(results_buffer)
+        results_buffer.clear()
+        print(f"Processed and wrote {point_i} points to {csv_file_name}") # Optional: for progress indication
 
+# Write any remaining data in the buffer
+if results_buffer:
+    with open(csv_file_name, 'a', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerows(results_buffer)
+    print(f"Wrote remaining {len(results_buffer)} points to {csv_file_name}") # Optional
+    results_buffer.clear()
 
+print("\nDone.\n") # Keep a final "Done" message or make it more specific.
