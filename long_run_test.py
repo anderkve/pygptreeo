@@ -39,11 +39,11 @@ target_name = "eggholder"
 target = target_dict[target_name]
 
 n_dims = 2
-n_pts = 100000
+n_pts = 20000
 
-Nbar = 100
+Nbar = 1000
 theta = 1e-4
-retrain_step = 100
+retrain_step = 1000
 
 x_min = 0.0
 x_max = 1.0
@@ -117,6 +117,7 @@ gpt = GPTree(
     use_calibrated_sigma=True,
     splitting_strategy='gradual',
     # splitting_strategy='standard',
+    n_GPs_per_node=1,
 )
 
 results_buffer = []
