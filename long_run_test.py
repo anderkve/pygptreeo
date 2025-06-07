@@ -42,7 +42,7 @@ n_dims = 2
 n_pts = 100000
 
 Nbar = 100
-theta = 1e-4
+theta = 0.10 # 1e-4
 retrain_step = 100
 
 x_min = 0.0

@@ -342,7 +342,13 @@ class GPTree:
             pred_leaf_probs = []
 
             collect_leaves(x, self.root, 1.0)
-        
+
+            # _Anders
+            main_gp = np.argmax([pred_leaf_probs])
+            leaves = [leaves[main_gp]]
+            pred_leaf_probs = [1.0]
+            # print(f"DEBUG: leaves: {leaves}  pred_leaf_probs: {pred_leaf_probs}")
+
             for leaf, ptilde in zip(leaves, pred_leaf_probs):
 
                 mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
