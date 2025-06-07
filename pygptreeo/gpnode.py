@@ -49,7 +49,8 @@ class GPNode(Node):
                  retrain_every_n_points=1,
                  name="0",
                  split_dimension_criteria='max_spread',
-                 splitting_strategy: Optional[str] = 'standard'):
+                 splitting_strategy: Optional[str] = 'standard',
+                 y_transform=None):
         """Initializes a GPNode.
 
         Args:
@@ -114,6 +115,9 @@ class GPNode(Node):
 
         self.sigma_scaler = 10
         self.sigma_scaler_init = 10
+
+        self.y_transform = y_transform
+        self.transformer = None
 
         print(f"Created node {self.name}")
 
@@ -201,6 +205,12 @@ class GPNode(Node):
         self.left.sigma_scaler_init = self.sigma_scaler_init
         self.right.sigma_scaler_init = self.sigma_scaler_init
 
+        self.left.y_transform = self.y_transform
+        self.right.y_transform = self.y_transform
+
+        self.left.transformer = self.transformer
+        self.right.transformer = self.transformer
+
 
     def delete_point(self, index=-1, shared_point=True):
         """ Remove a single data point from the node. """
@@ -283,6 +293,72 @@ class GPNode(Node):
         del self.my_GPR
 
 
+    # _Anders
+    def apply_transform(self, X, y):
+
+        if self.y_transform == "yeo-johnson":
+            from sklearn.preprocessing import PowerTransformer
+            self.transformer = PowerTransformer(method='yeo-johnson', standardize=False)  
+            self.transformer = self.transformer.fit(y)
+            lam = self.transformer.lambdas_[0]
+            lam = np.clip(lam, -0.5, 2.0)   # e.g. forbid very negative exponents
+            self.transformer.lambdas_[0] = lam
+            y = self.transformer.transform(y).ravel()
+
+        elif self.y_transform == "linear":
+            from sklearn.linear_model import LinearRegression
+            self.transformer = LinearRegression()
+            self.transformer.fit(X, y)
+            y_pred = self.transformer.predict(X)
+            y = y - y_pred
+
+        elif self.y_transform == "testing":
+            # from sklearn.preprocessing import QuantileTransformer
+            # self.transformer = QuantileTransformer(output_distribution='uniform', n_quantiles=int(y.shape[0]))  
+
+            # from sklearn.preprocessing import MinMaxScaler
+            # self.transformer = MinMaxScaler(feature_range=(0, 1))  
+
+            # from sklearn.preprocessing import StandardScaler
+            # self.transformer = StandardScaler()  
+
+            # self.transformer.fit(y)
+            # y = self.transformer.transform(y).ravel()
+
+            self.transformer = {}
+            self.transformer["shift"] = np.abs(np.min(y)) + 1 
+            y = y + self.transformer["shift"]
+            y = np.log(y)
+
+            from sklearn.linear_model import LinearRegression
+            self.transformer["linear_model"] = LinearRegression()
+            self.transformer["linear_model"].fit(X, y)
+            y_pred = self.transformer["linear_model"].predict(X)
+            y = y - y_pred
+
+        return X, y
+
+    # _Anders
+    def apply_inverse_transform(self, X, y):
+
+        if self.y_transform == "yeo-johnson":
+            y = self.transformer.inverse_transform(y.reshape(-1,1)).ravel()
+
+        elif self.y_transform == "linear":
+            y_pred = self.transformer.predict(X)[0]
+            # print(f"DEBUG: y: {y}  y_pred: {y_pred}")
+            y = y + y_pred
+
+        if self.y_transform == "testing":
+            # y = self.transformer.inverse_transform(y.reshape(-1,1)).ravel()
+            y_pred = self.transformer["linear_model"].predict(X)[0]
+            y = y + y_pred
+            y = np.exp(y)
+            y = y - self.transformer["shift"]
+
+        return X, y
+
+
     def fit_my_GPR(self, force_training=False):
         """Fits the node's Gaussian Process Regressor (GPR) to its local data.
 
@@ -309,8 +385,8 @@ class GPNode(Node):
             self.n_points_since_retrain = 0
 
             # Combine own points and shared points
-            X_train = np.vstack((self.my_X_data, self.shared_X_data))
-            y_train = np.vstack((self.my_y_data, self.shared_y_data))
+            X_train = deepcopy(np.vstack((self.my_X_data, self.shared_X_data)))
+            y_train = deepcopy(np.vstack((self.my_y_data, self.shared_y_data)))
 
             # Get x ranges
             x_max_vals = [np.max(X_train[:,i]) for i in range(self.n_features)]
@@ -321,6 +397,10 @@ class GPNode(Node):
             use_bounds = [(np.max([self.my_GPR.min_length_scale, 0.01*x_ranges[i]]), np.max([10*self.my_GPR.min_length_scale, 10*x_ranges[i]])) for i in range(self.n_features)]
             use_init_points = [0.1*x_ranges[i] for i in range(self.n_features)]
 
+            # _Anders
+            # Transform data?
+            if self.y_transform:
+                X_train, y_train = self.apply_transform(X_train, y_train)                
 
             # Loop over kernel alternatives
             # TODO: Only try the alternative kernels with a certain probability?
@@ -515,7 +595,24 @@ class GPNode(Node):
                 - sigma_pred (np.ndarray): The standard deviation of the
                   prediction(s). Only returned if `return_std` is True.
         """
+
         mu_pred, sigma_pred = self.my_GPR.predict(x, return_std=return_std)
+
+        # _Anders
+        print(f"DEBUG: predict called:  self.y_transform: {self.y_transform}  self.transformer: {self.transformer}")
+        print(f"DEBUG: predict before:  x: {x}  mu_pred: {mu_pred}  sigma_pred: {sigma_pred}")
+        if self.y_transform and self.transformer:
+            # print(f"DEBUG: self.transformer.lamdas_: {self.transformer.lambdas_}")
+            _, mu_pred_temp = self.apply_inverse_transform(x, mu_pred)
+            _, mu_pred_plus_std_temp = self.apply_inverse_transform(x, mu_pred + sigma_pred)
+            _, mu_pred_minus_std_temp = self.apply_inverse_transform(x, mu_pred - sigma_pred)
+
+            sigma_pred = np.max(np.abs([mu_pred_plus_std_temp - mu_pred_temp, mu_pred_temp - mu_pred_minus_std_temp]))
+            sigma_pred = np.array([sigma_pred])
+            mu_pred = mu_pred_temp
+
+        print(f"DEBUG: predict after:   x: {x}  mu_pred: {mu_pred}  sigma_pred: {sigma_pred}")
+
 
         if use_calibrated_sigma:
             sigma_pred = sigma_pred * self.sigma_scaler
@@ -526,6 +623,14 @@ class GPNode(Node):
     def register_pred_perf(self, x: np.ndarray, y: float):
         """ Register the residual between prediction and true value at for this data point. """
         mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False)
+
+        # if self.y_transform and self.transformer:
+        #     _, mu_pred_temp = self.apply_inverse_transform(x, mu_pred)
+        #     _, mu_pred_plus_std_temp = self.apply_inverse_transform(x, mu_pred + sigma_pred)
+        #     _, mu_pred_minus_std_temp = self.apply_inverse_transform(x, mu_pred - sigma_pred)
+
+        #     sigma_pred = np.max(np.abs([mu_pred_plus_std_temp - mu_pred_temp, mu_pred_temp - mu_pred_minus_std_temp]))
+        #     mu_pred = mu_pred_temp
 
         keep_n_points = self.n_points_pred_perf - 1
 
@@ -551,6 +656,8 @@ class GPNode(Node):
             return 
 
         def coverage_deviation(x):
+            # print(f"DEBUG: self.residuals: {self.residuals}")
+            # print(f"DEBUG: self.sigma_preds: {self.sigma_preds}")
             deviation = np.sum(np.abs(self.residuals) < x * self.sigma_preds) / self.n_points_pred_perf - target_coverage
             return deviation
 
