@@ -4,7 +4,7 @@ import numpy as np
 import argparse
 import sys # Import sys for error handling
 
-def plot_metrics(csv_file_path):
+def plot_metrics(csv_file_path, plot_n_points):
     try:
         df = pd.read_csv(csv_file_path)
     except FileNotFoundError:
@@ -87,6 +87,7 @@ def plot_metrics(csv_file_path):
     axes[0].plot(processed_points, avg_predict_time, label="Avg. predict time (last 2000 pts)", linewidth=2.0)
     axes[0].set_ylabel("Time (s)")
     axes[0].set_title("Average prediction time per point")
+    axes[0].set_xlim([0, plot_n_points])
     axes[0].grid(True)
     axes[0].legend()
 
@@ -94,6 +95,7 @@ def plot_metrics(csv_file_path):
     axes[1].plot(processed_points, avg_update_time, label="Avg. update time (last 2000 pts)", color='orange', linewidth=2.0)
     axes[1].set_ylabel("Time (s)")
     axes[1].set_title("Average tree update time per point")
+    axes[1].set_xlim([0, plot_n_points])
     axes[1].grid(True)
     axes[1].legend()
 
@@ -101,6 +103,7 @@ def plot_metrics(csv_file_path):
     axes[2].plot(processed_points, rmse, label="RMSE (last 2000 pts)", color='green', linewidth=2.0)
     axes[2].set_ylabel("RMSE")
     axes[2].set_title("RMSE for predictions")
+    axes[2].set_xlim([0, plot_n_points])
     axes[2].set_ylim([0.1, 5000])
     axes[2].set_yscale("log")
     axes[2].grid(True)
@@ -111,6 +114,7 @@ def plot_metrics(csv_file_path):
     axes[3].plot(processed_points, fraction_within_10_percent, label="Fraction < 10% Error (last 2000 pts)", color='orange', linewidth=2.0)
     axes[3].set_ylabel("Fraction")
     axes[3].set_title("Fraction of predictions within x% of true value")
+    axes[3].set_xlim([0, plot_n_points])
     axes[3].set_ylim([0.0, 1.0])
     axes[3].grid(True)
     axes[3].legend()
@@ -120,6 +124,7 @@ def plot_metrics(csv_file_path):
     axes[4].plot([processed_points[0], processed_points[-1]], [0.68, 0.68], "--", color='black', linewidth=2.0)
     axes[4].set_ylabel("Fraction")
     axes[4].set_title("Empirical coverage of prediction uncertainty")
+    axes[4].set_xlim([0, plot_n_points])
     axes[4].set_ylim([0.0, 1.0])
     axes[4].grid(True)
     axes[4].legend()
@@ -137,10 +142,11 @@ def plot_metrics(csv_file_path):
 def main():
     parser = argparse.ArgumentParser(description="Plot performance metrics from pygptreeo run_output.csv.")
     parser.add_argument("csv_file", help="Path to the input CSV file (e.g., run_output.csv)")
+    parser.add_argument("plot_n_points", type=int, help="Total number of points to plot along the x axis")
 
     args = parser.parse_args()
 
-    plot_metrics(args.csv_file)
+    plot_metrics(args.csv_file, args.plot_n_points)
 
 if __name__ == "__main__":
     main()
