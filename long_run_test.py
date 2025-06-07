@@ -45,9 +45,9 @@ Nbar = 100
 retrain_step = 100
 
 # theta = 0.0001
-theta = 0.20 # 1e-4
+theta = 0.05 # 1e-4
 # max_n_pred_leaves = None
-max_n_pred_leaves = 1
+max_n_pred_leaves = 10
 
 
 x_min = 0.0
@@ -123,6 +123,7 @@ gpt = GPTree(
     splitting_strategy='gradual',
     # splitting_strategy='standard',
     max_n_pred_leaves=max_n_pred_leaves,
+    aggregation="poe",
 )
 
 results_buffer = []

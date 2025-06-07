@@ -60,6 +60,7 @@ class GPTree:
                  split_dimension_criteria: Optional[str] = 'max_spread',
                  splitting_strategy: Optional[str] = 'standard',
                  max_n_pred_leaves: Optional[int] = None,
+                 aggregation: Optional[str] = "default",
                  **kwargs):
         """Initializes the GPTree.
 
@@ -92,6 +93,8 @@ class GPTree:
         self.use_calibrated_sigma = use_calibrated_sigma
 
         self.max_n_pred_leaves = max_n_pred_leaves
+        
+        self.aggregation = aggregation
 
         self.first_point = True
 
@@ -361,16 +364,50 @@ class GPTree:
                 leaves = leaves[:self.max_n_pred_leaves]
 
             # Compute joint prediciton
-            for leaf, ptilde in zip(leaves, pred_leaf_probs):
+            # The default: mixture of experts, following the DLGP paper
+            if self.aggregation == "default" or self.aggregation == "moe":
 
-                mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+                for leaf, ptilde in zip(leaves, pred_leaf_probs):
 
-                # mean_DLGP[i] += ptilde*mu_leaf[0]
-                mean_DLGP[i] += ptilde*mu_leaf
-                var_DLGP[i] += ptilde*(sigma_leaf*sigma_leaf + mu_leaf*mu_leaf)
-            
-            var_DLGP[i] += -mean_DLGP[i]*mean_DLGP[i]
-        
+                    mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+
+                    mean_DLGP[i] += ptilde*mu_leaf
+                    var_DLGP[i] += ptilde*(sigma_leaf*sigma_leaf + mu_leaf*mu_leaf)
+                
+                var_DLGP[i] += -mean_DLGP[i]*mean_DLGP[i]
+
+            # Generalized product of experts
+            elif self.aggregation == "poe": 
+
+                # Collect individual predictions
+                mus = []
+                vars_ = []
+                betas = pred_leaf_probs
+                for leaf, ptilde in zip(leaves, pred_leaf_probs):
+                    mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+                    mus.append(mu_leaf)
+                    vars_.append(sigma_leaf**2)
+                mus = np.array(mus)
+                vars_ = np.array(vars_)
+
+                # Compute weighted precisions
+                betas = np.array(betas)[:, None]  # shape (M, 1)
+                precisions = betas / vars_        # shape (M, n_samples)
+
+                # Combined precision and variance
+                total_precision = np.sum(precisions, axis=0)  # shape (n_samples,)
+                var_poe = 1.0 / total_precision                # shape (n_samples,)
+
+                # Combined mean
+                weighted_means = np.sum(precisions * mus, axis=0)  # shape (n_samples,)
+                mu_poe = var_poe * weighted_means                  # shape (n_samples,)
+
+                # Rename
+                mean_DLGP = mu_poe.reshape((1, 1))
+                var_DLGP = var_poe.reshape((1, 1))
+
+            # print(f"DEBUG: mean_DLGP: {mean_DLGP}  var_DLGP: {var_DLGP}")
+
         return mean_DLGP, np.sqrt(var_DLGP)
 
 
