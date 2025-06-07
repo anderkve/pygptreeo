@@ -2,6 +2,7 @@ import numpy as np
 from binarytree import Node
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern, ExpSineSquared, ConstantKernel, WhiteKernel
+from sklearn.model_selection import train_test_split
 from typing import Callable, Optional, Type, Union
 from scipy.optimize import root_scalar
 from copy import deepcopy
@@ -11,6 +12,9 @@ import warnings
 from pygptreeo.default_gpr import Default_GPR
 
 np.set_printoptions(suppress=True)
+
+
+
 
 class GPNode(Node):
     """Represents a node within the GPTree structure.
@@ -102,6 +106,9 @@ class GPNode(Node):
         self.shared_y_data = None
         self.n_shared_points = 0
 
+        self.validate_X_data = None
+        self.validate_y_data = None
+
         self.split_index = 0       # 'j' in the DLGP article
         self.split_position = 0.0  # 's' in the DLGP article
         self.overlap = 0.001       # 'o' in the DLGP article
@@ -142,6 +149,98 @@ class GPNode(Node):
             value (int): The new number of training points.
         """
         self.value = value
+    def fit_my_GPR(self, force_training=False):
+        """Fits the node's Gaussian Process Regressor (GPR) to its local data.
+
+        Training is triggered if the number of new points in the buffer
+        (`n_points_since_retrain`) reaches `retrain_every_n_points`, if the node
+        is full (`n_points >= Nbar`), or if `force_training` is True.
+
+        The method iterates through `kernel_alternatives` defined in the GPR
+        object (e.g., `Default_GPR`). For each kernel, it adjusts the
+        length scale bounds and initial points based on the current data ranges
+        in the node. The kernel that yields the best (lowest)
+        log-marginal-likelihood (LML) is selected for `self.my_GPR`.
+
+        Args:
+            force_training (bool): If True, the GPR is retrained even if the
+                usual buffer or fullness conditions are not met. Defaults to False.
+
+        Returns:
+            bool: True if the GPR was trained in this call, False otherwise.
+        """
+        did_train = False
+        # Only train the GP if the buffer is full, the node is full, or if force_training=True
+        if (self.n_points_since_retrain >= self.retrain_every_n_points) or (self.n_points >= self.Nbar) or force_training:
+            self.n_points_since_retrain = 0
+
+            # Combine own points and shared points
+            X_train = np.vstack((self.my_X_data, self.shared_X_data))
+            y_train = np.vstack((self.my_y_data, self.shared_y_data))
+
+            # Get x ranges
+            x_max_vals = [np.max(X_train[:,i]) for i in range(self.n_features)]
+            x_min_vals = [np.min(X_train[:,i]) for i in range(self.n_features)]
+            x_ranges = [x_max_vals[i] - x_min_vals[i] for i in range(self.n_features)]
+            # x_ranges = [np.max(X_train[:,i])-np.min(X_train[:,i]) for i in range(self.n_features)]
+
+            use_bounds = [(np.max([self.my_GPR.min_length_scale, 0.01*x_ranges[i]]), np.max([10*self.my_GPR.min_length_scale, 10*x_ranges[i]])) for i in range(self.n_features)]
+            use_init_points = [0.1*x_ranges[i] for i in range(self.n_features)]
+
+
+            # Loop over kernel alternatives
+            # TODO: Only try the alternative kernels with a certain probability?
+            # TODO: Make this code more efficient. It should be unnecessary to copy the
+            #       entire my_GPR object like we do below...
+            best_lml = float_info.max
+            temp_GPR = self.my_GPR
+            for kernel in self.my_GPR.kernel_alternatives:
+
+                params = kernel.get_params(deep=True)
+
+                # Example params dict: 
+                # params: {
+                #     'k1': 1**2, 
+                #     'k2': Matern(length_scale=[1, 1], nu=1.5), 
+                #     'k1__constant_value': 1.0, 
+                #     'k1__constant_value_bounds': (0.001, 100000000.0), 
+                #     'k2__length_scale': [1.0, 1.0], 
+                #     'k2__length_scale_bounds': [(0.001, 1000.0), (0.001, 1000.0)], 
+                #     'k2__nu': 1.5
+                # }
+
+                new_params = {}
+                for k,v in params.items():
+                    if k[-21:] == "__length_scale_bounds":
+                        new_params[k] = use_bounds
+                    elif k[-14:] == "__length_scale":
+                        new_params[k] = use_init_points
+                kernel.set_params(**new_params)
+
+                temp_GPR.kernel = kernel
+                temp_GPR.fit(X_train, y_train)
+
+                lml = temp_GPR.log_marginal_likelihood_value_
+                theta = temp_GPR.kernel_.theta
+                # print(f"kernel: {kernel}   lml: {lml}   theta: {theta}   exp(theta): {np.exp(theta)}")
+
+                # Keep this kernel?
+                if lml < best_lml:
+                    self.my_GPR = deepcopy(temp_GPR)
+                    best_lml = lml
+
+            x_range_strs = []
+            for i in range(self.n_features):
+                x_range_strs.append( "({:.2e},{:.2e})".format(x_min_vals[i],x_max_vals[i]))
+            x_range_str = "[" + ", ".join(x_range_strs) + "]"
+            print(f"Trained node {self.name}:  "
+                  # f"x_data_range: {[(x_max_vals[i],x_min_vals[i]) for i in range(self.n_features)]}  "
+                  f"x_range: {x_range_str}  "
+                  f"kernel: {self.my_GPR.kernel_}"
+            )
+
+            did_train = True
+        return did_train
 
 
     def init_data_set(self, n_features: int):
@@ -377,6 +476,85 @@ class GPNode(Node):
         return did_train
 
 
+    # _Anders
+    def get_error_eigenvecs(self):
+
+        epsilon = 1e-9
+
+        # Full data set
+        X_data_full = np.vstack((self.my_X_data, self.shared_X_data))
+        y_data_full = np.vstack((self.my_y_data, self.shared_y_data))
+
+        # Train-validation split
+        X_train, X_validate, y_train, y_validate = (None, None, None, None)
+
+        MIN_SAMPLES_FOR_VALIDATION = 5
+        validate_fraction = 0.2
+        if int(X_data_full.shape[0] * validate_fraction) < MIN_SAMPLES_FOR_VALIDATION:
+            warnings.warn(f"Node {self.name}: Insufficient data ({X_data_full.shape[0]} points) for train-validation split. Training on all data. RMSE will be NaN.", RuntimeWarning)
+            X_train_gpr = X_data_full
+            y_train_gpr = y_data_full
+        else:
+            X_train, X_validate, y_train, y_validate = train_test_split(
+                X_data_full, y_data_full, test_size=validate_fraction
+                # X_data_full, y_data_full, test_size=validate_fraction, random_state=42 # Fixed random_state for reproducibility
+            )
+
+        # Get x ranges
+        x_max_vals = [np.max(X_train[:,i]) for i in range(self.n_features)]
+        x_min_vals = [np.min(X_train[:,i]) for i in range(self.n_features)]
+        x_ranges = [x_max_vals[i] - x_min_vals[i] for i in range(self.n_features)]
+
+        use_bounds = [(np.max([self.my_GPR.min_length_scale, 0.01*x_ranges[i]]), np.max([10*self.my_GPR.min_length_scale, 10*x_ranges[i]])) for i in range(self.n_features)]
+        use_init_points = [0.1*x_ranges[i] for i in range(self.n_features)]
+
+        # Train a GP on train data
+        temp_GPR = deepcopy(self.my_GPR)
+        temp_GPR.fit(X_train, y_train)
+
+        # Compute predictions and errors
+        y_pred, y_std = temp_GPR.predict(X_validate, return_std=True)
+
+        # _Anders 
+        y_validate = y_validate.reshape(y_validate.shape[0],)
+
+        # e = np.abs(y_pred - y_validate) / (np.abs(y_validate) + epsilon)
+        e = np.abs(y_pred - y_validate)
+
+        print(f"DEBUG: y_validate.shape: {y_validate.shape}")
+        print(f"DEBUG: y_pred.shape: {y_pred.shape}")
+        print(f"DEBUG: X_validate.shape: {X_validate.shape}")
+        print(f"DEBUG: e.shape: {e.shape}")
+        # Form weights w_i = e_i^2
+        w = e**2
+
+        # # Standardize each column of X_validate:
+        # X_validate_std = X_validate.std(axis=0)
+        # X_validate_std[X_validate_std == 0] = epsilon
+        # X_validate = (X_validate - X_validate.mean(axis=0)) / X_validate_std
+
+        # Compute weighted mean of X:
+        W_total = np.sum(w)
+        print(f"DEBUG: W_total.shape: {W_total.shape}")
+        print(f"DEBUG: X_validate.shape: {X_validate.shape}")
+        xw_mean = np.sum(X_validate * w[:,None], axis=0) / (W_total + epsilon)
+
+        # Center X around xw_mean:
+        X_validate_centered = X_validate - xw_mean[None,:]
+
+        # Build the weighted covariance matrix C:
+        C = (X_validate_centered.T * w) @ X_validate_centered / (W_total + epsilon)
+
+        # Eigen‐decompose:
+        eigvals, eigvecs = np.linalg.eigh(C)
+        idx_desc = np.argsort(eigvals)[::-1]
+        eigvals = eigvals[idx_desc]
+        eigvecs = eigvecs[:, idx_desc]
+
+        # Return
+        return eigvecs, eigvals
+
+
     def compute_split_position_and_overlap(self, theta: float):
         """Computes the split dimension, position, and overlap for node splitting.
 
@@ -425,6 +603,19 @@ class GPNode(Node):
                 self.split_index = np.random.randint(0, self.n_features)
             else:
                 self.split_index = 0 # Default to 0 if no features
+        # _Anders
+        elif self.split_dimension_criteria == 'max_error':
+            eigvecs, eigvals = self.get_error_eigenvecs()
+            v_max_err = eigvecs[:,0]
+            self.split_index = np.argmax(np.abs(v_max_err))
+            print(f"DEBUG: node {self.name}:  eigvals: {eigvals}  eigvecs: {eigvecs}")
+            print(f"DEBUG: node {self.name}:  Will use split_index {self.split_index}")
+        elif self.split_dimension_criteria == 'min_error':
+            eigvecs, eigvals = self.get_error_eigenvecs()
+            v_min_err = eigvecs[:,-1]
+            self.split_index = np.argmin(np.abs(v_min_err))
+            print(f"DEBUG: node {self.name}:  eigvals: {eigvals}  eigvecs: {eigvecs}")
+            print(f"DEBUG: node {self.name}:  Will use split_index {self.split_index}")
         else:
             raise ValueError(f"Unknown split_dimension_criteria: {self.split_dimension_criteria}")
 
@@ -435,7 +626,6 @@ class GPNode(Node):
         else:
             current_dim_spread = 0.0 # Default if no data
 
-        # TODO: Introduce alternative ways to compute the split position, e.g. median
         self.split_position = None
         if self.my_X_data.shape[0] == 0: # No data, place split in the middle (0 if not scaled) or handle as error?
             self.split_position = 0.0 

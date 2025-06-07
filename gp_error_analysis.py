@@ -49,7 +49,9 @@ print(f"X_val shape: {X_val.shape}, y_val shape: {y_val.shape}")
 
 # 1. Compute predictions and errors
 y_pred, y_std = gp.predict(X_val, return_std=True)
-e = y_pred - y_val
+e = np.abs(y_pred - y_val) / (np.abs(y_val) + 1e-9)
+
+print(f"DEBUG: e.shape: {e.shape}")
 
 # 2. Form weights w_i = e_i^2
 w = e**2

@@ -38,12 +38,12 @@ np.random.seed(512312)
 target_name = "eggholder"
 target = target_dict[target_name]
 
-n_dims = 2
+n_dims = 3
 n_pts = 100000
 
-Nbar = 100
+Nbar = 200
 theta = 1e-4
-retrain_step = 100
+retrain_step = 200
 
 x_min = 0.0
 x_max = 1.0
@@ -112,7 +112,7 @@ gpt = GPTree(
     Nbar=Nbar,
     theta=theta,
     split_position_method='median',
-    split_dimension_criteria='max_variance',
+    split_dimension_criteria='min_error',
     retrain_every_n_points=retrain_step,
     use_calibrated_sigma=True,
     splitting_strategy='gradual',
