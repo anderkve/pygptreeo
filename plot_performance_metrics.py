@@ -101,6 +101,8 @@ def plot_metrics(csv_file_path):
     axes[2].plot(processed_points, rmse, label="RMSE (last 2000 pts)", color='green', linewidth=2.0)
     axes[2].set_ylabel("RMSE")
     axes[2].set_title("RMSE for predictions")
+    axes[2].set_ylim([1.0,10000])
+    axes[2].set_yscale("log")
     axes[2].grid(True)
     axes[2].legend()
 
@@ -109,6 +111,7 @@ def plot_metrics(csv_file_path):
     axes[3].plot(processed_points, fraction_within_10_percent, label="Fraction < 10% Error (last 2000 pts)", color='orange', linewidth=2.0)
     axes[3].set_ylabel("Fraction")
     axes[3].set_title("Fraction of predictions within x% of true value")
+    axes[3].set_ylim([0,1])
     axes[3].grid(True)
     axes[3].legend()
 
@@ -117,6 +120,7 @@ def plot_metrics(csv_file_path):
     axes[4].plot([processed_points[0], processed_points[-1]], [0.68, 0.68], "--", color='black', linewidth=2.0)
     axes[4].set_ylabel("Fraction")
     axes[4].set_title("Empirical coverage of prediction uncertainty")
+    axes[4].set_ylim([0,1])
     axes[4].grid(True)
     axes[4].legend()
 

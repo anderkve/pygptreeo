@@ -2,6 +2,7 @@ import numpy as np
 from binarytree import Node
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern, ExpSineSquared, ConstantKernel, WhiteKernel
+from sklearn.cluster import KMeans
 from typing import Callable, Optional, Type, Union
 from scipy.optimize import root_scalar
 from copy import deepcopy
@@ -283,6 +284,31 @@ class GPNode(Node):
         del self.my_GPR
 
 
+    # _Anders
+    def get_subset_indices(self, X, n_clusters):
+        # Use KMeans to cluster X into n clusters
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        cluster_labels = kmeans.fit_predict(X)
+        cluster_centers = kmeans.cluster_centers_
+
+        # For each cluster, pick the data point closest to 
+        # the cluster centroid (the medoid) as representative
+        representative_indices = []
+        for i in range(n_clusters):
+            # Find indices of points in cluster i
+            cluster_i_indices = np.where(cluster_labels == i)[0]
+            # Extract those points
+            points_i = X[cluster_i_indices]
+            # Compute squared Euclidean distances to the centroid
+            distances = np.sum((points_i - cluster_centers[i])**2, axis=1)
+            # Pick the index with minimum distance
+            medoid_index = cluster_i_indices[np.argmin(distances)]
+            representative_indices.append(medoid_index)
+        representative_indices = np.array(representative_indices)
+
+        return representative_indices
+
+
     def fit_my_GPR(self, force_training=False):
         """Fits the node's Gaussian Process Regressor (GPR) to its local data.
 
@@ -321,6 +347,10 @@ class GPNode(Node):
             use_bounds = [(np.max([self.my_GPR.min_length_scale, 0.01*x_ranges[i]]), np.max([10*self.my_GPR.min_length_scale, 10*x_ranges[i]])) for i in range(self.n_features)]
             use_init_points = [0.1*x_ranges[i] for i in range(self.n_features)]
 
+            # _Anders
+            subset_indices = self.get_subset_indices(X_train, 100)
+            X_train = X_train[subset_indices]
+            y_train = y_train[subset_indices]
 
             # Loop over kernel alternatives
             # TODO: Only try the alternative kernels with a certain probability?
