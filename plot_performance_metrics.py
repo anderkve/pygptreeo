@@ -134,7 +134,8 @@ def plot_metrics(csv_file_path, plot_n_points):
 
     plt.tight_layout(rect=[0, 0, 1, 0.96]) # Adjust layout to make space for suptitle
 
-    output_plot_file = "performance_metrics.png"
+    # output_plot_file = "performance_metrics.png"
+    output_plot_file = csv_file_path.replace(".csv", ".png")
     plt.savefig(output_plot_file, dpi=300)
     print(f"Plot saved to {output_plot_file}")
     # plt.show() # Optionally display the plot

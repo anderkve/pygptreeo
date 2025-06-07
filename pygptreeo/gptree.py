@@ -59,6 +59,7 @@ class GPTree:
                  use_calibrated_sigma: Optional[bool] = True,
                  split_dimension_criteria: Optional[str] = 'max_spread',
                  splitting_strategy: Optional[str] = 'standard',
+                 max_n_pred_leaves: Optional[int] = None,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -89,6 +90,8 @@ class GPTree:
         self.n_features = 0
 
         self.use_calibrated_sigma = use_calibrated_sigma
+
+        self.max_n_pred_leaves = max_n_pred_leaves
 
         self.first_point = True
 
@@ -335,20 +338,29 @@ class GPTree:
         for i, x in tqdm(enumerate(X_test), total=X_test.shape[0], disable=not show_progress, desc="Predicting"):
             x = x.reshape((1, x.shape[0]))
 
+            # Collect leaves
             sum_probs = 0
             collection_done = False
 
             leaves = []
             pred_leaf_probs = []
-
             collect_leaves(x, self.root, 1.0)
 
-            # _Anders
-            main_gp = np.argmax([pred_leaf_probs])
-            leaves = [leaves[main_gp]]
-            pred_leaf_probs = [1.0]
-            # print(f"DEBUG: leaves: {leaves}  pred_leaf_probs: {pred_leaf_probs}")
+            # Limit the number of leaves used?
+            if self.max_n_pred_leaves:
+                pred_leaf_probs = np.array(pred_leaf_probs)
+                ordering = np.argsort(pred_leaf_probs)[::-1]
 
+                pred_leaf_probs = pred_leaf_probs[ordering]
+                leaves = [leaves[idx] for idx in ordering]
+
+                pred_leaf_probs = pred_leaf_probs[:self.max_n_pred_leaves]
+                pred_leaf_probs = pred_leaf_probs / np.sum(pred_leaf_probs)
+                pred_leaf_probs = list(pred_leaf_probs)
+
+                leaves = leaves[:self.max_n_pred_leaves]
+
+            # Compute joint prediciton
             for leaf, ptilde in zip(leaves, pred_leaf_probs):
 
                 mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)

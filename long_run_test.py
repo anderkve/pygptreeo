@@ -38,12 +38,17 @@ np.random.seed(512312)
 target_name = "eggholder"
 target = target_dict[target_name]
 
-n_dims = 2
+n_dims = 3
 n_pts = 100000
 
 Nbar = 100
-theta = 0.10 # 1e-4
 retrain_step = 100
+
+# theta = 0.0001
+theta = 0.20 # 1e-4
+# max_n_pred_leaves = None
+max_n_pred_leaves = 1
+
 
 x_min = 0.0
 x_max = 1.0
@@ -117,10 +122,12 @@ gpt = GPTree(
     use_calibrated_sigma=True,
     splitting_strategy='gradual',
     # splitting_strategy='standard',
+    max_n_pred_leaves=max_n_pred_leaves,
 )
 
 results_buffer = []
-csv_file_name = "run_output.csv"
+# csv_file_name = "run_output.csv"
+csv_file_name = sys.argv[1]
 csv_header = ["x_coordinates", "true_y", "predicted_y", "prediction_uncertainty", "predict_time_s", "update_tree_time_s"]
 
 with open(csv_file_name, 'w', newline='') as f:
