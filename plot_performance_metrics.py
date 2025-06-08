@@ -66,10 +66,16 @@ def plot_metrics(csv_file_path, plot_n_points):
     true_y_for_ratio = df['true_y'].replace(0, np.nan)
     abs_percentage_error = abs(df['predicted_y'] - df['true_y']) / abs(true_y_for_ratio)
     within_1_percent = abs_percentage_error < 0.01
-    within_10_percent = abs_percentage_error < 0.10
+    within_2_percent = abs_percentage_error < 0.02
+    within_4_percent = abs_percentage_error < 0.04
+    within_8_percent = abs_percentage_error < 0.08
+    within_16_percent = abs_percentage_error < 0.16
     # Calculate mean on the boolean series (True=1, False=0)
     fraction_within_1_percent = within_1_percent.rolling(window=window_size, min_periods=min_p).mean()
-    fraction_within_10_percent = within_10_percent.rolling(window=window_size, min_periods=min_p).mean()
+    fraction_within_2_percent = within_2_percent.rolling(window=window_size, min_periods=min_p).mean()
+    fraction_within_4_percent = within_4_percent.rolling(window=window_size, min_periods=min_p).mean()
+    fraction_within_8_percent = within_8_percent.rolling(window=window_size, min_periods=min_p).mean()
+    fraction_within_16_percent = within_16_percent.rolling(window=window_size, min_periods=min_p).mean()
 
     # Metric 5: Empirical coverage of prediction uncertainty
     abs_error = abs(df['predicted_y'] - df['true_y'])
@@ -110,8 +116,11 @@ def plot_metrics(csv_file_path, plot_n_points):
     axes[2].legend()
 
     # Plot 4: Fraction of predictions within 1% of true value
-    axes[3].plot(processed_points, fraction_within_1_percent, label="Fraction < 1% Error (last 2000 pts)", color='red', linewidth=2.0)
-    axes[3].plot(processed_points, fraction_within_10_percent, label="Fraction < 10% Error (last 2000 pts)", color='orange', linewidth=2.0)
+    axes[3].plot(processed_points, fraction_within_16_percent, label="Fraction < 16% Error (last 2000 pts)", linewidth=2.0)
+    axes[3].plot(processed_points, fraction_within_8_percent, label="Fraction < 8% Error (last 2000 pts)", linewidth=2.0)
+    axes[3].plot(processed_points, fraction_within_4_percent, label="Fraction < 4% Error (last 2000 pts)", linewidth=2.0)
+    axes[3].plot(processed_points, fraction_within_2_percent, label="Fraction < 2% Error (last 2000 pts)", linewidth=2.0)
+    axes[3].plot(processed_points, fraction_within_1_percent, label="Fraction < 1% Error (last 2000 pts)", linewidth=2.0)
     axes[3].set_ylabel("Fraction")
     axes[3].set_title("Fraction of predictions within x% of true value")
     axes[3].set_xlim([0, plot_n_points])

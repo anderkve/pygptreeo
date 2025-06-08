@@ -42,12 +42,12 @@ n_dims = 3
 n_pts = 100000
 
 Nbar = 100
-retrain_step = 100
+retrain_step = 5
 
 # theta = 0.0001
 theta = 0.05 # 1e-4
 # max_n_pred_leaves = None
-max_n_pred_leaves = 10
+max_n_pred_leaves = 50
 
 
 x_min = 0.0
@@ -124,6 +124,7 @@ gpt = GPTree(
     # splitting_strategy='standard',
     max_n_pred_leaves=max_n_pred_leaves,
     aggregation="poe",
+    # aggregation="moe",
 )
 
 results_buffer = []
@@ -147,6 +148,8 @@ for x,y in zip(X_input, y_input):
     # Compute prediction
     start_predict_time = time.perf_counter()
     y_pred, y_pred_std = gpt.predict(x, show_progress=False)
+    y_pred = y_pred[0][0]
+    y_pred_std = y_pred_std[0][0]
     end_predict_time = time.perf_counter()
     predict_time = end_predict_time - start_predict_time
 
@@ -161,11 +164,16 @@ for x,y in zip(X_input, y_input):
     x_coords_str = ";".join(x_coords_list)
     # x_coords_str = ";".join(map(str, x[0]))
 
+    abs_err = np.abs(y_pred - y[0][0])
+    rel_err = abs_err / np.abs(y[0][0])
+    print(f"point {point_i}:  x: {x}  y: {y[0][0]:.4e}  y_pred: {y_pred:.4e}  y_pred_std: {y_pred_std:.3e}  abs_err: {abs_err:.3e}  rel_err: {rel_err:.3e}")
+
+
     current_result = [
         x_coords_str,
         f"{y[0][0]:.6e}",
-        f"{y_pred[0][0]:.6e}",
-        f"{y_pred_std[0][0]:.6e}",
+        f"{y_pred:.6e}",
+        f"{y_pred_std:.6e}",
         f"{predict_time:.3e}",
         f"{update_tree_time:.3e}"
     ]
@@ -176,7 +184,7 @@ for x,y in zip(X_input, y_input):
             writer = csv.writer(f)
             writer.writerows(results_buffer)
         results_buffer.clear()
-        print(f"Processed and wrote {point_i} points to {csv_file_name}") # Optional: for progress indication
+        print(f"Processed and wrote {point_i} points to {csv_file_name}") # Optional: for progress indication    
 
 # Write any remaining data in the buffer
 if results_buffer:
