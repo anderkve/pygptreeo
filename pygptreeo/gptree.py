@@ -61,6 +61,7 @@ class GPTree:
                  splitting_strategy: Optional[str] = 'standard',
                  max_n_pred_leaves: Optional[int] = None,
                  aggregation: Optional[str] = "default",
+                 policies: Optional[list[tuple[int, float]]] = None,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -84,7 +85,8 @@ class GPTree:
         
         self.GPR = GPR
         self.splitting_strategy = splitting_strategy
-        self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria, splitting_strategy=self.splitting_strategy, **kwargs)  # Initialize root node of the GPTree
+        # Jules add policies:
+        self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria, splitting_strategy=self.splitting_strategy, theta_for_split=self.theta, **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 
@@ -95,6 +97,9 @@ class GPTree:
         self.max_n_pred_leaves = max_n_pred_leaves
         
         self.aggregation = aggregation
+
+        # Jules add policies:
+        self.policies = policies
 
         self.first_point = True
 
@@ -158,10 +163,12 @@ class GPTree:
         # If the node is full, generate child nodes
         if node.n_points >= node.Nbar:
             # Create child nodes. Each child node gets a copy of the current parent GP.
-            node.generate_children(self.GPR, self.n_features)
+            # Jules add policies: Pass policies to children generation
+            node.generate_children(self.GPR, self.n_features, self.policies)
             
             # Compute parameters for the probability function 
-            node.compute_split_position_and_overlap(self.theta)
+            # Jules add policies: Use node's own theta for split computation
+            node.compute_split_position_and_overlap(node.theta_for_split)
 
             # Now pass parent's split info to children
             node.children[0].parent_split_index = node.split_index

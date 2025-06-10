@@ -7,6 +7,7 @@ from scipy.optimize import root_scalar
 from copy import deepcopy
 from sys import float_info
 import warnings
+import random
 
 from pygptreeo.default_gpr import Default_GPR
 
@@ -49,7 +50,9 @@ class GPNode(Node):
                  retrain_every_n_points=1,
                  name="0",
                  split_dimension_criteria='max_spread',
-                 splitting_strategy: Optional[str] = 'standard'):
+                 splitting_strategy: Optional[str] = 'standard',
+                 # Jules add policies:
+                 theta_for_split: float = 0.0001):
         """Initializes a GPNode.
 
         Args:
@@ -115,6 +118,9 @@ class GPNode(Node):
         self.sigma_scaler = 10
         self.sigma_scaler_init = 10
 
+        # Jules add policies:
+        self.theta_for_split = theta_for_split
+
         print(f"Created node {self.name}")
 
 
@@ -159,12 +165,30 @@ class GPNode(Node):
         self.n_shared_points = 0
 
 
-    def generate_children(self, GPR: Type[GaussianProcessRegressor], n_features: int):
+    def generate_children(self, GPR: Type[GaussianProcessRegressor], n_features: int, policies: Optional[list[tuple[int, float]]] = None):
         """ Grow the GPtree by adding two GPNodes as children of the current GPNode. """
 
-        # Settings that will be passed on to the child nodes
-        node_config_kwargs = {
-            'Nbar': self.Nbar,
+        # Jules add policies: Determine Nbar and theta for children
+        nbar_left, theta_left = self.Nbar, self.theta_for_split
+        nbar_right, theta_right = self.Nbar, self.theta_for_split
+        if policies is not None and len(policies) > 0:
+            nbar_left, theta_left = random.choice(policies)
+            nbar_right, theta_right = random.choice(policies)
+
+        # Jules add policies: Settings that will be passed on to the child nodes
+        node_config_kwargs_left = {
+            'Nbar': nbar_left,
+            'theta_for_split': theta_left,
+            'split_position_method': self.split_position_method,
+            'retrain_every_n_points': self.retrain_every_n_points,
+            'split_dimension_criteria': self.split_dimension_criteria,
+            'splitting_strategy': self.splitting_strategy,
+        }
+
+        # Jules add policies:
+        node_config_kwargs_right = {
+            'Nbar': nbar_right,
+            'theta_for_split': theta_right,
             'split_position_method': self.split_position_method,
             'retrain_every_n_points': self.retrain_every_n_points,
             'split_dimension_criteria': self.split_dimension_criteria,
@@ -172,8 +196,10 @@ class GPNode(Node):
         }
 
         # Create child nodes with a copy of the parent GP
-        self.left = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "0", **node_config_kwargs)
-        self.right = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "1", **node_config_kwargs)
+        # Jules add policies:
+        self.left = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "0", **node_config_kwargs_left)
+        # Jules add policies:
+        self.right = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "1", **node_config_kwargs_right)
         
         self.left.is_left = True
         self.right.is_left = False
