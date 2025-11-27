@@ -20,8 +20,8 @@ GPTreeO builds a binary tree where each node represents a specific region of the
 ## Installation
 Details on installing via pip will be added soon. For now, you can clone the repository and install dependencies:
 ```bash
-git clone https://github.com/your-username/gptreeo.git # Replace with the actual repository URL
-cd gptreeo
+git clone https://github.com/your-username/pygptreeo.git # Replace with the actual repository URL
+cd pygptreeo
 pip install numpy scikit-learn binarytree tqdm joblib
 ```
 
@@ -66,20 +66,24 @@ for i in range(len(X_test)):
 ```
 
 ## Running Examples
-For more detailed demonstrations, see the example scripts:
+For more detailed demonstrations, see the example scripts in the `examples/` directory:
 
-*   `example.py`: Shows a basic workflow of training and predicting with `GPTree`.
+*   `examples/example.py`: Shows a basic workflow of training and predicting with `GPTree`.
     ```bash
-    python example.py
+    python examples/example.py
     ```
-*   `test_animated.py`: Provides an animated visualization of the `GPTree` learning process for 2D data.
+*   `examples/performance_test.py`: Demonstrates performance metrics tracking and visualization during online learning.
+    ```bash
+    OMP_NUM_THREADS=1 python examples/performance_test.py
+    ```
+*   `examples/test_animated.py`: Provides an animated visualization of the `GPTree` learning process for 2D data.
     It requires command-line arguments:
     ```bash
-    python test_animated.py <target_function_name> <n_points> <Nbar> <retrain_step> <update_step> <live_update_bool>
+    python examples/test_animated.py <target_function_name> <n_points> <Nbar> <retrain_step> <update_step> <live_update_bool>
     ```
     For example:
     ```bash
-    python test_animated.py eggholder 10000 200 200 10 1
+    python examples/test_animated.py eggholder 10000 200 200 10 1
     ```
     (Available target functions: `eggholder`, `himmelblau`, `rosenbrock`, `rastrigin`, `levy`, `custom`)
 
