@@ -6,7 +6,7 @@ configurations, similar to `example.py`.
 import numpy as np
 from pygptreeo import GPTree
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel
+from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, RationalQuadratic, ConstantKernel, WhiteKernel
 import sys
 import csv
 import time
@@ -42,7 +42,7 @@ n_dims = 3
 n_pts = 100000
 
 Nbar = 100
-retrain_step = 5
+retrain_step = 100
 
 # theta = 0.0001
 theta = 0.05 # 1e-4
@@ -90,10 +90,15 @@ class my_GPR_class(GaussianProcessRegressor):
         random_state (int, RandomState instance or None): Controls the
             randomness of the initialization. Passed to `GaussianProcessRegressor`.
     """
-    def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=False, copy_X_train=True, n_targets=None, random_state=None):
+    def __init__(self, kernel=None, *, alpha=0.0001, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=5, normalize_y=False, copy_X_train=True, n_targets=None, random_state=None):
         super().__init__()
         self.kernel_alternatives = [
-            ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
+            # length_scale=1.0, periodicity=1.0, periodicity_bounds="fixed")
+            # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * RBF(length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims) * ExpSineSquared(length_scale=1.0, periodicity=1.0)
+            # ExpSineSquared(length_scale=1.0, periodicity=1.0)
+            ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * RBF(length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims) +  ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * ExpSineSquared(length_scale=0.1, periodicity=0.1) + WhiteKernel(noise_level=1e-3, noise_level_bounds=(1e-9, 1e0))
+
+            # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
             # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * RBF(length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
         ]
 

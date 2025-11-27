@@ -322,56 +322,62 @@ class GPNode(Node):
             use_init_points = [0.1*x_ranges[i] for i in range(self.n_features)]
 
 
-            # Loop over kernel alternatives
-            # TODO: Only try the alternative kernels with a certain probability?
-            # TODO: Make this code more efficient. It should be unnecessary to copy the
-            #       entire my_GPR object like we do below...
-            best_lml = float_info.max
-            temp_GPR = self.my_GPR
-            for kernel in self.my_GPR.kernel_alternatives:
+            # _Anders
+            # print(f"DEBUG: self.my_GPR.alpha: {self.my_GPR.alpha}")
+            self.my_GPR.fit(X_train, y_train)
 
-                params = kernel.get_params(deep=True)
+            
+            # # Loop over kernel alternatives
+            # # TODO: Only try the alternative kernels with a certain probability?
+            # # TODO: Make this code more efficient. It should be unnecessary to copy the
+            # #       entire my_GPR object like we do below...
 
-                # Example params dict: 
-                # params: {
-                #     'k1': 1**2, 
-                #     'k2': Matern(length_scale=[1, 1], nu=1.5), 
-                #     'k1__constant_value': 1.0, 
-                #     'k1__constant_value_bounds': (0.001, 100000000.0), 
-                #     'k2__length_scale': [1.0, 1.0], 
-                #     'k2__length_scale_bounds': [(0.001, 1000.0), (0.001, 1000.0)], 
-                #     'k2__nu': 1.5
-                # }
+            # best_lml = float_info.max
+            # temp_GPR = self.my_GPR
+            # for kernel in self.my_GPR.kernel_alternatives:
 
-                new_params = {}
-                for k,v in params.items():
-                    if k[-21:] == "__length_scale_bounds":
-                        new_params[k] = use_bounds
-                    elif k[-14:] == "__length_scale":
-                        new_params[k] = use_init_points
-                kernel.set_params(**new_params)
+            #     params = kernel.get_params(deep=True)
 
-                temp_GPR.kernel = kernel
-                temp_GPR.fit(X_train, y_train)
+            #     # Example params dict: 
+            #     # params: {
+            #     #     'k1': 1**2, 
+            #     #     'k2': Matern(length_scale=[1, 1], nu=1.5), 
+            #     #     'k1__constant_value': 1.0, 
+            #     #     'k1__constant_value_bounds': (0.001, 100000000.0), 
+            #     #     'k2__length_scale': [1.0, 1.0], 
+            #     #     'k2__length_scale_bounds': [(0.001, 1000.0), (0.001, 1000.0)], 
+            #     #     'k2__nu': 1.5
+            #     # }
 
-                lml = temp_GPR.log_marginal_likelihood_value_
-                theta = temp_GPR.kernel_.theta
-                # print(f"kernel: {kernel}   lml: {lml}   theta: {theta}   exp(theta): {np.exp(theta)}")
+            #     new_params = {}
+            #     for k,v in params.items():
+            #         if k[-21:] == "__length_scale_bounds":
+            #             new_params[k] = use_bounds
+            #         elif k[-14:] == "__length_scale":
+            #             new_params[k] = use_init_points
+            #     kernel.set_params(**new_params)
 
-                # Keep this kernel?
-                if lml < best_lml:
-                    self.my_GPR = deepcopy(temp_GPR)
-                    best_lml = lml
+            #     temp_GPR.kernel = kernel
+            #     temp_GPR.fit(X_train, y_train)
 
-            x_range_strs = []
-            for i in range(self.n_features):
-                x_range_strs.append( "({:.2e},{:.2e})".format(x_min_vals[i],x_max_vals[i]))
-            x_range_str = "[" + ", ".join(x_range_strs) + "]"
-            print(f"Trained node {self.name}:  "
-                  # f"x_data_range: {[(x_max_vals[i],x_min_vals[i]) for i in range(self.n_features)]}  "
-                  f"x_range: {x_range_str}  "
-                  f"kernel: {self.my_GPR.kernel_}"
-            )
+            #     lml = temp_GPR.log_marginal_likelihood_value_
+            #     theta = temp_GPR.kernel_.theta
+            #     # print(f"kernel: {kernel}   lml: {lml}   theta: {theta}   exp(theta): {np.exp(theta)}")
+
+            #     # Keep this kernel?
+            #     if lml < best_lml:
+            #         self.my_GPR = deepcopy(temp_GPR)
+            #         best_lml = lml
+
+            # x_range_strs = []
+            # for i in range(self.n_features):
+            #     x_range_strs.append( "({:.2e},{:.2e})".format(x_min_vals[i],x_max_vals[i]))
+            # x_range_str = "[" + ", ".join(x_range_strs) + "]"
+            # print(f"Trained node {self.name}:  "
+            #       # f"x_data_range: {[(x_max_vals[i],x_min_vals[i]) for i in range(self.n_features)]}  "
+            #       f"x_range: {x_range_str}  "
+            #       f"kernel: {self.my_GPR.kernel_}"
+            # )
 
             did_train = True
         return did_train
