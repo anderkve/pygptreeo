@@ -290,12 +290,6 @@ class GPNode(Node):
         (`n_points_since_retrain`) reaches `retrain_every_n_points`, if the node
         is full (`n_points >= Nbar`), or if `force_training` is True.
 
-        The method iterates through `kernel_alternatives` defined in the GPR
-        object (e.g., `Default_GPR`). For each kernel, it adjusts the
-        length scale bounds and initial points based on the current data ranges
-        in the node. The kernel that yields the best (lowest)
-        log-marginal-likelihood (LML) is selected for `self.my_GPR`.
-
         Args:
             force_training (bool): If True, the GPR is retrained even if the
                 usual buffer or fullness conditions are not met. Defaults to False.
@@ -318,67 +312,7 @@ class GPNode(Node):
             x_ranges = [x_max_vals[i] - x_min_vals[i] for i in range(self.n_features)]
             # x_ranges = [np.max(X_train[:,i])-np.min(X_train[:,i]) for i in range(self.n_features)]
 
-            use_bounds = [(np.max([self.my_GPR.min_length_scale, 0.01*x_ranges[i]]), np.max([10*self.my_GPR.min_length_scale, 10*x_ranges[i]])) for i in range(self.n_features)]
-            use_init_points = [0.1*x_ranges[i] for i in range(self.n_features)]
-
-
-            # _Anders
-            # print(f"DEBUG: self.my_GPR.alpha: {self.my_GPR.alpha}")
             self.my_GPR.fit(X_train, y_train)
-
-            
-            # # Loop over kernel alternatives
-            # # TODO: Only try the alternative kernels with a certain probability?
-            # # TODO: Make this code more efficient. It should be unnecessary to copy the
-            # #       entire my_GPR object like we do below...
-
-            # best_lml = float_info.max
-            # temp_GPR = self.my_GPR
-            # for kernel in self.my_GPR.kernel_alternatives:
-
-            #     params = kernel.get_params(deep=True)
-
-            #     # Example params dict: 
-            #     # params: {
-            #     #     'k1': 1**2, 
-            #     #     'k2': Matern(length_scale=[1, 1], nu=1.5), 
-            #     #     'k1__constant_value': 1.0, 
-            #     #     'k1__constant_value_bounds': (0.001, 100000000.0), 
-            #     #     'k2__length_scale': [1.0, 1.0], 
-            #     #     'k2__length_scale_bounds': [(0.001, 1000.0), (0.001, 1000.0)], 
-            #     #     'k2__nu': 1.5
-            #     # }
-
-            #     new_params = {}
-            #     for k,v in params.items():
-            #         if k[-21:] == "__length_scale_bounds":
-            #             new_params[k] = use_bounds
-            #         elif k[-14:] == "__length_scale":
-            #             new_params[k] = use_init_points
-            #     kernel.set_params(**new_params)
-
-            #     temp_GPR.kernel = kernel
-            #     temp_GPR.fit(X_train, y_train)
-
-            #     lml = temp_GPR.log_marginal_likelihood_value_
-            #     theta = temp_GPR.kernel_.theta
-            #     # print(f"kernel: {kernel}   lml: {lml}   theta: {theta}   exp(theta): {np.exp(theta)}")
-
-            #     # Keep this kernel?
-            #     if lml < best_lml:
-            #         self.my_GPR = deepcopy(temp_GPR)
-            #         best_lml = lml
-
-            # x_range_strs = []
-            # for i in range(self.n_features):
-            #     x_range_strs.append( "({:.2e},{:.2e})".format(x_min_vals[i],x_max_vals[i]))
-            # x_range_str = "[" + ", ".join(x_range_strs) + "]"
-            # print(f"Trained node {self.name}:  "
-            #       # f"x_data_range: {[(x_max_vals[i],x_min_vals[i]) for i in range(self.n_features)]}  "
-            #       f"x_range: {x_range_str}  "
-            #       f"kernel: {self.my_GPR.kernel_}"
-            # )
-
             did_train = True
         return did_train
 
@@ -441,7 +375,6 @@ class GPNode(Node):
         else:
             current_dim_spread = 0.0 # Default if no data
 
-        # TODO: Introduce alternative ways to compute the split position, e.g. median
         self.split_position = None
         if self.my_X_data.shape[0] == 0: # No data, place split in the middle (0 if not scaled) or handle as error?
             self.split_position = 0.0 

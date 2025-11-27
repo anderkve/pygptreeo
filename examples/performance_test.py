@@ -60,11 +60,11 @@ target_name = "eggholder"
 target = target_dict[target_name]
 
 n_dims = 3
-n_pts = 300000
+n_pts = 2000
 
-Nbar = 200
+Nbar = 100
 theta = 1e-4
-retrain_step = 200
+retrain_step = 100
 
 x_min = 0.0
 x_max = 1.0
@@ -82,15 +82,10 @@ class my_GPR_class(GaussianProcessRegressor):
     and default parameters for the GPR instances used within the `GPTree`.
 
     Attributes:
-        kernel_alternatives (list): A list of scikit-learn kernel objects.
-            The `GPNode` within `GPTree` will iterate through these kernels
-            during its fitting process and select the one that maximizes
-            the log-marginal-likelihood.
+        kernel: The kernel to be used.
         min_length_scale (float): A minimum bound for the kernel's length
             scale hyperparameters. This is used by `GPNode` to constrain
             the kernel optimization.
-        kernel: The default kernel to be used. Initially set to the first
-            kernel in `kernel_alternatives`.
         alpha (float or ndarray): Value added to the diagonal of the kernel
             matrix during fitting. Passed to `GaussianProcessRegressor`.
         optimizer (str or callable): The optimizer used for fitting the
@@ -108,11 +103,7 @@ class my_GPR_class(GaussianProcessRegressor):
     """
     def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=1, normalize_y=False, copy_X_train=True, n_targets=None, random_state=None):
         super().__init__()
-        self.kernel_alternatives = [
-            ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
-            # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * RBF(length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims),
-        ]
-        self.kernel = self.kernel_alternatives[0]
+        self.kernel = ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims)
         self.min_length_scale = 0.001
         self.alpha = alpha
         self.optimizer = optimizer

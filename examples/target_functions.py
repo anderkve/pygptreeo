@@ -55,7 +55,6 @@ def Eggholder(x):
     for i in range(dim-1):
         func += Eggholder_2d(x[i:i+2])
 
-    print(f"DEBUG: func: {func}")
     return func
 
 

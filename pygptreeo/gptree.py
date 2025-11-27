@@ -136,12 +136,8 @@ class GPTree:
         # - Start from the root node
         # - For each level, pick a branch according node.prob_func(x), until a leaf node is reached
         node = self.root
-        # while node.children:
         while not node.is_leaf:
             node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
-
-        # DEBUG
-        # node._print_debug_status()
 
         # Add new point and register prediction performance
         node.store_point(x, y, remove_shared=True)
@@ -238,18 +234,9 @@ class GPTree:
         
         # Train all the leaves
         for i, leaf in tqdm(enumerate(self.root.leaves), total=len(self.root.leaves), disable=not show_progress, desc="Training"):
-            # leaf.is_leaf = True
             leaf.fit_my_GPR()
             if forward_GPR_to_next_leaf and i != len(self.root.leaves) - 1:
                 self.root.leaves[i+1].my_GPR = deepcopy(leaf.my_GPR)
-
-            
-            """ kernel = leaf.my_GPR.kernel_
-            with open("hyperparameters.txt", 'a') as infile:
-                infile.write(f"Leaf node {i}")
-                infile.write("##############")
-                for hyperparameter, hyperparameter_value in zip(kernel.hyperparameters, kernel.theta):
-                    infile.write(f"{hyperparameter} {np.exp(hyperparameter_value)} \n") """
                 
                 
     def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False):
