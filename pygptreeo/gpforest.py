@@ -1,12 +1,27 @@
-import numpy as np
-from binarytree import Node
-from sklearn.gaussian_process import GaussianProcessRegressor
+"""GPForest: Ensemble of GPTree models.
+
+This module implements the GPForest class, which manages an ensemble of
+multiple GPTree instances. By combining predictions from multiple trees,
+GPForest can provide improved stability and accuracy compared to a single tree.
+
+The ensemble approach allows for:
+    - Better handling of uncertainty through multiple independent models
+    - Improved robustness to hyperparameter choices
+    - Potential for parallel training of individual trees
+"""
+
+# Standard library imports
 from typing import Callable, Optional, Type, Union
+
+# Third-party imports
+import joblib
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
 from tqdm import tqdm
 
-from pygptreeo.gptree import GPTree # Added import
-import joblib # Added import
+# Local imports
 from pygptreeo.default_gpr import Default_GPR
+from pygptreeo.gptree import GPTree
 
 
 class GPForest:

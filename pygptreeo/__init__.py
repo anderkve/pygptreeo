@@ -1,13 +1,40 @@
+"""pygptreeo: Online regression with dynamically growing GP trees.
+
+This package implements a continual learning approach for regression tasks using
+a dynamically growing binary tree of local Gaussian Process regressors. It is
+designed for online learning scenarios where data arrives sequentially and fast
+predictions with reliable uncertainty estimates are required.
+
+Main components:
+    - GPTree: The core tree structure with local GP models at leaf nodes
+    - GPNode: Individual nodes managing local data and GP models
+    - GPForest: Ensemble of multiple GPTree models for improved predictions
+    - Default_GPR: Pre-configured Gaussian Process Regressor
+
+Typical usage:
+    from pygptreeo import GPTree
+
+    gpt = GPTree(Nbar=100, theta=1e-4)
+
+    for x, y in data_stream:
+        y_pred, y_std = gpt.predict(x)
+        gpt.update_tree(x, y)
+"""
+
+# Standard library imports
+from copy import deepcopy
+from typing import Callable, Optional, Type, Union
+
+# Third-party imports
+import joblib
 import numpy as np
 from binarytree import Node
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern
 from sklearn.utils import resample
-from typing import Callable, Optional, Type, Union
-from copy import deepcopy
 from tqdm import tqdm
-import joblib
 
+# Local imports
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 from pygptreeo.gptree import GPTree

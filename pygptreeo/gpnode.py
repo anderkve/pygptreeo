@@ -1,14 +1,38 @@
-import numpy as np
-from binarytree import Node
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import Matern, ExpSineSquared, ConstantKernel, WhiteKernel
-from typing import Callable, Optional, Type, Union
-from scipy.optimize import root_scalar
+"""GPNode: Individual node implementation for GPTree.
+
+This module implements the GPNode class, which represents a single node in the
+GPTree structure. Each node manages its own training data, Gaussian Process model,
+and handles splitting logic when it becomes too full.
+
+Key responsibilities:
+    - Store and manage local training data
+    - Train and maintain a local GP regressor
+    - Implement probabilistic splitting functions
+    - Handle node splitting into child nodes
+    - Provide local predictions with calibrated uncertainty
+"""
+
+# Standard library imports
+import warnings
 from copy import deepcopy
 from sys import float_info
-import warnings
+from typing import Callable, Optional, Type, Union
 
+# Third-party imports
+import numpy as np
+from binarytree import Node
+from scipy.optimize import root_scalar
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import ConstantKernel, ExpSineSquared, Matern, WhiteKernel
+
+# Local imports
 from pygptreeo.default_gpr import Default_GPR
+
+# Module-level constants
+DEFAULT_OVERLAP = 0.001  # Default initial overlap for node boundaries
+DEFAULT_N_POINTS_PRED_PERF = 25  # Number of recent predictions tracked for calibration
+DEFAULT_SIGMA_SCALER = 10.0  # Initial sigma scaling factor for uncertainty calibration
+TARGET_COVERAGE = 0.68  # Target coverage for calibrated uncertainty (1 sigma)
 
 np.set_printoptions(suppress=True)
 
@@ -104,16 +128,16 @@ class GPNode(Node):
 
         self.split_index = 0       # 'j' in the DLGP article
         self.split_position = 0.0  # 's' in the DLGP article
-        self.overlap = 0.001       # 'o' in the DLGP article
+        self.overlap = DEFAULT_OVERLAP  # 'o' in the DLGP article
         self.name = name
 
-        self.n_points_pred_perf = 25
+        self.n_points_pred_perf = DEFAULT_N_POINTS_PRED_PERF
         self.residuals = np.array([])
         self.mu_preds = np.array([])
         self.sigma_preds = np.array([])
 
-        self.sigma_scaler = 10
-        self.sigma_scaler_init = 10
+        self.sigma_scaler = DEFAULT_SIGMA_SCALER
+        self.sigma_scaler_init = DEFAULT_SIGMA_SCALER
 
         print(f"Created node {self.name}")
 
@@ -480,7 +504,7 @@ class GPNode(Node):
 
     def update_sigma_scaler(self):
         """ Update the scaling factor for the prediction uncertainty. """
-        target_coverage = 0.68
+        target_coverage = TARGET_COVERAGE
 
         # Before we have collected self.n_points_pred_perf points, just set the 
         # self.sigma_scaler such that all residuals are covered 

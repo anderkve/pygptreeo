@@ -1,6 +1,16 @@
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel
+"""Default Gaussian Process Regressor configuration.
+
+This module provides a pre-configured GaussianProcessRegressor class suitable
+for use with GPTreeO. It sets up sensible defaults for kernel configuration
+and hyperparameters commonly used in online regression tasks.
+"""
+
+# Standard library imports
 from typing import Callable, Optional, Type, Union
+
+# Third-party imports
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
 
 class Default_GPR(GaussianProcessRegressor):
         """A default GaussianProcessRegressor configuration for GPTreeO.

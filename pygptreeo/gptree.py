@@ -1,13 +1,31 @@
-import numpy as np
-from binarytree import Node
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import Matern
-from sklearn.utils import resample
-from typing import Callable, Optional, Type, Union
-from copy import deepcopy
-from tqdm import tqdm
-import joblib # Ensure joblib is imported
+"""GPTree: Main tree structure for online regression.
 
+This module implements the GPTree class, which provides the core logic for
+dynamically growing a binary tree of Gaussian Process regressors. The tree
+adapts to incoming data by splitting nodes and training local GP models.
+
+The GPTree manages:
+    - Dynamic tree growth based on data accumulation
+    - Routing of data points to appropriate leaf nodes
+    - Prediction aggregation across multiple leaf nodes
+    - Training coordination for all GP models
+
+This implementation is suitable for online learning scenarios where data
+arrives sequentially and the model needs to adapt continuously.
+"""
+
+# Standard library imports
+from copy import deepcopy
+from typing import Callable, Optional, Type, Union
+
+# Third-party imports
+import joblib
+import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.utils import resample
+from tqdm import tqdm
+
+# Local imports
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 
