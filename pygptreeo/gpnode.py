@@ -236,6 +236,16 @@ class GPNode(Node):
         self.left.sigma_scaler_init = self.sigma_scaler_init
         self.right.sigma_scaler_init = self.sigma_scaler_init
 
+        # Copy scalers so children can use parent's GP correctly
+        # The children get a copy of the parent's trained GP, which was trained on
+        # scaled data using the parent's scalers. So children need the same scalers
+        # to properly scale inputs before prediction.
+        if self.use_standard_scaling and self.X_scaler is not None:
+            self.left.X_scaler = deepcopy(self.X_scaler)
+            self.left.y_scaler = deepcopy(self.y_scaler)
+            self.right.X_scaler = deepcopy(self.X_scaler)
+            self.right.y_scaler = deepcopy(self.y_scaler)
+
 
     def delete_point(self, index=-1, shared_point=True):
         """ Remove a single data point from the node. """
