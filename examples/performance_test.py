@@ -60,7 +60,7 @@ target_name = "eggholder"
 target = target_dict[target_name]
 
 n_dims = 3
-n_pts = 2000
+n_pts = 100000
 
 Nbar = 100
 theta = 1e-4
