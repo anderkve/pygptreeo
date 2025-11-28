@@ -124,6 +124,7 @@ gpt = GPTree(
     theta=theta,
     split_position_method='median',
     split_dimension_criteria='max_variance',
+    # split_dimension_criteria='max_uncertainty',
     retrain_every_n_points=retrain_step,
     use_calibrated_sigma=True,
     splitting_strategy='gradual',

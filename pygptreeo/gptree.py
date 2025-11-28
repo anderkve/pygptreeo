@@ -94,7 +94,8 @@ class GPTree:
             use_calibrated_sigma (Optional[bool]): If True, enables sigma
                 calibration in GPNode predictions. Defaults to True.
             split_dimension_criteria (Optional[str]): Method to select split
-                dimension. Defaults to 'max_spread'.
+                dimension. Options: 'max_spread', 'max_variance', 'max_uncertainty',
+                'random'. Defaults to 'max_spread'.
             splitting_strategy (Optional[str]): Strategy for splitting nodes.
                 'standard' or 'gradual'. Defaults to 'standard'.
             max_n_pred_leaves (Optional[int]): Maximum number of leaves to use

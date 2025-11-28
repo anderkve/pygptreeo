@@ -95,7 +95,10 @@ class GPNode(Node):
             name (str): A string identifier for the node, often representing its
                 path from the root (e.g., "0", "01"). Defaults to "0".
             split_dimension_criteria (str): The method used to determine the
-                split dimension. Defaults to 'max_spread'.
+                split dimension. Valid options: 'max_spread' (split on dimension with
+                largest range), 'max_variance' (split on dimension with highest variance),
+                'max_uncertainty' (split on dimension where GP is most uncertain),
+                'random' (random dimension). Defaults to 'max_spread'.
             use_standard_scaling (Optional[bool]): If True, standardizes both X and y
                 data before fitting the GP and inverse transforms predictions.
                 Defaults to True.
@@ -401,6 +404,69 @@ class GPNode(Node):
         return did_train
 
 
+    def _compute_dimensional_uncertainty(self):
+        """Computes uncertainty scores for each dimension to guide splitting.
+
+        This method assesses which dimension the current GP is most uncertain about
+        by analyzing how uncertainty varies along each dimension. The dimension with
+        the highest uncertainty score is where splitting would be most beneficial.
+
+        Strategy:
+        1. For each dimension, create a grid of test points that vary only in that dimension
+        2. Compute GP predictions and uncertainties at these test points
+        3. Aggregate uncertainty (e.g., mean or max) to get a score per dimension
+
+        Returns:
+            np.ndarray: Uncertainty scores for each dimension (shape: n_features)
+        """
+        uncertainty_scores = np.zeros(self.n_features)
+
+        # Use a sample of training points as reference points
+        # For computational efficiency, sample at most 20 points
+        n_sample_points = min(20, self.my_X_data.shape[0])
+        if n_sample_points < self.my_X_data.shape[0]:
+            # Randomly sample points
+            sample_indices = np.random.choice(self.my_X_data.shape[0],
+                                             size=n_sample_points,
+                                             replace=False)
+            sample_X = self.my_X_data[sample_indices, :]
+        else:
+            sample_X = self.my_X_data
+
+        # For each dimension, assess uncertainty
+        for dim in range(self.n_features):
+            # Create test points that vary along this dimension
+            # Use the range of data in this dimension
+            dim_min = np.min(self.my_X_data[:, dim])
+            dim_max = np.max(self.my_X_data[:, dim])
+
+            if dim_max - dim_min < 1e-10:
+                # No variation in this dimension
+                uncertainty_scores[dim] = 0.0
+                continue
+
+            # Create a grid of values for this dimension (use 5 points for efficiency)
+            dim_values = np.linspace(dim_min, dim_max, 5)
+
+            # For each sampled point, vary only this dimension and measure uncertainty
+            uncertainties = []
+            for base_point in sample_X:
+                for dim_val in dim_values:
+                    test_point = base_point.copy()
+                    test_point[dim] = dim_val
+                    test_point = test_point.reshape(1, -1)
+
+                    # Get prediction uncertainty
+                    _, sigma = self.predict(test_point, return_std=True, use_calibrated_sigma=False)
+                    uncertainties.append(sigma[0])
+
+            # Aggregate uncertainties for this dimension
+            # Use mean uncertainty as the score
+            uncertainty_scores[dim] = np.mean(uncertainties)
+
+        return uncertainty_scores
+
+
     def compute_split_position_and_overlap(self, theta: float):
         """Computes the split dimension, position, and overlap for node splitting.
 
@@ -438,6 +504,26 @@ class GPNode(Node):
                 self.split_index = np.argmax(variances)
             else: # Fallback for single data point or no variance
                 if self.my_X_data.shape[0] > 0:
+                    w = np.empty(self.n_features)
+                    for i in range(self.n_features):
+                        w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
+                    self.split_index = np.argmax(w)
+                else:
+                    self.split_index = 0 # Default to 0 if no data
+        elif self.split_dimension_criteria == 'max_uncertainty':
+            # Split on the dimension where the GP is most uncertain
+            # Strategy: compute marginal predictive uncertainty for each dimension
+            if self.my_X_data.shape[0] > 1 and hasattr(self.my_GPR, 'kernel_'):
+                # Compute per-dimension uncertainty scores
+                # We'll use the GP's predictions on the training data to assess uncertainty
+                uncertainty_scores = self._compute_dimensional_uncertainty()
+                self.split_index = np.argmax(uncertainty_scores)
+            else:
+                # Fallback to max_variance if GP not trained yet
+                if self.my_X_data.shape[0] > 1:
+                    variances = np.var(self.my_X_data, axis=0)
+                    self.split_index = np.argmax(variances)
+                elif self.my_X_data.shape[0] > 0:
                     w = np.empty(self.n_features)
                     for i in range(self.n_features):
                         w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
