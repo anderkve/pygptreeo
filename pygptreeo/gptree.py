@@ -93,11 +93,18 @@ class GPTree:
                 theta * range_of_split_dimension. Defaults to 0.0001.
             use_calibrated_sigma (Optional[bool]): If True, enables sigma
                 calibration in GPNode predictions. Defaults to True.
-            **kwargs: Additional keyword arguments passed to the constructor
-                of the root `GPNode`. These can include parameters like
-                `split_position_method` and `retrain_every_n_points`.
             split_dimension_criteria (Optional[str]): Method to select split
                 dimension. Defaults to 'max_spread'.
+            splitting_strategy (Optional[str]): Strategy for splitting nodes.
+                'standard' or 'gradual'. Defaults to 'standard'.
+            max_n_pred_leaves (Optional[int]): Maximum number of leaves to use
+                for prediction. Defaults to None (use all).
+            aggregation (Optional[str]): Method for aggregating predictions.
+                'default'/'moe' or 'poe'. Defaults to 'default'.
+            **kwargs: Additional keyword arguments passed to the constructor
+                of the root `GPNode`. These can include parameters like
+                `split_position_method`, `retrain_every_n_points`, and
+                `use_standard_scaling` (bool, defaults to True).
         """
         
         self.GPR = GPR

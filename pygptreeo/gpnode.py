@@ -24,6 +24,7 @@ from binarytree import Node
 from scipy.optimize import root_scalar
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, ExpSineSquared, Matern, WhiteKernel
+from sklearn.preprocessing import StandardScaler
 
 # Local imports
 from pygptreeo.default_gpr import Default_GPR
@@ -66,14 +67,15 @@ class GPNode(Node):
         retrain_every_n_points (int): Frequency of GPR retraining.
         overlap (float): The size of the overlapping region with sibling nodes.
     """
-    def __init__(self, *args, 
-                 my_GPR: GaussianProcessRegressor, 
+    def __init__(self, *args,
+                 my_GPR: GaussianProcessRegressor,
                  Nbar: Optional[int] = 100,
-                 split_position_method='median', 
+                 split_position_method='median',
                  retrain_every_n_points=1,
                  name="0",
                  split_dimension_criteria='max_spread',
-                 splitting_strategy: Optional[str] = 'standard'):
+                 splitting_strategy: Optional[str] = 'standard',
+                 use_standard_scaling: Optional[bool] = True):
         """Initializes a GPNode.
 
         Args:
@@ -94,6 +96,9 @@ class GPNode(Node):
                 path from the root (e.g., "0", "01"). Defaults to "0".
             split_dimension_criteria (str): The method used to determine the
                 split dimension. Defaults to 'max_spread'.
+            use_standard_scaling (Optional[bool]): If True, standardizes both X and y
+                data before fitting the GP and inverse transforms predictions.
+                Defaults to True.
         """
         
         super().__init__(*args)
@@ -108,9 +113,14 @@ class GPNode(Node):
         self.retrain_every_n_points = retrain_every_n_points
         self.split_dimension_criteria = split_dimension_criteria
         self.splitting_strategy = splitting_strategy
-        
+        self.use_standard_scaling = use_standard_scaling
+
         self.parent_split_index = None
         self.parent_split_position = None
+
+        # Standard scalers for X and y (fitted during GP training)
+        self.X_scaler = None
+        self.y_scaler = None
 
         self.is_left = None
         self.is_leaf = True
@@ -193,6 +203,7 @@ class GPNode(Node):
             'retrain_every_n_points': self.retrain_every_n_points,
             'split_dimension_criteria': self.split_dimension_criteria,
             'splitting_strategy': self.splitting_strategy,
+            'use_standard_scaling': self.use_standard_scaling,
         }
 
         # Create child nodes with a copy of the parent GP
@@ -307,12 +318,44 @@ class GPNode(Node):
         del self.my_GPR
 
 
+    def _fit_scalers(self, X: np.ndarray, y: np.ndarray):
+        """Fits StandardScalers on the combined training data.
+
+        This method creates and fits separate StandardScaler instances for
+        the feature data (X) and target data (y). These scalers are stored
+        in the node and used to transform data before GP training and to
+        inverse transform predictions.
+
+        Args:
+            X (np.ndarray): Feature data to fit the X scaler on.
+                Shape: (n_samples, n_features)
+            y (np.ndarray): Target data to fit the y scaler on.
+                Shape: (n_samples, 1)
+
+        Note:
+            StandardScaler handles edge cases automatically:
+            - Single point: sets scale=1, mean=point_value
+            - Zero variance in a dimension: sets scale=1 for that dimension
+        """
+        # Fit X scaler (per-feature standardization)
+        self.X_scaler = StandardScaler()
+        self.X_scaler.fit(X)
+
+        # Fit y scaler (single output standardization)
+        self.y_scaler = StandardScaler()
+        self.y_scaler.fit(y)
+
+
     def fit_my_GPR(self, force_training=False):
         """Fits the node's Gaussian Process Regressor (GPR) to its local data.
 
         Training is triggered if the number of new points in the buffer
         (`n_points_since_retrain`) reaches `retrain_every_n_points`, if the node
         is full (`n_points >= Nbar`), or if `force_training` is True.
+
+        If `use_standard_scaling` is enabled, this method first fits StandardScalers
+        on the combined training data, then transforms the data before fitting the GP.
+        The raw (unscaled) data remains stored in the node.
 
         Args:
             force_training (bool): If True, the GPR is retrained even if the
@@ -330,13 +373,20 @@ class GPNode(Node):
             X_train = np.vstack((self.my_X_data, self.shared_X_data))
             y_train = np.vstack((self.my_y_data, self.shared_y_data))
 
-            # Get x ranges
-            x_max_vals = [np.max(X_train[:,i]) for i in range(self.n_features)]
-            x_min_vals = [np.min(X_train[:,i]) for i in range(self.n_features)]
-            x_ranges = [x_max_vals[i] - x_min_vals[i] for i in range(self.n_features)]
-            # x_ranges = [np.max(X_train[:,i])-np.min(X_train[:,i]) for i in range(self.n_features)]
+            if self.use_standard_scaling and X_train.shape[0] > 0:
+                # Fit scalers on the combined training data
+                self._fit_scalers(X_train, y_train)
 
-            self.my_GPR.fit(X_train, y_train)
+                # Transform data to standardized space
+                X_train_scaled = self.X_scaler.transform(X_train)
+                y_train_scaled = self.y_scaler.transform(y_train)
+
+                # Train GP on scaled data
+                self.my_GPR.fit(X_train_scaled, y_train_scaled)
+            else:
+                # No scaling - train on raw data
+                self.my_GPR.fit(X_train, y_train)
+
             did_train = True
         return did_train
 
@@ -462,8 +512,14 @@ class GPNode(Node):
     def predict(self, x: np.ndarray, return_std=True, use_calibrated_sigma=False):
         """Evaluates the prediction from this node's GPR at input point(s) x.
 
+        The input x is expected to be in the original (unscaled) space. If
+        `use_standard_scaling` is enabled, this method transforms x to the
+        standardized space before calling the GP, then inverse transforms
+        the predictions back to the original space.
+
         Args:
-            x (np.ndarray): The input point(s) at which to make predictions.
+            x (np.ndarray): The input point(s) at which to make predictions,
+                in the original (unscaled) space.
                 Shape should be (n_samples, n_features).
             return_std (bool): Whether to return the standard deviation of the
                 prediction. Defaults to True.
@@ -474,11 +530,26 @@ class GPNode(Node):
 
         Returns:
             tuple:
-                - mu_pred (np.ndarray): The mean prediction(s).
+                - mu_pred (np.ndarray): The mean prediction(s) in original space.
                 - sigma_pred (np.ndarray): The standard deviation of the
-                  prediction(s). Only returned if `return_std` is True.
+                  prediction(s) in original space. Only returned if `return_std` is True.
         """
-        mu_pred, sigma_pred = self.my_GPR.predict(x, return_std=return_std)
+        if self.use_standard_scaling and self.X_scaler is not None:
+            # Transform input to standardized space
+            x_scaled = self.X_scaler.transform(x)
+
+            # Get prediction in scaled space
+            mu_scaled, sigma_scaled = self.my_GPR.predict(x_scaled, return_std=return_std)
+
+            # Inverse transform mean: mu_original = mu_scaled * scale_y + mean_y
+            mu_pred = self.y_scaler.inverse_transform(mu_scaled.reshape(-1, 1)).flatten()
+
+            # Transform std: sigma_original = sigma_scaled * scale_y
+            # When y is scaled by scale_y, variance scales by scale_y^2, so std scales by scale_y
+            sigma_pred = sigma_scaled * self.y_scaler.scale_[0]
+        else:
+            # No scaling - predict on raw data
+            mu_pred, sigma_pred = self.my_GPR.predict(x, return_std=return_std)
 
         if use_calibrated_sigma:
             sigma_pred = sigma_pred * self.sigma_scaler
