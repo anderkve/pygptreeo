@@ -129,6 +129,12 @@ gpt = GPTree(
     use_calibrated_sigma=True,
     splitting_strategy='gradual',
     # splitting_strategy='standard',
+    enable_point_rejection=False,
+    rejection_threshold=1e-2,
+    min_points_before_rejection=25,
+    enable_point_merging=True,
+    merge_distance_threshold=0.01,
+    min_points_before_merging=10,
 )
 
 # Initialize for plotting

@@ -75,7 +75,13 @@ class GPNode(Node):
                  name="0",
                  split_dimension_criteria='max_spread',
                  splitting_strategy: Optional[str] = 'standard',
-                 use_standard_scaling: Optional[bool] = True):
+                 use_standard_scaling: Optional[bool] = True,
+                 enable_point_rejection: Optional[bool] = False,
+                 rejection_threshold: Optional[float] = 1e-3,
+                 min_points_before_rejection: Optional[int] = 50,
+                 enable_point_merging: Optional[bool] = False,
+                 merge_distance_threshold: Optional[float] = 0.01,
+                 min_points_before_merging: Optional[int] = 10):
         """Initializes a GPNode.
 
         Args:
@@ -102,6 +108,20 @@ class GPNode(Node):
             use_standard_scaling (Optional[bool]): If True, standardizes both X and y
                 data before fitting the GP and inverse transforms predictions.
                 Defaults to True.
+            enable_point_rejection (Optional[bool]): If True, rejects new points that
+                are well-predicted by the current GP. Defaults to False.
+            rejection_threshold (Optional[float]): Relative error threshold below which
+                points are rejected. E.g., 1e-3 means reject if |y - y_pred| / |y| < 0.001.
+                Defaults to 1e-3.
+            min_points_before_rejection (Optional[int]): Minimum number of points required
+                before rejection starts. Ensures we have enough data before being selective.
+                Defaults to 50.
+            enable_point_merging (Optional[bool]): If True, merges new points with nearby
+                existing points via weighted averaging. Defaults to False.
+            merge_distance_threshold (Optional[float]): Distance threshold below which points
+                are merged. Measured as Euclidean distance in input space. Defaults to 0.01.
+            min_points_before_merging (Optional[int]): Minimum number of points required
+                before merging starts. Defaults to 10.
         """
         
         super().__init__(*args)
@@ -117,6 +137,20 @@ class GPNode(Node):
         self.split_dimension_criteria = split_dimension_criteria
         self.splitting_strategy = splitting_strategy
         self.use_standard_scaling = use_standard_scaling
+
+        # Point rejection parameters
+        self.enable_point_rejection = enable_point_rejection
+        self.rejection_threshold = rejection_threshold
+        self.min_points_before_rejection = min_points_before_rejection
+
+        # Point merging parameters
+        self.enable_point_merging = enable_point_merging
+        self.merge_distance_threshold = merge_distance_threshold
+        self.min_points_before_merging = min_points_before_merging
+
+        # Statistics for monitoring merging behavior
+        self.n_merges = 0
+        self.merge_counts = None  # Will be initialized with data
 
         self.parent_split_index = None
         self.parent_split_position = None
@@ -195,6 +229,9 @@ class GPNode(Node):
         self.n_points = 0
         self.n_shared_points = 0
 
+        # Initialize merge tracking - each point tracks how many merges it represents
+        self.merge_counts = np.array([]).reshape((0, 1))
+
 
     def generate_children(self, GPR: Type[GaussianProcessRegressor], n_features: int):
         """ Grow the GPtree by adding two GPNodes as children of the current GPNode. """
@@ -207,6 +244,12 @@ class GPNode(Node):
             'split_dimension_criteria': self.split_dimension_criteria,
             'splitting_strategy': self.splitting_strategy,
             'use_standard_scaling': self.use_standard_scaling,
+            'enable_point_rejection': self.enable_point_rejection,
+            'rejection_threshold': self.rejection_threshold,
+            'min_points_before_rejection': self.min_points_before_rejection,
+            'enable_point_merging': self.enable_point_merging,
+            'merge_distance_threshold': self.merge_distance_threshold,
+            'min_points_before_merging': self.min_points_before_merging,
         }
 
         # Create child nodes with a copy of the parent GP
@@ -259,6 +302,8 @@ class GPNode(Node):
         elif (not shared_point) and self.n_points > 0:
             self.my_X_data = np.delete(self.my_X_data, index, axis=0)
             self.my_y_data = np.delete(self.my_y_data, index, axis=0)
+            if self.merge_counts is not None:
+                self.merge_counts = np.delete(self.merge_counts, index, axis=0)
             self.n_points -= 1
         else:
             warnings.warn(f"Node {self.name}: No point left to delete.", RuntimeWarning)
@@ -286,6 +331,9 @@ class GPNode(Node):
             self.my_y_data = np.vstack((y, self.my_y_data))
             # self.my_X_data = np.append(self.my_X_data, x, axis=0)
             # self.my_y_data = np.append(self.my_y_data, y, axis=0)
+            # Track merge count for this new point (starts at 0)
+            if self.merge_counts is not None:
+                self.merge_counts = np.vstack((np.array([[0]]), self.merge_counts))
             self.n_points += 1
             if increment_buffer:
                 self.n_points_since_retrain += 1
@@ -330,6 +378,165 @@ class GPNode(Node):
         """
         del self.my_GPR
 
+
+    def find_nearest_neighbor(self, x: np.ndarray):
+        """Finds the nearest neighbor to x in the node's training data.
+
+        Args:
+            x (np.ndarray): Input point to find nearest neighbor for (shape: 1 x n_features)
+
+        Returns:
+            tuple: (index, distance) of nearest neighbor, or (None, None) if no data
+        """
+        if self.n_points == 0:
+            return None, None
+
+        # Compute Euclidean distances to all points
+        distances = np.linalg.norm(self.my_X_data - x, axis=1)
+        nearest_idx = np.argmin(distances)
+        nearest_dist = distances[nearest_idx]
+
+        return nearest_idx, nearest_dist
+
+
+    def merge_with_point(self, x: np.ndarray, y: float, nearest_idx: int):
+        """Merges new point (x, y) with existing point at nearest_idx via weighted averaging.
+
+        Weights are based on GP prediction uncertainties:
+        - Lower uncertainty = higher weight (more confident measurement)
+        - Weight = 1 / σ²
+
+        Args:
+            x (np.ndarray): Input features of new point
+            y (float): Target value of new point
+            nearest_idx (int): Index of existing point to merge with
+
+        Returns:
+            bool: True if merge was successful
+        """
+        # Get existing point
+        x_old = self.my_X_data[nearest_idx:nearest_idx+1]
+        y_old = self.my_y_data[nearest_idx, 0]
+
+        # Get GP uncertainties for weighting
+        try:
+            _, sigma_old = self.predict(x_old, return_std=True, use_calibrated_sigma=False)
+            _, sigma_new = self.predict(x, return_std=True, use_calibrated_sigma=False)
+        except Exception:
+            # If prediction fails, use equal weights
+            sigma_old = 1.0
+            sigma_new = 1.0
+
+        # Compute weights (inverse variance)
+        w_old = 1.0 / (sigma_old[0]**2 + 1e-10)
+        w_new = 1.0 / (sigma_new[0]**2 + 1e-10)
+        w_total = w_old + w_new
+
+        # Weighted average for both x and y
+        x_merged = (w_old * x_old + w_new * x) / w_total
+        y_merged = (w_old * y_old + w_new * y) / w_total
+
+        # Update the existing point with merged values
+        self.my_X_data[nearest_idx] = x_merged[0]
+        self.my_y_data[nearest_idx, 0] = y_merged
+
+        # Update merge count for this point
+        self.merge_counts[nearest_idx, 0] += 1
+        self.n_merges += 1
+
+        print(f"Node {self.name}: Merged points (dist={np.linalg.norm(x - x_old):.2e}, "
+              f"w_old={w_old:.2e}, w_new={w_new:.2e}, total_merges={int(self.merge_counts[nearest_idx, 0])})")
+
+        return True
+
+
+    def should_merge_point(self, x: np.ndarray, y: float):
+        """Determines if a new point should be merged with an existing nearby point.
+
+        A point is merged if:
+        1. Point merging is enabled
+        2. Node has enough points (>= min_points_before_merging)
+        3. GP has been trained
+        4. Nearest neighbor is within merge_distance_threshold
+
+        If merging occurs, the existing point is updated in-place.
+
+        Args:
+            x (np.ndarray): Input features of new point
+            y (float): Target value of new point
+
+        Returns:
+            bool: True if point was merged (don't add it), False otherwise (add as new point)
+        """
+        # Point merging disabled or not enough points yet
+        if not self.enable_point_merging:
+            return False
+
+        if self.n_points < self.min_points_before_merging:
+            return False
+
+        # GP not trained yet
+        if not hasattr(self.my_GPR, 'kernel_'):
+            return False
+
+        # Find nearest neighbor
+        nearest_idx, nearest_dist = self.find_nearest_neighbor(x)
+        if nearest_idx is None:
+            return False
+
+        # Check if distance is below threshold
+        if nearest_dist < self.merge_distance_threshold:
+            # Merge the points
+            return self.merge_with_point(x, y, nearest_idx)
+
+        return False
+
+
+    def should_reject_point(self, x: np.ndarray, y: float):
+        """Determines if a new training point should be rejected.
+
+        A point is rejected if:
+        1. Point rejection is enabled
+        2. Node has enough points (>= min_points_before_rejection)
+        3. GP has been trained (has kernel_)
+        4. The point is well-predicted (relative error < rejection_threshold)
+
+        Args:
+            x (np.ndarray): Input features of the new point
+            y (float): Target value of the new point
+
+        Returns:
+            bool: True if point should be rejected, False if it should be stored
+        """
+        # Point rejection disabled or not enough points yet
+        if not self.enable_point_rejection:
+            return False
+
+        if self.n_points < self.min_points_before_rejection:
+            return False
+
+        # GP not trained yet
+        if not hasattr(self.my_GPR, 'kernel_'):
+            return False
+
+        # Get prediction for this point
+        try:
+            y_pred, _ = self.predict(x, return_std=True, use_calibrated_sigma=False)
+        except Exception:
+            # If prediction fails, don't reject (be conservative)
+            return False
+
+        # Compute relative error
+        abs_error = np.abs(y - y_pred[0])
+        relative_error = abs_error / np.maximum(np.abs(y), 1e-10)
+
+        # Reject if error is below threshold
+        is_rejected = bool(relative_error < self.rejection_threshold)
+
+        if is_rejected:
+            print(f"Node {self.name}: Rejected point (rel_err={float(relative_error):.2e} < {self.rejection_threshold:.2e})")
+
+        return is_rejected
 
     def _fit_scalers(self, X: np.ndarray, y: np.ndarray):
         """Fits StandardScalers on the combined training data.

@@ -165,6 +165,20 @@ class GPTree:
         while not node.is_leaf:
             node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
 
+        # Check if this point should be merged with a nearby point (updates existing point in-place)
+        if node.should_merge_point(x, y):
+            # Point was merged with existing point, don't add as new point
+            # Still register prediction performance and update sigma scaler
+            node.register_pred_perf(x, y)
+            if self.use_calibrated_sigma:
+                node.update_sigma_scaler()
+            return
+
+        # Check if this point should be rejected (if well-predicted by current GP)
+        if node.should_reject_point(x, y):
+            # Point is well-predicted, don't store it
+            return
+
         # Add new point and register prediction performance
         node.store_point(x, y, remove_shared=True)
         node.register_pred_perf(x, y)
