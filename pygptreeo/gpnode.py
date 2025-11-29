@@ -81,7 +81,11 @@ class GPNode(Node):
                  min_points_before_rejection: Optional[int] = 50,
                  enable_point_merging: Optional[bool] = False,
                  merge_distance_threshold: Optional[float] = 0.01,
-                 min_points_before_merging: Optional[int] = 10):
+                 min_points_before_merging: Optional[int] = 10,
+                 enable_split_evaluation: Optional[bool] = False,
+                 n_split_candidates: Optional[int] = 3,
+                 split_eval_train_fraction: Optional[float] = 0.6,
+                 split_eval_min_points: Optional[int] = 20):
         """Initializes a GPNode.
 
         Args:
@@ -122,6 +126,14 @@ class GPNode(Node):
                 are merged. Measured as Euclidean distance in input space. Defaults to 0.01.
             min_points_before_merging (Optional[int]): Minimum number of points required
                 before merging starts. Defaults to 10.
+            enable_split_evaluation (Optional[bool]): If True, evaluates multiple candidate
+                split dimensions before choosing the best one. Defaults to False.
+            n_split_candidates (Optional[int]): Number of candidate split dimensions to
+                evaluate. Defaults to 3.
+            split_eval_train_fraction (Optional[float]): Fraction of points in each region
+                to use for training during split evaluation. Defaults to 0.6.
+            split_eval_min_points (Optional[int]): Minimum points required in a region
+                to evaluate that split. Defaults to 20.
         """
         
         super().__init__(*args)
@@ -151,6 +163,12 @@ class GPNode(Node):
         # Statistics for monitoring merging behavior
         self.n_merges = 0
         self.merge_counts = None  # Will be initialized with data
+
+        # Split evaluation parameters
+        self.enable_split_evaluation = enable_split_evaluation
+        self.n_split_candidates = n_split_candidates
+        self.split_eval_train_fraction = split_eval_train_fraction
+        self.split_eval_min_points = split_eval_min_points
 
         self.parent_split_index = None
         self.parent_split_position = None
@@ -250,6 +268,10 @@ class GPNode(Node):
             'enable_point_merging': self.enable_point_merging,
             'merge_distance_threshold': self.merge_distance_threshold,
             'min_points_before_merging': self.min_points_before_merging,
+            'enable_split_evaluation': self.enable_split_evaluation,
+            'n_split_candidates': self.n_split_candidates,
+            'split_eval_train_fraction': self.split_eval_train_fraction,
+            'split_eval_min_points': self.split_eval_min_points,
         }
 
         # Create child nodes with a copy of the parent GP
@@ -674,12 +696,247 @@ class GPNode(Node):
         return uncertainty_scores
 
 
+    def evaluate_candidate_split(self, split_index: int, split_position: float, overlap: float):
+        """Evaluates prediction performance of a candidate split.
+
+        For a given split (dimension and position), this method:
+        1. Partitions data into left/right regions using prob_func
+        2. For each region:
+           - Splits into train/test subsets
+           - Trains a small GP on train subset
+           - Evaluates RMSE on test subset
+        3. Returns combined error score (lower is better)
+
+        Args:
+            split_index (int): Dimension to split on
+            split_position (float): Position along dimension to split at
+            overlap (float): Overlap parameter for prob_func
+
+        Returns:
+            float: Combined RMSE score (weighted average of left and right errors)
+                   Returns np.inf if evaluation fails or insufficient data
+        """
+        if self.my_X_data.shape[0] < 2 * self.split_eval_min_points:
+            # Not enough data to evaluate split
+            return np.inf
+
+        # Temporarily set split parameters for prob_func
+        old_split_index = self.split_index
+        old_split_position = self.split_position
+        old_overlap = self.overlap
+
+        self.split_index = split_index
+        self.split_position = split_position
+        self.overlap = overlap
+
+        try:
+            # Partition data into left/right using prob_func
+            left_indices = []
+            right_indices = []
+
+            for i in range(self.my_X_data.shape[0]):
+                x = self.my_X_data[i:i+1]
+                prob_right = self.prob_func(x)[0][0]
+                # Deterministically assign based on probability
+                if prob_right < 0.5:
+                    left_indices.append(i)
+                else:
+                    right_indices.append(i)
+
+            left_indices = np.array(left_indices)
+            right_indices = np.array(right_indices)
+
+            # Check if we have enough points in each region
+            if len(left_indices) < self.split_eval_min_points or len(right_indices) < self.split_eval_min_points:
+                return np.inf
+
+            # Evaluate left region
+            X_left = self.my_X_data[left_indices]
+            y_left = self.my_y_data[left_indices]
+
+            n_train_left = max(int(len(left_indices) * self.split_eval_train_fraction), 10)
+            n_train_left = min(n_train_left, len(left_indices) - 5)  # Leave at least 5 for testing
+
+            # Randomly split into train/test
+            indices_left = np.random.permutation(len(left_indices))
+            train_idx_left = indices_left[:n_train_left]
+            test_idx_left = indices_left[n_train_left:]
+
+            if len(test_idx_left) == 0:
+                return np.inf
+
+            # Train small GP on left train subset
+            gp_left = deepcopy(self.my_GPR)
+            X_train_left = X_left[train_idx_left]
+            y_train_left = y_left[train_idx_left]
+
+            # Apply scaling if enabled
+            if self.use_standard_scaling:
+                from sklearn.preprocessing import StandardScaler
+                scaler_X_left = StandardScaler()
+                scaler_y_left = StandardScaler()
+                X_train_left_scaled = scaler_X_left.fit_transform(X_train_left)
+                y_train_left_scaled = scaler_y_left.fit_transform(y_train_left)
+                gp_left.fit(X_train_left_scaled, y_train_left_scaled)
+
+                # Predict on test set
+                X_test_left_scaled = scaler_X_left.transform(X_left[test_idx_left])
+                y_pred_left_scaled = gp_left.predict(X_test_left_scaled, return_std=False)
+                y_pred_left = scaler_y_left.inverse_transform(y_pred_left_scaled.reshape(-1, 1)).flatten()
+            else:
+                gp_left.fit(X_train_left, y_train_left)
+                y_pred_left = gp_left.predict(X_left[test_idx_left], return_std=False)
+
+            y_true_left = y_left[test_idx_left].flatten()
+            rmse_left = np.sqrt(np.mean((y_true_left - y_pred_left)**2))
+
+            # Evaluate right region
+            X_right = self.my_X_data[right_indices]
+            y_right = self.my_y_data[right_indices]
+
+            n_train_right = max(int(len(right_indices) * self.split_eval_train_fraction), 10)
+            n_train_right = min(n_train_right, len(right_indices) - 5)
+
+            indices_right = np.random.permutation(len(right_indices))
+            train_idx_right = indices_right[:n_train_right]
+            test_idx_right = indices_right[n_train_right:]
+
+            if len(test_idx_right) == 0:
+                return np.inf
+
+            gp_right = deepcopy(self.my_GPR)
+            X_train_right = X_right[train_idx_right]
+            y_train_right = y_right[train_idx_right]
+
+            if self.use_standard_scaling:
+                from sklearn.preprocessing import StandardScaler
+                scaler_X_right = StandardScaler()
+                scaler_y_right = StandardScaler()
+                X_train_right_scaled = scaler_X_right.fit_transform(X_train_right)
+                y_train_right_scaled = scaler_y_right.fit_transform(y_train_right)
+                gp_right.fit(X_train_right_scaled, y_train_right_scaled)
+
+                X_test_right_scaled = scaler_X_right.transform(X_right[test_idx_right])
+                y_pred_right_scaled = gp_right.predict(X_test_right_scaled, return_std=False)
+                y_pred_right = scaler_y_right.inverse_transform(y_pred_right_scaled.reshape(-1, 1)).flatten()
+            else:
+                gp_right.fit(X_train_right, y_train_right)
+                y_pred_right = gp_right.predict(X_right[test_idx_right], return_std=False)
+
+            y_true_right = y_right[test_idx_right].flatten()
+            rmse_right = np.sqrt(np.mean((y_true_right - y_pred_right)**2))
+
+            # Combined score: weighted average by number of test points
+            n_test_left = len(test_idx_left)
+            n_test_right = len(test_idx_right)
+            combined_rmse = (n_test_left * rmse_left + n_test_right * rmse_right) / (n_test_left + n_test_right)
+
+            return combined_rmse
+
+        except Exception as e:
+            # If evaluation fails, return infinity (worst score)
+            warnings.warn(f"Node {self.name}: Split evaluation failed: {e}", RuntimeWarning)
+            return np.inf
+
+        finally:
+            # Restore original split parameters
+            self.split_index = old_split_index
+            self.split_position = old_split_position
+            self.overlap = old_overlap
+
+
+    def find_best_split_dimension(self, theta: float):
+        """Finds the best split dimension by evaluating multiple candidates.
+
+        Tests several candidate dimensions and selects the one with lowest
+        prediction error. Candidates are chosen using different criteria
+        (max_variance, max_spread, max_uncertainty).
+
+        Args:
+            theta (float): Theta parameter for computing overlap
+
+        Returns:
+            tuple: (best_split_index, best_split_position) or (None, None) if evaluation fails
+        """
+        if self.my_X_data.shape[0] < 2 * self.split_eval_min_points:
+            # Not enough data for evaluation
+            return None, None
+
+        # Generate candidate dimensions to test
+        candidates = []
+
+        # Candidate 1: Max variance
+        if self.my_X_data.shape[0] > 1:
+            variances = np.var(self.my_X_data, axis=0)
+            dim_max_var = np.argmax(variances)
+            candidates.append(('max_variance', dim_max_var))
+
+        # Candidate 2: Max spread
+        if self.my_X_data.shape[0] > 0:
+            spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
+            dim_max_spread = np.argmax(spreads)
+            candidates.append(('max_spread', dim_max_spread))
+
+        # Candidate 3: Max uncertainty (if GP is trained)
+        if hasattr(self.my_GPR, 'kernel_') and self.my_X_data.shape[0] > 1:
+            uncertainty_scores = self._compute_dimensional_uncertainty()
+            dim_max_unc = np.argmax(uncertainty_scores)
+            candidates.append(('max_uncertainty', dim_max_unc))
+
+        # Remove duplicates (keep unique dimensions)
+        unique_candidates = []
+        seen_dims = set()
+        for name, dim in candidates:
+            if dim not in seen_dims:
+                unique_candidates.append((name, dim))
+                seen_dims.add(dim)
+
+        # Limit to n_split_candidates
+        unique_candidates = unique_candidates[:self.n_split_candidates]
+
+        if len(unique_candidates) == 0:
+            return None, None
+
+        print(f"Node {self.name}: Evaluating {len(unique_candidates)} candidate splits...")
+
+        # Evaluate each candidate
+        best_score = np.inf
+        best_index = None
+        best_position = None
+
+        for name, split_index in unique_candidates:
+            # Compute split position (use median)
+            split_position = np.median(self.my_X_data[:, split_index])
+
+            # Compute overlap
+            spread = np.max(self.my_X_data[:, split_index]) - np.min(self.my_X_data[:, split_index])
+            overlap = theta * spread
+
+            # Evaluate this candidate
+            score = self.evaluate_candidate_split(split_index, split_position, overlap)
+
+            print(f"  Candidate: {name} (dim {split_index}), score: {score:.4e}")
+
+            if score < best_score:
+                best_score = score
+                best_index = split_index
+                best_position = split_position
+
+        if best_index is not None:
+            print(f"  Best: dim {best_index} with score {best_score:.4e}")
+
+        return best_index, best_position
+
+
     def compute_split_position_and_overlap(self, theta: float):
         """Computes the split dimension, position, and overlap for node splitting.
 
         This method determines which feature dimension (`self.split_index`) to
         split on, typically by selecting the dimension with the maximum spread
         (range of values) in the node's current training data (`self.my_X_data`).
+
+        If `enable_split_evaluation` is True, it evaluates multiple candidate
+        splits and selects the best one based on prediction performance.
 
         The actual split position (`self.split_position`) along this dimension is
         then calculated based on the `self.split_position_method` (e.g., median,
@@ -695,6 +952,18 @@ class GPNode(Node):
                 the extent of the overlap. It's a fraction of the data range
                 in the chosen split dimension.
         """
+
+        # If split evaluation is enabled, find best split by testing candidates
+        if self.enable_split_evaluation:
+            best_index, best_position = self.find_best_split_dimension(theta)
+            if best_index is not None:
+                self.split_index = best_index
+                self.split_position = best_position
+                # Compute overlap for the chosen dimension
+                current_dim_spread = np.max(self.my_X_data[:, self.split_index]) - np.min(self.my_X_data[:, self.split_index])
+                self.overlap = theta * current_dim_spread
+                return  # Done - we have split_index, split_position, and overlap
+            # If evaluation failed, fall through to use default criteria
 
         # Determine the split index based on the chosen criteria
         if self.split_dimension_criteria == 'max_spread':
