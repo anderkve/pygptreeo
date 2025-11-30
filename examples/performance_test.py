@@ -63,7 +63,7 @@ n_dims = 3
 n_pts = 100000
 
 Nbar = 100
-theta = 1e-4
+theta = 1e-4  #0.10 # 1e-4
 retrain_step = 100
 
 x_min = 0.0
@@ -128,7 +128,9 @@ gpt = GPTree(
     retrain_every_n_points=retrain_step,
     use_calibrated_sigma=True,
     splitting_strategy='gradual',
-    max_n_pred_leaves=10,
+    max_n_pred_leaves=3,
+    aggregation='moe',
+    # aggregation='poe',
     # splitting_strategy='standard',
     # 
     enable_point_rejection=False,
@@ -185,7 +187,7 @@ for x,y in zip(X_input, y_input):
     if not make_plot:
 
         # Compute prediction
-        y_pred, y_pred_std = gpt.predict(x, show_progress=False)
+        y_pred, y_pred_std, leaf_names = gpt.predict(x, show_progress=False, return_leaf_names=True)
 
         # Update tree
         gpt.update_tree(x, y)
@@ -193,7 +195,7 @@ for x,y in zip(X_input, y_input):
         # Print point summary
         abs_err = np.abs(y_pred[0][0] - y[0][0])
         rel_err = abs_err / np.max([np.abs(y[0][0]), 1e-10])
-        print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]:.4e}  y_pred: {y_pred[0][0]:.4e}  y_pred_std: {y_pred_std[0][0]:.3e}  abs_err: {abs_err:.3e}  rel_err: {rel_err:.3e}")
+        print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]:.4e}  y_pred: {y_pred[0][0]:.4e}  y_pred_std: {y_pred_std[0][0]:.3e}  abs_err: {abs_err:.3e}  rel_err: {rel_err:.3e}  n_leaves: {len(leaf_names)}")
 
         continue
 
@@ -201,7 +203,7 @@ for x,y in zip(X_input, y_input):
 
     # Compute prediction
     start_time = time.time()
-    y_pred, y_pred_std = gpt.predict(x, show_progress=False)
+    y_pred, y_pred_std, leaf_names = gpt.predict(x, show_progress=False, return_leaf_names=True)
     predict_time = time.time() - start_time
     current_batch_predict_times.append(predict_time)
 
@@ -317,8 +319,7 @@ for x,y in zip(X_input, y_input):
     # Print point summary
     abs_err = np.abs(y_pred[0][0] - y[0][0])
     rel_err = abs_err / np.max([np.abs(y[0][0]), 1e-10])
-    print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]:.4e}  y_pred: {y_pred[0][0]:.4e}  y_pred_std: {y_pred_std[0][0]:.3e}  abs_err: {abs_err:.3e}  rel_err: {rel_err:.3e}")
-
+    print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]:.4e}  y_pred: {y_pred[0][0]:.4e}  y_pred_std: {y_pred_std[0][0]:.3e}  abs_err: {abs_err:.3e}  rel_err: {rel_err:.3e}  n_leaves: {len(leaf_names)}")
 
 
 print()

@@ -279,7 +279,7 @@ class GPTree:
                 self.root.leaves[i+1].my_GPR = deepcopy(leaf.my_GPR)
                 
                 
-    def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False):
+    def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False, return_leaf_names: Optional[bool]=False):
         """ 
         A predict function that uses a recursive function to collect contributing leaves.
         Should be the fastest alternative when N_train >> Nbar. 
@@ -293,6 +293,9 @@ class GPTree:
         show_progress: Optional[bool]=False
             Display a progress bar in the terminal using tqdm.
 
+        return_leaf_names: Optional[bool]=False
+            Also return a list with the names of the leaves contributing to the prediction. 
+
         Returns
         -------
 
@@ -301,6 +304,9 @@ class GPTree:
         
         std_DLGP: np.ndarray
             The posterior standard deviation used to quantify the uncertainty in the prediction. Has shape=(N_test, 1).
+        
+        leaf_names: Optional[list]
+            A list with the names of the leaves contributing to the prediction. Only returned if return_leaf_names=True.
         """
         
         global sum_probs, collection_done
@@ -435,6 +441,10 @@ class GPTree:
 
             # print(f"DEBUG: mean_DLGP: {mean_DLGP}  var_DLGP: {var_DLGP}")
 
+        if return_leaf_names:
+            leaf_names = [leaf.name for leaf in leaves]
+            return mean_DLGP, np.sqrt(var_DLGP), leaf_names
+
         return mean_DLGP, np.sqrt(var_DLGP)
 
 
@@ -496,10 +506,10 @@ class GPTree:
         return res
     
 
-    def predict(self, X_test: np.ndarray, mode: Optional[str]='recursive', show_progress: Optional[bool]=False):
+    def predict(self, X_test: np.ndarray, mode: Optional[str]='recursive', show_progress: Optional[bool]=False, return_leaf_names: Optional[bool]=False):
         """ Main predict function that calls a specific predict function according to the 'mode' argument.  """
         if mode == 'recursive':
-            return self.predict_recursive(X_test, show_progress=show_progress)
+            return self.predict_recursive(X_test, show_progress=show_progress, return_leaf_names=return_leaf_names)
         elif mode == 'loop':
             return self.predict_loop(X_test, show_progress=show_progress)
         elif mode == 'each':
