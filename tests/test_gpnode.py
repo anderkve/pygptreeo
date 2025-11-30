@@ -54,10 +54,10 @@ class TestGPNode(unittest.TestCase):
             self.fail(f"GPNode creation with custom params raised an exception: {e}")
 
     def test_gpnode_init_training_set(self):
-        """Test the init_training_set method."""
+        """Test the init_data_set method."""
         node = GPNode(0, my_GPR=self.gpr_for_1d, Nbar=10, name="init_set_node")
         n_features = 1
-        node.init_training_set(n_features)
+        node.init_data_set(n_features)
 
         self.assertEqual(node.my_X_data.shape, (0, n_features), "my_X_data shape incorrect")
         self.assertEqual(node.my_y_data.shape, (0, 1), "my_y_data shape incorrect")
@@ -69,7 +69,7 @@ class TestGPNode(unittest.TestCase):
         """Test adding a single data point to GPNode."""
         node = GPNode(0, my_GPR=self.gpr_for_1d, Nbar=10, name="add_single_data_node")
         n_features = 1
-        node.init_training_set(n_features) # Initialize training set structure
+        node.init_data_set(n_features) # Initialize training set structure
 
         x_sample = np.array([[0.5]])
         y_sample = np.array([[1.0]]) # Ensure y is 2D as per typical usage in GPTree
@@ -85,7 +85,7 @@ class TestGPNode(unittest.TestCase):
         """Test adding multiple data points."""
         node = GPNode(0, my_GPR=self.gpr_for_1d, Nbar=10, name="add_multi_data_node")
         n_features = 1
-        node.init_training_set(n_features)
+        node.init_data_set(n_features)
 
         x_data = [np.array([[0.1]]), np.array([[0.2]]), np.array([[0.3]])]
         y_data = [np.array([[1.0]]), np.array([[2.0]]), np.array([[3.0]])] # Ensure y is 2D
@@ -95,14 +95,15 @@ class TestGPNode(unittest.TestCase):
 
         self.assertEqual(node.n_points, 3)
         self.assertEqual(node.n_points_since_retrain, 3)
-        self.assertTrue(np.array_equal(node.my_X_data, np.vstack(x_data)))
-        self.assertTrue(np.array_equal(node.my_y_data, np.vstack(y_data)))
+        # Note: store_point uses np.vstack((x, self.my_X_data)), so data is stored in reverse order
+        self.assertTrue(np.array_equal(node.my_X_data, np.vstack(x_data[::-1])))
+        self.assertTrue(np.array_equal(node.my_y_data, np.vstack(y_data[::-1])))
 
     def test_gpnode_fit_my_gpr_simple(self):
         """Test fitting the GPR with a few data points."""
         node = GPNode(0, my_GPR=self.gpr_for_1d, Nbar=10, retrain_every_n_points=1, name="fit_gpr_node")
         n_features = 1
-        node.init_training_set(n_features)
+        node.init_data_set(n_features)
 
         # Add enough data to trigger a fit (retrain_every_n_points = 1)
         x_sample1 = np.array([[0.1]])
@@ -136,7 +137,7 @@ class TestGPNode(unittest.TestCase):
         """Test GPR fitting with force_training=True."""
         node = GPNode(0, my_GPR=self.gpr_for_1d, Nbar=10, retrain_every_n_points=5, name="force_fit_node") # retrain_every_n_points is high
         n_features = 1
-        node.init_training_set(n_features)
+        node.init_data_set(n_features)
 
         x_sample = np.array([[0.5]])
         y_sample = np.array([[1.5]])

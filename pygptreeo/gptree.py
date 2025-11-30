@@ -72,6 +72,8 @@ class GPTree:
     """
     def __init__(self,
                  GPR: Optional[GaussianProcessRegressor] = Default_GPR(),
+                 GPR_candidates: Optional[list] = None,
+                 kernel_selection_train_fraction: Optional[float] = 0.5,
                  Nbar: Optional[int] = 100,
                  theta: Optional[float] = 0.0001,
                  use_calibrated_sigma: Optional[bool] = True,
@@ -86,6 +88,11 @@ class GPTree:
             GPR (Optional[GaussianProcessRegressor]): The Gaussian Process
                 Regressor instance to be used as a template for nodes.
                 Defaults to `Default_GPR()`.
+            GPR_candidates (Optional[list]): List of Gaussian Process Regressor
+                candidates to select from when splitting nodes. If None, only
+                GPR is used.
+            kernel_selection_train_fraction (Optional[float]): Fraction of data
+                used to train kernel candidates during selection. Defaults to 0.5.
             Nbar (Optional[int]): Maximum number of training points a node
                 can hold before splitting. Defaults to 100.
             theta (Optional[float]): Parameter influencing the overlap region
@@ -109,8 +116,14 @@ class GPTree:
         """
         
         self.GPR = GPR
+        if GPR_candidates is None:
+            self.GPR_candidates = [GPR]
+        else:
+            self.GPR_candidates = GPR_candidates
+
+        self.kernel_selection_train_fraction = kernel_selection_train_fraction
         self.splitting_strategy = splitting_strategy
-        self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria, splitting_strategy=self.splitting_strategy, **kwargs)  # Initialize root node of the GPTree
+        self.root = GPNode(0, my_GPR=GPR, GPR_candidates=self.GPR_candidates, kernel_selection_train_fraction=self.kernel_selection_train_fraction, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria, splitting_strategy=self.splitting_strategy, **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 
@@ -194,7 +207,9 @@ class GPTree:
         # If the node is full, generate child nodes
         if node.n_points >= node.Nbar:
             # Create child nodes. Each child node gets a copy of the current parent GP.
-            node.generate_children(self.GPR, self.n_features)
+            # Passing GPR_candidates is not strictly necessary as it is stored in node, but kept for interface consistency if needed.
+            # However, generate_children signature might change. Let's rely on node's stored candidates.
+            node.generate_children(self.n_features)
             
             # Compute parameters for the probability function 
             node.compute_split_position_and_overlap(self.theta)
