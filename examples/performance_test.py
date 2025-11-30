@@ -56,15 +56,15 @@ np.random.seed(512312)
 
 make_plot = True
 
-target_name = "rosenbrock"
+target_name = "eggholder"
 target = target_dict[target_name]
 
-n_dims = 6
+n_dims = 3
 n_pts = 100000
 
-Nbar = 200
+Nbar = 100
 theta = 1e-4
-retrain_step = 200
+retrain_step = 100
 
 x_min = 0.0
 x_max = 1.0
@@ -128,6 +128,7 @@ gpt = GPTree(
     retrain_every_n_points=retrain_step,
     use_calibrated_sigma=True,
     splitting_strategy='gradual',
+    max_n_pred_leaves=10,
     # splitting_strategy='standard',
     # 
     enable_point_rejection=False,
@@ -138,7 +139,7 @@ gpt = GPTree(
     merge_distance_threshold=0.01,
     min_points_before_merging=10,
     # 
-    enable_split_evaluation=True,
+    enable_split_evaluation=False,
     n_split_candidates=4,
     split_eval_train_fraction=0.4,
     split_eval_min_points=20,
