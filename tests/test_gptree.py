@@ -211,8 +211,9 @@ class TestGPTree(unittest.TestCase):
         self.assertEqual(gpt.n_features, 2, "n_features should be set to 2 for 2D data.")
         self.assertEqual(gpt.root.n_points, 3, f"Root node should have 3 training points, got {gpt.root.n_points}.")
         self.assertTrue(gpt.root.is_leaf, "Root node should still be a leaf as Nbar not reached.")
-        self.assertTrue(np.array_equal(gpt.root.my_X_data, X_train))
-        self.assertTrue(np.array_equal(gpt.root.my_y_data, y_train))
+        # Note: update_tree/store_point use np.vstack((x, self.my_X_data)), so data is stored in reverse order of addition
+        self.assertTrue(np.array_equal(gpt.root.my_X_data, X_train[::-1]))
+        self.assertTrue(np.array_equal(gpt.root.my_y_data, y_train[::-1]))
 
     # @ignore_warnings(category=ConvergenceWarning)
     def test_update_tree_causes_split_1d(self):

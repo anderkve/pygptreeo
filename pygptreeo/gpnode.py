@@ -69,6 +69,8 @@ class GPNode(Node):
     """
     def __init__(self, *args,
                  my_GPR: GaussianProcessRegressor,
+                 GPR_candidates: Optional[list] = None,
+                 kernel_selection_train_fraction: Optional[float] = 0.5,
                  Nbar: Optional[int] = 100,
                  split_position_method='median',
                  retrain_every_n_points=1,
@@ -94,6 +96,10 @@ class GPNode(Node):
                 which corresponds to `n_points`.
             my_GPR (sklearn.gaussian_process.GaussianProcessRegressor): The
                 Gaussian Process Regressor instance to be used by this node.
+            GPR_candidates (Optional[list]): List of Gaussian Process Regressor
+                candidates to select from when splitting nodes.
+            kernel_selection_train_fraction (Optional[float]): Fraction of data
+                used to train kernel candidates during selection. Defaults to 0.5.
             Nbar (Optional[int]): The maximum number of training points this node
                 can hold before it considers splitting. Defaults to 100.
             split_position_method (str): The method used to determine the split
@@ -141,6 +147,11 @@ class GPNode(Node):
         self.Nbar = Nbar
 
         self.my_GPR = my_GPR
+        if GPR_candidates is None:
+            self.GPR_candidates = [my_GPR]
+        else:
+            self.GPR_candidates = GPR_candidates
+        self.kernel_selection_train_fraction = kernel_selection_train_fraction
         self.parent = None
         self.children = None
 
@@ -251,8 +262,91 @@ class GPNode(Node):
         self.merge_counts = np.array([]).reshape((0, 1))
 
 
-    def generate_children(self, GPR: Type[GaussianProcessRegressor], n_features: int):
+    def select_best_kernel(self):
+        """Selects the best performing kernel from candidates.
+
+        This method splits the node's current data into training and test
+        sets based on `kernel_selection_train_fraction`. It then trains
+        each candidate GPR on the training set and evaluates its RMSE on
+        the test set. The candidate with the lowest RMSE is returned.
+
+        Returns:
+            GaussianProcessRegressor: The best performing GPR candidate.
+        """
+        if len(self.GPR_candidates) <= 1:
+            return deepcopy(self.my_GPR)
+
+        # Prepare data for selection
+        X_all = self.my_X_data
+        y_all = self.my_y_data
+
+        n_samples = X_all.shape[0]
+        if n_samples < 5: # Too few points to do meaningful selection
+             return deepcopy(self.my_GPR)
+
+        n_train = int(n_samples * self.kernel_selection_train_fraction)
+        if n_train < 2 or n_samples - n_train < 1: # Ensure at least some points for train and test
+             return deepcopy(self.my_GPR)
+
+        # Shuffle and split
+        indices = np.random.permutation(n_samples)
+        train_idx = indices[:n_train]
+        test_idx = indices[n_train:]
+
+        X_train = X_all[train_idx]
+        y_train = y_all[train_idx]
+        X_test = X_all[test_idx]
+        y_test = y_all[test_idx]
+
+        best_rmse = float('inf')
+        best_gpr = None
+
+        for i, gpr_template in enumerate(self.GPR_candidates):
+            try:
+                # Clone the candidate to avoid modifying the template
+                # We need a fresh instance for training
+                # sklearn's clone would be ideal but deepcopy works for GPR
+                candidate = deepcopy(gpr_template)
+
+                # Fit the candidate
+                if self.use_standard_scaling:
+                    # We need to handle scaling locally for this temporary evaluation
+                    scaler_X = StandardScaler()
+                    scaler_y = StandardScaler()
+                    X_train_scaled = scaler_X.fit_transform(X_train)
+                    y_train_scaled = scaler_y.fit_transform(y_train)
+                    candidate.fit(X_train_scaled, y_train_scaled)
+
+                    # Predict
+                    X_test_scaled = scaler_X.transform(X_test)
+                    y_pred_scaled = candidate.predict(X_test_scaled, return_std=False)
+                    y_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1)).flatten()
+                else:
+                    candidate.fit(X_train, y_train)
+                    y_pred = candidate.predict(X_test, return_std=False)
+
+                # Calculate RMSE
+                rmse = np.sqrt(np.mean((y_test.flatten() - y_pred)**2))
+
+                if rmse < best_rmse:
+                    best_rmse = rmse
+                    best_gpr = gpr_template # Store the template, not the trained one (children will train)
+
+            except Exception as e:
+                pass
+
+        if best_gpr is None:
+             # Fallback
+             return deepcopy(self.my_GPR)
+
+        return deepcopy(best_gpr)
+
+
+    def generate_children(self, n_features: int):
         """ Grow the GPtree by adding two GPNodes as children of the current GPNode. """
+
+        # Select best kernel for children
+        best_gpr = self.select_best_kernel()
 
         # Settings that will be passed on to the child nodes
         node_config_kwargs = {
@@ -275,8 +369,9 @@ class GPNode(Node):
         }
 
         # Create child nodes with a copy of the parent GP
-        self.left = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "0", **node_config_kwargs)
-        self.right = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "1", **node_config_kwargs)
+        # Use best_gpr which is selected (or default)
+        self.left = GPNode(0, my_GPR=deepcopy(best_gpr), GPR_candidates=self.GPR_candidates, kernel_selection_train_fraction=self.kernel_selection_train_fraction, name=self.name + "0", **node_config_kwargs)
+        self.right = GPNode(0, my_GPR=deepcopy(best_gpr), GPR_candidates=self.GPR_candidates, kernel_selection_train_fraction=self.kernel_selection_train_fraction, name=self.name + "1", **node_config_kwargs)
         
         self.left.is_left = True
         self.right.is_left = False
