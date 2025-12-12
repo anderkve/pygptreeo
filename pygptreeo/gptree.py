@@ -125,8 +125,8 @@ class GPTree:
         self.first_point = True
 
 
-    def update_tree(self, x: np.ndarray, y: float, allow_training=True):
-        """Updates the tree structure and node GPRs with a new data point (x, y).
+    def update_tree(self, x: np.ndarray, y: float, sigma: float, allow_training=True):
+        """Updates the tree structure and node GPRs with a new data point (x, y, sigma).
 
         This method implements a process similar to Algorithm 1 in the DLGP
         (Deep Locally-Weighted Gaussian Processes) article, with some modifications.
@@ -144,6 +144,7 @@ class GPTree:
             x (np.ndarray): The new input data point (features), expected as a
                 1D array or a 2D array with one row.
             y (float): The corresponding target value for the data point.
+            sigma (float): The uncertainty (standard deviation) for this point. Required.
             allow_training (bool): If True (default), the GPR model in the
                 selected leaf node can be retrained if its conditions
                 (e.g., buffer full, node full) are met. If False, GPR retraining
@@ -158,7 +159,7 @@ class GPTree:
             self.root.init_data_set(self.n_features)
             self.first_point = False
 
-        # Find a leaf node for the new (x,y) point
+        # Find a leaf node for the new (x,y,sigma) point
         # - Start from the root node
         # - For each level, pick a branch according node.prob_func(x), until a leaf node is reached
         node = self.root
@@ -166,7 +167,7 @@ class GPTree:
             node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
 
         # Check if this point should be merged with a nearby point (updates existing point in-place)
-        if node.should_merge_point(x, y):
+        if node.should_merge_point(x, y, sigma):
             # Point was merged with existing point, don't add as new point
             # Still register prediction performance and update sigma scaler
             node.register_pred_perf(x, y)
@@ -180,7 +181,7 @@ class GPTree:
             return
 
         # Add new point and register prediction performance
-        node.store_point(x, y, remove_shared=True)
+        node.store_point(x, y, sigma, remove_shared=True)
         node.register_pred_perf(x, y)
 
         # Update the uncertainty scaler for this node?
@@ -210,16 +211,18 @@ class GPTree:
                 # First distribute data as usual between the two child nodes
                 node.split_training_data()
 
-                # Since we are doing gradual splitting, give 
+                # Since we are doing gradual splitting, give
                 # each child a copy of the other child's data
                 order = node.children[1].my_X_data[:,node.split_index].argsort()
                 node.children[0].shared_X_data = node.children[1].my_X_data[order]
                 node.children[0].shared_y_data = node.children[1].my_y_data[order]
+                node.children[0].shared_sigma_data = node.children[1].my_sigma_data[order]
                 node.children[0].n_shared_points = node.children[0].shared_X_data.shape[0]
 
                 order = node.children[0].my_X_data[:,node.split_index].argsort()[::-1]
                 node.children[1].shared_X_data = node.children[0].my_X_data[order]
                 node.children[1].shared_y_data = node.children[0].my_y_data[order]
+                node.children[1].shared_sigma_data = node.children[0].my_sigma_data[order]
                 node.children[1].n_shared_points = node.children[1].shared_X_data.shape[0]
 
             else:
@@ -235,7 +238,8 @@ class GPTree:
             node.delete_my_GPR()
 
 
-    def fit(self, X_train: np.ndarray, y_train: np.ndarray, show_progress: Optional[bool]=False, shuffle: Optional[bool]=True, 
+    def fit(self, X_train: np.ndarray, y_train: np.ndarray, sigma_train: np.ndarray,
+            show_progress: Optional[bool]=False, shuffle: Optional[bool]=True,
             forward_GPR_to_next_leaf: Optional[bool]=False):
         """
         Construct the binary tree by assigning a set of training samples to nodes and train the leaf-node GPs.
@@ -248,6 +252,9 @@ class GPTree:
         y_train: np.ndarray
             The training data in target space. Has shape=(N_train, 1) (only scalar targets implemented).
 
+        sigma_train: np.ndarray
+            Per-point uncertainties (standard deviations). Has shape=(N_train,) or (N_train, 1). Required.
+
         show_progress: Optional[bool]=False
             Display a progress bar in the terminal using tqdm.
 
@@ -255,22 +262,27 @@ class GPTree:
             Shuffle the training set to avoid an unbalanced tree.
 
         forward_GPR_to_next_leaf: Optional[bool]=False
-            When training the leaf-node GPs, let the next leaf start from a copy of the trained GP 
+            When training the leaf-node GPs, let the next leaf start from a copy of the trained GP
             from the previous leaf.
         """
         self.n_features = X_train.shape[1]
         N = X_train.shape[0]
         self.root.init_data_set(self.n_features)
 
+        # Reshape sigma_train if needed
+        if sigma_train.ndim == 1:
+            sigma_train = sigma_train.reshape((-1, 1))
+
         if shuffle:
-            X_train, y_train = resample(X_train, y_train, replace=False)
+            X_train, y_train, sigma_train = resample(X_train, y_train, sigma_train, replace=False)
 
         # Construct the tree
-        for x, y in tqdm(zip(X_train, y_train), total=N, disable=not show_progress, desc="Building binary tree"):
+        for x, y, sigma in tqdm(zip(X_train, y_train, sigma_train), total=N, disable=not show_progress, desc="Building binary tree"):
             x = x.reshape((1, x.shape[0]))
             y = y.reshape((1, 1))
+            sigma = sigma.reshape((1, 1)) if hasattr(sigma, 'reshape') else np.array([[sigma]])
 
-            self.update_tree(x, y, allow_training=False)
+            self.update_tree(x, y, sigma[0, 0], allow_training=False)
         
         # Train all the leaves
         for i, leaf in tqdm(enumerate(self.root.leaves), total=len(self.root.leaves), disable=not show_progress, desc="Training"):

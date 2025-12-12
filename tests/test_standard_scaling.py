@@ -62,9 +62,10 @@ class TestStandardScaling(unittest.TestCase):
         # Add some points
         X_train = np.array([[1.0], [2.0], [3.0], [4.0], [5.0]])
         y_train = np.array([[10.0], [20.0], [30.0], [40.0], [50.0]])
+        sigma_train = np.array([0.1, 0.1, 0.1, 0.1, 0.1])
 
-        for x, y in zip(X_train, y_train):
-            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1))
+        for x, y, sigma in zip(X_train, y_train, sigma_train):
+            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
         # After training, scalers should be fitted
         self.assertIsNotNone(gpt.root.X_scaler)
@@ -83,9 +84,10 @@ class TestStandardScaling(unittest.TestCase):
         # Create data with large values
         X_train = np.array([[100.0], [200.0], [300.0]])
         y_train = np.array([[1000.0], [2000.0], [3000.0]])
+        sigma_train = np.array([0.1, 0.1, 0.1])
 
-        for x, y in zip(X_train, y_train):
-            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1))
+        for x, y, sigma in zip(X_train, y_train, sigma_train):
+            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
         # Check that stored data is in original scale
         stored_X = gpt.root.my_X_data
@@ -103,9 +105,10 @@ class TestStandardScaling(unittest.TestCase):
         # Train on data with large values
         X_train = np.array([[100.0], [200.0], [300.0], [400.0], [500.0]])
         y_train = np.array([[1000.0], [2000.0], [3000.0], [4000.0], [5000.0]])
+        sigma_train = np.array([0.1, 0.1, 0.1, 0.1, 0.1])
 
-        for x, y in zip(X_train, y_train):
-            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1))
+        for x, y, sigma in zip(X_train, y_train, sigma_train):
+            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
         # Predict at a test point
         X_test = np.array([[250.0]])
@@ -125,18 +128,19 @@ class TestStandardScaling(unittest.TestCase):
         # Create identical training data
         X_train = np.random.uniform(0, 1, (20, 1))
         y_train = np.sin(X_train * 10).reshape(-1, 1)
+        sigma_train = np.full(20, 0.1)
 
         # Train with scaling
         gpt_scaled = GPTree(GPR=self.gpr_1d, Nbar=30, use_standard_scaling=True,
                            retrain_every_n_points=5, theta=0.01)
-        for x, y in zip(X_train, y_train):
-            gpt_scaled.update_tree(x.reshape(1, -1), y.reshape(1, -1))
+        for x, y, sigma in zip(X_train, y_train, sigma_train):
+            gpt_scaled.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
         # Train without scaling
         gpt_unscaled = GPTree(GPR=self.gpr_1d, Nbar=30, use_standard_scaling=False,
                              retrain_every_n_points=5, theta=0.01)
-        for x, y in zip(X_train, y_train):
-            gpt_unscaled.update_tree(x.reshape(1, -1), y.reshape(1, -1))
+        for x, y, sigma in zip(X_train, y_train, sigma_train):
+            gpt_unscaled.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
         # Make predictions
         X_test = np.array([[0.5]])
@@ -163,9 +167,10 @@ class TestStandardScaling(unittest.TestCase):
         # Add enough points to trigger a split
         X_train = np.random.uniform(0, 10, (10, 1))
         y_train = X_train * 2.0
+        sigma_train = np.full(10, 0.1)
 
-        for x, y in zip(X_train, y_train):
-            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1))
+        for x, y, sigma in zip(X_train, y_train, sigma_train):
+            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
         # Root should have split
         self.assertFalse(gpt.root.is_leaf)
@@ -190,9 +195,10 @@ class TestStandardScaling(unittest.TestCase):
         X_train = np.array([[100.0, 1.0], [200.0, 2.0], [300.0, 3.0],
                            [400.0, 4.0], [500.0, 5.0]])
         y_train = X_train[:, 0:1] + X_train[:, 1:2] * 10  # y = x1 + 10*x2
+        sigma_train = np.full(5, 0.1)
 
-        for x, y in zip(X_train, y_train):
-            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1))
+        for x, y, sigma in zip(X_train, y_train, sigma_train):
+            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
         # Check that X_scaler has correct shape
         self.assertEqual(gpt.root.X_scaler.mean_.shape[0], 2)
@@ -214,9 +220,10 @@ class TestStandardScaling(unittest.TestCase):
         # All points have the same x value (zero variance)
         X_train = np.array([[5.0], [5.0], [5.0], [5.0], [5.0]])
         y_train = np.array([[10.0], [20.0], [30.0], [40.0], [50.0]])
+        sigma_train = np.full(5, 0.1)
 
-        for x, y in zip(X_train, y_train):
-            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1))
+        for x, y, sigma in zip(X_train, y_train, sigma_train):
+            gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
         # Should not raise an error
         # StandardScaler sets scale=1 for zero-variance dimensions
@@ -239,8 +246,9 @@ class TestStandardScaling(unittest.TestCase):
         # Add just one point
         X_train = np.array([[3.0]])
         y_train = np.array([[30.0]])
+        sigma_train = 0.1
 
-        gpt.update_tree(X_train, y_train)
+        gpt.update_tree(X_train, y_train, sigma_train)
 
         # Scalers should be fitted (mean=value, scale=1)
         self.assertIsNotNone(gpt.root.X_scaler)

@@ -209,7 +209,7 @@ for x,y in zip(X_input, y_input):
 
     # Update tree
     start_time = time.time()
-    gpt.update_tree(x, y)
+    gpt.update_tree(x, y, 0.001 * np.abs(y))
     update_time = time.time() - start_time
     current_batch_update_times.append(update_time)
     current_batch_actual_values.append(y[0][0])

@@ -104,15 +104,17 @@ class TestGPTree(unittest.TestCase):
 
         X_train = np.array([[0.1], [0.2], [0.8], [0.9]])
         y_train = np.array([[1.0], [2.0], [8.0], [9.0]])
+        sigma_train = np.array([0.1, 0.1, 0.1, 0.1])
 
         # Populate the tree enough to cause splits and have some data in leaves
         for i in range(X_train.shape[0]):
             x_sample = X_train[i:i+1, :]
             y_sample = y_train[i:i+1, :]
+            sigma_sample = sigma_train[i]
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=ConvergenceWarning)
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
-                gpt.update_tree(x_sample, y_sample, allow_training=True) # Ensure leaf GPRs are trained
+                gpt.update_tree(x_sample, y_sample, sigma_sample, allow_training=True) # Ensure leaf GPRs are trained
 
         # Ensure tree has split for a more meaningful predict test
         self.assertFalse(gpt.root.is_leaf, "Root should have split for this test.")
@@ -161,7 +163,7 @@ class TestGPTree(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
             warnings.filterwarnings("ignore", category=RuntimeWarning)
-            gpt.update_tree(np.array([[0.1]]), np.array([[1.0]]))
+            gpt.update_tree(np.array([[0.1]]), np.array([[1.0]]), 0.1)
             gpt.root.fit_my_GPR(force_training=True) # Ensure the single node GPR is trained
 
         y_pred, y_std = gpt.predict(X_test)
@@ -177,11 +179,12 @@ class TestGPTree(unittest.TestCase):
 
         x_sample = np.array([[0.5]])
         y_sample = np.array([[1.0]]) # GPTree expects y to be 2D array for a single sample
+        sigma_sample = 0.1
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
             warnings.filterwarnings("ignore", category=RuntimeWarning)
-            gpt.update_tree(x_sample, y_sample)
+            gpt.update_tree(x_sample, y_sample, sigma_sample)
 
         self.assertFalse(gpt.first_point, "first_point flag should be False after first point.")
         self.assertEqual(gpt.n_features, 1, "n_features should be set to 1 for 1D data.")
@@ -189,6 +192,7 @@ class TestGPTree(unittest.TestCase):
         self.assertEqual(gpt.root.n_points, 1, "Root node should have 1 training point.")
         self.assertTrue(np.array_equal(gpt.root.my_X_data, x_sample), "Root node's X data incorrect.")
         self.assertTrue(np.array_equal(gpt.root.my_y_data, y_sample), "Root node's y data incorrect.")
+        self.assertEqual(gpt.root.my_sigma_data[0, 0], sigma_sample, "Root node's sigma data incorrect.")
         self.assertTrue(gpt.root.is_leaf, "Root node should still be a leaf.")
 
     # @ignore_warnings(category=ConvergenceWarning)
@@ -199,20 +203,23 @@ class TestGPTree(unittest.TestCase):
 
         X_train = np.array([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
         y_train = np.array([[1.0], [2.0], [3.0]])
+        sigma_train = np.array([0.1, 0.12, 0.11])
 
         for i in range(X_train.shape[0]):
             x_sample = X_train[i:i+1, :]
             y_sample = y_train[i:i+1, :]
+            sigma_sample = sigma_train[i]
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=ConvergenceWarning)
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
-                gpt.update_tree(x_sample, y_sample)
+                gpt.update_tree(x_sample, y_sample, sigma_sample)
 
         self.assertEqual(gpt.n_features, 2, "n_features should be set to 2 for 2D data.")
         self.assertEqual(gpt.root.n_points, 3, f"Root node should have 3 training points, got {gpt.root.n_points}.")
         self.assertTrue(gpt.root.is_leaf, "Root node should still be a leaf as Nbar not reached.")
-        self.assertTrue(np.array_equal(gpt.root.my_X_data, X_train))
-        self.assertTrue(np.array_equal(gpt.root.my_y_data, y_train))
+        # Data is stored in reverse order (newest first)
+        self.assertTrue(np.array_equal(gpt.root.my_X_data, X_train[::-1]))
+        self.assertTrue(np.array_equal(gpt.root.my_y_data, y_train[::-1]))
 
     # @ignore_warnings(category=ConvergenceWarning)
     def test_update_tree_causes_split_1d(self):
@@ -224,13 +231,14 @@ class TestGPTree(unittest.TestCase):
 
         X_train = np.array([[0.1], [0.2], [0.3], [0.4]])
         y_train = np.array([[1.0], [2.0], [3.0], [4.0]])
+        sigma_train = np.array([0.1, 0.1, 0.1, 0.1])
 
         # Add points up to Nbar - 1
         for i in range(custom_nbar - 1):
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=ConvergenceWarning)
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
-                gpt.update_tree(X_train[i:i+1, :], y_train[i:i+1, :])
+                gpt.update_tree(X_train[i:i+1, :], y_train[i:i+1, :], sigma_train[i])
             self.assertTrue(gpt.root.is_leaf, f"Root should be leaf before Nbar reached (point {i+1})")
             self.assertEqual(gpt.root.n_points, i + 1)
 
@@ -238,7 +246,7 @@ class TestGPTree(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
             warnings.filterwarnings("ignore", category=RuntimeWarning)
-            gpt.update_tree(X_train[custom_nbar-1:custom_nbar-1+1, :], y_train[custom_nbar-1:custom_nbar-1+1, :])
+            gpt.update_tree(X_train[custom_nbar-1:custom_nbar-1+1, :], y_train[custom_nbar-1:custom_nbar-1+1, :], sigma_train[custom_nbar-1])
 
         self.assertFalse(gpt.root.is_leaf, "Root node should have split and no longer be a leaf.")
         self.assertIsNotNone(gpt.root.children, "Root node should have children after split.")
@@ -267,7 +275,7 @@ class TestGPTree(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
             warnings.filterwarnings("ignore", category=RuntimeWarning)
-            gpt.update_tree(X_train[custom_nbar:custom_nbar+1, :], y_train[custom_nbar:custom_nbar+1, :])
+            gpt.update_tree(X_train[custom_nbar:custom_nbar+1, :], y_train[custom_nbar:custom_nbar+1, :], sigma_train[custom_nbar])
         total_points_in_children_after_one_more = left_child.n_points + right_child.n_points
         self.assertEqual(total_points_in_children_after_one_more, custom_nbar + 1,
                          "Total points in children should be Nbar + 1 after one more point.")

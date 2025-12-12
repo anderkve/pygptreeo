@@ -85,7 +85,8 @@ class GPForest:
             self.GPR = self.num_GPTrees*[self.GPR]
 
 
-    def fit(self, X_train: np.ndarray, y_train: np.ndarray, show_progress: Optional[bool]=False):
+    def fit(self, X_train: np.ndarray, y_train: np.ndarray, sigma_train: np.ndarray,
+            show_progress: Optional[bool]=False):
         """Builds and trains all GPTrees in the forest.
 
         This method first initializes each GPTree in the `GPTrees` list
@@ -95,15 +96,16 @@ class GPForest:
         Args:
             X_train: The training data features (numpy array).
             y_train: The training data targets (numpy array).
+            sigma_train: Per-point uncertainties (standard deviations). Required.
             show_progress: If True, displays a progress bar for tree
                 building and training. Defaults to False.
         """
 
         for i in tqdm(range(self.num_GPTrees), disable=not show_progress, desc='Building forest'):
             self.GPTrees.append(GPTree(self.GPR[i], self.Nbar[i], self.theta[i]))
-        
+
         for i in tqdm(range(self.num_GPTrees), disable=not show_progress, desc='Training GPTrees'):
-            self.GPTrees[i].fit(X_train, y_train, shuffle=True)
+            self.GPTrees[i].fit(X_train, y_train, sigma_train, shuffle=True)
 
     def predict(self, X_test: np.ndarray, show_progress: Optional[bool]=False):
         """Predicts target values and their uncertainties using the GPForest.

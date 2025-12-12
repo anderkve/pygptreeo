@@ -239,9 +239,11 @@ class GPNode(Node):
 
         self.my_X_data = np.array([]).reshape((0, n_features))
         self.my_y_data = np.array([]).reshape((0, 1))
+        self.my_sigma_data = np.array([]).reshape((0, 1))  # Per-point uncertainties
 
         self.shared_X_data = np.array([]).reshape((0, n_features))
         self.shared_y_data = np.array([]).reshape((0, 1))
+        self.shared_sigma_data = np.array([]).reshape((0, 1))  # Shared uncertainties
 
         self.n_points_since_retrain = 0
         self.n_points = 0
@@ -320,10 +322,12 @@ class GPNode(Node):
         if shared_point and self.n_shared_points > 0:
             self.shared_X_data = np.delete(self.shared_X_data, index, axis=0)
             self.shared_y_data = np.delete(self.shared_y_data, index, axis=0)
+            self.shared_sigma_data = np.delete(self.shared_sigma_data, index, axis=0)
             self.n_shared_points -= 1
         elif (not shared_point) and self.n_points > 0:
             self.my_X_data = np.delete(self.my_X_data, index, axis=0)
             self.my_y_data = np.delete(self.my_y_data, index, axis=0)
+            self.my_sigma_data = np.delete(self.my_sigma_data, index, axis=0)
             if self.merge_counts is not None:
                 self.merge_counts = np.delete(self.merge_counts, index, axis=0)
             self.n_points -= 1
@@ -339,18 +343,36 @@ class GPNode(Node):
 
 
 
-    def store_point(self, x: np.ndarray, y: float, increment_buffer=True, shared_point=False, remove_shared=True):
-        """ Add a single data point to the node. """
+    def store_point(self, x: np.ndarray, y: float, sigma: float, increment_buffer=True, shared_point=False, remove_shared=True):
+        """ Add a single data point to the node.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            Input features
+        y : float
+            Target value
+        sigma : float
+            Uncertainty (standard deviation) for this point
+        increment_buffer : bool
+            Whether to increment the retrain buffer
+        shared_point : bool
+            Whether this is a shared point from gradual splitting
+        remove_shared : bool
+            Whether to remove one shared point when adding
+        """
         # Note: Points are added to the beginning of the arrays (using np.vstack)
         if shared_point:
             self.shared_X_data = np.vstack((x, self.shared_X_data))
             self.shared_y_data = np.vstack((y, self.shared_y_data))
+            self.shared_sigma_data = np.vstack((sigma, self.shared_sigma_data))
             # self.shared_X_data = np.append(self.shared_X_data, x, axis=0)
             # self.shared_y_data = np.append(self.shared_y_data, y, axis=0)
             self.n_shared_points += 1
         else:
             self.my_X_data = np.vstack((x, self.my_X_data))
             self.my_y_data = np.vstack((y, self.my_y_data))
+            self.my_sigma_data = np.vstack((sigma, self.my_sigma_data))
             # self.my_X_data = np.append(self.my_X_data, x, axis=0)
             # self.my_y_data = np.append(self.my_y_data, y, axis=0)
             # Track merge count for this new point (starts at 0)
@@ -366,15 +388,16 @@ class GPNode(Node):
     
     def split_training_data(self):
         """ Assign the training samples of a node to its child nodes. """
-        for x, y in zip(self.my_X_data, self.my_y_data):
+        for x, y, sigma in zip(self.my_X_data, self.my_y_data, self.my_sigma_data):
             x = x.reshape((1, x.shape[0]))
             y = y.reshape((1, 1))
+            sigma = sigma.reshape((1, 1))
             child = self.children[int(np.random.binomial(1, self.prob_func(x)[0][0]))]
-            child.store_point(x, y, increment_buffer=False)
+            child.store_point(x, y, sigma, increment_buffer=False)
 
         
     def delete_data(self, delete_own_data=True, delete_shared_data=True):
-        """Deletes the data (my_X_data, my_y_data, and possibly shared_X_data, shared_y_data) from the node.
+        """Deletes the data (my_X_data, my_y_data, my_sigma_data, and possibly shared_X_data, shared_y_data, shared_sigma_data) from the node.
 
         This is typically called on a parent node after its data has been
         successfully split and passed down to its children. This helps to
@@ -384,10 +407,12 @@ class GPNode(Node):
         if delete_own_data:
             del self.my_X_data
             del self.my_y_data
+            del self.my_sigma_data
 
         if delete_shared_data:
             del self.shared_X_data
             del self.shared_y_data
+            del self.shared_sigma_data
 
 
     def delete_my_GPR(self):
@@ -421,16 +446,17 @@ class GPNode(Node):
         return nearest_idx, nearest_dist
 
 
-    def merge_with_point(self, x: np.ndarray, y: float, nearest_idx: int):
-        """Merges new point (x, y) with existing point at nearest_idx via weighted averaging.
+    def merge_with_point(self, x: np.ndarray, y: float, sigma: float, nearest_idx: int):
+        """Merges new point (x, y, sigma) with existing point at nearest_idx via inverse-variance weighted averaging.
 
-        Weights are based on GP prediction uncertainties:
+        Weights are based on per-point uncertainties (standard deviations):
         - Lower uncertainty = higher weight (more confident measurement)
         - Weight = 1 / σ²
 
         Args:
             x (np.ndarray): Input features of new point
             y (float): Target value of new point
+            sigma (float): Uncertainty (standard deviation) of new point
             nearest_idx (int): Index of existing point to merge with
 
         Returns:
@@ -439,40 +465,43 @@ class GPNode(Node):
         # Get existing point
         x_old = self.my_X_data[nearest_idx:nearest_idx+1]
         y_old = self.my_y_data[nearest_idx, 0]
+        sigma_old = self.my_sigma_data[nearest_idx, 0]
 
-        # Get GP uncertainties for weighting
-        try:
-            _, sigma_old = self.predict(x_old, return_std=True, use_calibrated_sigma=False)
-            _, sigma_new = self.predict(x, return_std=True, use_calibrated_sigma=False)
-        except Exception:
-            # If prediction fails, use equal weights
-            sigma_old = 1.0
-            sigma_new = 1.0
+        # Convert standard deviations to variances
+        var_old = sigma_old ** 2
+        var_new = sigma ** 2
 
-        # Compute weights (inverse variance)
-        w_old = 1.0 / (sigma_old[0]**2 + 1e-10)
-        w_new = 1.0 / (sigma_new[0]**2 + 1e-10)
+        # Add epsilon for numerical stability
+        epsilon = 1e-10
+        w_old = 1.0 / (var_old + epsilon)
+        w_new = 1.0 / (var_new + epsilon)
         w_total = w_old + w_new
 
-        # Weighted average for both x and y
+        # Weighted average for both x and y (using inverse-variance weighting)
         x_merged = (w_old * x_old + w_new * x) / w_total
         y_merged = (w_old * y_old + w_new * y) / w_total
+
+        # Merge variance and convert back to standard deviation
+        var_merged = 1.0 / w_total
+        sigma_merged = np.sqrt(var_merged)
 
         # Update the existing point with merged values
         self.my_X_data[nearest_idx] = x_merged[0]
         self.my_y_data[nearest_idx, 0] = y_merged
+        self.my_sigma_data[nearest_idx, 0] = sigma_merged
 
         # Update merge count for this point
         self.merge_counts[nearest_idx, 0] += 1
         self.n_merges += 1
 
         print(f"Node {self.name}: Merged points (dist={np.linalg.norm(x - x_old):.2e}, "
-              f"w_old={w_old:.2e}, w_new={w_new:.2e}, total_merges={int(self.merge_counts[nearest_idx, 0])})")
+              f"sigma_old={sigma_old:.2e}, sigma_new={sigma:.2e}, sigma_merged={sigma_merged:.2e}, "
+              f"total_merges={int(self.merge_counts[nearest_idx, 0])})")
 
         return True
 
 
-    def should_merge_point(self, x: np.ndarray, y: float):
+    def should_merge_point(self, x: np.ndarray, y: float, sigma: float):
         """Determines if a new point should be merged with an existing nearby point.
 
         A point is merged if:
@@ -486,6 +515,7 @@ class GPNode(Node):
         Args:
             x (np.ndarray): Input features of new point
             y (float): Target value of new point
+            sigma (float): Uncertainty (standard deviation) of new point
 
         Returns:
             bool: True if point was merged (don't add it), False otherwise (add as new point)
@@ -509,7 +539,7 @@ class GPNode(Node):
         # Check if distance is below threshold
         if nearest_dist < self.merge_distance_threshold:
             # Merge the points
-            return self.merge_with_point(x, y, nearest_idx)
+            return self.merge_with_point(x, y, sigma, nearest_idx)
 
         return False
 
@@ -614,6 +644,7 @@ class GPNode(Node):
             # Combine own points and shared points
             X_train = np.vstack((self.my_X_data, self.shared_X_data))
             y_train = np.vstack((self.my_y_data, self.shared_y_data))
+            sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))
 
             if self.use_standard_scaling and X_train.shape[0] > 0:
                 # Fit scalers on the combined training data
@@ -623,10 +654,20 @@ class GPNode(Node):
                 X_train_scaled = self.X_scaler.transform(X_train)
                 y_train_scaled = self.y_scaler.transform(y_train)
 
-                # Train GP on scaled data
+                # Transform uncertainties (std dev → variance → scaled variance)
+                # σ_scaled = σ_original / y_scale
+                # α_scaled = σ_scaled² = σ_original² / y_scale²
+                y_scale = self.y_scaler.scale_[0]
+                sigma_train_scaled = sigma_train / y_scale
+                alpha_train_scaled = sigma_train_scaled ** 2  # Convert to variance
+
+                # Set GP alpha and train
+                self.my_GPR.alpha = alpha_train_scaled.flatten()
                 self.my_GPR.fit(X_train_scaled, y_train_scaled)
             else:
-                # No scaling - train on raw data
+                # No scaling - convert std dev to variance
+                alpha_train = sigma_train ** 2  # Convert to variance
+                self.my_GPR.alpha = alpha_train.flatten()
                 self.my_GPR.fit(X_train, y_train)
 
             did_train = True
