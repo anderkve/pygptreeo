@@ -123,15 +123,15 @@ gpt = GPTree(
     Nbar=Nbar,
     theta=theta,
     split_position_method='median',
-    split_dimension_criteria='max_variance',
-    # split_dimension_criteria='max_uncertainty',
+    # split_dimension_criteria='max_variance',
+    split_dimension_criteria='max_uncertainty',
     retrain_every_n_points=retrain_step,
     use_calibrated_sigma=True,
     splitting_strategy='gradual',
+    # splitting_strategy='standard',
     max_n_pred_leaves=3,
     aggregation='moe',
     # aggregation='poe',
-    # splitting_strategy='standard',
     # 
     enable_point_rejection=False,
     rejection_threshold=1e-2,
@@ -258,12 +258,14 @@ for x,y in zip(X_input, y_input):
         # Update plots
         axs[0].clear()
         axs[0].plot(points_processed_history, avg_predict_times_history, label="Avg. predict time (last 2000 pts)", linewidth=2.0)
+        axs[0].set_xlim([0, n_pts])
         axs[0].set_ylabel('Time (s)')
         axs[0].set_title('Average prediction time per point')
         axs[0].legend()
 
         axs[1].clear()
         axs[1].plot(points_processed_history, avg_update_times_history, label="Avg. update time (last 2000 pts)", color='orange', linewidth=2.0)
+        axs[1].set_xlim([0, n_pts])
         axs[1].set_ylabel('Time (s)')
         axs[1].set_title('Average tree update time per point')
         axs[1].legend()
@@ -272,6 +274,7 @@ for x,y in zip(X_input, y_input):
         axs[2].plot(points_processed_history, nrmse_history, label="NRMSE (last 2000 pts)", color='green', linewidth=2.0)
         axs[2].set_ylabel('NRMSE')
         axs[2].set_title('NRMSE for predictions')
+        axs[2].set_xlim([0, n_pts])
         axs[2].set_ylim([0.001, 1.0])
         # axs[2].set_ylim([0.0, np.max([0.1, np.max(nrmse_history)])])
         axs[2].set_yscale('log')
@@ -285,6 +288,7 @@ for x,y in zip(X_input, y_input):
         axs[3].plot(points_processed_history, within_1_percent_history, label="Fraction < 1% Error (last 2000 pts)", linewidth=2.0)
         axs[3].set_ylabel('Fraction')
         axs[3].set_title('Fraction of predictions within x% of true value')
+        axs[3].set_xlim([0, n_pts])
         axs[3].set_ylim([0, 1])
         axs[3].legend()
 
@@ -294,6 +298,7 @@ for x,y in zip(X_input, y_input):
         axs[4].set_ylabel('Fraction')
         axs[4].set_title('Empirical coverage of prediction uncertainty')
         axs[4].set_xlabel('Total points processed') # X-label only on the last plot
+        axs[4].set_xlim([0, n_pts])
         axs[4].set_ylim([0, 1])
         axs[4].legend()
 
