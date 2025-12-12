@@ -29,6 +29,10 @@ from tqdm import tqdm
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 
+# Atomic save
+import os
+import tempfile
+
 
 class GPTree:
     """Implements the GPTree for dynamic learning and regression.
@@ -528,3 +532,17 @@ class GPTree:
             path (str): The file path where the GPTree object will be saved.
         """
         joblib.dump(self, path)
+
+    def atomic_save(self, path:str):
+        """Atomically saves the trained GPTree object to a file using joblib."""
+
+        # make temporary file
+        dir_name = os.path.dirname(path)
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".joblib")
+        os.close(fd) 
+
+        # save to file
+        self.save(tmp_path)
+
+        # atomic replace
+        os.replace(tmp_path, path)  # atomic replace
