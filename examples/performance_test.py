@@ -56,7 +56,9 @@ np.random.seed(512312)
 
 make_plot = True
 
+# target_name = "rosenbrock"
 target_name = "eggholder"
+# target_name = "himmelblau"
 target = target_dict[target_name]
 
 n_dims = 3
@@ -131,6 +133,18 @@ class my_GPR_class(GaussianProcessRegressor):
             length_scale=[1.0]*n_dims, 
             length_scale_bounds=[(1e-5, 1e5)]*n_dims
         ))
+
+        # from pygptreeo.kernels import AdditiveKernel
+        # self.kernel = ConstantKernel(
+        #     constant_value=1.0, 
+        #     constant_value_bounds=(1e-3, 1e8)
+        # ) * AdditiveKernel(
+        #     input_dim=n_dims,
+        #     interaction_depth=2,  # or 2 for pairwise
+        #     base_kernel='rbf',
+        #     length_scale=1.0,
+        #     length_scale_bounds=(1e-5, 1e5),
+        # )
 
         self.min_length_scale = 0.001
         self.alpha = alpha

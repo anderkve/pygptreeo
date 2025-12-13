@@ -2,12 +2,15 @@
 
 This module provides custom Gaussian process kernels that extend the
 functionality available in scikit-learn, particularly anisotropic variants
-of kernels that only have isotropic versions in sklearn.
+of kernels that only have isotropic versions in sklearn, and additive kernels
+for learning functions with low-dimensional structure.
 """
 
 import numpy as np
+from itertools import combinations
 from sklearn.gaussian_process.kernels import Kernel, Hyperparameter, StationaryKernelMixin, NormalizedKernelMixin
 from sklearn.gaussian_process.kernels import _check_length_scale
+from sklearn.gaussian_process.kernels import RBF, Matern
 
 
 class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
@@ -296,3 +299,365 @@ class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin,
         else:
             return (f"{self.__class__.__name__}(alpha={self.alpha}, "
                    f"length_scale={self.length_scale})")
+
+
+class AdditiveKernel(Kernel):
+    """Additive kernel with configurable interaction depth.
+
+    This kernel is designed for learning functions with low-dimensional structure
+    by decomposing the kernel into a sum of terms with different interaction orders.
+    For example, with interaction_depth=2 in 3D:
+
+        k(x, x') = k₁(x₁, x'₁) + k₂(x₂, x'₂) + k₃(x₃, x'₃)           [order 1]
+                 + k₁(x₁, x'₁) × k₂(x₂, x'₂)                          [order 2]
+                 + k₁(x₁, x'₁) × k₃(x₃, x'₃)                          [order 2]
+                 + k₂(x₂, x'₂) × k₃(x₃, x'₃)                          [order 2]
+
+    This is particularly effective for:
+    - Functions that are truly additive or have low-order interactions
+    - High-dimensional problems with sparse data
+    - Avoiding the curse of dimensionality in standard kernels
+    - Interpretable models (see which dimensions/interactions matter)
+
+    Parameters
+    ----------
+    input_dim : int
+        Number of input dimensions
+
+    interaction_depth : int, default=1
+        Maximum order of interactions to include:
+        - 1: Only main effects (purely additive)
+        - 2: Main effects + pairwise interactions
+        - 3: Up to 3-way interactions
+        - etc.
+
+    base_kernel : str, default='rbf'
+        Type of 1D kernel to use for each dimension:
+        - 'rbf': RBF kernel (smooth, infinitely differentiable)
+        - 'matern': Matérn kernel with nu=1.5 (once differentiable)
+
+    length_scale : float or array-like of shape (n_dims,), default=1.0
+        Length scale for each dimension. If float, same length scale
+        for all dimensions.
+
+    length_scale_bounds : pair of floats >= 0 or "fixed", default=(1e-3, 1e3)
+        The lower and upper bound on length_scale parameters.
+
+    Examples
+    --------
+    >>> from pygptreeo.kernels import AdditiveKernel
+    >>> from sklearn.gaussian_process import GaussianProcessRegressor
+    >>> import numpy as np
+    >>>
+    >>> # 5D problem with main effects + pairwise interactions
+    >>> kernel = AdditiveKernel(
+    ...     input_dim=5,
+    ...     interaction_depth=2,
+    ...     base_kernel='rbf',
+    ...     length_scale=1.0
+    ... )
+    >>> # This creates 5 + C(5,2) = 5 + 10 = 15 kernel terms
+    >>>
+    >>> gpr = GaussianProcessRegressor(kernel=kernel)
+    """
+
+    def __init__(self, input_dim, interaction_depth=1, base_kernel='rbf',
+                 length_scale=1.0, length_scale_bounds=(1e-3, 1e3)):
+        # Store constructor parameters as regular attributes (sklearn needs this)
+        self.input_dim = input_dim
+        self.interaction_depth = interaction_depth
+        self.base_kernel = base_kernel
+        self.length_scale_bounds = length_scale_bounds
+
+        # Generate interaction term indices
+        # For example, with input_dim=3, depth=2:
+        # Order 1: [(0,), (1,), (2,)]
+        # Order 2: [(0,1), (0,2), (1,2)]
+        self._interaction_terms = []
+        for order in range(1, min(interaction_depth + 1, input_dim + 1)):
+            self._interaction_terms.extend(
+                list(combinations(range(input_dim), order))
+            )
+
+        self._n_terms = len(self._interaction_terms)
+
+        # Set length_scale (this can be an attribute as it's a hyperparameter)
+        # IMPORTANT: Always store length_scale as an array of length input_dim
+        # to ensure sklearn creates the right number of hyperparameters
+        if np.ndim(length_scale) == 0:
+            self.length_scale = np.full(input_dim, length_scale)
+        else:
+            self.length_scale = np.asarray(length_scale)
+            if len(self.length_scale) != input_dim:
+                raise ValueError(f"length_scale must have length {input_dim}, got {len(self.length_scale)}")
+
+    @property
+    def interaction_terms(self):
+        """List of interaction term tuples."""
+        return self._interaction_terms
+
+    @property
+    def n_terms(self):
+        """Number of additive terms."""
+        return self._n_terms
+
+    @property
+    def hyperparameter_length_scale(self):
+        """Returns the hyperparameter specification for length_scale."""
+        # Always return input_dim hyperparameters (one per dimension)
+        return Hyperparameter(
+            "length_scale", "numeric", self.length_scale_bounds,
+            self.input_dim
+        )
+
+    def __call__(self, X, Y=None, eval_gradient=False):
+        """Return the kernel k(X, Y) and optionally its gradient.
+
+        Parameters
+        ----------
+        X : ndarray of shape (n_samples_X, n_features)
+            Left argument of the returned kernel k(X, Y)
+
+        Y : ndarray of shape (n_samples_Y, n_features), default=None
+            Right argument of the returned kernel k(X, Y). If None, k(X, X)
+            is evaluated instead.
+
+        eval_gradient : bool, default=False
+            Determines whether the gradient with respect to the log of the
+            kernel hyperparameters is computed.
+
+        Returns
+        -------
+        K : ndarray of shape (n_samples_X, n_samples_Y)
+            Kernel k(X, Y)
+
+        K_gradient : ndarray of shape (n_samples_X, n_samples_Y, n_dims), optional
+            The gradient of the kernel k(X, Y) with respect to the log of the
+            hyperparameters. Only returned when eval_gradient is True.
+        """
+        X = np.atleast_2d(X)
+
+        # length_scale is already an array (initialized in __init__)
+        length_scale = self.length_scale
+
+        if Y is None:
+            Y = X
+        else:
+            Y = np.atleast_2d(Y)
+
+        if eval_gradient:
+            K, K_gradient = self._compute_kernel_gradient(X, Y, length_scale)
+            return K, K_gradient
+        else:
+            K = self._compute_kernel(X, Y, length_scale)
+            return K
+
+    def _compute_kernel(self, X, Y, length_scale):
+        """Compute the additive kernel matrix.
+
+        Parameters
+        ----------
+        X : ndarray of shape (n_samples_X, n_features)
+            Left argument
+        Y : ndarray of shape (n_samples_Y, n_features)
+            Right argument
+        length_scale : ndarray of shape (n_dims,)
+            Length scales for each dimension
+
+        Returns
+        -------
+        K : ndarray of shape (n_samples_X, n_samples_Y)
+            Kernel matrix
+        """
+        K = np.zeros((X.shape[0], Y.shape[0]))
+
+        # Sum over all interaction terms
+        for term_dims in self.interaction_terms:
+            # Compute product of 1D kernels for this term
+            K_term = np.ones((X.shape[0], Y.shape[0]))
+            for dim in term_dims:
+                # Extract dimension and compute 1D kernel
+                X_dim = X[:, dim:dim+1]
+                Y_dim = Y[:, dim:dim+1]
+                K_dim = self._compute_1d_kernel(X_dim, Y_dim, length_scale[dim])
+                K_term *= K_dim
+
+            K += K_term
+
+        return K
+
+    def _compute_kernel_gradient(self, X, Y, length_scale):
+        """Compute kernel and gradient with respect to log(length_scale).
+
+        Parameters
+        ----------
+        X : ndarray of shape (n_samples_X, n_features)
+            Left argument
+        Y : ndarray of shape (n_samples_Y, n_features)
+            Right argument
+        length_scale : ndarray of shape (n_dims,)
+            Length scales
+
+        Returns
+        -------
+        K : ndarray of shape (n_samples_X, n_samples_Y)
+            Kernel matrix
+        K_gradient : ndarray of shape (n_samples_X, n_samples_Y, n_dims)
+            Gradient w.r.t. log(length_scale)
+        """
+        K = np.zeros((X.shape[0], Y.shape[0]))
+        K_gradient = np.zeros((X.shape[0], Y.shape[0], self.input_dim))
+
+        # For each interaction term
+        for term_dims in self.interaction_terms:
+            # Compute the kernel for this term and its gradient
+            K_term = np.ones((X.shape[0], Y.shape[0]))
+            K_1d_list = []  # Store individual 1D kernels
+            grad_1d_list = []  # Store individual 1D gradients
+
+            # Compute all 1D kernels in this product
+            for dim in term_dims:
+                X_dim = X[:, dim:dim+1]
+                Y_dim = Y[:, dim:dim+1]
+                K_1d, grad_1d = self._compute_1d_kernel_gradient(
+                    X_dim, Y_dim, length_scale[dim]
+                )
+                K_1d_list.append(K_1d)
+                grad_1d_list.append(grad_1d)
+                K_term *= K_1d
+
+            # Add this term to total kernel
+            K += K_term
+
+            # Compute gradient for each dimension in this term
+            for i, dim in enumerate(term_dims):
+                # Gradient via product rule:
+                # d/d(log l_i) [k₁ × k₂ × ... × kₙ] = k₁ × ... × (dk_i/d(log l_i)) × ... × kₙ
+                grad_term = grad_1d_list[i]
+                for j in range(len(term_dims)):
+                    if j != i:
+                        grad_term = grad_term * K_1d_list[j]
+
+                K_gradient[:, :, dim] += grad_term
+
+        return K, K_gradient
+
+    def _compute_1d_kernel(self, X, Y, length_scale):
+        """Compute 1D kernel for a single dimension.
+
+        Parameters
+        ----------
+        X : ndarray of shape (n_samples_X, 1)
+            Left argument (single dimension)
+        Y : ndarray of shape (n_samples_Y, 1)
+            Right argument (single dimension)
+        length_scale : float
+            Length scale for this dimension
+
+        Returns
+        -------
+        K : ndarray of shape (n_samples_X, n_samples_Y)
+            1D kernel matrix
+        """
+        # Compute squared distances
+        dists_sq = np.sum((X[:, np.newaxis, :] - Y[np.newaxis, :, :]) ** 2, axis=2) / (length_scale ** 2)
+
+        if self.base_kernel == 'rbf':
+            # RBF kernel: exp(-0.5 * r²)
+            K = np.exp(-0.5 * dists_sq)
+        elif self.base_kernel == 'matern':
+            # Matérn kernel with nu=1.5: (1 + sqrt(3)*r) * exp(-sqrt(3)*r)
+            r = np.sqrt(dists_sq)
+            sqrt3_r = np.sqrt(3) * r
+            K = (1.0 + sqrt3_r) * np.exp(-sqrt3_r)
+        else:
+            raise ValueError(f"Unknown base_kernel: {self.base_kernel}")
+
+        return K
+
+    def _compute_1d_kernel_gradient(self, X, Y, length_scale):
+        """Compute 1D kernel and gradient w.r.t. log(length_scale).
+
+        Parameters
+        ----------
+        X : ndarray of shape (n_samples_X, 1)
+            Left argument
+        Y : ndarray of shape (n_samples_Y, 1)
+            Right argument
+        length_scale : float
+            Length scale
+
+        Returns
+        -------
+        K : ndarray of shape (n_samples_X, n_samples_Y)
+            1D kernel matrix
+        grad : ndarray of shape (n_samples_X, n_samples_Y)
+            Gradient w.r.t. log(length_scale)
+        """
+        # Compute squared distances
+        dists_sq = np.sum((X[:, np.newaxis, :] - Y[np.newaxis, :, :]) ** 2, axis=2) / (length_scale ** 2)
+
+        if self.base_kernel == 'rbf':
+            # RBF: k = exp(-0.5 * r²)
+            # d/d(log l) k = d/dl k * l = (r²) * k * l
+            K = np.exp(-0.5 * dists_sq)
+            grad = dists_sq * K * length_scale
+
+        elif self.base_kernel == 'matern':
+            # Matérn 1.5: k = (1 + sqrt(3)*r) * exp(-sqrt(3)*r)
+            # d/d(log l) k = d/dl k * l
+            r = np.sqrt(dists_sq)
+            sqrt3_r = np.sqrt(3) * r
+            K = (1.0 + sqrt3_r) * np.exp(-sqrt3_r)
+
+            # Derivative w.r.t. l (then multiply by l for log derivative)
+            # dk/dl = dk/dr * dr/dl
+            # dr/dl = -r/l
+            # dk/dr = sqrt(3) * exp(-sqrt(3)*r) * (1 - (1 + sqrt(3)*r))
+            #       = -3 * r * exp(-sqrt(3)*r)
+            dk_dr = -3 * r * np.exp(-sqrt3_r)
+            dr_dl = -r / length_scale
+            grad = dk_dr * dr_dl * length_scale  # multiply by l for log derivative
+            # Simplify: grad = 3 * r² * exp(-sqrt(3)*r)
+            grad = 3 * dists_sq * np.exp(-sqrt3_r)
+
+        else:
+            raise ValueError(f"Unknown base_kernel: {self.base_kernel}")
+
+        return K, grad
+
+    def diag(self, X):
+        """Returns the diagonal of the kernel k(X, X).
+
+        For additive kernels, the diagonal equals the number of terms,
+        assuming each 1D kernel has diag = 1.
+
+        Parameters
+        ----------
+        X : ndarray of shape (n_samples, n_features)
+            Argument to the kernel
+
+        Returns
+        -------
+        K_diag : ndarray of shape (n_samples,)
+            Diagonal of K(X, X)
+        """
+        # Each 1D kernel contributes 1 on the diagonal
+        # Total diagonal = number of terms
+        return np.full(X.shape[0], self.n_terms)
+
+    def is_stationary(self):
+        """Returns whether the kernel is stationary."""
+        return True
+
+    def __repr__(self):
+        # Check if all length scales are the same
+        if len(np.unique(self.length_scale)) == 1:
+            ls_repr = f"{self.length_scale[0]:.3g}"
+        else:
+            ls_repr = f"[{', '.join(f'{ls:.3g}' for ls in self.length_scale)}]"
+        return (f"{self.__class__.__name__}(n_dims={self.input_dim}, "
+                f"interaction_depth={self.interaction_depth}, "
+                f"base_kernel='{self.base_kernel}', "
+                f"length_scale={ls_repr}, "
+                f"n_terms={self.n_terms})")

@@ -40,4 +40,4 @@ from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 from pygptreeo.gptree import GPTree
 from pygptreeo.gpforest import GPForest
-from pygptreeo.kernels import AnisotropicRationalQuadratic
+from pygptreeo.kernels import AnisotropicRationalQuadratic, AdditiveKernel
