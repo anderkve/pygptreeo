@@ -10,6 +10,7 @@ Main components:
     - GPNode: Individual nodes managing local data and GP models
     - GPForest: Ensemble of multiple GPTree models for improved predictions
     - Default_GPR: Pre-configured Gaussian Process Regressor
+    - AnisotropicRationalQuadratic: Custom kernel for multi-scale learning
 
 Typical usage:
     from pygptreeo import GPTree
@@ -39,3 +40,4 @@ from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 from pygptreeo.gptree import GPTree
 from pygptreeo.gpforest import GPForest
+from pygptreeo.kernels import AnisotropicRationalQuadratic
