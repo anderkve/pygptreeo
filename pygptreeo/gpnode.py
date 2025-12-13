@@ -808,6 +808,12 @@ class GPNode(Node):
 
             # Train small GP on left train subset
             gp_left = deepcopy(self.my_GPR)
+            # Subset alpha to match training data if it's an array
+            if hasattr(gp_left, 'alpha') and isinstance(gp_left.alpha, np.ndarray):
+                # Alpha corresponds to my_X_data (first N entries) + shared_X_data
+                # left_indices are into my_X_data, so we subset from the beginning
+                alpha_left = gp_left.alpha[left_indices]
+                gp_left.alpha = alpha_left[train_idx_left]
             X_train_left = X_left[train_idx_left]
             y_train_left = y_left[train_idx_left]
 
@@ -846,6 +852,12 @@ class GPNode(Node):
                 return np.inf
 
             gp_right = deepcopy(self.my_GPR)
+            # Subset alpha to match training data if it's an array
+            if hasattr(gp_right, 'alpha') and isinstance(gp_right.alpha, np.ndarray):
+                # Alpha corresponds to my_X_data (first N entries) + shared_X_data
+                # right_indices are into my_X_data, so we subset from the beginning
+                alpha_right = gp_right.alpha[right_indices]
+                gp_right.alpha = alpha_right[train_idx_right]
             X_train_right = X_right[train_idx_right]
             y_train_right = y_right[train_idx_right]
 

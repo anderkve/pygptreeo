@@ -141,7 +141,7 @@ gpt = GPTree(
     merge_distance_threshold=0.01,
     min_points_before_merging=10,
     # 
-    enable_split_evaluation=False,
+    enable_split_evaluation=True,
     n_split_candidates=4,
     split_eval_train_fraction=0.4,
     split_eval_min_points=20,
