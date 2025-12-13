@@ -104,7 +104,7 @@ class my_GPR_class(GaussianProcessRegressor):
     def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=1, normalize_y=False, copy_X_train=True, n_targets=None, random_state=None):
         super().__init__()
 
-        self.kernel = ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-5, 1e5)]*n_dims)
+        # self.kernel = ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-5, 1e5)]*n_dims)
 
         # from pygptreeo.kernels import AnisotropicRationalQuadratic
         # self.kernel = ConstantKernel(
@@ -117,10 +117,25 @@ class my_GPR_class(GaussianProcessRegressor):
         #     alpha_bounds=(1e-4, 1e4)
         # )
 
+        from pygptreeo.kernels import AnisotropicRationalQuadratic
+        self.kernel = ConstantKernel(
+            constant_value=1.0, 
+            constant_value_bounds=(1e-3,1e8)
+        ) * (AnisotropicRationalQuadratic(
+            length_scale=[1.0]*n_dims,
+            length_scale_bounds=(1e-5, 1e5),
+            alpha=1.0,
+            alpha_bounds=(1e-4, 1e4)
+        ) + Matern(
+            nu=1.5,
+            length_scale=[1.0]*n_dims, 
+            length_scale_bounds=[(1e-5, 1e5)]*n_dims
+        ))
+
         self.min_length_scale = 0.001
         self.alpha = alpha
         self.optimizer = optimizer
-        self.n_restarts_optimizer = 3  # n_restarts_optimizer
+        self.n_restarts_optimizer = 6  # n_restarts_optimizer
         self.normalize_y = normalize_y
         self.copy_X_train = copy_X_train
         self.n_targets = n_targets
