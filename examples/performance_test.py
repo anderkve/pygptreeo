@@ -64,9 +64,9 @@ target = target_dict[target_name]
 n_dims = 3
 n_pts = 100000
 
-Nbar = 100
+Nbar = 200
 theta = 1e-4  #0.10 # 1e-4
-retrain_step = 100
+retrain_step = 200
 
 x_min = 0.0
 x_max = 1.0
@@ -149,7 +149,7 @@ class my_GPR_class(GaussianProcessRegressor):
         self.min_length_scale = 0.001
         self.alpha = alpha
         self.optimizer = optimizer
-        self.n_restarts_optimizer = 6  # n_restarts_optimizer
+        self.n_restarts_optimizer = 3  # n_restarts_optimizer
         self.normalize_y = normalize_y
         self.copy_X_train = copy_X_train
         self.n_targets = n_targets
@@ -174,6 +174,9 @@ gpt = GPTree(
     max_n_pred_leaves=3,
     aggregation='moe',
     # aggregation='poe',
+    # 
+    use_hyperparameter_inheritance=False,
+    use_standard_scaling=True,
     # 
     enable_point_rejection=False,
     rejection_threshold=1e-2,
@@ -270,7 +273,7 @@ for x,y in zip(X_input, y_input):
         # NRMSE
         nrmse_batch = np.sqrt(np.mean((actual_vals - predicted_vals)**2)) / (np.max(actual_vals) - np.min(actual_vals))
 
-        # Accuracy (within 5% of true value)
+        # Accuracy
         within_1_percent_flags = [is_within_percentage(p, a, 1) for p, a in zip(predicted_vals, actual_vals)]
         within_2_percent_flags = [is_within_percentage(p, a, 2) for p, a in zip(predicted_vals, actual_vals)]
         within_4_percent_flags = [is_within_percentage(p, a, 4) for p, a in zip(predicted_vals, actual_vals)]

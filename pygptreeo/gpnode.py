@@ -71,13 +71,14 @@ class GPNode(Node):
                  my_GPR: GaussianProcessRegressor,
                  Nbar: Optional[int] = 100,
                  split_position_method='median',
-                 retrain_every_n_points=1,
+                 retrain_every_n_points=100,
                  name="0",
-                 split_dimension_criteria='max_spread',
-                 splitting_strategy: Optional[str] = 'standard',
+                 split_dimension_criteria='max_uncertainty',
+                 splitting_strategy: Optional[str] = 'gradual',
                  use_standard_scaling: Optional[bool] = True,
+                 use_hyperparameter_inheritance: Optional[bool] = False,
                  enable_point_rejection: Optional[bool] = False,
-                 rejection_threshold: Optional[float] = 1e-3,
+                 rejection_threshold: Optional[float] = 1e-4,
                  min_points_before_rejection: Optional[int] = 50,
                  enable_point_merging: Optional[bool] = False,
                  merge_distance_threshold: Optional[float] = 0.01,
@@ -111,7 +112,10 @@ class GPNode(Node):
                 'random' (random dimension). Defaults to 'max_spread'.
             use_standard_scaling (Optional[bool]): If True, standardizes both X and y
                 data before fitting the GP and inverse transforms predictions.
-                Defaults to True.
+                Defaults to False. Cannot be used together with use_hyperparameter_inheritance.
+            use_hyperparameter_inheritance (Optional[bool]): If True, child nodes inherit
+                their parent's optimized kernel hyperparameters as starting values.
+                Defaults to True. Cannot be used together with use_standard_scaling.
             enable_point_rejection (Optional[bool]): If True, rejects new points that
                 are well-predicted by the current GP. Defaults to False.
             rejection_threshold (Optional[float]): Relative error threshold below which
@@ -138,6 +142,14 @@ class GPNode(Node):
         
         super().__init__(*args)
 
+        # Validate that both use_standard_scaling and use_hyperparameter_inheritance are not enabled
+        if use_standard_scaling and use_hyperparameter_inheritance:
+            raise ValueError(
+                "Cannot use both use_standard_scaling=True and use_hyperparameter_inheritance=True. "
+                "Standard scaling changes the coordinate system between parent and child nodes, "
+                "making hyperparameter inheritance incompatible. Please choose one or the other."
+            )
+
         self.Nbar = Nbar
 
         self.my_GPR = my_GPR
@@ -149,6 +161,7 @@ class GPNode(Node):
         self.split_dimension_criteria = split_dimension_criteria
         self.splitting_strategy = splitting_strategy
         self.use_standard_scaling = use_standard_scaling
+        self.use_hyperparameter_inheritance = use_hyperparameter_inheritance
 
         # Point rejection parameters
         self.enable_point_rejection = enable_point_rejection
@@ -264,6 +277,7 @@ class GPNode(Node):
             'split_dimension_criteria': self.split_dimension_criteria,
             'splitting_strategy': self.splitting_strategy,
             'use_standard_scaling': self.use_standard_scaling,
+            'use_hyperparameter_inheritance': self.use_hyperparameter_inheritance,
             'enable_point_rejection': self.enable_point_rejection,
             'rejection_threshold': self.rejection_threshold,
             'min_points_before_rejection': self.min_points_before_rejection,
@@ -305,6 +319,17 @@ class GPNode(Node):
 
         self.left.sigma_scaler_init = self.sigma_scaler_init
         self.right.sigma_scaler_init = self.sigma_scaler_init
+
+        # Inherit parent's optimized kernel hyperparameters if enabled
+        # This gives children a warm-start for their GP optimization
+        if self.use_hyperparameter_inheritance and self.my_GPR is not None:
+            # Check if parent GP has been trained (has kernel_ attribute)
+            if hasattr(self.my_GPR, 'kernel_'):
+                # Copy the parent's optimized kernel to the children
+                # This preserves learned length scales, amplitudes, etc.
+                self.left.my_GPR.kernel = deepcopy(self.my_GPR.kernel_)
+                self.right.my_GPR.kernel = deepcopy(self.my_GPR.kernel_)
+                print(f"Inherited hyperparameters from node {self.name} to children {self.left.name} and {self.right.name}")
 
         # Copy scalers so children can use parent's GP correctly
         # The children get a copy of the parent's trained GP, which was trained on
