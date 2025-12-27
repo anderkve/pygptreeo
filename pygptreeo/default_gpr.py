@@ -1,57 +1,107 @@
 """Default Gaussian Process Regressor configuration.
 
-This module provides a pre-configured GaussianProcessRegressor class suitable
-for use with GPTreeO. It sets up sensible defaults for kernel configuration
-and hyperparameters commonly used in online regression tasks.
+This module provides a factory function that creates a default GPRegressorInterface
+instance suitable for use with GPTreeO. It sets up sensible defaults for kernel
+configuration and hyperparameters commonly used in online regression tasks.
 """
 
 # Standard library imports
-from typing import Callable, Optional, Type, Union
+from typing import Optional
 
 # Third-party imports
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 
-class Default_GPR(GaussianProcessRegressor):
-        """A default GaussianProcessRegressor configuration for GPTreeO.
+# Local imports
+from pygptreeo.adapters import SklearnGPAdapter
 
-        This class extends sklearn.gaussian_process.GaussianProcessRegressor
-        to provide a default setup suitable for use within the GPTreeO framework.
-        It initializes with a predefined kernel and a minimum length scale for
-        kernel parameters.
 
-        Attributes:
-            kernel: The kernel to be used. Defaults to ConstantKernel * Matern(nu=1.5).
-            min_length_scale: The minimum bound for the kernel's length scale
-                hyperparameters. This is used to prevent the optimizer from
-                choosing excessively small length scales. Defaults to 0.001.
-            alpha: Value added to the diagonal of the kernel matrix during fitting.
-                Larger values correspond to increased noise level in the observations.
-                Passed to GaussianProcessRegressor.
-            optimizer: The optimizer to use for fitting the kernel's hyperparameters.
-                Passed to GaussianProcessRegressor.
-            n_restarts_optimizer: The number of times the optimizer is restarted.
-                Passed to GaussianProcessRegressor.
-            normalize_y: Whether the target values y are normalized before fitting.
-                Passed to GaussianProcessRegressor.
-            copy_X_train: If True, a persistent copy of the training data is stored.
-                Passed to GaussianProcessRegressor.
-            n_targets: The number of dimensions of the target values. Used to
-                reshape y if it is a 1D array. Passed to GaussianProcessRegressor.
-            random_state: Controls the randomness of the initialization.
-                Passed to GaussianProcessRegressor.
-        """
-        def __init__(self, kernel=None, *, alpha=1e-10, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=False, copy_X_train=True, n_targets=None, random_state=None):
-            if kernel is None:
-                self.kernel = ConstantKernel() * Matern(nu=1.5)
-            else:
-                self.kernel = kernel
-            self.min_length_scale = 0.001
-            self.alpha = alpha
-            self.optimizer = optimizer
-            self.n_restarts_optimizer = n_restarts_optimizer
-            self.normalize_y = normalize_y
-            self.copy_X_train = copy_X_train
-            self.n_targets = n_targets
-            self.random_state = random_state
+def Default_GPR(
+    kernel=None,
+    *,
+    alpha=1e-10,
+    optimizer='fmin_l_bfgs_b',
+    n_restarts_optimizer=0,
+    normalize_y=False,
+    copy_X_train=True,
+    n_targets=None,
+    random_state=None
+):
+    """Create a default GaussianProcessRegressor adapter for GPTreeO.
+
+    This function creates and returns a SklearnGPAdapter wrapping a
+    scikit-learn GaussianProcessRegressor with sensible default settings
+    for use within the GPTreeO framework.
+
+    Parameters
+    ----------
+    kernel : Kernel object, optional
+        The kernel specifying the covariance function of the GP.
+        If None is passed, the kernel ConstantKernel() * Matern(nu=1.5) is used.
+        Note that the kernel's hyperparameters are optimized during fitting.
+    alpha : float or ndarray of shape (n_samples,), default=1e-10
+        Value added to the diagonal of the kernel matrix during fitting.
+        This can represent the expected amount of noise in the observations.
+        Larger values correspond to increased noise level.
+    optimizer : "fmin_l_bfgs_b" or callable, default="fmin_l_bfgs_b"
+        Can either be one of the internally supported optimizers for optimizing
+        the kernel's parameters, specified by a string, or an externally
+        defined optimizer passed as a callable.
+    n_restarts_optimizer : int, default=0
+        The number of restarts of the optimizer for finding the kernel's
+        parameters which maximize the log-marginal likelihood. The first run
+        of the optimizer is performed from the kernel's initial parameters,
+        the remaining ones (if any) from thetas sampled log-uniform randomly
+        from the space of allowed theta-values.
+    normalize_y : bool, default=False
+        Whether or not to normalize the target values y by removing the mean
+        and scaling to unit-variance.
+    copy_X_train : bool, default=True
+        If True, a persistent copy of the training data is stored in the
+        object. Otherwise, just a reference to the training data is stored,
+        which might cause predictions to change if the data is modified
+        externally.
+    n_targets : int, optional
+        The number of dimensions of the target values. If None, then it is
+        inferred from y during fit.
+    random_state : int, RandomState instance or None, default=None
+        Determines random number generation used to initialize the centers.
+
+    Returns
+    -------
+    SklearnGPAdapter
+        An adapter wrapping a configured scikit-learn GaussianProcessRegressor.
+
+    Examples
+    --------
+    >>> from pygptreeo import GPTree, Default_GPR
+    >>>
+    >>> # Use default configuration
+    >>> gpt = GPTree(GPR=Default_GPR())
+    >>>
+    >>> # Use custom kernel
+    >>> from sklearn.gaussian_process.kernels import RBF
+    >>> gpt = GPTree(GPR=Default_GPR(kernel=RBF()))
+    """
+    # Set default kernel if none provided
+    if kernel is None:
+        kernel = ConstantKernel() * Matern(nu=1.5)
+
+    # Create the underlying sklearn GPR
+    sklearn_gpr = GaussianProcessRegressor(
+        kernel=kernel,
+        alpha=alpha,
+        optimizer=optimizer,
+        n_restarts_optimizer=n_restarts_optimizer,
+        normalize_y=normalize_y,
+        copy_X_train=copy_X_train,
+        n_targets=n_targets,
+        random_state=random_state
+    )
+
+    # Set the min_length_scale attribute (used by pygptreeo)
+    sklearn_gpr.min_length_scale = 0.001
+
+    # Wrap in adapter and return
+    return SklearnGPAdapter(sklearn_gpr)
     

@@ -20,8 +20,12 @@ setuptools.setup(
         'scikit-learn',
         'binarytree',
         'tqdm',
-        'joblib', # Added joblib
+        'joblib',
     ],
+    extras_require={
+        'gpytorch': ['gpytorch', 'torch'],  # For GPyTorch backend support
+        'all': ['gpytorch', 'torch'],  # Install all optional dependencies
+    },
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Science/Research',

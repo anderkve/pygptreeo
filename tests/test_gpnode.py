@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from pygptreeo.gpnode import GPNode
 from pygptreeo.default_gpr import Default_GPR
+from pygptreeo.adapters import SklearnGPAdapter
 from sklearn.gaussian_process.kernels import RBF
 
 import warnings
@@ -21,9 +22,7 @@ class TestGPNode(unittest.TestCase):
 
         # A simple kernel for 1D data
         kernel_1d = 1.0 * RBF(length_scale=1.0, length_scale_bounds=(1e-2, 1e2))
-        self.gpr_for_1d = Default_GPR()
-        self.gpr_for_1d.kernel = kernel_1d
-        self.gpr_for_1d.kernel_alternatives = [kernel_1d]
+        self.gpr_for_1d = Default_GPR(kernel=kernel_1d)
 
 
     def test_gpnode_creation_default_gpr(self):
@@ -35,7 +34,7 @@ class TestGPNode(unittest.TestCase):
             self.assertEqual(node.Nbar, 50, "Nbar should be set to 50")
             self.assertTrue(node.is_leaf, "A new node should be a leaf")
             self.assertIsNone(node.children, "A new node should not have children")
-            self.assertIsInstance(node.my_GPR, Default_GPR, "my_GPR should be an instance of Default_GPR")
+            self.assertIsInstance(node.my_GPR, SklearnGPAdapter, "my_GPR should be an instance of SklearnGPAdapter")
         except Exception as e:
             self.fail(f"GPNode creation raised an exception: {e}")
 
@@ -49,7 +48,7 @@ class TestGPNode(unittest.TestCase):
             self.assertEqual(node.Nbar, 100)
             self.assertEqual(node.split_position_method, 'mean')
             self.assertEqual(node.name, "custom_node_1")
-            self.assertFalse(node.my_GPR.normalize_y, "GPR normalize_y should be False")
+            self.assertFalse(node.my_GPR.sklearn_gpr.normalize_y, "GPR normalize_y should be False")
         except Exception as e:
             self.fail(f"GPNode creation with custom params raised an exception: {e}")
 
@@ -120,7 +119,7 @@ class TestGPNode(unittest.TestCase):
             warnings.filterwarnings("ignore", category=RuntimeWarning)
             did_train = node.fit_my_GPR() # Should train as n_points_since_retrain (1) == retrain_every_n_points (1)
         self.assertTrue(did_train, "GPR should have been trained")
-        self.assertIsNotNone(node.my_GPR.kernel_.theta, "GPR kernel theta should be set after fitting")
+        self.assertTrue(node.my_GPR.is_trained(), "GPR should be trained after fitting")
         self.assertEqual(node.n_points_since_retrain, 0, "Buffer should be reset after training")
 
         # Add another point

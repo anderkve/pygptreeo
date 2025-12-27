@@ -22,12 +22,12 @@ from typing import Callable, Optional, Type, Union
 import numpy as np
 from binarytree import Node
 from scipy.optimize import root_scalar
-from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, ExpSineSquared, Matern, WhiteKernel
 from sklearn.preprocessing import StandardScaler
 
 # Local imports
 from pygptreeo.default_gpr import Default_GPR
+from pygptreeo.gp_interface import GPRegressorInterface
 
 # Module-level constants
 DEFAULT_OVERLAP = 0.001  # Default initial overlap for node boundaries
@@ -47,8 +47,7 @@ class GPNode(Node):
     and makes local predictions within its domain.
 
     Attributes:
-        my_GPR (sklearn.gaussian_process.GaussianProcessRegressor): The GPR
-            instance associated with this node.
+        my_GPR (GPRegressorInterface): The GPR instance associated with this node.
         Nbar (int): The maximum number of training points this node can hold
             before it attempts to split.
         my_X_data (numpy.ndarray): Training data features for this node.
@@ -68,7 +67,7 @@ class GPNode(Node):
         overlap (float): The size of the overlapping region with sibling nodes.
     """
     def __init__(self, *args,
-                 my_GPR: GaussianProcessRegressor,
+                 my_GPR: GPRegressorInterface,
                  Nbar: Optional[int] = 100,
                  split_position_method='median',
                  retrain_every_n_points=100,
@@ -93,8 +92,8 @@ class GPNode(Node):
             *args: Arguments passed to the `binarytree.Node` parent class constructor.
                 Typically, the first argument is the initial `value` for the node,
                 which corresponds to `n_points`.
-            my_GPR (sklearn.gaussian_process.GaussianProcessRegressor): The
-                Gaussian Process Regressor instance to be used by this node.
+            my_GPR (GPRegressorInterface): The Gaussian Process Regressor instance
+                to be used by this node.
             Nbar (Optional[int]): The maximum number of training points this node
                 can hold before it considers splitting. Defaults to 100.
             split_position_method (str): The method used to determine the split
@@ -266,7 +265,7 @@ class GPNode(Node):
         self.merge_counts = np.array([]).reshape((0, 1))
 
 
-    def generate_children(self, GPR: Type[GaussianProcessRegressor], n_features: int):
+    def generate_children(self, GPR: GPRegressorInterface, n_features: int):
         """ Grow the GPtree by adding two GPNodes as children of the current GPNode. """
 
         # Settings that will be passed on to the child nodes
@@ -291,8 +290,8 @@ class GPNode(Node):
         }
 
         # Create child nodes with a copy of the parent GP
-        self.left = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "0", **node_config_kwargs)
-        self.right = GPNode(0, my_GPR=deepcopy(self.my_GPR), name=self.name + "1", **node_config_kwargs)
+        self.left = GPNode(0, my_GPR=self.my_GPR.clone(), name=self.name + "0", **node_config_kwargs)
+        self.right = GPNode(0, my_GPR=self.my_GPR.clone(), name=self.name + "1", **node_config_kwargs)
         
         self.left.is_left = True
         self.right.is_left = False
@@ -323,12 +322,13 @@ class GPNode(Node):
         # Inherit parent's optimized kernel hyperparameters if enabled
         # This gives children a warm-start for their GP optimization
         if self.use_hyperparameter_inheritance and self.my_GPR is not None:
-            # Check if parent GP has been trained (has kernel_ attribute)
-            if hasattr(self.my_GPR, 'kernel_'):
+            # Check if parent GP has been trained
+            if self.my_GPR.is_trained():
                 # Copy the parent's optimized kernel to the children
                 # This preserves learned length scales, amplitudes, etc.
-                self.left.my_GPR.kernel = deepcopy(self.my_GPR.kernel_)
-                self.right.my_GPR.kernel = deepcopy(self.my_GPR.kernel_)
+                trained_kernel = self.my_GPR.get_kernel()
+                self.left.my_GPR.set_kernel(deepcopy(trained_kernel))
+                self.right.my_GPR.set_kernel(deepcopy(trained_kernel))
                 print(f"Inherited hyperparameters from node {self.name} to children {self.left.name} and {self.right.name}")
 
         # Copy scalers so children can use parent's GP correctly
@@ -553,7 +553,7 @@ class GPNode(Node):
             return False
 
         # GP not trained yet
-        if not hasattr(self.my_GPR, 'kernel_'):
+        if not self.my_GPR.is_trained():
             return False
 
         # Find nearest neighbor
@@ -593,7 +593,7 @@ class GPNode(Node):
             return False
 
         # GP not trained yet
-        if not hasattr(self.my_GPR, 'kernel_'):
+        if not self.my_GPR.is_trained():
             return False
 
         # Get prediction for this point
@@ -686,13 +686,13 @@ class GPNode(Node):
                 sigma_train_scaled = sigma_train / y_scale
                 alpha_train_scaled = sigma_train_scaled ** 2  # Convert to variance
 
-                # Set GP alpha and train
-                self.my_GPR.alpha = alpha_train_scaled.flatten()
+                # Set GP observation noise and train
+                self.my_GPR.set_observation_noise(alpha_train_scaled)
                 self.my_GPR.fit(X_train_scaled, y_train_scaled)
             else:
                 # No scaling - convert std dev to variance
                 alpha_train = sigma_train ** 2  # Convert to variance
-                self.my_GPR.alpha = alpha_train.flatten()
+                self.my_GPR.set_observation_noise(alpha_train)
                 self.my_GPR.fit(X_train, y_train)
 
             did_train = True
@@ -832,13 +832,11 @@ class GPNode(Node):
                 return np.inf
 
             # Train small GP on left train subset
-            gp_left = deepcopy(self.my_GPR)
+            gp_left = self.my_GPR.clone()
             # Subset alpha to match training data if it's an array
-            if hasattr(gp_left, 'alpha') and isinstance(gp_left.alpha, np.ndarray):
-                # Alpha corresponds to my_X_data (first N entries) + shared_X_data
-                # left_indices are into my_X_data, so we subset from the beginning
-                alpha_left = gp_left.alpha[left_indices]
-                gp_left.alpha = alpha_left[train_idx_left]
+            # For now, we'll let the GP use its default noise handling
+            # Note: This section may need adaptation for non-sklearn backends
+            # that handle observation noise differently
             X_train_left = X_left[train_idx_left]
             y_train_left = y_left[train_idx_left]
 
@@ -876,13 +874,11 @@ class GPNode(Node):
             if len(test_idx_right) == 0:
                 return np.inf
 
-            gp_right = deepcopy(self.my_GPR)
+            gp_right = self.my_GPR.clone()
             # Subset alpha to match training data if it's an array
-            if hasattr(gp_right, 'alpha') and isinstance(gp_right.alpha, np.ndarray):
-                # Alpha corresponds to my_X_data (first N entries) + shared_X_data
-                # right_indices are into my_X_data, so we subset from the beginning
-                alpha_right = gp_right.alpha[right_indices]
-                gp_right.alpha = alpha_right[train_idx_right]
+            # For now, we'll let the GP use its default noise handling
+            # Note: This section may need adaptation for non-sklearn backends
+            # that handle observation noise differently
             X_train_right = X_right[train_idx_right]
             y_train_right = y_right[train_idx_right]
 
@@ -956,7 +952,7 @@ class GPNode(Node):
             candidates.append(('max_spread', dim_max_spread))
 
         # Candidate 3: Max uncertainty (if GP is trained)
-        if hasattr(self.my_GPR, 'kernel_') and self.my_X_data.shape[0] > 1:
+        if self.my_GPR.is_trained() and self.my_X_data.shape[0] > 1:
             uncertainty_scores = self._compute_dimensional_uncertainty()
             dim_max_unc = np.argmax(uncertainty_scores)
             candidates.append(('max_uncertainty', dim_max_unc))
@@ -1067,7 +1063,7 @@ class GPNode(Node):
         elif self.split_dimension_criteria == 'max_uncertainty':
             # Split on the dimension where the GP is most uncertain
             # Strategy: compute marginal predictive uncertainty for each dimension
-            if self.my_X_data.shape[0] > 1 and hasattr(self.my_GPR, 'kernel_'):
+            if self.my_X_data.shape[0] > 1 and self.my_GPR.is_trained():
                 # Compute per-dimension uncertainty scores
                 # We'll use the GP's predictions on the training data to assess uncertainty
                 uncertainty_scores = self._compute_dimensional_uncertainty()

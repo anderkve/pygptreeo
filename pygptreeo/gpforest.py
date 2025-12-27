@@ -16,12 +16,12 @@ from typing import Callable, Optional, Type, Union
 # Third-party imports
 import joblib
 import numpy as np
-from sklearn.gaussian_process import GaussianProcessRegressor
 from tqdm import tqdm
 
 # Local imports
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gptree import GPTree
+from pygptreeo.gp_interface import GPRegressorInterface
 
 
 class GPForest:
@@ -34,23 +34,23 @@ class GPForest:
     single GPTree.
 
     Attributes:
-        GPR: The GaussianProcessRegressor or list of GPRs used by the trees.
+        GPR: The GPRegressorInterface or list of GPRs used by the trees.
         Nbar: Maximum number of training points per node in each GPTree.
         theta: Overlap parameter for node splitting in each GPTree.
         GPTrees: A list containing the individual GPTree instances.
         num_GPTrees: The total number of GPTrees in the forest.
     """
     def __init__(self,
-                 GPR: Optional[Union[GaussianProcessRegressor, list]] = Default_GPR(),
+                 GPR: Optional[Union[GPRegressorInterface, list]] = None,
                  Nbar: Optional[Union[int, list]] = 100,
                  theta: Optional[Union[float, list]] = 0.0001):
         """Initializes the GPForest.
 
         Args:
-            GPR: The GaussianProcessRegressor instance or a list of such
+            GPR: The GPRegressorInterface instance or a list of such
                 instances to be used for the GPTrees. If a single instance
                 is provided, it will be replicated for all GPTrees in the
-                forest. Defaults to `Default_GPR()`.
+                forest. Defaults to `Default_GPR()` (scikit-learn adapter).
             Nbar: The maximum number of training points allowed in a leaf
                 node for each GPTree. Can be an integer (applying to all
                 trees) or a list of integers (one for each tree).
@@ -63,25 +63,30 @@ class GPForest:
         Raises:
             AssertionError: If `Nbar` and `theta` are lists of different lengths.
         """
-        
+
+        # Use Default_GPR if no GPR is provided
+        if GPR is None:
+            GPR = Default_GPR()
+
         self.GPR = GPR
         self.Nbar = Nbar
         self.theta = theta
 
         self.GPTrees = []
 
-        
+
         if type(self.Nbar) == int:
             self.Nbar = [self.Nbar]
 
         if type(self.theta) == int:
             self.theta = [self.theta]
-        
+
         assert len(self.Nbar) == len(self.theta), "Nbar and theta must have the same number of elements"
 
         self.num_GPTrees = len(self.Nbar)
 
-        if type(self.GPR) == GaussianProcessRegressor or type(self.GPR) == Default_GPR:
+        # If GPR is a single instance (not a list), replicate it for all trees
+        if not isinstance(self.GPR, list):
             self.GPR = self.num_GPTrees*[self.GPR]
 
 
@@ -148,7 +153,9 @@ class GPForest:
 
             T.append(1./(sigma_i*sigma_i))
 
-            sigma_prior = np.diag(self.GPTrees[i].GPR.kernel(X_test)).reshape(-1, 1)
+            # Compute prior covariance using the GP interface
+            cov_prior = self.GPTrees[i].GPR.get_kernel_covariance(X_test)
+            sigma_prior = np.diag(cov_prior).reshape(-1, 1)
 
             alpha.append(0.5*(np.log(sigma_prior) - np.log(sigma_i)))
 

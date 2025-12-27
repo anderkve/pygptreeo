@@ -21,13 +21,13 @@ from typing import Callable, Optional, Type, Union
 # Third-party imports
 import joblib
 import numpy as np
-from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.utils import resample
 from tqdm import tqdm
 
 # Local imports
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
+from pygptreeo.gp_interface import GPRegressorInterface
 
 
 class GPTree:
@@ -43,8 +43,8 @@ class GPTree:
 
     Attributes:
         root (GPNode): The root node of the GPTree.
-        GPR (sklearn.gaussian_process.GaussianProcessRegressor): The base GPR
-            configuration used as a template for the GPR in each new GPNode.
+        GPR (GPRegressorInterface): The base GPR configuration used as a
+            template for the GPR in each new GPNode.
         Nbar (int): The maximum number of training points a GPNode can hold
             before it attempts to split.
         theta (float): A parameter that influences the size of the overlapping
@@ -71,7 +71,7 @@ class GPTree:
             Saves the trained GPTree object to a file.
     """
     def __init__(self,
-                 GPR: Optional[GaussianProcessRegressor] = Default_GPR(),
+                 GPR: Optional[GPRegressorInterface] = None,
                  Nbar: Optional[int] = 100,
                  theta: Optional[float] = 0.0001,
                  use_calibrated_sigma: Optional[bool] = True,
@@ -83,9 +83,9 @@ class GPTree:
         """Initializes the GPTree.
 
         Args:
-            GPR (Optional[GaussianProcessRegressor]): The Gaussian Process
+            GPR (Optional[GPRegressorInterface]): The Gaussian Process
                 Regressor instance to be used as a template for nodes.
-                Defaults to `Default_GPR()`.
+                Defaults to `Default_GPR()` (scikit-learn adapter).
             Nbar (Optional[int]): Maximum number of training points a node
                 can hold before splitting. Defaults to 100.
             theta (Optional[float]): Parameter influencing the overlap region
@@ -107,7 +107,11 @@ class GPTree:
                 `split_position_method`, `retrain_every_n_points`, and
                 `use_standard_scaling` (bool, defaults to True).
         """
-        
+
+        # Use Default_GPR if no GPR is provided
+        if GPR is None:
+            GPR = Default_GPR()
+
         self.GPR = GPR
         self.splitting_strategy = splitting_strategy
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria, splitting_strategy=self.splitting_strategy, **kwargs)  # Initialize root node of the GPTree

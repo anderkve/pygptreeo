@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from pygptreeo.gptree import GPTree
 from pygptreeo.gpnode import GPNode
 from pygptreeo.default_gpr import Default_GPR
+from pygptreeo.adapters import SklearnGPAdapter
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel
 
@@ -21,17 +22,11 @@ class TestGPTree(unittest.TestCase):
         """Common setup for GPTree tests."""
         # Define a simple GPR for 1D data for most tests
         kernel_1d = ConstantKernel(1.0, constant_value_bounds="fixed") * RBF(length_scale=1.0, length_scale_bounds="fixed")
-        self.gpr_1d_template = Default_GPR()
-        self.gpr_1d_template.kernel = kernel_1d
-        self.gpr_1d_template.kernel_alternatives = [kernel_1d]
-        self.gpr_1d_template.min_length_scale = 0.01
+        self.gpr_1d_template = Default_GPR(kernel=kernel_1d)
 
         # Define a simple GPR for 2D data for relevant tests
         kernel_2d = ConstantKernel(1.0, constant_value_bounds="fixed") * RBF(length_scale=[1.0, 1.0], length_scale_bounds="fixed")
-        self.gpr_2d_template = Default_GPR()
-        self.gpr_2d_template.kernel = kernel_2d
-        self.gpr_2d_template.kernel_alternatives = [kernel_2d]
-        self.gpr_2d_template.min_length_scale = 0.01
+        self.gpr_2d_template = Default_GPR(kernel=kernel_2d)
 
         # Suppress console output from GPNode/GPTree - for now, accept prints
         pass
@@ -41,7 +36,7 @@ class TestGPTree(unittest.TestCase):
         gpt = GPTree() # Uses Default_GPR() by default
         self.assertIsNotNone(gpt.root, "GPTree root should be initialized.")
         self.assertIsInstance(gpt.root, GPNode, "Root should be a GPNode instance.")
-        self.assertIsInstance(gpt.GPR, Default_GPR, "Default GPR should be Default_GPR instance.")
+        self.assertIsInstance(gpt.GPR, SklearnGPAdapter, "Default GPR should be SklearnGPAdapter instance.")
         self.assertEqual(gpt.root.Nbar, 100, "Default Nbar should be 100.")
         self.assertEqual(gpt.theta, 0.0001, "Default theta should be 0.0001.")
         self.assertTrue(gpt.first_point, "first_point flag should be True initially.")
@@ -52,10 +47,8 @@ class TestGPTree(unittest.TestCase):
         custom_nbar = 50
         custom_theta = 0.05
         # Use a fresh GPR instance for customization
-        custom_gpr = Default_GPR()
-        custom_gpr.kernel = ConstantKernel(0.5) * RBF(length_scale=0.5)
-        custom_gpr.kernel_alternatives = [custom_gpr.kernel]
-        custom_gpr.normalize_y = False
+        custom_kernel = ConstantKernel(0.5) * RBF(length_scale=0.5)
+        custom_gpr = Default_GPR(kernel=custom_kernel, normalize_y=False)
 
         gpt = GPTree(GPR=custom_gpr, Nbar=custom_nbar, theta=custom_theta, use_calibrated_sigma=False)
 
@@ -67,13 +60,13 @@ class TestGPTree(unittest.TestCase):
 
         # Check if the GPR in the tree is the one we passed (or a copy with same params)
         # GPTree root node gets a copy of the GPR instance
-        self.assertIsInstance(gpt.GPR, Default_GPR)
-        self.assertFalse(gpt.GPR.normalize_y, "Custom GPR normalize_y should be False.")
+        self.assertIsInstance(gpt.GPR, SklearnGPAdapter)
+        self.assertFalse(gpt.GPR.sklearn_gpr.normalize_y, "Custom GPR normalize_y should be False.")
         # Check root node's GPR
-        self.assertIsInstance(gpt.root.my_GPR, Default_GPR)
-        self.assertFalse(gpt.root.my_GPR.normalize_y, "Root node's GPR normalize_y should be False.")
+        self.assertIsInstance(gpt.root.my_GPR, SklearnGPAdapter)
+        self.assertFalse(gpt.root.my_GPR.sklearn_gpr.normalize_y, "Root node's GPR normalize_y should be False.")
         # Compare kernel string representation as a proxy for checking if it's the custom one
-        self.assertEqual(str(gpt.root.my_GPR.kernel), str(custom_gpr.kernel))
+        self.assertEqual(str(gpt.root.my_GPR.sklearn_gpr.kernel), str(custom_kernel))
 
 
     def test_gptree_initialization_sklearn_gpr(self):

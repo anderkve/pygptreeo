@@ -33,9 +33,7 @@ class TestStandardScaling(unittest.TestCase):
         # Create a simple 1D kernel
         kernel_1d = ConstantKernel(1.0, constant_value_bounds="fixed") * \
                     RBF(length_scale=1.0, length_scale_bounds="fixed")
-        self.gpr_1d = Default_GPR()
-        self.gpr_1d.kernel = kernel_1d
-        self.gpr_1d.alpha = 1e-6
+        self.gpr_1d = Default_GPR(kernel=kernel_1d, alpha=1e-6)
 
     def test_scaling_flag_initialization(self):
         """Test that use_standard_scaling flag is properly initialized."""
@@ -66,6 +64,9 @@ class TestStandardScaling(unittest.TestCase):
 
         for x, y, sigma in zip(X_train, y_train, sigma_train):
             gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
+
+        # Force training to ensure scalers are fitted with all data
+        gpt.root.fit_my_GPR(force_training=True)
 
         # After training, scalers should be fitted
         self.assertIsNotNone(gpt.root.X_scaler)

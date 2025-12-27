@@ -10,6 +10,9 @@ Main components:
     - GPNode: Individual nodes managing local data and GP models
     - GPForest: Ensemble of multiple GPTree models for improved predictions
     - Default_GPR: Pre-configured Gaussian Process Regressor
+    - GPRegressorInterface: Abstract interface for GP implementations
+    - SklearnGPAdapter: Adapter for scikit-learn GP regressors
+    - GPyTorchAdapter: Adapter for GPyTorch models (if GPyTorch is installed)
     - AnisotropicRationalQuadratic: Custom kernel for multi-scale learning
 
 Typical usage:
@@ -41,3 +44,12 @@ from pygptreeo.gpnode import GPNode
 from pygptreeo.gptree import GPTree
 from pygptreeo.gpforest import GPForest
 from pygptreeo.kernels import AnisotropicRationalQuadratic, AdditiveKernel
+from pygptreeo.gp_interface import GPRegressorInterface
+from pygptreeo.adapters import SklearnGPAdapter
+
+# Conditionally import GPyTorch adapter if available
+try:
+    from pygptreeo.adapters import GPyTorchAdapter
+    _GPYTORCH_AVAILABLE = True
+except ImportError:
+    _GPYTORCH_AVAILABLE = False
