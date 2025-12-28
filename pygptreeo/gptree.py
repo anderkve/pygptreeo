@@ -305,7 +305,7 @@ class GPTree:
 
         # Train all the leaves
         for i, leaf in tqdm(enumerate(self.root.leaves), total=len(self.root.leaves), disable=not show_progress, desc="Training"):
-            leaf.fit_my_GPR()
+            leaf.fit_my_GPR(force_training=True)
             if forward_GPR_to_next_leaf and i != len(self.root.leaves) - 1:
                 # For multi-output, forward only the first GP
                 self.root.leaves[i+1].my_GPRs[0] = deepcopy(leaf.my_GPRs[0])
