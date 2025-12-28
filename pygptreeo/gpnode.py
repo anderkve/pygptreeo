@@ -85,7 +85,8 @@ class GPNode(Node):
                  enable_split_evaluation: Optional[bool] = False,
                  n_split_candidates: Optional[int] = 3,
                  split_eval_train_fraction: Optional[float] = 0.6,
-                 split_eval_min_points: Optional[int] = 20):
+                 split_eval_min_points: Optional[int] = 20,
+                 n_outputs: Optional[int] = 1):
         """Initializes a GPNode.
 
         Args:
@@ -137,8 +138,10 @@ class GPNode(Node):
                 to use for training during split evaluation. Defaults to 0.6.
             split_eval_min_points (Optional[int]): Minimum points required in a region
                 to evaluate that split. Defaults to 20.
+            n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
+                For multi-output GPs, independent GPs are trained for each output.
         """
-        
+
         super().__init__(*args)
 
         # Validate that both use_standard_scaling and use_hyperparameter_inheritance are not enabled
@@ -150,8 +153,17 @@ class GPNode(Node):
             )
 
         self.Nbar = Nbar
+        self.n_outputs = n_outputs
 
-        self.my_GPR = my_GPR
+        # For multi-output support: create a list of independent GPs
+        # For backward compatibility, single output (n_outputs=1) still works
+        if n_outputs == 1:
+            self.my_GPR = my_GPR
+            self.my_GPRs = [my_GPR]  # Also store as list for unified handling
+        else:
+            self.my_GPR = None  # Not used for multi-output
+            self.my_GPRs = [deepcopy(my_GPR) for _ in range(n_outputs)]
+
         self.parent = None
         self.children = None
 
@@ -186,8 +198,14 @@ class GPNode(Node):
         self.parent_split_position = None
 
         # Standard scalers for X and y (fitted during GP training)
+        # For multi-output: y_scalers is a list of scalers (one per output)
         self.X_scaler = None
-        self.y_scaler = None
+        if n_outputs == 1:
+            self.y_scaler = None
+            self.y_scalers = [None]  # Also store as list for unified handling
+        else:
+            self.y_scaler = None  # Not used for multi-output
+            self.y_scalers = [None for _ in range(n_outputs)]
 
         self.is_left = None
         self.is_leaf = True
@@ -209,12 +227,31 @@ class GPNode(Node):
         self.name = name
 
         self.n_points_pred_perf = DEFAULT_N_POINTS_PRED_PERF
-        self.residuals = np.array([])
-        self.mu_preds = np.array([])
-        self.sigma_preds = np.array([])
-
-        self.sigma_scaler = DEFAULT_SIGMA_SCALER
-        self.sigma_scaler_init = DEFAULT_SIGMA_SCALER
+        # For multi-output: these become lists of arrays (one per output)
+        if n_outputs == 1:
+            self.residuals = np.array([])
+            self.mu_preds = np.array([])
+            self.sigma_preds = np.array([])
+            self.sigma_scaler = DEFAULT_SIGMA_SCALER
+            self.sigma_scaler_init = DEFAULT_SIGMA_SCALER
+            # Also store as lists for unified handling
+            self.residuals_list = [np.array([])]
+            self.mu_preds_list = [np.array([])]
+            self.sigma_preds_list = [np.array([])]
+            self.sigma_scalers = [DEFAULT_SIGMA_SCALER]
+            self.sigma_scaler_inits = [DEFAULT_SIGMA_SCALER]
+        else:
+            self.residuals = None  # Not used for multi-output
+            self.mu_preds = None
+            self.sigma_preds = None
+            self.sigma_scaler = None
+            self.sigma_scaler_init = None
+            # Use lists instead
+            self.residuals_list = [np.array([]) for _ in range(n_outputs)]
+            self.mu_preds_list = [np.array([]) for _ in range(n_outputs)]
+            self.sigma_preds_list = [np.array([]) for _ in range(n_outputs)]
+            self.sigma_scalers = [DEFAULT_SIGMA_SCALER for _ in range(n_outputs)]
+            self.sigma_scaler_inits = [DEFAULT_SIGMA_SCALER for _ in range(n_outputs)]
 
         print(f"Created node {self.name}")
 
@@ -250,12 +287,12 @@ class GPNode(Node):
         self.n_features = n_features
 
         self.my_X_data = np.array([]).reshape((0, n_features))
-        self.my_y_data = np.array([]).reshape((0, 1))
-        self.my_sigma_data = np.array([]).reshape((0, 1))  # Per-point uncertainties
+        self.my_y_data = np.array([]).reshape((0, self.n_outputs))  # Multi-output support
+        self.my_sigma_data = np.array([]).reshape((0, self.n_outputs))  # Per-point uncertainties per output
 
         self.shared_X_data = np.array([]).reshape((0, n_features))
-        self.shared_y_data = np.array([]).reshape((0, 1))
-        self.shared_sigma_data = np.array([]).reshape((0, 1))  # Shared uncertainties
+        self.shared_y_data = np.array([]).reshape((0, self.n_outputs))  # Multi-output support
+        self.shared_sigma_data = np.array([]).reshape((0, self.n_outputs))  # Shared uncertainties per output
 
         self.n_points_since_retrain = 0
         self.n_points = 0
@@ -287,11 +324,13 @@ class GPNode(Node):
             'n_split_candidates': self.n_split_candidates,
             'split_eval_train_fraction': self.split_eval_train_fraction,
             'split_eval_min_points': self.split_eval_min_points,
+            'n_outputs': self.n_outputs,  # Pass n_outputs to children
         }
 
-        # Create child nodes with a copy of the parent GP
-        self.left = GPNode(0, my_GPR=self.my_GPR.clone(), name=self.name + "0", **node_config_kwargs)
-        self.right = GPNode(0, my_GPR=self.my_GPR.clone(), name=self.name + "1", **node_config_kwargs)
+        # Create child nodes with a copy of the parent GP (use first GP from list for template)
+        # Use the clone() method from GP interface for proper copying
+        self.left = GPNode(0, my_GPR=self.my_GPRs[0].clone(), name=self.name + "0", **node_config_kwargs)
+        self.right = GPNode(0, my_GPR=self.my_GPRs[0].clone(), name=self.name + "1", **node_config_kwargs)
         
         self.left.is_left = True
         self.right.is_left = False
@@ -304,32 +343,46 @@ class GPNode(Node):
             child.init_data_set(n_features)
 
         # Copy important numbers over to the child nodes
-        self.left.residuals = self.residuals.copy()
-        self.right.residuals = self.residuals.copy()
+        # Handle both single-output and multi-output cases
+        if self.n_outputs == 1:
+            self.left.residuals = self.residuals.copy()
+            self.right.residuals = self.residuals.copy()
+            self.left.mu_preds = self.mu_preds.copy()
+            self.right.mu_preds = self.mu_preds.copy()
+            self.left.sigma_preds = self.sigma_preds.copy()
+            self.right.sigma_preds = self.sigma_preds.copy()
+            self.left.sigma_scaler = self.sigma_scaler
+            self.right.sigma_scaler = self.sigma_scaler
+            self.left.sigma_scaler_init = self.sigma_scaler_init
+            self.right.sigma_scaler_init = self.sigma_scaler_init
 
-        self.left.mu_preds = self.mu_preds.copy()
-        self.right.mu_preds = self.mu_preds.copy()
-
-        self.left.sigma_preds = self.sigma_preds.copy()
-        self.right.sigma_preds = self.sigma_preds.copy()
-
-        self.left.sigma_scaler = self.sigma_scaler
-        self.right.sigma_scaler = self.sigma_scaler
-
-        self.left.sigma_scaler_init = self.sigma_scaler_init
-        self.right.sigma_scaler_init = self.sigma_scaler_init
+        # Copy lists for multi-output (or single-output stored as lists)
+        self.left.residuals_list = [arr.copy() for arr in self.residuals_list]
+        self.right.residuals_list = [arr.copy() for arr in self.residuals_list]
+        self.left.mu_preds_list = [arr.copy() for arr in self.mu_preds_list]
+        self.right.mu_preds_list = [arr.copy() for arr in self.mu_preds_list]
+        self.left.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
+        self.right.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
+        self.left.sigma_scalers = self.sigma_scalers.copy()
+        self.right.sigma_scalers = self.sigma_scalers.copy()
+        self.left.sigma_scaler_inits = self.sigma_scaler_inits.copy()
+        self.right.sigma_scaler_inits = self.sigma_scaler_inits.copy()
 
         # Inherit parent's optimized kernel hyperparameters if enabled
         # This gives children a warm-start for their GP optimization
-        if self.use_hyperparameter_inheritance and self.my_GPR is not None:
-            # Check if parent GP has been trained
-            if self.my_GPR.is_trained():
-                # Copy the parent's optimized kernel to the children
-                # This preserves learned length scales, amplitudes, etc.
-                trained_kernel = self.my_GPR.get_kernel()
-                self.left.my_GPR.set_kernel(deepcopy(trained_kernel))
-                self.right.my_GPR.set_kernel(deepcopy(trained_kernel))
+        if self.use_hyperparameter_inheritance:
+            # For each output, copy the trained kernel to children using the GP interface
+            for i in range(self.n_outputs):
+                if self.my_GPRs[i].is_trained():
+                    # Copy the parent's optimized kernel to the children
+                    # This preserves learned length scales, amplitudes, etc.
+                    trained_kernel = self.my_GPRs[i].get_kernel()
+                    self.left.my_GPRs[i].set_kernel(deepcopy(trained_kernel))
+                    self.right.my_GPRs[i].set_kernel(deepcopy(trained_kernel))
+            if self.n_outputs == 1:
                 print(f"Inherited hyperparameters from node {self.name} to children {self.left.name} and {self.right.name}")
+            else:
+                print(f"Inherited hyperparameters for {self.n_outputs} outputs from node {self.name} to children {self.left.name} and {self.right.name}")
 
         # Copy scalers so children can use parent's GP correctly
         # The children get a copy of the parent's trained GP, which was trained on
@@ -337,9 +390,14 @@ class GPNode(Node):
         # to properly scale inputs before prediction.
         if self.use_standard_scaling and self.X_scaler is not None:
             self.left.X_scaler = deepcopy(self.X_scaler)
-            self.left.y_scaler = deepcopy(self.y_scaler)
             self.right.X_scaler = deepcopy(self.X_scaler)
-            self.right.y_scaler = deepcopy(self.y_scaler)
+            # Copy y_scalers (list for multi-output)
+            self.left.y_scalers = [deepcopy(scaler) if scaler is not None else None for scaler in self.y_scalers]
+            self.right.y_scalers = [deepcopy(scaler) if scaler is not None else None for scaler in self.y_scalers]
+            # Also update single y_scaler for backward compatibility
+            if self.n_outputs == 1:
+                self.left.y_scaler = self.left.y_scalers[0]
+                self.right.y_scaler = self.right.y_scalers[0]
 
 
     def delete_point(self, index=-1, shared_point=True):
@@ -368,17 +426,20 @@ class GPNode(Node):
 
 
 
-    def store_point(self, x: np.ndarray, y: float, sigma: float, increment_buffer=True, shared_point=False, remove_shared=True):
+    def store_point(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray],
+                    increment_buffer=True, shared_point=False, remove_shared=True):
         """ Add a single data point to the node.
 
         Parameters
         ----------
         x : np.ndarray
-            Input features
-        y : float
-            Target value
-        sigma : float
-            Uncertainty (standard deviation) for this point
+            Input features (shape: 1 x n_features)
+        y : float or np.ndarray
+            Target value(s). For single output: float or shape (1, 1) or (1,)
+            For multi-output: shape (1, n_outputs) or (n_outputs,)
+        sigma : float or np.ndarray
+            Uncertainty (standard deviation) for this point.
+            Can be a scalar (same for all outputs) or array (per-output)
         increment_buffer : bool
             Whether to increment the retrain buffer
         shared_point : bool
@@ -386,20 +447,36 @@ class GPNode(Node):
         remove_shared : bool
             Whether to remove one shared point when adding
         """
+        # Ensure y has the right shape (1, n_outputs)
+        if isinstance(y, (int, float, np.floating)):
+            y = np.array([[y]])  # Single output case
+        else:
+            y = np.atleast_2d(y)
+            if y.shape[0] != 1:
+                y = y.reshape(1, -1)
+
+        # Ensure sigma has the right shape (1, n_outputs)
+        if isinstance(sigma, (int, float, np.floating)):
+            # Scalar sigma - broadcast to all outputs
+            sigma = np.full((1, self.n_outputs), sigma)
+        else:
+            sigma = np.atleast_2d(sigma)
+            if sigma.shape[0] != 1:
+                sigma = sigma.reshape(1, -1)
+            # If sigma has only one value but we have multiple outputs, broadcast
+            if sigma.shape[1] == 1 and self.n_outputs > 1:
+                sigma = np.tile(sigma, (1, self.n_outputs))
+
         # Note: Points are added to the beginning of the arrays (using np.vstack)
         if shared_point:
             self.shared_X_data = np.vstack((x, self.shared_X_data))
             self.shared_y_data = np.vstack((y, self.shared_y_data))
             self.shared_sigma_data = np.vstack((sigma, self.shared_sigma_data))
-            # self.shared_X_data = np.append(self.shared_X_data, x, axis=0)
-            # self.shared_y_data = np.append(self.shared_y_data, y, axis=0)
             self.n_shared_points += 1
         else:
             self.my_X_data = np.vstack((x, self.my_X_data))
             self.my_y_data = np.vstack((y, self.my_y_data))
             self.my_sigma_data = np.vstack((sigma, self.my_sigma_data))
-            # self.my_X_data = np.append(self.my_X_data, x, axis=0)
-            # self.my_y_data = np.append(self.my_y_data, y, axis=0)
             # Track merge count for this new point (starts at 0)
             if self.merge_counts is not None:
                 self.merge_counts = np.vstack((np.array([[0]]), self.merge_counts))
@@ -415,8 +492,8 @@ class GPNode(Node):
         """ Assign the training samples of a node to its child nodes. """
         for x, y, sigma in zip(self.my_X_data, self.my_y_data, self.my_sigma_data):
             x = x.reshape((1, x.shape[0]))
-            y = y.reshape((1, 1))
-            sigma = sigma.reshape((1, 1))
+            y = y.reshape((1, self.n_outputs))  # Multi-output support
+            sigma = sigma.reshape((1, self.n_outputs))  # Multi-output support
             child = self.children[int(np.random.binomial(1, self.prob_func(x)[0][0]))]
             child.store_point(x, y, sigma, increment_buffer=False)
 
@@ -441,14 +518,18 @@ class GPNode(Node):
 
 
     def delete_my_GPR(self):
-        """Deletes the Gaussian Process Regressor (my_GPR) instance from the node.
+        """Deletes the Gaussian Process Regressor (my_GPR/my_GPRs) instances from the node.
 
         This method is typically called on a node after it has been split and
         is no longer a leaf node. Non-leaf nodes usually do not need to
         maintain their GPR model once their responsibilities have been passed
         to their children, thus saving memory.
         """
-        del self.my_GPR
+        if self.my_GPR is not None:
+            del self.my_GPR
+        for gpr in self.my_GPRs:
+            del gpr
+        del self.my_GPRs
 
 
     def find_nearest_neighbor(self, x: np.ndarray):
@@ -471,26 +552,42 @@ class GPNode(Node):
         return nearest_idx, nearest_dist
 
 
-    def merge_with_point(self, x: np.ndarray, y: float, sigma: float, nearest_idx: int):
+    def merge_with_point(self, x: np.ndarray, y: Union[float, np.ndarray],
+                         sigma: Union[float, np.ndarray], nearest_idx: int):
         """Merges new point (x, y, sigma) with existing point at nearest_idx via inverse-variance weighted averaging.
 
         Weights are based on per-point uncertainties (standard deviations):
         - Lower uncertainty = higher weight (more confident measurement)
         - Weight = 1 / σ²
 
+        For multi-output: merging is done independently for each output dimension.
+
         Args:
             x (np.ndarray): Input features of new point
-            y (float): Target value of new point
-            sigma (float): Uncertainty (standard deviation) of new point
+            y (float or np.ndarray): Target value(s) of new point
+            sigma (float or np.ndarray): Uncertainty (standard deviation) of new point
             nearest_idx (int): Index of existing point to merge with
 
         Returns:
             bool: True if merge was successful
         """
+        # Ensure y and sigma are arrays of shape (n_outputs,)
+        if isinstance(y, (int, float, np.floating)):
+            y = np.array([y])
+        else:
+            y = np.atleast_1d(y).flatten()
+
+        if isinstance(sigma, (int, float, np.floating)):
+            sigma = np.full(self.n_outputs, sigma)
+        else:
+            sigma = np.atleast_1d(sigma).flatten()
+            if sigma.shape[0] == 1 and self.n_outputs > 1:
+                sigma = np.tile(sigma, self.n_outputs)
+
         # Get existing point
         x_old = self.my_X_data[nearest_idx:nearest_idx+1]
-        y_old = self.my_y_data[nearest_idx, 0]
-        sigma_old = self.my_sigma_data[nearest_idx, 0]
+        y_old = self.my_y_data[nearest_idx, :]  # Shape: (n_outputs,)
+        sigma_old = self.my_sigma_data[nearest_idx, :]  # Shape: (n_outputs,)
 
         # Convert standard deviations to variances
         var_old = sigma_old ** 2
@@ -502,31 +599,38 @@ class GPNode(Node):
         w_new = 1.0 / (var_new + epsilon)
         w_total = w_old + w_new
 
-        # Weighted average for both x and y (using inverse-variance weighting)
-        x_merged = (w_old * x_old + w_new * x) / w_total
+        # Weighted average for x (same for all outputs)
+        # Use average weight across outputs for x merging
+        w_old_x = np.mean(w_old)
+        w_new_x = np.mean(w_new)
+        w_total_x = w_old_x + w_new_x
+        x_merged = (w_old_x * x_old + w_new_x * x) / w_total_x
+
+        # Weighted average for y (per output)
         y_merged = (w_old * y_old + w_new * y) / w_total
 
-        # Merge variance and convert back to standard deviation
+        # Merge variance and convert back to standard deviation (per output)
         var_merged = 1.0 / w_total
         sigma_merged = np.sqrt(var_merged)
 
         # Update the existing point with merged values
         self.my_X_data[nearest_idx] = x_merged[0]
-        self.my_y_data[nearest_idx, 0] = y_merged
-        self.my_sigma_data[nearest_idx, 0] = sigma_merged
+        self.my_y_data[nearest_idx, :] = y_merged
+        self.my_sigma_data[nearest_idx, :] = sigma_merged
 
         # Update merge count for this point
         self.merge_counts[nearest_idx, 0] += 1
         self.n_merges += 1
 
         print(f"Node {self.name}: Merged points (dist={np.linalg.norm(x - x_old):.2e}, "
-              f"sigma_old={sigma_old:.2e}, sigma_new={sigma:.2e}, sigma_merged={sigma_merged:.2e}, "
-              f"total_merges={int(self.merge_counts[nearest_idx, 0])})")
+              f"sigma_old_mean={np.mean(sigma_old):.2e}, sigma_new_mean={np.mean(sigma):.2e}, "
+              f"sigma_merged_mean={np.mean(sigma_merged):.2e}, total_merges={int(self.merge_counts[nearest_idx, 0])})")
 
         return True
 
 
-    def should_merge_point(self, x: np.ndarray, y: float, sigma: float):
+    def should_merge_point(self, x: np.ndarray, y: Union[float, np.ndarray],
+                           sigma: Union[float, np.ndarray]):
         """Determines if a new point should be merged with an existing nearby point.
 
         A point is merged if:
@@ -539,8 +643,8 @@ class GPNode(Node):
 
         Args:
             x (np.ndarray): Input features of new point
-            y (float): Target value of new point
-            sigma (float): Uncertainty (standard deviation) of new point
+            y (float or np.ndarray): Target value(s) of new point
+            sigma (float or np.ndarray): Uncertainty (standard deviation) of new point
 
         Returns:
             bool: True if point was merged (don't add it), False otherwise (add as new point)
@@ -552,8 +656,8 @@ class GPNode(Node):
         if self.n_points < self.min_points_before_merging:
             return False
 
-        # GP not trained yet
-        if not self.my_GPR.is_trained():
+        # GP not trained yet (check first GP in list using interface method)
+        if not self.my_GPRs[0].is_trained():
             return False
 
         # Find nearest neighbor
@@ -569,18 +673,20 @@ class GPNode(Node):
         return False
 
 
-    def should_reject_point(self, x: np.ndarray, y: float):
+    def should_reject_point(self, x: np.ndarray, y: Union[float, np.ndarray]):
         """Determines if a new training point should be rejected.
 
         A point is rejected if:
         1. Point rejection is enabled
         2. Node has enough points (>= min_points_before_rejection)
         3. GP has been trained (has kernel_)
-        4. The point is well-predicted (relative error < rejection_threshold)
+        4. The point is well-predicted (average relative error < rejection_threshold)
+
+        For multi-output: uses average relative error across all outputs.
 
         Args:
             x (np.ndarray): Input features of the new point
-            y (float): Target value of the new point
+            y (float or np.ndarray): Target value(s) of the new point
 
         Returns:
             bool: True if point should be rejected, False if it should be stored
@@ -592,9 +698,15 @@ class GPNode(Node):
         if self.n_points < self.min_points_before_rejection:
             return False
 
-        # GP not trained yet
-        if not self.my_GPR.is_trained():
+        # GP not trained yet (check first GP in list using interface method)
+        if not self.my_GPRs[0].is_trained():
             return False
+
+        # Ensure y is array
+        if isinstance(y, (int, float, np.floating)):
+            y = np.array([y])
+        else:
+            y = np.atleast_1d(y).flatten()
 
         # Get prediction for this point
         try:
@@ -603,15 +715,16 @@ class GPNode(Node):
             # If prediction fails, don't reject (be conservative)
             return False
 
-        # Compute relative error
-        abs_error = np.abs(y - y_pred[0])
-        relative_error = abs_error / np.maximum(np.abs(y), 1e-10)
+        # Compute relative error per output, then average
+        abs_errors = np.abs(y - y_pred.flatten())
+        relative_errors = abs_errors / np.maximum(np.abs(y), 1e-10)
+        avg_relative_error = np.mean(relative_errors)
 
-        # Reject if error is below threshold
-        is_rejected = bool(relative_error < self.rejection_threshold)
+        # Reject if average error is below threshold
+        is_rejected = bool(avg_relative_error < self.rejection_threshold)
 
         if is_rejected:
-            print(f"Node {self.name}: Rejected point (rel_err={float(relative_error):.2e} < {self.rejection_threshold:.2e})")
+            print(f"Node {self.name}: Rejected point (avg_rel_err={float(avg_relative_error):.2e} < {self.rejection_threshold:.2e})")
 
         return is_rejected
 
@@ -623,11 +736,13 @@ class GPNode(Node):
         in the node and used to transform data before GP training and to
         inverse transform predictions.
 
+        For multi-output: creates one scaler per output dimension.
+
         Args:
             X (np.ndarray): Feature data to fit the X scaler on.
                 Shape: (n_samples, n_features)
             y (np.ndarray): Target data to fit the y scaler on.
-                Shape: (n_samples, 1)
+                Shape: (n_samples, n_outputs)
 
         Note:
             StandardScaler handles edge cases automatically:
@@ -638,17 +753,24 @@ class GPNode(Node):
         self.X_scaler = StandardScaler()
         self.X_scaler.fit(X)
 
-        # Fit y scaler (single output standardization)
-        self.y_scaler = StandardScaler()
-        self.y_scaler.fit(y)
+        # Fit y scalers (one per output)
+        for i in range(self.n_outputs):
+            self.y_scalers[i] = StandardScaler()
+            self.y_scalers[i].fit(y[:, i:i+1])  # Fit on column i
+
+        # Also update single y_scaler for backward compatibility
+        if self.n_outputs == 1:
+            self.y_scaler = self.y_scalers[0]
 
 
     def fit_my_GPR(self, force_training=False):
-        """Fits the node's Gaussian Process Regressor (GPR) to its local data.
+        """Fits the node's Gaussian Process Regressor(s) to its local data.
 
         Training is triggered if the number of new points in the buffer
         (`n_points_since_retrain`) reaches `retrain_every_n_points`, if the node
         is full (`n_points >= Nbar`), or if `force_training` is True.
+
+        For multi-output: trains one independent GP per output dimension.
 
         If `use_standard_scaling` is enabled, this method first fits StandardScalers
         on the combined training data, then transforms the data before fitting the GP.
@@ -668,32 +790,47 @@ class GPNode(Node):
 
             # Combine own points and shared points
             X_train = np.vstack((self.my_X_data, self.shared_X_data))
-            y_train = np.vstack((self.my_y_data, self.shared_y_data))
-            sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))
+            y_train = np.vstack((self.my_y_data, self.shared_y_data))  # Shape: (N, n_outputs)
+            sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))  # Shape: (N, n_outputs)
 
             if self.use_standard_scaling and X_train.shape[0] > 0:
                 # Fit scalers on the combined training data
                 self._fit_scalers(X_train, y_train)
 
-                # Transform data to standardized space
+                # Transform X to standardized space (same for all outputs)
                 X_train_scaled = self.X_scaler.transform(X_train)
-                y_train_scaled = self.y_scaler.transform(y_train)
 
-                # Transform uncertainties (std dev → variance → scaled variance)
-                # σ_scaled = σ_original / y_scale
-                # α_scaled = σ_scaled² = σ_original² / y_scale²
-                y_scale = self.y_scaler.scale_[0]
-                sigma_train_scaled = sigma_train / y_scale
-                alpha_train_scaled = sigma_train_scaled ** 2  # Convert to variance
+                # Train each output GP independently
+                for i in range(self.n_outputs):
+                    # Get data for this output
+                    y_train_i = y_train[:, i:i+1]  # Shape: (N, 1)
+                    sigma_train_i = sigma_train[:, i:i+1]  # Shape: (N, 1)
 
-                # Set GP observation noise and train
-                self.my_GPR.set_observation_noise(alpha_train_scaled)
-                self.my_GPR.fit(X_train_scaled, y_train_scaled)
+                    # Transform y to standardized space
+                    y_train_scaled_i = self.y_scalers[i].transform(y_train_i)
+
+                    # Transform uncertainties (std dev → variance → scaled variance)
+                    # σ_scaled = σ_original / y_scale
+                    # α_scaled = σ_scaled² = σ_original² / y_scale²
+                    y_scale_i = self.y_scalers[i].scale_[0]
+                    sigma_train_scaled_i = sigma_train_i / y_scale_i
+                    alpha_train_scaled_i = sigma_train_scaled_i ** 2  # Convert to variance
+
+                    # Set GP alpha and train
+                    self.my_GPRs[i].alpha = alpha_train_scaled_i.flatten()
+                    self.my_GPRs[i].fit(X_train_scaled, y_train_scaled_i)
+
             else:
-                # No scaling - convert std dev to variance
-                alpha_train = sigma_train ** 2  # Convert to variance
-                self.my_GPR.set_observation_noise(alpha_train)
-                self.my_GPR.fit(X_train, y_train)
+                # No scaling - train each output GP independently
+                for i in range(self.n_outputs):
+                    # Get data for this output
+                    y_train_i = y_train[:, i:i+1]  # Shape: (N, 1)
+                    sigma_train_i = sigma_train[:, i:i+1]  # Shape: (N, 1)
+
+                    # Convert std dev to variance
+                    alpha_train_i = sigma_train_i ** 2  # Convert to variance
+                    self.my_GPRs[i].alpha = alpha_train_i.flatten()
+                    self.my_GPRs[i].fit(X_train, y_train_i)
 
             did_train = True
         return did_train
@@ -1156,12 +1293,14 @@ class GPNode(Node):
 
 
     def predict(self, x: np.ndarray, return_std=True, use_calibrated_sigma=False):
-        """Evaluates the prediction from this node's GPR at input point(s) x.
+        """Evaluates the prediction from this node's GPR(s) at input point(s) x.
 
         The input x is expected to be in the original (unscaled) space. If
         `use_standard_scaling` is enabled, this method transforms x to the
         standardized space before calling the GP, then inverse transforms
         the predictions back to the original space.
+
+        For multi-output: returns predictions for all outputs as (n_samples, n_outputs) arrays.
 
         Args:
             x (np.ndarray): The input point(s) at which to make predictions,
@@ -1170,76 +1309,135 @@ class GPNode(Node):
             return_std (bool): Whether to return the standard deviation of the
                 prediction. Defaults to True.
             use_calibrated_sigma (bool): If True, the returned `sigma_pred`
-                (standard deviation) is scaled by the node's `self.sigma_scaler`
-                attribute. This scaler is intended to calibrate the uncertainty
+                (standard deviation) is scaled by the node's `self.sigma_scaler(s)`
+                attribute(s). This scaler is intended to calibrate the uncertainty
                 estimates. Defaults to False.
 
         Returns:
             tuple:
                 - mu_pred (np.ndarray): The mean prediction(s) in original space.
+                  Shape: (n_samples, n_outputs)
                 - sigma_pred (np.ndarray): The standard deviation of the
-                  prediction(s) in original space. Only returned if `return_std` is True.
+                  prediction(s) in original space. Shape: (n_samples, n_outputs)
+                  Only returned if `return_std` is True.
         """
+        n_samples = x.shape[0]
+
+        # Initialize output arrays
+        mu_pred = np.zeros((n_samples, self.n_outputs))
+        sigma_pred = np.zeros((n_samples, self.n_outputs))
+
         if self.use_standard_scaling and self.X_scaler is not None:
-            # Transform input to standardized space
+            # Transform input to standardized space (same for all outputs)
             x_scaled = self.X_scaler.transform(x)
 
-            # Get prediction in scaled space
-            mu_scaled, sigma_scaled = self.my_GPR.predict(x_scaled, return_std=return_std)
+            # Get predictions for each output independently
+            for i in range(self.n_outputs):
+                # Get prediction in scaled space
+                mu_scaled_i, sigma_scaled_i = self.my_GPRs[i].predict(x_scaled, return_std=return_std)
 
-            # Inverse transform mean: mu_original = mu_scaled * scale_y + mean_y
-            mu_pred = self.y_scaler.inverse_transform(mu_scaled.reshape(-1, 1)).flatten()
+                # Inverse transform mean: mu_original = mu_scaled * scale_y + mean_y
+                mu_pred[:, i] = self.y_scalers[i].inverse_transform(mu_scaled_i.reshape(-1, 1)).flatten()
 
-            # Transform std: sigma_original = sigma_scaled * scale_y
-            # When y is scaled by scale_y, variance scales by scale_y^2, so std scales by scale_y
-            sigma_pred = sigma_scaled * self.y_scaler.scale_[0]
+                # Transform std: sigma_original = sigma_scaled * scale_y
+                # When y is scaled by scale_y, variance scales by scale_y^2, so std scales by scale_y
+                sigma_pred[:, i] = sigma_scaled_i * self.y_scalers[i].scale_[0]
+
         else:
-            # No scaling - predict on raw data
-            mu_pred, sigma_pred = self.my_GPR.predict(x, return_std=return_std)
+            # No scaling - predict on raw data for each output
+            for i in range(self.n_outputs):
+                mu_i, sigma_i = self.my_GPRs[i].predict(x, return_std=return_std)
+                mu_pred[:, i] = mu_i.flatten()
+                sigma_pred[:, i] = sigma_i
 
+        # Apply calibration if requested
         if use_calibrated_sigma:
-            sigma_pred = sigma_pred * self.sigma_scaler
+            if self.n_outputs == 1:
+                sigma_pred = sigma_pred * self.sigma_scaler
+            else:
+                # Multiply each output by its calibration factor
+                for i in range(self.n_outputs):
+                    sigma_pred[:, i] = sigma_pred[:, i] * self.sigma_scalers[i]
 
         return mu_pred, sigma_pred
 
 
-    def register_pred_perf(self, x: np.ndarray, y: float):
-        """ Register the residual between prediction and true value at for this data point. """
+    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray]):
+        """ Register the residual between prediction and true value for this data point.
+
+        For multi-output: tracks performance per output dimension.
+        """
         mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False)
+
+        # Ensure y is array of shape (n_outputs,)
+        if isinstance(y, (int, float, np.floating)):
+            y = np.array([y])
+        else:
+            y = np.atleast_1d(y).flatten()
 
         keep_n_points = self.n_points_pred_perf - 1
 
-        self.residuals = self.residuals[:keep_n_points]
-        self.residuals = np.insert(self.residuals, 0, y - mu_pred)
+        # Update for each output
+        for i in range(self.n_outputs):
+            self.residuals_list[i] = self.residuals_list[i][:keep_n_points]
+            self.residuals_list[i] = np.insert(self.residuals_list[i], 0, y[i] - mu_pred[0, i])
 
-        self.mu_preds = self.mu_preds[:keep_n_points]
-        self.mu_preds = np.insert(self.mu_preds, 0, mu_pred)
+            self.mu_preds_list[i] = self.mu_preds_list[i][:keep_n_points]
+            self.mu_preds_list[i] = np.insert(self.mu_preds_list[i], 0, mu_pred[0, i])
 
-        self.sigma_preds = self.sigma_preds[:keep_n_points]
-        self.sigma_preds = np.insert(self.sigma_preds, 0, sigma_pred)
+            self.sigma_preds_list[i] = self.sigma_preds_list[i][:keep_n_points]
+            self.sigma_preds_list[i] = np.insert(self.sigma_preds_list[i], 0, sigma_pred[0, i])
+
+        # Also update single arrays for backward compatibility (single output case)
+        if self.n_outputs == 1:
+            self.residuals = self.residuals_list[0]
+            self.mu_preds = self.mu_preds_list[0]
+            self.sigma_preds = self.sigma_preds_list[0]
 
 
     def update_sigma_scaler(self):
-        """ Update the scaling factor for the prediction uncertainty. """
+        """ Update the scaling factor for the prediction uncertainty.
+
+        For multi-output: updates each output's sigma scaler independently.
+        """
         target_coverage = TARGET_COVERAGE
 
-        # Before we have collected self.n_points_pred_perf points, just set the 
-        # self.sigma_scaler such that all residuals are covered 
-        if self.residuals.shape[0] < self.n_points_pred_perf:
-            self.sigma_scaler = np.max(np.abs(self.residuals) / self.sigma_preds)
-            self.sigma_scaler_init = self.sigma_scaler
-            return 
+        # Update sigma scaler for each output
+        for i in range(self.n_outputs):
+            residuals_i = self.residuals_list[i]
+            sigma_preds_i = self.sigma_preds_list[i]
 
-        def coverage_deviation(x):
-            deviation = np.sum(np.abs(self.residuals) < x * self.sigma_preds) / self.n_points_pred_perf - target_coverage
-            return deviation
+            # Before we have collected self.n_points_pred_perf points, just set the
+            # sigma_scaler such that all residuals are covered
+            if residuals_i.shape[0] < self.n_points_pred_perf:
+                if len(sigma_preds_i) > 0 and np.max(sigma_preds_i) > 0:
+                    self.sigma_scalers[i] = np.max(np.abs(residuals_i) / (sigma_preds_i + 1e-10))
+                else:
+                    self.sigma_scalers[i] = DEFAULT_SIGMA_SCALER
+                self.sigma_scaler_inits[i] = self.sigma_scalers[i]
+                continue
 
-        # Make sure we start from a range that brackets the root of coverage_deviation
-        x_bracket = [0.0, 2 * self.sigma_scaler_init]
-        while coverage_deviation(x_bracket[0]) * coverage_deviation(x_bracket[1]) > 0:
-            self.sigma_scaler_init *= 2
-            x_bracket[1] = 2 * self.sigma_scaler_init
+            def coverage_deviation(x):
+                deviation = np.sum(np.abs(residuals_i) < x * sigma_preds_i) / self.n_points_pred_perf - target_coverage
+                return deviation
 
-        sol = root_scalar(coverage_deviation, x0=self.sigma_scaler_init, bracket=x_bracket, maxiter=50)
-        if sol.converged:
-            self.sigma_scaler = np.max([sol.root, 1e-9])
+            # Make sure we start from a range that brackets the root of coverage_deviation
+            x_bracket = [0.0, 2 * self.sigma_scaler_inits[i]]
+            try:
+                while coverage_deviation(x_bracket[0]) * coverage_deviation(x_bracket[1]) > 0:
+                    self.sigma_scaler_inits[i] *= 2
+                    x_bracket[1] = 2 * self.sigma_scaler_inits[i]
+                    if x_bracket[1] > 1e6:  # Prevent infinite loop
+                        break
+
+                sol = root_scalar(coverage_deviation, x0=self.sigma_scaler_inits[i], bracket=x_bracket, maxiter=50)
+                if sol.converged:
+                    self.sigma_scalers[i] = np.max([sol.root, 1e-9])
+            except:
+                # If root finding fails, keep current scaler
+                pass
+
+        # Also update single sigma_scaler for backward compatibility (single output case)
+        if self.n_outputs == 1:
+            self.sigma_scaler = self.sigma_scalers[0]
+            self.sigma_scaler_init = self.sigma_scaler_inits[0]
