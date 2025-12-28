@@ -79,6 +79,7 @@ class GPTree:
                  splitting_strategy: Optional[str] = 'standard',
                  max_n_pred_leaves: Optional[int] = None,
                  aggregation: Optional[str] = "default",
+                 n_outputs: Optional[int] = 1,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -102,15 +103,19 @@ class GPTree:
                 for prediction. Defaults to None (use all).
             aggregation (Optional[str]): Method for aggregating predictions.
                 'default'/'moe' or 'poe'. Defaults to 'default'.
+            n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
+                For multi-output GPs, independent GPs are trained for each output.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
                 `use_standard_scaling` (bool, defaults to True).
         """
-        
+
         self.GPR = GPR
         self.splitting_strategy = splitting_strategy
-        self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria, splitting_strategy=self.splitting_strategy, **kwargs)  # Initialize root node of the GPTree
+        self.n_outputs = n_outputs
+        self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
+                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs, **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 
@@ -119,13 +124,13 @@ class GPTree:
         self.use_calibrated_sigma = use_calibrated_sigma
 
         self.max_n_pred_leaves = max_n_pred_leaves
-        
+
         self.aggregation = aggregation
 
         self.first_point = True
 
 
-    def update_tree(self, x: np.ndarray, y: float, sigma: float, allow_training=True):
+    def update_tree(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray], allow_training=True):
         """Updates the tree structure and node GPRs with a new data point (x, y, sigma).
 
         This method implements a process similar to Algorithm 1 in the DLGP
@@ -143,8 +148,10 @@ class GPTree:
         Args:
             x (np.ndarray): The new input data point (features), expected as a
                 1D array or a 2D array with one row.
-            y (float): The corresponding target value for the data point.
-            sigma (float): The uncertainty (standard deviation) for this point. Required.
+            y (float or np.ndarray): The corresponding target value(s) for the data point.
+                For single output: float. For multi-output: array of shape (n_outputs,).
+            sigma (float or np.ndarray): The uncertainty (standard deviation) for this point. Required.
+                Can be scalar (same for all outputs) or array (per-output).
             allow_training (bool): If True (default), the GPR model in the
                 selected leaf node can be retrained if its conditions
                 (e.g., buffer full, node full) are met. If False, GPR retraining
@@ -250,10 +257,12 @@ class GPTree:
             The training data in feature space. Has shape=(N_train, n_features).
 
         y_train: np.ndarray
-            The training data in target space. Has shape=(N_train, 1) (only scalar targets implemented).
+            The training data in target space. Has shape=(N_train, n_outputs) for multi-output,
+            or (N_train, 1) for single output.
 
         sigma_train: np.ndarray
-            Per-point uncertainties (standard deviations). Has shape=(N_train,) or (N_train, 1). Required.
+            Per-point uncertainties (standard deviations). Has shape=(N_train, n_outputs) for per-output
+            uncertainties, or (N_train,) or (N_train, 1) for shared uncertainty. Required.
 
         show_progress: Optional[bool]=False
             Display a progress bar in the terminal using tqdm.
@@ -263,15 +272,25 @@ class GPTree:
 
         forward_GPR_to_next_leaf: Optional[bool]=False
             When training the leaf-node GPs, let the next leaf start from a copy of the trained GP
-            from the previous leaf.
+            from the previous leaf. Note: For multi-output, only the first GP is forwarded.
         """
         self.n_features = X_train.shape[1]
         N = X_train.shape[0]
         self.root.init_data_set(self.n_features)
 
-        # Reshape sigma_train if needed
+        # Ensure y_train has shape (N, n_outputs)
+        if y_train.ndim == 1:
+            y_train = y_train.reshape((-1, 1))
+
+        # Ensure sigma_train has shape (N, n_outputs) or is broadcastable
         if sigma_train.ndim == 1:
+            # Broadcast to all outputs
             sigma_train = sigma_train.reshape((-1, 1))
+            if self.n_outputs > 1:
+                sigma_train = np.tile(sigma_train, (1, self.n_outputs))
+        elif sigma_train.shape[1] == 1 and self.n_outputs > 1:
+            # Broadcast single column to all outputs
+            sigma_train = np.tile(sigma_train, (1, self.n_outputs))
 
         if shuffle:
             X_train, y_train, sigma_train = resample(X_train, y_train, sigma_train, replace=False)
@@ -279,16 +298,19 @@ class GPTree:
         # Construct the tree
         for x, y, sigma in tqdm(zip(X_train, y_train, sigma_train), total=N, disable=not show_progress, desc="Building binary tree"):
             x = x.reshape((1, x.shape[0]))
-            y = y.reshape((1, 1))
-            sigma = sigma.reshape((1, 1)) if hasattr(sigma, 'reshape') else np.array([[sigma]])
+            y = y.reshape((1, self.n_outputs))  # Multi-output support
+            sigma = sigma.reshape((1, self.n_outputs)) if hasattr(sigma, 'reshape') else np.array([sigma]).reshape((1, self.n_outputs))
 
-            self.update_tree(x, y, sigma[0, 0], allow_training=False)
-        
+            self.update_tree(x, y, sigma, allow_training=False)
+
         # Train all the leaves
         for i, leaf in tqdm(enumerate(self.root.leaves), total=len(self.root.leaves), disable=not show_progress, desc="Training"):
             leaf.fit_my_GPR()
             if forward_GPR_to_next_leaf and i != len(self.root.leaves) - 1:
-                self.root.leaves[i+1].my_GPR = deepcopy(leaf.my_GPR)
+                # For multi-output, forward only the first GP
+                self.root.leaves[i+1].my_GPRs[0] = deepcopy(leaf.my_GPRs[0])
+                if self.n_outputs == 1:
+                    self.root.leaves[i+1].my_GPR = self.root.leaves[i+1].my_GPRs[0]
                 
                 
     def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False, return_leaf_names: Optional[bool]=False):
@@ -380,8 +402,8 @@ class GPTree:
             return
         
 
-        mean_DLGP = np.zeros((X_test.shape[0], 1))
-        var_DLGP = np.zeros((X_test.shape[0], 1))
+        mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
+        var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
 
         for i, x in tqdm(enumerate(X_test), total=X_test.shape[0], disable=not show_progress, desc="Predicting"):
             x = x.reshape((1, x.shape[0]))
@@ -415,14 +437,15 @@ class GPTree:
                 for leaf, ptilde in zip(leaves, pred_leaf_probs):
 
                     mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+                    # mu_leaf and sigma_leaf have shape (1, n_outputs)
 
-                    mean_DLGP[i] += ptilde*mu_leaf
-                    var_DLGP[i] += ptilde*(sigma_leaf*sigma_leaf + mu_leaf*mu_leaf)
-                
-                var_DLGP[i] += -mean_DLGP[i]*mean_DLGP[i]
+                    mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
+                    var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + mu_leaf[0, :]**2)
+
+                var_DLGP[i, :] += -mean_DLGP[i, :]**2
 
             # Generalized product of experts
-            elif self.aggregation == "poe": 
+            elif self.aggregation == "poe":
 
                 # Collect individual predictions
                 mus = []
@@ -430,26 +453,27 @@ class GPTree:
                 betas = pred_leaf_probs
                 for leaf, ptilde in zip(leaves, pred_leaf_probs):
                     mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
-                    mus.append(mu_leaf)
-                    vars_.append(sigma_leaf**2)
-                mus = np.array(mus)
-                vars_ = np.array(vars_)
+                    # mu_leaf and sigma_leaf have shape (1, n_outputs)
+                    mus.append(mu_leaf[0, :])
+                    vars_.append(sigma_leaf[0, :]**2)
+                mus = np.array(mus)  # Shape: (n_leaves, n_outputs)
+                vars_ = np.array(vars_)  # Shape: (n_leaves, n_outputs)
 
                 # Compute weighted precisions
                 betas = np.array(betas)[:, None]  # shape (M, 1)
-                precisions = betas / vars_        # shape (M, n_samples)
+                precisions = betas / vars_        # shape (M, n_outputs)
 
                 # Combined precision and variance
-                total_precision = np.sum(precisions, axis=0)  # shape (n_samples,)
-                var_poe = 1.0 / total_precision                # shape (n_samples,)
+                total_precision = np.sum(precisions, axis=0)  # shape (n_outputs,)
+                var_poe = 1.0 / total_precision                # shape (n_outputs,)
 
                 # Combined mean
-                weighted_means = np.sum(precisions * mus, axis=0)  # shape (n_samples,)
-                mu_poe = var_poe * weighted_means                  # shape (n_samples,)
+                weighted_means = np.sum(precisions * mus, axis=0)  # shape (n_outputs,)
+                mu_poe = var_poe * weighted_means                  # shape (n_outputs,)
 
-                # Rename
-                mean_DLGP = mu_poe.reshape((1, 1))
-                var_DLGP = var_poe.reshape((1, 1))
+                # Store in result arrays
+                mean_DLGP[i, :] = mu_poe
+                var_DLGP[i, :] = var_poe
 
             # print(f"DEBUG: mean_DLGP: {mean_DLGP}  var_DLGP: {var_DLGP}")
 
@@ -482,26 +506,25 @@ class GPTree:
         std_DLGP: np.ndarray
             The posterior standard deviation used to quantify the uncertainty in the prediction. Has shape=(N_test, 1).
         """
-        mean_DLGP = np.zeros((X_test.shape[0], 1))
-        var_DLGP = np.zeros((X_test.shape[0], 1))
+        mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
+        var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
 
         for leaf in tqdm(self.root.leaves, disable=not show_progress, desc="Predicting"):
-            
-            ptilde = leaf.marg_prob(X_test)
-            ptilde = ptilde.reshape(mean_DLGP.shape)
+
+            ptilde = leaf.marg_prob(X_test)  # Shape: (n_test, 1)
 
             # We can skip this leaf if its prediction contribute zero for all points in X_test
             if np.all(ptilde == 0.0):
                 continue
 
             mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
-            mu_leaf = mu_leaf.reshape(mean_DLGP.shape)
-            sigma_leaf = sigma_leaf.reshape(mean_DLGP.shape)
+            # mu_leaf and sigma_leaf have shape (n_test, n_outputs)
 
-            mean_DLGP += ptilde*mu_leaf
-            var_DLGP += ptilde*(sigma_leaf*sigma_leaf + mu_leaf*mu_leaf)
-        
-        var_DLGP += -mean_DLGP*mean_DLGP
+            # Broadcast ptilde to match shape (n_test, n_outputs)
+            mean_DLGP += ptilde * mu_leaf
+            var_DLGP += ptilde * (sigma_leaf**2 + mu_leaf**2)
+
+        var_DLGP += -mean_DLGP**2
 
         return mean_DLGP, np.sqrt(var_DLGP)
 
