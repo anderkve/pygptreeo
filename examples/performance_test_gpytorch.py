@@ -57,7 +57,7 @@ target_name = "eggholder"
 target = target_dict[target_name]
 
 n_dims = 3
-n_pts = 10000  # Reduced for faster testing with GPyTorch
+n_pts = 100000  # Reduced for faster testing with GPyTorch
 
 Nbar = 200
 theta = 1e-4
@@ -107,19 +107,29 @@ gpt = GPTree(
     Nbar=Nbar,
     theta=theta,
     split_position_method='median',
-    split_dimension_criteria='max_spread',  # 'max_uncertainty' may be slower with GPyTorch
+    split_dimension_criteria='max_uncertainty',  # 'max_uncertainty' may be slower with GPyTorch
     retrain_every_n_points=retrain_step,
     use_calibrated_sigma=True,
     splitting_strategy='gradual',
     max_n_pred_leaves=3,
     aggregation='moe',
-    # Note: GPyTorch handles scaling internally, but we can still use standard scaling
+    # 
+    use_hyperparameter_inheritance=False,
     use_standard_scaling=True,
-    # Point rejection/merging disabled for simplicity
+    # 
     enable_point_rejection=False,
+    rejection_threshold=1e-2,
+    min_points_before_rejection=25,
+    # 
     enable_point_merging=False,
-    # Split evaluation
-    enable_split_evaluation=False,  # Disabled for faster testing
+    merge_distance_threshold=0.01,
+    min_points_before_merging=10,
+    # 
+    enable_split_evaluation=True,
+    n_split_candidates=4,
+    split_eval_train_fraction=0.4,
+    split_eval_min_points=20,
+
 )
 
 # Initialize for plotting

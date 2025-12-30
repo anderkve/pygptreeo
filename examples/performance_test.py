@@ -18,6 +18,7 @@ how specific kernel configurations can be passed to the `GPTree`.
 import numpy as np
 import matplotlib.pyplot as plt
 from pygptreeo import GPTree
+from pygptreeo.adapters import SklearnGPAdapter
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel
 import sys
@@ -160,8 +161,9 @@ class my_GPR_class(GaussianProcessRegressor):
 mygpr = my_GPR_class()
 
 # Construct GPTree
+# Wrap the sklearn GPR in an adapter to provide the required interface
 gpt = GPTree(
-    GPR=my_GPR_class(),
+    GPR=SklearnGPAdapter(my_GPR_class()),
     Nbar=Nbar,
     theta=theta,
     split_position_method='median',

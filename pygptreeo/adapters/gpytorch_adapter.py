@@ -253,8 +253,15 @@ class GPyTorchAdapter(GPRegressorInterface):
             Standard deviations of shape (n_samples, 1).
             Only returned if return_std=True.
         """
+        # If not trained, return prior predictions (mean=0, std=1) like sklearn
         if not self._trained:
-            raise RuntimeError("Model must be trained before making predictions")
+            n_samples = X.shape[0]
+            mean = np.zeros((n_samples, 1))
+            if return_std:
+                std = np.ones((n_samples, 1))
+                return mean, std
+            else:
+                return mean
 
         # Convert to tensor
         test_x = torch.from_numpy(X).float().to(self._device)
