@@ -83,14 +83,31 @@ gpytorch_gpr = GPyTorchAdapter(
     likelihood=None,  # Will create default GaussianLikelihood
     # Kernel configuration
     mean_module=gpytorch.means.ConstantMean(),
-    covar_module=gpytorch.kernels.ScaleKernel(
-        gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=n_dims)
+    # 
+    # covar_module=gpytorch.kernels.ScaleKernel(
+    #     gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=n_dims)
+    # ),
+    # 
+    # covar_module=gpytorch.kernels.ScaleKernel(
+    #     gpytorch.kernels.RQKernel(ard_num_dims=n_dims) +
+    #     gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=n_dims)
+    # ),
+    # 
+    covar_module = gpytorch.kernels.ScaleKernel(
+        gpytorch.kernels.AdditiveKernel(
+            gpytorch.kernels.RQKernel(ard_num_dims=n_dims),
+            gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=n_dims)
+        )
     ),
     # Training configuration
     optimizer='adam',
     learning_rate=0.1,
-    training_iterations=50,  # Fewer iterations for speed
-    device=device
+    training_iterations=400,  # Fewer iterations for speed
+    # 
+    # optimizer='lbfgs',
+    # learning_rate=1.0,
+    # training_iterations=50,
+    # device=device
 )
 
 print(f"\nGPyTorch adapter configuration:")
