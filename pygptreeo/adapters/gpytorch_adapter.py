@@ -220,12 +220,25 @@ class GPyTorchAdapter(GPRegressorInterface):
             raise ValueError(f"Unknown optimizer: {self._optimizer_type}")
 
         # Training loop
-        for i in range(self._training_iterations):
-            optimizer.zero_grad()
-            output = self._model(train_x)
-            loss = -mll(output, train_y)
-            loss.backward()
-            optimizer.step()
+        if self._optimizer_type == 'lbfgs':
+            # LBFGS requires a closure function
+            def closure():
+                optimizer.zero_grad()
+                output = self._model(train_x)
+                loss = -mll(output, train_y)
+                loss.backward()
+                return loss
+
+            for i in range(self._training_iterations):
+                optimizer.step(closure)
+        else:
+            # Standard training loop for other optimizers (e.g., Adam)
+            for i in range(self._training_iterations):
+                optimizer.zero_grad()
+                output = self._model(train_x)
+                loss = -mll(output, train_y)
+                loss.backward()
+                optimizer.step()
 
         self._trained = True
         return self
