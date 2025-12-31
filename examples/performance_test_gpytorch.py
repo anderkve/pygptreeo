@@ -25,6 +25,9 @@ except ImportError:
     print("Install it with: pip install gpytorch torch")
     sys.exit(1)
 
+# To avoid numerical stability issues
+torch.set_default_dtype(torch.float64)
+
 from target_functions import Eggholder, Himmelblau, Rosenbrock, Rastrigin, Levy, Custom
 
 target_dict = {
@@ -70,7 +73,8 @@ X_input = np.random.uniform(x_min, x_max, n_dims * n_pts).reshape(n_pts, n_dims)
 y_input = target(X_input.T)
 
 # Check if CUDA is available
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cpu'
 print(f"Using device: {device}")
 if device == 'cuda':
     print(f"GPU: {torch.cuda.get_device_name(0)}")
@@ -102,7 +106,7 @@ gpytorch_gpr = GPyTorchAdapter(
     # Training configuration
     optimizer='adam',
     learning_rate=0.1,
-    training_iterations=400,  # Fewer iterations for speed
+    training_iterations=200,
     # 
     # optimizer='lbfgs',
     # learning_rate=1.0,
