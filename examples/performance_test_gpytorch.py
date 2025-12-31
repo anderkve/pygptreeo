@@ -115,14 +115,6 @@ gpytorch_gpr = GPyTorchAdapter(
     # device=device
 )
 
-print(f"\nGPyTorch adapter configuration:")
-print(f"  Device: {device}")
-print(f"  Optimizer: adam")
-print(f"  Learning rate: 0.1")
-print(f"  Training iterations: 50")
-print(f"  Kernel: ScaleKernel(MaternKernel(nu=1.5))")
-print()
-
 # Construct GPTree with GPyTorch adapter
 gpt = GPTree(
     GPR=gpytorch_gpr,
