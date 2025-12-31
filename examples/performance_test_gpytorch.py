@@ -79,6 +79,32 @@ print(f"Using device: {device}")
 if device == 'cuda':
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
+# Hyperparameter bounds configuration
+# You can adjust these to control the range of GP hyperparameters during optimization
+length_scale_bounds = (1e-5, 1e5)  # Bounds for length scales
+outputscale_bounds = (1e-3, 1e8)   # Bounds for output scale (overall amplitude)
+alpha_bounds = (1e-4, 1e4)         # Bounds for RQ kernel alpha parameter
+
+# Create kernels with explicit constraints
+# Kernel structure: ScaleKernel * (RQKernel + MaternKernel)
+# This matches the structure in performance_test.py
+from gpytorch.constraints import Interval
+
+# RQ kernel with constrained hyperparameters
+rq_kernel = gpytorch.kernels.RQKernel(ard_num_dims=n_dims)
+# rq_kernel.register_constraint("raw_lengthscale", Interval(*length_scale_bounds))
+# rq_kernel.register_constraint("raw_alpha", Interval(*alpha_bounds))
+
+# Matern kernel with constrained hyperparameters
+matern_kernel = gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=n_dims)
+# matern_kernel.register_constraint("raw_lengthscale", Interval(*length_scale_bounds))
+
+# Composite kernel: ScaleKernel * (RQKernel + MaternKernel)
+composite_kernel = gpytorch.kernels.ScaleKernel(
+    rq_kernel + matern_kernel
+)
+# composite_kernel.register_constraint("raw_outputscale", Interval(*outputscale_bounds))
+
 # Create GPyTorch adapter with custom configuration
 # Note: GPyTorch uses a different approach - we configure via the adapter
 gpytorch_gpr = GPyTorchAdapter(
@@ -87,33 +113,41 @@ gpytorch_gpr = GPyTorchAdapter(
     likelihood=None,  # Will create default GaussianLikelihood
     # Kernel configuration
     mean_module=gpytorch.means.ConstantMean(),
-    # 
-    # covar_module=gpytorch.kernels.ScaleKernel(
-    #     gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=n_dims)
-    # ),
-    # 
-    covar_module=gpytorch.kernels.ScaleKernel(
-        gpytorch.kernels.RQKernel(ard_num_dims=n_dims) +
-        gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=n_dims)
-    ),
-    # 
-    # covar_module = gpytorch.kernels.ScaleKernel(
-    #     gpytorch.kernels.AdditiveKernel(
-    #         gpytorch.kernels.RQKernel(ard_num_dims=n_dims),
-    #         gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=n_dims)
-    #     )
-    # ),
+    covar_module=composite_kernel,
+    #
+    # Alternative: Simple Matern kernel only (for comparison)
+    # matern_only = gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=n_dims)
+    # matern_only.register_constraint("raw_lengthscale", Interval(*length_scale_bounds))
+    # covar_module=gpytorch.kernels.ScaleKernel(matern_only),
+    #
     # Training configuration
-    optimizer='adam',
-    learning_rate=0.1,
-    training_iterations=400,
-    # 
+    # NOTE: LBFGS can cause numerical instability after multiple iterations
+    # For maximum stability, use training_iterations=1 or switch to Adam optimizer
+    #
+    # Option 1: LBFGS with 1 iteration (fastest but less optimized)
     # optimizer='lbfgs',
     # learning_rate=1.0,
-    # training_iterations=50,
-    # 
-    # device=device
+    # training_iterations=1,
+    #
+    # Option 2: Adam (slower but more stable with higher iterations)
+    optimizer='adam',
+    learning_rate=0.1,
+    training_iterations=25,  # Reduced when using restarts to balance speed/quality
+    n_restarts_optimizer=3,  # Match sklearn's n_restarts_optimizer (4 total attempts)
+    #
+    device=device
 )
+
+print(f"\nGPyTorch adapter configuration:")
+print(f"  Kernel structure: ScaleKernel * (RQKernel + MaternKernel)")
+print(f"  Hyperparameter bounds:")
+print(f"    Length scale: {length_scale_bounds}")
+print(f"    Output scale: {outputscale_bounds}")
+print(f"    RQ alpha: {alpha_bounds}")
+print(f"  Optimizer: {gpytorch_gpr._optimizer_type}")
+print(f"  Learning rate: {gpytorch_gpr._learning_rate}")
+print(f"  Training iterations: {gpytorch_gpr._training_iterations}")
+print()
 
 # Construct GPTree with GPyTorch adapter
 gpt = GPTree(

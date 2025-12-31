@@ -110,6 +110,10 @@ class GPyTorchAdapter(GPRegressorInterface):
         Learning rate for the optimizer.
     training_iterations : int, default=50
         Number of optimization iterations during fit().
+    n_restarts_optimizer : int, default=0
+        Number of times to restart hyperparameter optimization from random
+        initializations. The best result (lowest loss) is kept. Similar to
+        sklearn's n_restarts_optimizer.
     device : str, default='cpu'
         Device to use for computation ('cpu' or 'cuda').
 
@@ -148,19 +152,41 @@ class GPyTorchAdapter(GPRegressorInterface):
         optimizer: str = 'adam',
         learning_rate: float = 0.1,
         training_iterations: int = 50,
-        device: str = 'cpu'
+        n_restarts_optimizer: int = 0,
+        device: str = 'cpu',
+        normalize_y: bool = False
     ):
         """Initialize the GPyTorch adapter."""
         self._model = model
-        self._likelihood = likelihood if likelihood is not None else GaussianLikelihood()
+
+        # Initialize likelihood with better numerical stability
+        # Default noise constraint prevents noise from getting too small (1e-6 minimum)
+        if likelihood is not None:
+            self._likelihood = likelihood
+        else:
+            from gpytorch.constraints import GreaterThan
+            # Use more conservative noise floor for better numerical stability
+            self._likelihood = GaussianLikelihood(
+                noise_constraint=GreaterThan(1e-4)
+            )
+            # Initialize noise to a reasonable value
+            self._likelihood.noise = 1e-4
+
         self._mean_module = mean_module
         self._covar_module = covar_module
         self._optimizer_type = optimizer.lower()
         self._learning_rate = learning_rate
         self._training_iterations = training_iterations
+        self._n_restarts_optimizer = n_restarts_optimizer
         self._device = device
         self._trained = False
         self._observation_noise = None
+
+        # Y normalization parameters (for numerical stability)
+        # Only used if normalize_y=True
+        self._normalize_y = normalize_y
+        self._y_mean = None
+        self._y_std = None
 
         # Move likelihood to device
         self._likelihood = self._likelihood.to(device)
@@ -182,27 +208,77 @@ class GPyTorchAdapter(GPRegressorInterface):
             The fitted adapter instance.
         """
         # Convert numpy arrays to PyTorch tensors
-        train_x = torch.from_numpy(X).float().to(self._device)
-        train_y = torch.from_numpy(y.flatten()).float().to(self._device)
+        # Use the default dtype (respects torch.set_default_dtype)
+        train_x = torch.from_numpy(X).to(self._device)
 
-        # Set observation noise if specified
+        # Normalize y values for numerical stability if requested
+        y_array = y.flatten()
+        if self._normalize_y:
+            self._y_mean = y_array.mean()
+            self._y_std = y_array.std()
+            if self._y_std < 1e-10:  # Avoid division by zero
+                self._y_std = 1.0
+            y_normalized = (y_array - self._y_mean) / self._y_std
+            train_y = torch.from_numpy(y_normalized).to(self._device)
+        else:
+            # No normalization - use y values as-is
+            train_y = torch.from_numpy(y_array).to(self._device)
+
+        # Always create a fresh model AND fresh likelihood for each fit
+        # Reusing the likelihood causes numerical issues because LBFGS modifies its parameters
+        # Create a completely new likelihood from scratch instead of deepcopy to avoid state issues
+        from gpytorch.constraints import GreaterThan
+        fresh_likelihood = GaussianLikelihood(
+            noise_constraint=GreaterThan(1e-4)
+        ).to(self._device)
+
+        # Set observation noise on the fresh likelihood if specified
+        # Note: Noise must be scaled if y is normalized
         if self._observation_noise is not None:
             if isinstance(self._observation_noise, np.ndarray):
-                noise = torch.from_numpy(self._observation_noise.flatten()).float().to(self._device)
+                noise_array = self._observation_noise.flatten()
+                # Scale the noise if y is normalized
+                if self._normalize_y and self._y_std is not None:
+                    noise_array = noise_array / self._y_std
+                noise = torch.from_numpy(noise_array).to(self._device)
+                # Ensure noise doesn't get too small (match likelihood constraint)
+                noise = torch.clamp(noise, min=1e-4)
             else:
-                noise = torch.tensor(self._observation_noise).float().to(self._device)
-            self._likelihood.noise = noise
-
-        # Create model if it doesn't exist
-        if self._model is None:
-            self._model = SimpleGPModel(
-                train_x, train_y, self._likelihood,
-                mean_module=self._mean_module,
-                covar_module=self._covar_module
-            ).to(self._device)
+                # Scale scalar noise if y is normalized
+                if self._normalize_y and self._y_std is not None:
+                    noise = max(float(self._observation_noise) / self._y_std, 1e-4)
+                else:
+                    noise = max(float(self._observation_noise), 1e-4)
+            # Set the noise value
+            with torch.no_grad():
+                fresh_likelihood.noise = noise
         else:
-            # Update the model's training data
-            self._model.set_train_data(train_x, train_y, strict=False)
+            # Default noise
+            fresh_likelihood.noise = 1e-4
+
+        # Create fresh kernel instances for each fit
+        # Reusing the same kernel object across models causes numerical issues
+        # Need to recreate the kernel structure from scratch
+        if self._covar_module is None:
+            fresh_covar = None
+        else:
+            # TODO: This is a hacky way to create a fresh kernel - we should have a better method
+            # For now, just use the original (this works if it's not reused across fits)
+            fresh_covar = self._covar_module
+
+        if self._mean_module is None:
+            fresh_mean = None
+        else:
+            fresh_mean = self._mean_module
+
+        self._model = SimpleGPModel(
+            train_x, train_y, fresh_likelihood,
+            mean_module=fresh_mean,
+            covar_module=fresh_covar
+        ).to(self._device)
+
+        # Update our reference to use the fresh likelihood
+        self._likelihood = fresh_likelihood
 
         # Set to training mode
         self._model.train()
@@ -211,34 +287,67 @@ class GPyTorchAdapter(GPRegressorInterface):
         # Create marginal log likelihood
         mll = ExactMarginalLogLikelihood(self._likelihood, self._model)
 
-        # Create optimizer
-        if self._optimizer_type == 'adam':
-            optimizer = torch.optim.Adam(self._model.parameters(), lr=self._learning_rate)
-        elif self._optimizer_type == 'lbfgs':
-            optimizer = torch.optim.LBFGS(self._model.parameters(), lr=self._learning_rate)
-        else:
-            raise ValueError(f"Unknown optimizer: {self._optimizer_type}")
+        # Hyperparameter optimization with restarts
+        # Similar to sklearn's n_restarts_optimizer
+        best_loss = float('inf')
+        best_state_dict = None
 
-        # Training loop
-        if self._optimizer_type == 'lbfgs':
-            # LBFGS requires a closure function
-            def closure():
-                optimizer.zero_grad()
-                output = self._model(train_x)
-                loss = -mll(output, train_y)
-                loss.backward()
-                return loss
+        n_attempts = self._n_restarts_optimizer + 1  # 1 initial + n restarts
 
-            for i in range(self._training_iterations):
-                optimizer.step(closure)
-        else:
-            # Standard training loop for other optimizers (e.g., Adam)
-            for i in range(self._training_iterations):
-                optimizer.zero_grad()
+        for attempt in range(n_attempts):
+            # Randomize hyperparameters for restarts (skip first attempt)
+            if attempt > 0:
+                # Re-initialize hyperparameters to random values within bounds
+                with torch.no_grad():
+                    for param_name, param in self._model.named_parameters():
+                        if 'raw_' in param_name or 'noise' in param_name:
+                            # Randomize within a reasonable range
+                            param.data.uniform_(-2.0, 2.0)
+
+            # Create optimizer for this attempt
+            if self._optimizer_type == 'adam':
+                optimizer = torch.optim.Adam(self._model.parameters(), lr=self._learning_rate)
+            elif self._optimizer_type == 'lbfgs':
+                optimizer = torch.optim.LBFGS(self._model.parameters(), lr=self._learning_rate)
+            else:
+                raise ValueError(f"Unknown optimizer: {self._optimizer_type}")
+
+            # Training loop with numerical stability settings
+            # Add jitter for numerical stability in Cholesky decomposition
+            with gpytorch.settings.cholesky_jitter(1e-3):
+                if self._optimizer_type == 'lbfgs':
+                    # LBFGS requires a closure function
+                    def closure():
+                        optimizer.zero_grad()
+                        output = self._model(train_x)
+                        loss = -mll(output, train_y)
+                        loss.backward()
+                        return loss
+
+                    for i in range(self._training_iterations):
+                        loss = optimizer.step(closure)
+                else:
+                    # Standard training loop for other optimizers (e.g., Adam)
+                    for i in range(self._training_iterations):
+                        optimizer.zero_grad()
+                        output = self._model(train_x)
+                        loss = -mll(output, train_y)
+                        loss.backward()
+                        optimizer.step()
+
+            # Evaluate final loss for this attempt
+            with torch.no_grad():
                 output = self._model(train_x)
-                loss = -mll(output, train_y)
-                loss.backward()
-                optimizer.step()
+                final_loss = -mll(output, train_y).item()
+
+            # Keep the best result
+            if final_loss < best_loss:
+                best_loss = final_loss
+                best_state_dict = deepcopy(self._model.state_dict())
+
+        # Restore the best model state
+        if best_state_dict is not None:
+            self._model.load_state_dict(best_state_dict)
 
         self._trained = True
         return self
@@ -266,18 +375,25 @@ class GPyTorchAdapter(GPRegressorInterface):
             Standard deviations of shape (n_samples, 1).
             Only returned if return_std=True.
         """
-        # If not trained, return prior predictions (mean=0, std=1) like sklearn
+        # If not trained, return prior predictions
         if not self._trained:
             n_samples = X.shape[0]
-            mean = np.zeros((n_samples, 1))
-            if return_std:
+            # If we normalized y, return priors in original scale
+            if self._normalize_y and self._y_mean is not None and self._y_std is not None:
+                mean = np.full((n_samples, 1), self._y_mean)
+                std = np.full((n_samples, 1), self._y_std)
+            else:
+                # No normalization or not yet fitted - return standard priors
+                mean = np.zeros((n_samples, 1))
                 std = np.ones((n_samples, 1))
+
+            if return_std:
                 return mean, std
             else:
                 return mean
 
-        # Convert to tensor
-        test_x = torch.from_numpy(X).float().to(self._device)
+        # Convert to tensor (use default dtype)
+        test_x = torch.from_numpy(X).to(self._device)
 
         # Set to evaluation mode
         self._model.eval()
@@ -287,9 +403,14 @@ class GPyTorchAdapter(GPRegressorInterface):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             observed_pred = self._likelihood(self._model(test_x))
             mean = observed_pred.mean.cpu().numpy().reshape(-1, 1)
+            std = observed_pred.stddev.cpu().numpy().reshape(-1, 1)
+
+            # Denormalize predictions if we normalized during training
+            if self._normalize_y and self._y_mean is not None and self._y_std is not None:
+                mean = mean * self._y_std + self._y_mean
+                std = std * self._y_std  # std scales but doesn't shift
 
             if return_std:
-                std = observed_pred.stddev.cpu().numpy().reshape(-1, 1)
                 return mean, std
             else:
                 return mean
@@ -334,7 +455,7 @@ class GPyTorchAdapter(GPRegressorInterface):
         if not self._trained:
             raise RuntimeError("Model must be trained before computing kernel covariance")
 
-        test_x = torch.from_numpy(X).float().to(self._device)
+        test_x = torch.from_numpy(X).to(self._device)
 
         self._model.eval()
         with torch.no_grad():
@@ -360,13 +481,19 @@ class GPyTorchAdapter(GPRegressorInterface):
             optimizer=self._optimizer_type,
             learning_rate=self._learning_rate,
             training_iterations=self._training_iterations,
-            device=self._device
+            n_restarts_optimizer=self._n_restarts_optimizer,
+            device=self._device,
+            normalize_y=self._normalize_y
         )
 
         # If current model is trained, copy its state
         if self._trained and self._model is not None:
             new_adapter._model = deepcopy(self._model)
             new_adapter._trained = True
+
+        # Copy normalization parameters
+        new_adapter._y_mean = self._y_mean
+        new_adapter._y_std = self._y_std
 
         return new_adapter
 
