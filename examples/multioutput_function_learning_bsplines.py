@@ -275,7 +275,7 @@ def main():
         ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig('/home/user/pygptreeo/examples/multioutput_bsplines_functions.png', dpi=150, bbox_inches='tight')
+    plt.savefig('multioutput_bsplines_functions.png', dpi=150, bbox_inches='tight')
     print("   - Saved: multioutput_bsplines_functions.png")
 
     # Plot coefficient predictions
@@ -308,7 +308,7 @@ def main():
         ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig('/home/user/pygptreeo/examples/multioutput_bsplines_coefficients.png', dpi=150, bbox_inches='tight')
+    plt.savefig('multioutput_bsplines_coefficients.png', dpi=150, bbox_inches='tight')
     print("   - Saved: multioutput_bsplines_coefficients.png")
 
     print("\n" + "=" * 70)
