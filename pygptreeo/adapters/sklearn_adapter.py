@@ -201,6 +201,28 @@ class SklearnGPAdapter(GPRegressorInterface):
         """
         self._gpr.kernel = kernel
 
+    def log_marginal_likelihood(self) -> float:
+        """
+        Get the log marginal likelihood of the trained GP.
+
+        This value is computed during fitting and represents how well the
+        kernel and hyperparameters fit the training data, with a penalty
+        for model complexity (Occam's razor).
+
+        Returns
+        -------
+        float
+            The log marginal likelihood value.
+
+        Raises
+        ------
+        ValueError
+            If the GP has not been trained yet.
+        """
+        if not self.is_trained():
+            raise ValueError("GP must be trained before log marginal likelihood can be computed")
+        return self._gpr.log_marginal_likelihood_value_
+
     # Provide access to the underlying scikit-learn GPR for advanced users
     @property
     def sklearn_gpr(self) -> GaussianProcessRegressor:

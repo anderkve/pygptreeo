@@ -86,7 +86,8 @@ class GPNode(Node):
                  n_split_candidates: Optional[int] = 3,
                  split_eval_train_fraction: Optional[float] = 0.6,
                  split_eval_min_points: Optional[int] = 20,
-                 n_outputs: Optional[int] = 1):
+                 n_outputs: Optional[int] = 1,
+                 kernel_type_idx: Optional[int] = None):
         """Initializes a GPNode.
 
         Args:
@@ -140,6 +141,9 @@ class GPNode(Node):
                 to evaluate that split. Defaults to 20.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
                 For multi-output GPs, independent GPs are trained for each output.
+            kernel_type_idx (Optional[int]): Index of the kernel type used by this node (0-5).
+                If None, the kernel type is not tracked. This is used for automatic kernel
+                selection to record which kernel type was selected for this node.
         """
 
         super().__init__(*args)
@@ -226,6 +230,9 @@ class GPNode(Node):
         self.overlap = DEFAULT_OVERLAP  # 'o' in the DLGP article
         self.name = name
 
+        # Kernel type index for automatic kernel selection
+        self.kernel_type_idx = kernel_type_idx
+
         self.n_points_pred_perf = DEFAULT_N_POINTS_PRED_PERF
         # For multi-output: these become lists of arrays (one per output)
         if n_outputs == 1:
@@ -302,8 +309,90 @@ class GPNode(Node):
         self.merge_counts = np.array([]).reshape((0, 1))
 
 
+    def select_best_kernel_for_split(self, base_gpr: GPRegressorInterface):
+        """Select the best kernel type for child nodes by comparing parent's kernel with a random alternative.
+
+        This method:
+        1. Randomly selects an alternative kernel from the predefined list (indices 0-5)
+        2. Trains both the parent's current kernel and the alternative on the node's data
+        3. Compares log marginal likelihoods
+        4. Returns the kernel type index and GPR with the better performing kernel
+
+        Args:
+            base_gpr (GPRegressorInterface): Base GPR to use as template for creating new GPRs
+
+        Returns:
+            tuple: (selected_kernel_idx, selected_gpr) where:
+                - selected_kernel_idx (int): Index of the selected kernel (0-5)
+                - selected_gpr (GPRegressorInterface): GPR configured with the selected kernel
+        """
+        from pygptreeo.default_gpr import get_kernel_by_index
+
+        # If kernel_type_idx is None, no automatic selection is enabled
+        # Just return a clone of the parent's GPR
+        if self.kernel_type_idx is None:
+            return None, base_gpr.clone()
+
+        # Randomly select an alternative kernel index from 0-5
+        alternative_idx = np.random.randint(0, 6)
+
+        # Prepare training data
+        X_train = np.vstack((self.my_X_data, self.shared_X_data))
+        y_train = np.vstack((self.my_y_data, self.shared_y_data))
+        sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))
+
+        if X_train.shape[0] == 0:
+            # No data to train on, just return parent's kernel
+            return self.kernel_type_idx, base_gpr.clone()
+
+        # We'll only use the first output for kernel selection (for multi-output case)
+        y_train_single = y_train[:, 0:1]
+        sigma_train_single = sigma_train[:, 0:1]
+        alpha_train = sigma_train_single ** 2  # Convert to variance
+
+        # Test parent's kernel
+        parent_lml = -np.inf
+        try:
+            # Clone the parent's GPR and train it
+            gpr_parent = base_gpr.clone()
+            gpr_parent.alpha = alpha_train.flatten()
+            gpr_parent.fit(X_train, y_train_single)
+            parent_lml = gpr_parent.log_marginal_likelihood()
+        except Exception as e:
+            warnings.warn(f"Node {self.name}: Failed to train parent kernel (idx={self.kernel_type_idx}): {e}", RuntimeWarning)
+
+        # Test alternative kernel
+        alternative_lml = -np.inf
+        try:
+            # Clone the base GPR and replace its kernel
+            # This preserves settings like n_restarts_optimizer from the base GPR
+            alternative_kernel = get_kernel_by_index(alternative_idx)
+            gpr_alternative = base_gpr.clone()
+            gpr_alternative.set_kernel(alternative_kernel)
+            gpr_alternative.alpha = alpha_train.flatten()
+            gpr_alternative.fit(X_train, y_train_single)
+            alternative_lml = gpr_alternative.log_marginal_likelihood()
+        except Exception as e:
+            warnings.warn(f"Node {self.name}: Failed to train alternative kernel (idx={alternative_idx}): {e}", RuntimeWarning)
+
+        # Compare and select the best kernel
+        if alternative_lml > parent_lml:
+            selected_idx = alternative_idx
+            selected_gpr = gpr_alternative
+            print(f"Node {self.name}: Selected alternative kernel {alternative_idx} (LML={alternative_lml:.2f}) over parent kernel {self.kernel_type_idx} (LML={parent_lml:.2f})")
+        else:
+            selected_idx = self.kernel_type_idx
+            selected_gpr = base_gpr.clone()
+            print(f"Node {self.name}: Kept parent kernel {self.kernel_type_idx} (LML={parent_lml:.2f}) over alternative kernel {alternative_idx} (LML={alternative_lml:.2f})")
+
+        return selected_idx, selected_gpr
+
+
     def generate_children(self, GPR: GPRegressorInterface, n_features: int):
         """ Grow the GPtree by adding two GPNodes as children of the current GPNode. """
+
+        # Select the best kernel for the child nodes
+        selected_kernel_idx, selected_gpr = self.select_best_kernel_for_split(self.my_GPRs[0])
 
         # Settings that will be passed on to the child nodes
         node_config_kwargs = {
@@ -325,12 +414,13 @@ class GPNode(Node):
             'split_eval_train_fraction': self.split_eval_train_fraction,
             'split_eval_min_points': self.split_eval_min_points,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
+            'kernel_type_idx': selected_kernel_idx,  # Pass selected kernel type index to children
         }
 
-        # Create child nodes with a copy of the parent GP (use first GP from list for template)
+        # Create child nodes with the selected kernel
         # Use the clone() method from GP interface for proper copying
-        self.left = GPNode(0, my_GPR=self.my_GPRs[0].clone(), name=self.name + "0", **node_config_kwargs)
-        self.right = GPNode(0, my_GPR=self.my_GPRs[0].clone(), name=self.name + "1", **node_config_kwargs)
+        self.left = GPNode(0, my_GPR=selected_gpr.clone(), name=self.name + "0", **node_config_kwargs)
+        self.right = GPNode(0, my_GPR=selected_gpr.clone(), name=self.name + "1", **node_config_kwargs)
         
         self.left.is_left = True
         self.right.is_left = False

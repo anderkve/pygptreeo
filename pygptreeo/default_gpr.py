@@ -10,7 +10,7 @@ from typing import Optional
 
 # Third-party imports
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ConstantKernel, Matern
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF, RationalQuadratic
 
 # Local imports
 from pygptreeo.adapters import SklearnGPAdapter
@@ -104,4 +104,45 @@ def Default_GPR(
 
     # Wrap in adapter and return
     return SklearnGPAdapter(sklearn_gpr)
-    
+
+
+def get_kernel_by_index(kernel_idx: int):
+    """Get a kernel by its index from the predefined list.
+
+    Kernel types:
+        0: Const*(RBF + Matern(nu=1.5))
+        1: Const*(RQ + Matern(nu=1.5))
+        2: Const*(RQ + RBF)
+        3: Const*RQ
+        4: Const*Matern(nu=1.5)
+        5: Const*RBF
+
+    Args:
+        kernel_idx (int): Index of the kernel type (0-5)
+
+    Returns:
+        Kernel object: The kernel corresponding to the index
+
+    Raises:
+        ValueError: If kernel_idx is not in range 0-5
+    """
+    if kernel_idx == 0:
+        # Const*(RBF + Matern(nu=1.5))
+        return ConstantKernel() * (RBF() + Matern(nu=1.5))
+    elif kernel_idx == 1:
+        # Const*(RQ + Matern(nu=1.5))
+        return ConstantKernel() * (RationalQuadratic() + Matern(nu=1.5))
+    elif kernel_idx == 2:
+        # Const*(RQ + RBF)
+        return ConstantKernel() * (RationalQuadratic() + RBF())
+    elif kernel_idx == 3:
+        # Const*RQ
+        return ConstantKernel() * RationalQuadratic()
+    elif kernel_idx == 4:
+        # Const*Matern(nu=1.5)
+        return ConstantKernel() * Matern(nu=1.5)
+    elif kernel_idx == 5:
+        # Const*RBF
+        return ConstantKernel() * RBF()
+    else:
+        raise ValueError(f"Invalid kernel_idx: {kernel_idx}. Must be in range 0-5.")

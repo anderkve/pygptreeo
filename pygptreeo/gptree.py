@@ -80,6 +80,7 @@ class GPTree:
                  max_n_pred_leaves: Optional[int] = None,
                  aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
+                 enable_kernel_selection: Optional[bool] = False,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -105,21 +106,47 @@ class GPTree:
                 'default'/'moe' or 'poe'. Defaults to 'default'.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
                 For multi-output GPs, independent GPs are trained for each output.
+            enable_kernel_selection (Optional[bool]): If True, enables automatic kernel
+                selection where each node tests its kernel against a random alternative
+                at split time and selects the better performing one based on log marginal
+                likelihood. Defaults to False.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
                 `use_standard_scaling` (bool, defaults to True).
         """
 
-        # Use Default_GPR if no GPR is provided
-        if GPR is None:
-            GPR = Default_GPR()
+        # Handle automatic kernel selection
+        if enable_kernel_selection:
+            # Enable automatic kernel selection: start with kernel type 0
+            from pygptreeo.default_gpr import get_kernel_by_index
+            kernel_type_idx = 0
+            root_kernel = get_kernel_by_index(kernel_type_idx)
+
+            # If user provided a GPR, use it as template for settings
+            # Otherwise create default GPR
+            if GPR is None:
+                from pygptreeo.default_gpr import Default_GPR
+                GPR = Default_GPR(kernel=root_kernel)
+            else:
+                # Use provided GPR as template, just replace the kernel
+                GPR.set_kernel(root_kernel)
+        else:
+            # No automatic kernel selection
+            kernel_type_idx = None
+            if GPR is None:
+                from pygptreeo.default_gpr import Default_GPR
+                GPR = Default_GPR()
 
         self.GPR = GPR
         self.splitting_strategy = splitting_strategy
         self.n_outputs = n_outputs
+        self.enable_kernel_selection = enable_kernel_selection
+
+        # Create root node with appropriate kernel_type_idx
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
-                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs, **kwargs)  # Initialize root node of the GPTree
+                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
+                          kernel_type_idx=kernel_type_idx, **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 
