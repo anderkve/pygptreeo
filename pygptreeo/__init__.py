@@ -46,6 +46,7 @@ from pygptreeo.gpforest import GPForest
 from pygptreeo.kernels import AnisotropicRationalQuadratic, AdditiveKernel
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.adapters import SklearnGPAdapter
+from pygptreeo.kernel_performance_tracker import KernelPerformanceTracker
 
 # Conditionally import GPyTorch adapter if available
 try:

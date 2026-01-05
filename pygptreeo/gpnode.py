@@ -89,7 +89,10 @@ class GPNode(Node):
                  n_outputs: Optional[int] = 1,
                  kernel_type_idx: Optional[int] = None,
                  kernel_alternatives: Optional[list] = None,
-                 kernel_eval_train_fraction: Optional[float] = 0.6):
+                 kernel_eval_train_fraction: Optional[float] = 0.6,
+                 kernel_tracker: Optional['KernelPerformanceTracker'] = None,
+                 kernel_selection_k_best: Optional[int] = 2,
+                 kernel_selection_n_random: Optional[int] = 1):
         """Initializes a GPNode.
 
         Args:
@@ -150,6 +153,12 @@ class GPNode(Node):
                 selection. If None or empty, automatic kernel selection is disabled.
             kernel_eval_train_fraction (Optional[float]): Fraction of points to use for training
                 during kernel selection evaluation. The rest is used for testing. Defaults to 0.6.
+            kernel_tracker (Optional[KernelPerformanceTracker]): Tracker object for monitoring
+                kernel performance across the tree. If None, no tracking is performed.
+            kernel_selection_k_best (Optional[int]): Number of best-performing kernels to test
+                at each split. Defaults to 2.
+            kernel_selection_n_random (Optional[int]): Number of random kernels to test for
+                exploration at each split. Defaults to 1.
         """
 
         super().__init__(*args)
@@ -240,6 +249,9 @@ class GPNode(Node):
         self.kernel_type_idx = kernel_type_idx
         self.kernel_alternatives = kernel_alternatives
         self.kernel_eval_train_fraction = kernel_eval_train_fraction
+        self.kernel_tracker = kernel_tracker
+        self.kernel_selection_k_best = kernel_selection_k_best
+        self.kernel_selection_n_random = kernel_selection_n_random
 
         self.n_points_pred_perf = DEFAULT_N_POINTS_PRED_PERF
         # For multi-output: these become lists of arrays (one per output)
@@ -342,15 +354,67 @@ class GPNode(Node):
         return mare_val
 
 
-    def select_best_kernel_for_split(self, base_gpr: GPRegressorInterface):
-        """Select the best kernel type for child nodes using train/test MARE evaluation.
+    def _evaluate_kernel_at_index(self, kernel_idx, X_train, y_train, sigma_train,
+                                   X_test, y_test, base_gpr):
+        """Evaluate a single kernel by training on train set and testing on test set.
 
-        This method:
-        1. Randomly selects an alternative kernel from the kernel_alternatives list
-        2. Splits data into train/test sets
-        3. Trains both kernels on the train set
-        4. Evaluates MARE on the test set
-        5. Returns the kernel type index and GPR with the better performing kernel
+        Args:
+            kernel_idx (int): Index of the kernel to evaluate in kernel_alternatives list
+            X_train (np.ndarray): Training features
+            y_train (np.ndarray): Training targets
+            sigma_train (np.ndarray): Training uncertainties
+            X_test (np.ndarray): Test features
+            y_test (np.ndarray): Test targets
+            base_gpr (GPRegressorInterface): Base GPR to use as template
+
+        Returns:
+            float: MARE score on test set (np.inf if evaluation fails)
+        """
+        try:
+            # Get the kernel for this index
+            kernel = self.kernel_alternatives[kernel_idx]
+
+            # Clone base GPR and set the kernel
+            gpr = base_gpr.clone()
+            gpr.set_kernel(kernel)
+
+            # Set alpha (noise variance)
+            alpha_train = sigma_train ** 2
+            gpr.alpha = alpha_train.flatten()
+
+            # Train and predict with appropriate scaling
+            if self.use_standard_scaling:
+                from sklearn.preprocessing import StandardScaler
+                scaler_X = StandardScaler()
+                scaler_y = StandardScaler()
+                X_train_scaled = scaler_X.fit_transform(X_train)
+                y_train_scaled = scaler_y.fit_transform(y_train)
+                gpr.fit(X_train_scaled, y_train_scaled)
+
+                # Predict on test set
+                X_test_scaled = scaler_X.transform(X_test)
+                y_pred_scaled = gpr.predict(X_test_scaled, return_std=False)
+                y_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1)).flatten()
+            else:
+                gpr.fit(X_train, y_train)
+                y_pred = gpr.predict(X_test, return_std=False)
+
+            mare = self.mare(y_test.flatten(), y_pred)
+            return mare
+
+        except Exception as e:
+            warnings.warn(f"Node {self.name}: Failed to evaluate kernel {kernel_idx}: {e}", RuntimeWarning)
+            return np.inf
+
+
+    def select_best_kernel_for_split(self, base_gpr: GPRegressorInterface):
+        """Select the best kernel type for child nodes using performance tracking and MARE evaluation.
+
+        This method uses a KernelPerformanceTracker (if available) to intelligently select
+        which kernels to test. It tests k_best kernels (by win rate) plus n_random kernels
+        for exploration, evaluates them all, and selects the best performer.
+
+        If no tracker is available, falls back to testing one random alternative.
 
         Args:
             base_gpr (GPRegressorInterface): Base GPR to use as template for creating new GPRs
@@ -369,10 +433,23 @@ class GPNode(Node):
         if len(self.kernel_alternatives) == 1:
             return self.kernel_type_idx, base_gpr.clone()
 
-        # Randomly select an alternative kernel index from the kernel_alternatives list
-        # Make sure to exclude the parent's current kernel index
-        available_indices = [i for i in range(len(self.kernel_alternatives)) if i != self.kernel_type_idx]
-        alternative_idx = np.random.choice(available_indices)
+        # Determine which kernels to test
+        if self.kernel_tracker is None:
+            # No tracker: test parent kernel + one random alternative (original behavior)
+            available_indices = [i for i in range(len(self.kernel_alternatives))
+                               if i != self.kernel_type_idx]
+            if available_indices:
+                alternative_idx = np.random.choice(available_indices)
+                kernels_to_test = [self.kernel_type_idx, alternative_idx]
+            else:
+                kernels_to_test = [self.kernel_type_idx]
+        else:
+            # Use tracker to intelligently select which kernels to test
+            kernels_to_test = self.kernel_tracker.select_kernels_to_test(
+                parent_kernel_idx=self.kernel_type_idx,
+                k_best=self.kernel_selection_k_best,
+                n_random=self.kernel_selection_n_random
+            )
 
         # Prepare training data
         X_data = np.vstack((self.my_X_data, self.shared_X_data))
@@ -403,79 +480,39 @@ class GPNode(Node):
         X_train = X_data[train_idx]
         y_train = y_data_single[train_idx]
         sigma_train = sigma_data_single[train_idx]
-        alpha_train = sigma_train ** 2  # Convert to variance
 
         X_test = X_data[test_idx]
         y_test = y_data_single[test_idx]
 
-        # Test parent's kernel
-        parent_mare = np.inf
-        try:
-            # Clone the parent's GPR and train it
-            gpr_parent = base_gpr.clone()
-            gpr_parent.alpha = alpha_train.flatten()
+        # Evaluate all selected kernels
+        best_kernel_idx = self.kernel_type_idx
+        best_mare = np.inf
+        mare_results = {}
 
-            # Apply scaling if enabled
-            if self.use_standard_scaling:
-                from sklearn.preprocessing import StandardScaler
-                scaler_X = StandardScaler()
-                scaler_y = StandardScaler()
-                X_train_scaled = scaler_X.fit_transform(X_train)
-                y_train_scaled = scaler_y.fit_transform(y_train)
-                gpr_parent.fit(X_train_scaled, y_train_scaled)
+        for k_idx in kernels_to_test:
+            mare = self._evaluate_kernel_at_index(k_idx, X_train, y_train, sigma_train,
+                                                  X_test, y_test, base_gpr)
+            mare_results[k_idx] = mare
 
-                # Predict on test set
-                X_test_scaled = scaler_X.transform(X_test)
-                y_pred_scaled = gpr_parent.predict(X_test_scaled, return_std=False)
-                y_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1)).flatten()
-            else:
-                gpr_parent.fit(X_train, y_train)
-                y_pred = gpr_parent.predict(X_test, return_std=False)
+            if mare < best_mare:
+                best_mare = mare
+                best_kernel_idx = k_idx
 
-            parent_mare = self.mare(y_test.flatten(), y_pred)
-        except Exception as e:
-            warnings.warn(f"Node {self.name}: Failed to train parent kernel (idx={self.kernel_type_idx}): {e}", RuntimeWarning)
+        # Update tracker with results (if available)
+        if self.kernel_tracker is not None:
+            self.kernel_tracker.update(
+                tested_kernels=list(mare_results.keys()),
+                selected_kernel=best_kernel_idx
+            )
 
-        # Test alternative kernel
-        alternative_mare = np.inf
-        try:
-            # Clone the base GPR and replace its kernel
-            # This preserves settings like n_restarts_optimizer from the base GPR
-            alternative_kernel = self.kernel_alternatives[alternative_idx]
-            gpr_alternative = base_gpr.clone()
-            gpr_alternative.set_kernel(alternative_kernel)
-            gpr_alternative.alpha = alpha_train.flatten()
+        # Print selection summary
+        kernels_tested_str = ', '.join([f"{k}({mare_results[k]:.3e})" for k in kernels_to_test])
+        print(f"Node {self.name}: Tested {len(kernels_to_test)} kernels [{kernels_tested_str}], "
+              f"selected kernel {best_kernel_idx} (MARE={best_mare:.4e})")
 
-            # Apply scaling if enabled
-            if self.use_standard_scaling:
-                from sklearn.preprocessing import StandardScaler
-                scaler_X = StandardScaler()
-                scaler_y = StandardScaler()
-                X_train_scaled = scaler_X.fit_transform(X_train)
-                y_train_scaled = scaler_y.fit_transform(y_train)
-                gpr_alternative.fit(X_train_scaled, y_train_scaled)
-
-                # Predict on test set
-                X_test_scaled = scaler_X.transform(X_test)
-                y_pred_scaled = gpr_alternative.predict(X_test_scaled, return_std=False)
-                y_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1)).flatten()
-            else:
-                gpr_alternative.fit(X_train, y_train)
-                y_pred = gpr_alternative.predict(X_test, return_std=False)
-
-            alternative_mare = self.mare(y_test.flatten(), y_pred)
-        except Exception as e:
-            warnings.warn(f"Node {self.name}: Failed to train alternative kernel (idx={alternative_idx}): {e}", RuntimeWarning)
-
-        # Compare and select the best kernel (lower mare is better)
-        if alternative_mare < parent_mare:
-            selected_idx = alternative_idx
-            selected_kernel = self.kernel_alternatives[alternative_idx]
-            print(f"Node {self.name}: Selected alternative kernel {alternative_idx} (MARE={alternative_mare:.4e}) over parent kernel {self.kernel_type_idx} (MARE={parent_mare:.4e})")
-        else:
-            selected_idx = self.kernel_type_idx
-            selected_kernel = base_gpr.get_kernel()
-            print(f"Node {self.name}: Kept parent kernel {self.kernel_type_idx} (MARE={parent_mare:.4e}) over alternative kernel {alternative_idx} (MARE={alternative_mare:.4e})")
+        # Get the selected kernel
+        selected_idx = best_kernel_idx
+        selected_kernel = self.kernel_alternatives[best_kernel_idx]
 
         # Retrain the selected kernel on ALL available data (not just train subset)
         selected_gpr = base_gpr.clone()
@@ -528,6 +565,9 @@ class GPNode(Node):
             'kernel_type_idx': selected_kernel_idx,  # Pass selected kernel type index to children
             'kernel_alternatives': self.kernel_alternatives,  # Pass kernel alternatives list to children
             'kernel_eval_train_fraction': self.kernel_eval_train_fraction,  # Pass kernel evaluation train fraction to children
+            'kernel_tracker': self.kernel_tracker,  # Pass kernel tracker to children
+            'kernel_selection_k_best': self.kernel_selection_k_best,  # Pass k_best parameter to children
+            'kernel_selection_n_random': self.kernel_selection_n_random,  # Pass n_random parameter to children
         }
 
         # Create child nodes with the selected kernel

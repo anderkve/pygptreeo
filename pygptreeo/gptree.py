@@ -28,6 +28,7 @@ from tqdm import tqdm
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 from pygptreeo.gp_interface import GPRegressorInterface
+from pygptreeo.kernel_performance_tracker import KernelPerformanceTracker
 
 
 class GPTree:
@@ -82,6 +83,8 @@ class GPTree:
                  n_outputs: Optional[int] = 1,
                  kernel_alternatives: Optional[list] = None,
                  kernel_eval_train_fraction: Optional[float] = 0.6,
+                 kernel_selection_k_best: Optional[int] = 2,
+                 kernel_selection_n_random: Optional[int] = 1,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -109,12 +112,18 @@ class GPTree:
                 For multi-output GPs, independent GPs are trained for each output.
             kernel_alternatives (Optional[list]): List of kernel objects for automatic kernel
                 selection. If provided (non-empty list), enables automatic kernel selection where
-                each node tests its kernel against a random alternative from this list at split
-                time and selects the better performing one based on train/test MAPE.
-                Defaults to None (no automatic kernel selection).
+                each node tests multiple kernels from this list at split time and selects the
+                better performing one based on train/test MARE. Defaults to None (no automatic
+                kernel selection).
             kernel_eval_train_fraction (Optional[float]): Fraction of points to use for training
                 during kernel selection evaluation. The rest is used for testing. Defaults to 0.6.
                 Only used if kernel_alternatives is provided.
+            kernel_selection_k_best (Optional[int]): Number of best-performing kernels (by win rate)
+                to test at each node split. Defaults to 2. Higher values test more kernels
+                (more thorough but slower). Only used if kernel_alternatives is provided.
+            kernel_selection_n_random (Optional[int]): Number of random kernels to test for
+                exploration at each node split. Defaults to 1. Ensures all kernels get tested
+                eventually. Only used if kernel_alternatives is provided.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -126,6 +135,9 @@ class GPTree:
             # Enable automatic kernel selection: start with kernel type 0
             kernel_type_idx = 0
             root_kernel = kernel_alternatives[kernel_type_idx]
+
+            # Create kernel performance tracker
+            kernel_tracker = KernelPerformanceTracker(len(kernel_alternatives))
 
             # If user provided a GPR, use it as template for settings
             # Otherwise create default GPR
@@ -139,6 +151,7 @@ class GPTree:
             # No automatic kernel selection
             kernel_type_idx = None
             kernel_alternatives = None
+            kernel_tracker = None
             if GPR is None:
                 from pygptreeo.default_gpr import Default_GPR
                 GPR = Default_GPR()
@@ -147,12 +160,18 @@ class GPTree:
         self.splitting_strategy = splitting_strategy
         self.n_outputs = n_outputs
         self.kernel_alternatives = kernel_alternatives
+        self.kernel_tracker = kernel_tracker
+        self.kernel_selection_k_best = kernel_selection_k_best
+        self.kernel_selection_n_random = kernel_selection_n_random
 
         # Create root node with appropriate kernel_type_idx and kernel_alternatives
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
                           kernel_type_idx=kernel_type_idx, kernel_alternatives=kernel_alternatives,
                           kernel_eval_train_fraction=kernel_eval_train_fraction,
+                          kernel_tracker=kernel_tracker,
+                          kernel_selection_k_best=kernel_selection_k_best,
+                          kernel_selection_n_random=kernel_selection_n_random,
                           **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
