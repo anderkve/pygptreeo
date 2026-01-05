@@ -87,7 +87,9 @@ class GPNode(Node):
                  split_eval_train_fraction: Optional[float] = 0.6,
                  split_eval_min_points: Optional[int] = 20,
                  n_outputs: Optional[int] = 1,
-                 kernel_type_idx: Optional[int] = None):
+                 kernel_type_idx: Optional[int] = None,
+                 kernel_alternatives: Optional[list] = None,
+                 kernel_eval_train_fraction: Optional[float] = 0.6):
         """Initializes a GPNode.
 
         Args:
@@ -141,9 +143,13 @@ class GPNode(Node):
                 to evaluate that split. Defaults to 20.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
                 For multi-output GPs, independent GPs are trained for each output.
-            kernel_type_idx (Optional[int]): Index of the kernel type used by this node (0-5).
+            kernel_type_idx (Optional[int]): Index of the kernel type used by this node.
                 If None, the kernel type is not tracked. This is used for automatic kernel
                 selection to record which kernel type was selected for this node.
+            kernel_alternatives (Optional[list]): List of kernel objects for automatic kernel
+                selection. If None or empty, automatic kernel selection is disabled.
+            kernel_eval_train_fraction (Optional[float]): Fraction of points to use for training
+                during kernel selection evaluation. The rest is used for testing. Defaults to 0.6.
         """
 
         super().__init__(*args)
@@ -230,8 +236,10 @@ class GPNode(Node):
         self.overlap = DEFAULT_OVERLAP  # 'o' in the DLGP article
         self.name = name
 
-        # Kernel type index for automatic kernel selection
+        # Kernel type index and alternatives list for automatic kernel selection
         self.kernel_type_idx = kernel_type_idx
+        self.kernel_alternatives = kernel_alternatives
+        self.kernel_eval_train_fraction = kernel_eval_train_fraction
 
         self.n_points_pred_perf = DEFAULT_N_POINTS_PRED_PERF
         # For multi-output: these become lists of arrays (one per output)
@@ -309,81 +317,184 @@ class GPNode(Node):
         self.merge_counts = np.array([]).reshape((0, 1))
 
 
+    def mare(self, y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-8) -> float:
+        """
+        Compute Mean Absolute Relative Error (MARE).
+
+        Parameters
+        ----------
+        y_true : np.ndarray
+            True values.
+        y_pred : np.ndarray
+            Predicted values (same shape as y_true).
+        eps : float, optional
+            Small guard added to denominator to avoid division by zero (default 1e-8).
+
+        Returns
+        -------
+        float
+            The MARE
+        """
+
+        denom = np.where(np.abs(y_true) < eps, eps, y_true)
+        rel_err = (y_pred - y_true) / denom
+        mare_val = np.mean(np.abs(rel_err))
+        return mare_val
+
+
     def select_best_kernel_for_split(self, base_gpr: GPRegressorInterface):
-        """Select the best kernel type for child nodes by comparing parent's kernel with a random alternative.
+        """Select the best kernel type for child nodes using train/test MARE evaluation.
 
         This method:
-        1. Randomly selects an alternative kernel from the predefined list (indices 0-5)
-        2. Trains both the parent's current kernel and the alternative on the node's data
-        3. Compares log marginal likelihoods
-        4. Returns the kernel type index and GPR with the better performing kernel
+        1. Randomly selects an alternative kernel from the kernel_alternatives list
+        2. Splits data into train/test sets
+        3. Trains both kernels on the train set
+        4. Evaluates MARE on the test set
+        5. Returns the kernel type index and GPR with the better performing kernel
 
         Args:
             base_gpr (GPRegressorInterface): Base GPR to use as template for creating new GPRs
 
         Returns:
             tuple: (selected_kernel_idx, selected_gpr) where:
-                - selected_kernel_idx (int): Index of the selected kernel (0-5)
+                - selected_kernel_idx (int): Index of the selected kernel
                 - selected_gpr (GPRegressorInterface): GPR configured with the selected kernel
         """
-        from pygptreeo.default_gpr import get_kernel_by_index
-
-        # If kernel_type_idx is None, no automatic selection is enabled
+        # If kernel_alternatives is None or empty, no automatic selection is enabled
         # Just return a clone of the parent's GPR
-        if self.kernel_type_idx is None:
+        if self.kernel_alternatives is None or len(self.kernel_alternatives) == 0:
             return None, base_gpr.clone()
 
-        # Randomly select an alternative kernel index from 0-5
-        alternative_idx = np.random.randint(0, 6)
+        # If only one kernel in the list, no alternative to test
+        if len(self.kernel_alternatives) == 1:
+            return self.kernel_type_idx, base_gpr.clone()
+
+        # Randomly select an alternative kernel index from the kernel_alternatives list
+        # Make sure to exclude the parent's current kernel index
+        available_indices = [i for i in range(len(self.kernel_alternatives)) if i != self.kernel_type_idx]
+        alternative_idx = np.random.choice(available_indices)
 
         # Prepare training data
-        X_train = np.vstack((self.my_X_data, self.shared_X_data))
-        y_train = np.vstack((self.my_y_data, self.shared_y_data))
-        sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))
+        X_data = np.vstack((self.my_X_data, self.shared_X_data))
+        y_data = np.vstack((self.my_y_data, self.shared_y_data))
+        sigma_data = np.vstack((self.my_sigma_data, self.shared_sigma_data))
 
-        if X_train.shape[0] == 0:
-            # No data to train on, just return parent's kernel
+        # Need minimum of 20 points for a reasonable train/test split
+        if X_data.shape[0] < 20:
+            # Not enough data for train/test evaluation, just return parent's kernel
             return self.kernel_type_idx, base_gpr.clone()
 
         # We'll only use the first output for kernel selection (for multi-output case)
-        y_train_single = y_train[:, 0:1]
-        sigma_train_single = sigma_train[:, 0:1]
-        alpha_train = sigma_train_single ** 2  # Convert to variance
+        y_data_single = y_data[:, 0:1]
+        sigma_data_single = sigma_data[:, 0:1]
+
+        # Split into train/test
+        n_train = max(int(X_data.shape[0] * self.kernel_eval_train_fraction), 10)
+        n_train = min(n_train, X_data.shape[0] - 5)  # Leave at least 5 for testing
+
+        indices = np.random.permutation(X_data.shape[0])
+        train_idx = indices[:n_train]
+        test_idx = indices[n_train:]
+
+        if len(test_idx) == 0:
+            # Not enough data for testing, return parent's kernel
+            return self.kernel_type_idx, base_gpr.clone()
+
+        X_train = X_data[train_idx]
+        y_train = y_data_single[train_idx]
+        sigma_train = sigma_data_single[train_idx]
+        alpha_train = sigma_train ** 2  # Convert to variance
+
+        X_test = X_data[test_idx]
+        y_test = y_data_single[test_idx]
 
         # Test parent's kernel
-        parent_lml = -np.inf
+        parent_mare = np.inf
         try:
             # Clone the parent's GPR and train it
             gpr_parent = base_gpr.clone()
             gpr_parent.alpha = alpha_train.flatten()
-            gpr_parent.fit(X_train, y_train_single)
-            parent_lml = gpr_parent.log_marginal_likelihood()
+
+            # Apply scaling if enabled
+            if self.use_standard_scaling:
+                from sklearn.preprocessing import StandardScaler
+                scaler_X = StandardScaler()
+                scaler_y = StandardScaler()
+                X_train_scaled = scaler_X.fit_transform(X_train)
+                y_train_scaled = scaler_y.fit_transform(y_train)
+                gpr_parent.fit(X_train_scaled, y_train_scaled)
+
+                # Predict on test set
+                X_test_scaled = scaler_X.transform(X_test)
+                y_pred_scaled = gpr_parent.predict(X_test_scaled, return_std=False)
+                y_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1)).flatten()
+            else:
+                gpr_parent.fit(X_train, y_train)
+                y_pred = gpr_parent.predict(X_test, return_std=False)
+
+            parent_mare = self.mare(y_test.flatten(), y_pred)
         except Exception as e:
             warnings.warn(f"Node {self.name}: Failed to train parent kernel (idx={self.kernel_type_idx}): {e}", RuntimeWarning)
 
         # Test alternative kernel
-        alternative_lml = -np.inf
+        alternative_mare = np.inf
         try:
             # Clone the base GPR and replace its kernel
             # This preserves settings like n_restarts_optimizer from the base GPR
-            alternative_kernel = get_kernel_by_index(alternative_idx)
+            alternative_kernel = self.kernel_alternatives[alternative_idx]
             gpr_alternative = base_gpr.clone()
             gpr_alternative.set_kernel(alternative_kernel)
             gpr_alternative.alpha = alpha_train.flatten()
-            gpr_alternative.fit(X_train, y_train_single)
-            alternative_lml = gpr_alternative.log_marginal_likelihood()
+
+            # Apply scaling if enabled
+            if self.use_standard_scaling:
+                from sklearn.preprocessing import StandardScaler
+                scaler_X = StandardScaler()
+                scaler_y = StandardScaler()
+                X_train_scaled = scaler_X.fit_transform(X_train)
+                y_train_scaled = scaler_y.fit_transform(y_train)
+                gpr_alternative.fit(X_train_scaled, y_train_scaled)
+
+                # Predict on test set
+                X_test_scaled = scaler_X.transform(X_test)
+                y_pred_scaled = gpr_alternative.predict(X_test_scaled, return_std=False)
+                y_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1)).flatten()
+            else:
+                gpr_alternative.fit(X_train, y_train)
+                y_pred = gpr_alternative.predict(X_test, return_std=False)
+
+            alternative_mare = self.mare(y_test.flatten(), y_pred)
         except Exception as e:
             warnings.warn(f"Node {self.name}: Failed to train alternative kernel (idx={alternative_idx}): {e}", RuntimeWarning)
 
-        # Compare and select the best kernel
-        if alternative_lml > parent_lml:
+        # Compare and select the best kernel (lower mare is better)
+        if alternative_mare < parent_mare:
             selected_idx = alternative_idx
-            selected_gpr = gpr_alternative
-            print(f"Node {self.name}: Selected alternative kernel {alternative_idx} (LML={alternative_lml:.2f}) over parent kernel {self.kernel_type_idx} (LML={parent_lml:.2f})")
+            selected_kernel = self.kernel_alternatives[alternative_idx]
+            print(f"Node {self.name}: Selected alternative kernel {alternative_idx} (MARE={alternative_mare:.4e}) over parent kernel {self.kernel_type_idx} (MARE={parent_mare:.4e})")
         else:
             selected_idx = self.kernel_type_idx
-            selected_gpr = base_gpr.clone()
-            print(f"Node {self.name}: Kept parent kernel {self.kernel_type_idx} (LML={parent_lml:.2f}) over alternative kernel {alternative_idx} (LML={alternative_lml:.2f})")
+            selected_kernel = base_gpr.get_kernel()
+            print(f"Node {self.name}: Kept parent kernel {self.kernel_type_idx} (MARE={parent_mare:.4e}) over alternative kernel {alternative_idx} (MARE={alternative_mare:.4e})")
+
+        # Retrain the selected kernel on ALL available data (not just train subset)
+        selected_gpr = base_gpr.clone()
+        selected_gpr.set_kernel(selected_kernel)
+
+        # Prepare full dataset
+        alpha_full = sigma_data_single ** 2  # Convert to variance
+        selected_gpr.alpha = alpha_full.flatten()
+
+        # Train on full data with appropriate scaling
+        if self.use_standard_scaling:
+            from sklearn.preprocessing import StandardScaler
+            scaler_X_full = StandardScaler()
+            scaler_y_full = StandardScaler()
+            X_scaled_full = scaler_X_full.fit_transform(X_data)
+            y_scaled_full = scaler_y_full.fit_transform(y_data_single)
+            selected_gpr.fit(X_scaled_full, y_scaled_full)
+        else:
+            selected_gpr.fit(X_data, y_data_single)
 
         return selected_idx, selected_gpr
 
@@ -415,6 +526,8 @@ class GPNode(Node):
             'split_eval_min_points': self.split_eval_min_points,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
             'kernel_type_idx': selected_kernel_idx,  # Pass selected kernel type index to children
+            'kernel_alternatives': self.kernel_alternatives,  # Pass kernel alternatives list to children
+            'kernel_eval_train_fraction': self.kernel_eval_train_fraction,  # Pass kernel evaluation train fraction to children
         }
 
         # Create child nodes with the selected kernel
@@ -997,7 +1110,7 @@ class GPNode(Node):
         2. For each region:
            - Splits into train/test subsets
            - Trains a small GP on train subset
-           - Evaluates RMSE on test subset
+           - Evaluates MARE on test subset
         3. Returns combined error score (lower is better)
 
         Args:
@@ -1006,7 +1119,7 @@ class GPNode(Node):
             overlap (float): Overlap parameter for prob_func
 
         Returns:
-            float: Combined RMSE score (weighted average of left and right errors)
+            float: Combined MARE score (weighted average of left and right errors)
                    Returns np.inf if evaluation fails or insufficient data
         """
         if self.my_X_data.shape[0] < 2 * self.split_eval_min_points:
@@ -1085,7 +1198,7 @@ class GPNode(Node):
                 y_pred_left = gp_left.predict(X_left[test_idx_left], return_std=False)
 
             y_true_left = y_left[test_idx_left].flatten()
-            rmse_left = np.sqrt(np.mean((y_true_left - y_pred_left)**2))
+            mare_left = self.mare(y_true_left, y_pred_left)
 
             # Evaluate right region
             X_right = self.my_X_data[right_indices]
@@ -1125,14 +1238,14 @@ class GPNode(Node):
                 y_pred_right = gp_right.predict(X_right[test_idx_right], return_std=False)
 
             y_true_right = y_right[test_idx_right].flatten()
-            rmse_right = np.sqrt(np.mean((y_true_right - y_pred_right)**2))
+            mare_right = self.mare(y_true_right, y_pred_right)
 
             # Combined score: weighted average by number of test points
             n_test_left = len(test_idx_left)
             n_test_right = len(test_idx_right)
-            combined_rmse = (n_test_left * rmse_left + n_test_right * rmse_right) / (n_test_left + n_test_right)
+            combined_mare = (n_test_left * mare_left + n_test_right * mare_right) / (n_test_left + n_test_right)
 
-            return combined_rmse
+            return combined_mare
 
         except Exception as e:
             # If evaluation fails, return infinity (worst score)

@@ -3,15 +3,16 @@
 This script showcases the automatic kernel selection feature of the `GPTree`
 from the `pygptreeo` library for a regression task. It performs the following steps:
 1.  Defines or imports a target function (e.g., Eggholder, Himmelblau).
-2.  Sets up parameters for the `GPTree` with automatic kernel selection enabled.
-3.  Initializes a `GPTree` instance with `enable_kernel_selection=True`.
-4.  Generates random input data (`X_input`) and corresponding target
+2.  Creates a list of kernel alternatives for automatic kernel selection.
+3.  Sets up parameters for the `GPTree` with kernel_alternatives list.
+4.  Initializes a `GPTree` instance with the kernel_alternatives parameter.
+5.  Generates random input data (`X_input`) and corresponding target
     values (`y_input`).
-5.  Iterates through the data points:
+6.  Iterates through the data points:
     a.  Makes a prediction using the current state of the `GPTree`.
     b.  Updates the `GPTree` with the new data point.
     c.  Prints a comparison of the true and predicted values.
-6.  At the end, reports which kernel types were selected across the tree.
+7.  At the end, reports which kernel types were selected across the tree.
 
 With automatic kernel selection, each node tests its current kernel against a
 randomly selected alternative at split time, and selects the better performing
@@ -23,6 +24,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pygptreeo import GPTree
 from pygptreeo.default_gpr import Default_GPR
+from pygptreeo.kernels import AnisotropicRationalQuadratic
+from sklearn.gaussian_process.kernels import ConstantKernel, RBF, Matern
 import sys
 import time
 
@@ -79,14 +82,149 @@ X_input = np.random.uniform(x_min, x_max, n_dims * n_pts).reshape(n_pts, n_dims)
 y_input = target(X_input.T)
 
 
-# Construct GPTree with automatic kernel selection
-# Instead of defining a custom GPR class, we enable automatic kernel selection
-# The tree will start with kernel type 0: Const*(RBF + Matern(nu=1.5))
-# At each split, nodes will test their kernel against a random alternative
-# and select the better performing one based on log marginal likelihood
+# Create a list of kernel alternatives for automatic kernel selection
+# This list defines the kernels that nodes can choose from during splitting
+# Each kernel has manually set hyperparameter bounds for better optimization
+
+# kernel_alternatives = [
+#     # 0: Const*(RBF + Matern(nu=1.5))
+#     ConstantKernel(
+#         constant_value=1.0,
+#         constant_value_bounds=(1e-3, 1e8)
+#     ) * (RBF(
+#         length_scale=[1.0]*n_dims,
+#         length_scale_bounds=[(1e-5, 1e5)]*n_dims
+#     ) + Matern(
+#         nu=1.5,
+#         length_scale=[1.0]*n_dims,
+#         length_scale_bounds=[(1e-5, 1e5)]*n_dims
+#     )),
+
+#     # 1: Const*(AnisotropicRQ + Matern(nu=1.5))
+#     ConstantKernel(
+#         constant_value=1.0,
+#         constant_value_bounds=(1e-3, 1e8)
+#     ) * (AnisotropicRationalQuadratic(
+#         length_scale=[1.0]*n_dims,
+#         length_scale_bounds=(1e-5, 1e5),
+#         alpha=1.0,
+#         alpha_bounds=(1e-4, 1e4)
+#     ) + Matern(
+#         nu=1.5,
+#         length_scale=[1.0]*n_dims,
+#         length_scale_bounds=[(1e-5, 1e5)]*n_dims
+#     )),
+
+#     # 2: Const*(AnisotropicRQ + RBF)
+#     ConstantKernel(
+#         constant_value=1.0,
+#         constant_value_bounds=(1e-3, 1e8)
+#     ) * (AnisotropicRationalQuadratic(
+#         length_scale=[1.0]*n_dims,
+#         length_scale_bounds=(1e-5, 1e5),
+#         alpha=1.0,
+#         alpha_bounds=(1e-4, 1e4)
+#     ) + RBF(
+#         length_scale=[1.0]*n_dims,
+#         length_scale_bounds=[(1e-5, 1e5)]*n_dims
+#     )),
+
+#     # # 3: Const*AnisotropicRQ
+#     # ConstantKernel(
+#     #     constant_value=1.0,
+#     #     constant_value_bounds=(1e-3, 1e8)
+#     # ) * AnisotropicRationalQuadratic(
+#     #     length_scale=[1.0]*n_dims,
+#     #     length_scale_bounds=(1e-5, 1e5),
+#     #     alpha=1.0,
+#     #     alpha_bounds=(1e-4, 1e4)
+#     # ),
+
+#     # # 4: Const*Matern(nu=1.5)
+#     # ConstantKernel(
+#     #     constant_value=1.0,
+#     #     constant_value_bounds=(1e-3, 1e8)
+#     # ) * Matern(
+#     #     nu=1.5,
+#     #     length_scale=[1.0]*n_dims,
+#     #     length_scale_bounds=[(1e-5, 1e5)]*n_dims
+#     # ),
+
+#     # # 5: Const*RBF
+#     # ConstantKernel(
+#     #     constant_value=1.0,
+#     #     constant_value_bounds=(1e-3, 1e8)
+#     # ) * RBF(
+#     #     length_scale=[1.0]*n_dims,
+#     #     length_scale_bounds=[(1e-5, 1e5)]*n_dims
+#     # ),
+# ]
+
+
+kernel_alternatives = [
+    ConstantKernel(
+        constant_value=1.0,
+        constant_value_bounds=(1e-3, 1e8)
+    ) * (AnisotropicRationalQuadratic(
+        length_scale=[1.0]*n_dims,
+        length_scale_bounds=(1e-5, 1e5),
+        alpha=1.0,
+        alpha_bounds=(1e-4, 1e4)
+    ) + Matern(
+        nu=1.5,
+        length_scale=[1.0]*n_dims,
+        length_scale_bounds=[(1e-5, 1e5)]*n_dims
+    )),
+
+    ConstantKernel(
+        constant_value=1.0,
+        constant_value_bounds=(1e-3, 1e8)
+    ) * (RBF(
+        length_scale=[1.0]*n_dims,
+        length_scale_bounds=[(1e-5, 1e5)]*n_dims
+    ) + Matern(
+        nu=1.5,
+        length_scale=[1.0]*n_dims,
+        length_scale_bounds=[(1e-5, 1e5)]*n_dims
+    )),
+
+    # ConstantKernel(
+    #     constant_value=1.0,
+    #     constant_value_bounds=(1e-3, 1e8)
+    # ) * (AnisotropicRationalQuadratic(
+    #     length_scale=[1.0]*n_dims,
+    #     length_scale_bounds=(1e-5, 1e5),
+    #     alpha=1.0,
+    #     alpha_bounds=(1e-4, 1e4)
+    # ) + Matern(
+    #     nu=2.5,
+    #     length_scale=[1.0]*n_dims,
+    #     length_scale_bounds=[(1e-5, 1e5)]*n_dims
+    # )),
+
+    # ConstantKernel(
+    #     constant_value=1.0,
+    #     constant_value_bounds=(1e-3, 1e8)
+    # ) * Matern(
+    #     nu=1.5,
+    #     length_scale=[1.0]*n_dims,
+    #     length_scale_bounds=[(1e-5, 1e5)]*n_dims
+    # ),
+
+    # ConstantKernel(
+    #     constant_value=1.0,
+    #     constant_value_bounds=(1e-3, 1e8)
+    # ) * AnisotropicRationalQuadratic(
+    #     length_scale=[1.0]*n_dims,
+    #     length_scale_bounds=(1e-5, 1e5),
+    #     alpha=1.0,
+    #     alpha_bounds=(1e-4, 1e4)
+    # ),
+
+]
 
 # Create a GPR with custom settings to use as template
-# The kernel will be automatically set based on kernel selection
+# The initial kernel will be set from kernel_alternatives[0]
 my_gpr = Default_GPR(
     n_restarts_optimizer=3,  # Match the original performance_test.py settings
     alpha=1e-6,
@@ -94,7 +232,8 @@ my_gpr = Default_GPR(
 
 gpt = GPTree(
     GPR=my_gpr,  # Pass custom GPR as template for settings
-    enable_kernel_selection=True,  # Enable automatic kernel selection
+    kernel_alternatives=kernel_alternatives,  # Enable automatic kernel selection with this list
+    kernel_eval_train_fraction=0.4, 
     Nbar=Nbar,
     theta=theta,
     split_position_method='median',
@@ -289,7 +428,7 @@ for x,y in zip(X_input, y_input):
 
 
         plt.tight_layout(rect=[0, 0, 1, 0.96])
-        plt.savefig("plot_2.png")
+        plt.savefig("plot_9.png")
         # plt.pause(0.01)
 
         # Reset batch lists
@@ -316,9 +455,9 @@ print("=" * 80)
 
 kernel_names = {
     0: "Const*(RBF + Matern(nu=1.5))",
-    1: "Const*(RQ + Matern(nu=1.5))",
-    2: "Const*(RQ + RBF)",
-    3: "Const*RQ",
+    1: "Const*(AnisotropicRQ + Matern(nu=1.5))",
+    2: "Const*(AnisotropicRQ + RBF)",
+    3: "Const*AnisotropicRQ",
     4: "Const*Matern(nu=1.5)",
     5: "Const*RBF"
 }

@@ -80,7 +80,8 @@ class GPTree:
                  max_n_pred_leaves: Optional[int] = None,
                  aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
-                 enable_kernel_selection: Optional[bool] = False,
+                 kernel_alternatives: Optional[list] = None,
+                 kernel_eval_train_fraction: Optional[float] = 0.6,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -106,10 +107,14 @@ class GPTree:
                 'default'/'moe' or 'poe'. Defaults to 'default'.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
                 For multi-output GPs, independent GPs are trained for each output.
-            enable_kernel_selection (Optional[bool]): If True, enables automatic kernel
-                selection where each node tests its kernel against a random alternative
-                at split time and selects the better performing one based on log marginal
-                likelihood. Defaults to False.
+            kernel_alternatives (Optional[list]): List of kernel objects for automatic kernel
+                selection. If provided (non-empty list), enables automatic kernel selection where
+                each node tests its kernel against a random alternative from this list at split
+                time and selects the better performing one based on train/test MAPE.
+                Defaults to None (no automatic kernel selection).
+            kernel_eval_train_fraction (Optional[float]): Fraction of points to use for training
+                during kernel selection evaluation. The rest is used for testing. Defaults to 0.6.
+                Only used if kernel_alternatives is provided.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -117,11 +122,10 @@ class GPTree:
         """
 
         # Handle automatic kernel selection
-        if enable_kernel_selection:
+        if kernel_alternatives is not None and len(kernel_alternatives) > 0:
             # Enable automatic kernel selection: start with kernel type 0
-            from pygptreeo.default_gpr import get_kernel_by_index
             kernel_type_idx = 0
-            root_kernel = get_kernel_by_index(kernel_type_idx)
+            root_kernel = kernel_alternatives[kernel_type_idx]
 
             # If user provided a GPR, use it as template for settings
             # Otherwise create default GPR
@@ -134,6 +138,7 @@ class GPTree:
         else:
             # No automatic kernel selection
             kernel_type_idx = None
+            kernel_alternatives = None
             if GPR is None:
                 from pygptreeo.default_gpr import Default_GPR
                 GPR = Default_GPR()
@@ -141,12 +146,14 @@ class GPTree:
         self.GPR = GPR
         self.splitting_strategy = splitting_strategy
         self.n_outputs = n_outputs
-        self.enable_kernel_selection = enable_kernel_selection
+        self.kernel_alternatives = kernel_alternatives
 
-        # Create root node with appropriate kernel_type_idx
+        # Create root node with appropriate kernel_type_idx and kernel_alternatives
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
-                          kernel_type_idx=kernel_type_idx, **kwargs)  # Initialize root node of the GPTree
+                          kernel_type_idx=kernel_type_idx, kernel_alternatives=kernel_alternatives,
+                          kernel_eval_train_fraction=kernel_eval_train_fraction,
+                          **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 
