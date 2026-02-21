@@ -22,16 +22,16 @@ from pygptreeo import GPTree, Default_GPR
 # ============================================================
 
 n_dims = 15
-n_iterations = 10
-batch_size_train = 3000
-batch_size_test = 3000
+n_iterations = 40
+batch_size_train = 5000
+batch_size_test = 5000
 
 x_min = 0.0
 x_max = 1.0
 
-Nbar = 200
+Nbar = 1000
 theta = 1e-4
-retrain_step = 200
+retrain_step = 1000
 
 np.random.seed(42)
 
