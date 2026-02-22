@@ -1,10 +1,14 @@
 """Training test: 5 GPTree instances on 5 smooth functions in 15 dimensions.
 
 This script trains 5 separate GPTree instances on 5 different smoothly varying
-functions in 15 dimensions. Training is done in batches of several thousand
-points, with a similarly sized batch of test points evaluated after each
-training batch. This is repeated for 10 iterations and the results are
-summarised in a plot.
+functions in 15 dimensions. Training is done in batches of 20000 points each,
+with training disabled during point insertion. After each batch is fully
+inserted, all leaves in each tree are trained explicitly. This reduces the
+number of GP trainings performed compared to online training.
+
+A batch of test points is evaluated after each training batch. This is
+repeated for 15 iterations (300000 total training points) and the results
+are summarised in a plot.
 
 Usage:
     python training_test_5functions.py
@@ -22,16 +26,16 @@ from pygptreeo import GPTree, Default_GPR
 # ============================================================
 
 n_dims = 15
-n_iterations = 40
-batch_size_train = 5000
+n_iterations = 15          # 15 * 20000 = 300000 total training points
+batch_size_train = 20000
 batch_size_test = 5000
 
 x_min = 0.0
 x_max = 1.0
 
-Nbar = 1000
+Nbar = 2000
 theta = 1e-4
-retrain_step = 1000
+retrain_step = 2000        # Not used during insertion (allow_training=False)
 
 np.random.seed(42)
 
@@ -183,13 +187,22 @@ for iteration in range(n_iterations):
         # Compute training targets
         y_train = func(X_train.T)  # shape (n_pts,)
 
-        # Train: feed batch point by point using update_tree
+        # Train: feed batch point by point with training disabled,
+        # then train all leaves after the batch is complete
         t_start = time.time()
+
+        # Step 1: Insert all points without training
         for j in range(batch_size_train):
             x_j = X_train[j:j+1, :]            # shape (1, n_dims)
             y_j = y_train[j].reshape(1, 1)      # shape (1, 1)
             sigma_j = np.maximum(0.001 * np.abs(y_j), 1e-6)
-            trees[f_idx].update_tree(x_j, y_j, sigma_j)
+            trees[f_idx].update_tree(x_j, y_j, sigma_j, allow_training=False)
+
+        # Step 2: Train all leaves
+        n_leaves = len(trees[f_idx].root.leaves)
+        for leaf in trees[f_idx].root.leaves:
+            leaf.fit_my_GPR(force_training=True)
+
         train_times[f_idx, iteration] = time.time() - t_start
 
         # Test: predict on test batch
@@ -216,9 +229,11 @@ for iteration in range(n_iterations):
         coverage_results[f_idx, iteration] = coverage
 
         total_pts = (iteration + 1) * batch_size_train
+        n_leaves = len(trees[f_idx].root.leaves)
         print(f"  {func_name:20s}  |  NRMSE: {nrmse:.4e}  |  MAE: {mae:.4e}"
               f"  |  Coverage: {coverage:.3f}  |  Train: {train_times[f_idx, iteration]:.1f}s"
-              f"  |  Test: {test_times[f_idx, iteration]:.1f}s  |  Total pts: {total_pts}")
+              f"  |  Test: {test_times[f_idx, iteration]:.1f}s  |  Total pts: {total_pts}"
+              f"  |  Leaves: {n_leaves}")
 
 
 # ============================================================
@@ -230,8 +245,8 @@ cumulative_train_pts = iterations * batch_size_train
 
 fig, axs = plt.subplots(3, 1, figsize=(12, 12), sharex=True)
 fig.suptitle(
-    f'GPTree training performance \u2014 5 smooth functions in {n_dims}D\n'
-    f'(batch size: {batch_size_train} train / {batch_size_test} test, Nbar={Nbar})',
+    f'GPTree batch-train-leaves performance \u2014 5 smooth functions in {n_dims}D\n'
+    f'(batch size: {batch_size_train} train / {batch_size_test} test, Nbar={Nbar}, training disabled during insertion)',
     fontsize=14,
 )
 
