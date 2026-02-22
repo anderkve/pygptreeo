@@ -1,14 +1,15 @@
 """Training test: 5 GPTree instances on 5 smooth functions in 15 dimensions.
 
 This script trains 5 separate GPTree instances on 5 different smoothly varying
-functions in 15 dimensions. Training is done in batches of 20000 points each,
+functions in 15 dimensions. Training is done in batches of 10000 points each,
 with training disabled during point insertion. After each batch is fully
 inserted, all leaves in each tree are trained explicitly. This reduces the
 number of GP trainings performed compared to online training.
 
-A batch of test points is evaluated after each training batch. This is
-repeated for 15 iterations (300000 total training points) and the results
-are summarised in a plot.
+Performance metrics are computed per batch of test points (fresh test batch
+each iteration), so that differences from one batch to the next are visible.
+This is repeated for 30 iterations (300000 total training points) and the
+results are summarised in a plot.
 
 Usage:
     python training_test_5functions.py
@@ -26,16 +27,16 @@ from pygptreeo import GPTree, Default_GPR
 # ============================================================
 
 n_dims = 15
-n_iterations = 15          # 15 * 20000 = 300000 total training points
-batch_size_train = 20000
+n_iterations = 30          # 30 * 10000 = 300000 total training points
+batch_size_train = 10000
 batch_size_test = 5000
 
 x_min = 0.0
 x_max = 1.0
 
-Nbar = 2000
+Nbar = 1000
 theta = 1e-4
-retrain_step = 2000        # Not used during insertion (allow_training=False)
+retrain_step = 1000        # Not used during insertion (allow_training=False)
 
 np.random.seed(42)
 
@@ -246,7 +247,7 @@ cumulative_train_pts = iterations * batch_size_train
 fig, axs = plt.subplots(3, 1, figsize=(12, 12), sharex=True)
 fig.suptitle(
     f'GPTree batch-train-leaves performance \u2014 5 smooth functions in {n_dims}D\n'
-    f'(batch size: {batch_size_train} train / {batch_size_test} test, Nbar={Nbar}, training disabled during insertion)',
+    f'(batch: {batch_size_train} train / {batch_size_test} test, Nbar={Nbar}, per-batch metrics)',
     fontsize=14,
 )
 
