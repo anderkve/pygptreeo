@@ -42,7 +42,7 @@ def _make_configured_gpr_class(n_dims: int):
             self.min_length_scale = 0.001
             self.alpha = alpha
             self.optimizer = optimizer
-            self.n_restarts_optimizer = 3
+            self.n_restarts_optimizer = 1  # 3 was too slow for long benchmarks
             self.normalize_y = normalize_y
             self.copy_X_train = copy_X_train
             self.n_targets = n_targets

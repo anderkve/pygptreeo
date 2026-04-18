@@ -52,10 +52,10 @@ class GPyTorchSVGPAdapter(OnlineRegressor):
     name = "gpytorch_svgp"
     supports_uncertainty = True
 
-    def __init__(self, n_dims: int, n_inducing: int = 64,
-                 retrain_every: int = 200, n_epochs: int = 20,
+    def __init__(self, n_dims: int, n_inducing: int = 256,
+                 retrain_every: int = 200, n_epochs: int = 60,
                  batch_size: int = 128, max_buffer: int = 5000,
-                 lr: float = 1e-2, device: str = "cpu"):
+                 lr: float = 5e-3, device: str = "cpu"):
         self.n_dims = n_dims
         self.n_inducing = n_inducing
         self.retrain_every = retrain_every

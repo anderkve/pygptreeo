@@ -19,7 +19,7 @@ class RandomForestAdapter(OnlineRegressor):
     supports_uncertainty = True
 
     def __init__(self, n_dims: int, retrain_every: int = 200,
-                 n_estimators: int = 100, max_train_points: int = 20000,
+                 n_estimators: int = 300, max_train_points: int = 20000,
                  random_state: int = 0):
         self.n_dims = n_dims
         self.retrain_every = retrain_every
@@ -29,6 +29,7 @@ class RandomForestAdapter(OnlineRegressor):
         self._X_buf: list[np.ndarray] = []
         self._y_buf: list[np.ndarray] = []
         self._steps_since_refit = 0
+        self._n_refits = 0
         self._model: RandomForestRegressor | None = None
         self._trained = False
 
@@ -39,20 +40,18 @@ class RandomForestAdapter(OnlineRegressor):
         X = np.vstack(self._X_buf)
         y = np.vstack(self._y_buf).ravel()
         if n > self.max_train_points:
-            rng = np.random.default_rng(self.random_state)
-            n_recent = self.max_train_points // 4
-            n_random = self.max_train_points - n_recent
-            idx_random = rng.choice(n - n_recent, size=n_random, replace=False)
-            idx = np.concatenate([idx_random, np.arange(n - n_recent, n)])
+            rng = np.random.default_rng(self.random_state + self._n_refits)
+            idx = rng.choice(n, size=self.max_train_points, replace=False)
             X = X[idx]
             y = y[idx]
         self._model = RandomForestRegressor(
             n_estimators=self.n_estimators,
             n_jobs=1,
-            random_state=self.random_state,
+            random_state=self.random_state + self._n_refits,
         )
         self._model.fit(X, y)
         self._trained = True
+        self._n_refits += 1
 
     def predict(self, X):
         if not self._trained:

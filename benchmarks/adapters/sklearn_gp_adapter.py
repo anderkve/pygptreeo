@@ -22,7 +22,7 @@ class SklearnGPAdapter(OnlineRegressor):
     supports_uncertainty = True
 
     def __init__(self, n_dims: int, retrain_every: int = 200,
-                 max_train_points: int = 2000, random_state: int = 0):
+                 max_train_points: int = 1500, random_state: int = 0):
         self.n_dims = n_dims
         self.retrain_every = retrain_every
         self.max_train_points = max_train_points
@@ -30,6 +30,7 @@ class SklearnGPAdapter(OnlineRegressor):
         self._X_buf: list[np.ndarray] = []
         self._y_buf: list[np.ndarray] = []
         self._steps_since_refit = 0
+        self._n_refits = 0
         self._model: GaussianProcessRegressor | None = None
         self._trained = False
 
@@ -54,17 +55,16 @@ class SklearnGPAdapter(OnlineRegressor):
         X = np.vstack(self._X_buf)
         y = np.vstack(self._y_buf).ravel()
         if n > self.max_train_points:
-            rng = np.random.default_rng(self.random_state)
-            # Keep the most recent 25% plus a random sample for coverage.
-            n_recent = self.max_train_points // 4
-            n_random = self.max_train_points - n_recent
-            idx_random = rng.choice(n - n_recent, size=n_random, replace=False)
-            idx = np.concatenate([idx_random, np.arange(n - n_recent, n)])
+            # Uniform reservoir-style subsample across the whole stream
+            # history. Different refits see different subsamples.
+            rng = np.random.default_rng(self.random_state + self._n_refits)
+            idx = rng.choice(n, size=self.max_train_points, replace=False)
             X = X[idx]
             y = y[idx]
         self._model = self._make_model()
         self._model.fit(X, y)
         self._trained = True
+        self._n_refits += 1
 
     def predict(self, X):
         if not self._trained:
