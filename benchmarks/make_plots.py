@@ -48,6 +48,7 @@ METHOD_LABEL = {
     "pygptreeo_A": "pygptreeo (A)",
     "pygptreeo_B": "pygptreeo (B: Nbar=100)",
     "pygptreeo_C": "pygptreeo (C: Matern-only)",
+    "pygptreeo_poe": "pygptreeo (PoE)",
     "sklearn_gp": "sklearn GP (A: N≤400)",
     "sklearn_gp_A": "sklearn GP (A: N≤400)",
     "sklearn_gp_B": "sklearn GP (B: N≤1200)",
@@ -64,6 +65,7 @@ METHOD_LABEL = {
 METHOD_COLOR = {
     "pygptreeo": "#d7263d", "pygptreeo_A": "#d7263d",
     "pygptreeo_B": "#ff6b8a", "pygptreeo_C": "#8b0000",
+    "pygptreeo_poe": "#ff9b3a",
     "sklearn_gp": "#1b9e77", "sklearn_gp_A": "#1b9e77",
     "sklearn_gp_B": "#0a5d47",
     "gpytorch_svgp": "#7570b3", "gpytorch_svgp_A": "#7570b3",
@@ -76,6 +78,7 @@ METHOD_COLOR = {
 METHOD_LS = {
     "pygptreeo": "-", "pygptreeo_A": "-",
     "pygptreeo_B": "-", "pygptreeo_C": (0, (5, 2)),
+    "pygptreeo_poe": (0, (2, 2)),
     "sklearn_gp": "--", "sklearn_gp_A": "--",
     "sklearn_gp_B": (0, (5, 1)),
     "gpytorch_svgp": "-.", "gpytorch_svgp_A": "-.",
@@ -638,8 +641,9 @@ def plot_headline(results, problems, out_path, schedule="iid"):
         ax.grid(True, axis="y", alpha=0.3)
 
     handles, labels = axes[0][0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=min(7, len(labels)),
-               bbox_to_anchor=(0.5, -0.06), frameon=False, fontsize=9)
+    # ncol=4 -> 2-row legend so labels don't clip.
+    fig.legend(handles, labels, loc="lower center", ncol=4,
+               bbox_to_anchor=(0.5, -0.14), frameon=False, fontsize=9)
     fig.suptitle(
         "pygptreeo vs. alternatives — median over seeds, IQR error bars",
         fontsize=13,
@@ -895,6 +899,26 @@ def main():
     n_runs = sum(len(v) for v in results.values())
     print(f"Loaded {n_runs} runs across {len(results)} "
           f"(method, problem, schedule) combinations.")
+
+    # One-line reliability statement, for paper quotability.
+    pygp_total = 0
+    pygp_clean = 0
+    for (method, _, _), runs in results.items():
+        if not method.startswith("pygptreeo"):
+            continue
+        for r in runs:
+            arr = r.get("frac_pathological_std")
+            if arr is None or len(arr) == 0:
+                continue
+            pygp_total += 1
+            if float(arr[-1]) == 0.0:
+                pygp_clean += 1
+    if pygp_total > 0:
+        pct = 100.0 * pygp_clean / pygp_total
+        print(
+            f"Reliability: {pygp_clean} / {pygp_total} pygptreeo* runs "
+            f"have frac_pathological_std[-1] == 0 ({pct:.1f} %)"
+        )
 
     out_dirs = [args.plots_dir]
     if args.iter_dir:

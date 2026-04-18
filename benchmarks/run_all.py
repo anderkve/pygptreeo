@@ -93,6 +93,56 @@ def _make_pygptreeo_C(d: int):
     )
 
 
+def _make_pygptreeo_poe(d: int):
+    """Aggregation ablation: same baseline as _A but PoE (product of
+    experts) instead of the default MoE (mixture of experts).
+
+    The adapter's GPTree takes an ``aggregation`` kwarg; PoE tends to
+    give sharper but potentially over-confident predictions when leaves
+    disagree. We include this variant so the paper can report the
+    MoE-vs-PoE trade-off empirically rather than just citing the DLGP
+    defaults.
+    """
+    from benchmarks.adapters.pygptreeo_adapter import (
+        PyGPTreeOAdapter, _make_configured_gpr_class,
+    )
+    from pygptreeo import GPTree
+    from pygptreeo.adapters import SklearnGPAdapter as _SklearnGPAdapter
+
+    class _PoEAdapter(PyGPTreeOAdapter):
+        def __init__(self, n_dims, Nbar=200, theta=1e-4,
+                     retrain_step=200, sigma_rel=1e-3,
+                     kernel_spec="matern+rq"):
+            # We can't easily override a single kwarg on the GPTree
+            # constructor from the parent __init__, so we rebuild the
+            # tree here with aggregation="poe".
+            self.n_dims = n_dims
+            self.sigma_rel = sigma_rel
+            self.kernel_spec = kernel_spec
+            gpr_cls = _make_configured_gpr_class(n_dims, kernel_spec)
+            self.tree = GPTree(
+                GPR=_SklearnGPAdapter(gpr_cls()),
+                Nbar=Nbar, theta=theta,
+                split_position_method="median",
+                split_dimension_criteria="max_uncertainty",
+                retrain_every_n_points=retrain_step,
+                use_calibrated_sigma=True,
+                splitting_strategy="gradual",
+                max_n_pred_leaves=3,
+                aggregation="poe",
+                use_hyperparameter_inheritance=False,
+                use_standard_scaling=True,
+                enable_point_rejection=False,
+                enable_point_merging=False,
+                enable_split_evaluation=True,
+                n_split_candidates=4,
+                split_eval_train_fraction=0.4,
+                split_eval_min_points=20,
+            )
+            self._seen = 0
+    return _PoEAdapter(d)
+
+
 # ---------- sklearn_gp -------------------------------------------------
 
 def _make_sklearn_gp_A(d: int):
@@ -176,6 +226,7 @@ METHODS = {
     "pygptreeo_A": _make_pygptreeo_A,
     "pygptreeo_B": _make_pygptreeo_B,
     "pygptreeo_C": _make_pygptreeo_C,
+    "pygptreeo_poe": _make_pygptreeo_poe,
     "sklearn_gp_A": _make_sklearn_gp_A,
     "sklearn_gp_B": _make_sklearn_gp_B,
     "gpytorch_svgp_A": _make_svgp_A,
