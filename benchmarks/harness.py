@@ -221,11 +221,17 @@ def run_online_benchmark(
     max_wall_time_s: float = 3600.0,
     method_name: str | None = None,
     verbose: bool = True,
+    save_every_checkpoint_to: str | None = None,
 ) -> RunResult:
     """Run one (method, problem, seed) benchmark.
 
     The test set is drawn from an **independent** RNG (``seed + 10_000``) so
     it cannot correlate with whatever the stream rng consumes.
+
+    If ``save_every_checkpoint_to`` is set, write ``result`` to that path
+    after every checkpoint. The driver uses this together with a subprocess
+    timeout: if the child is killed mid-``method.update()``, whatever was
+    already flushed is the surviving record.
     """
     _seed_all(seed)
 
@@ -287,6 +293,10 @@ def run_online_benchmark(
                     f"badσ {m['frac_pathological_std']:.2f} | "
                     f"upd {cum_update:.1f}s"
                 )
+            if save_every_checkpoint_to:
+                # Partial save so a subprocess timeout still leaves a record.
+                result.wall_time = time.time() - t_start
+                np.savez(save_every_checkpoint_to, **result.to_npz_dict())
 
             if time.time() - t_start > max_wall_time_s:
                 result.aborted = True
@@ -298,6 +308,8 @@ def run_online_benchmark(
 
     result.wall_time = time.time() - t_start
     method.close()
+    if save_every_checkpoint_to:
+        np.savez(save_every_checkpoint_to, **result.to_npz_dict())
     return result
 
 

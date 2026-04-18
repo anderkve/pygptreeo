@@ -55,7 +55,8 @@ class GPyTorchSVGPAdapter(OnlineRegressor):
     def __init__(self, n_dims: int, n_inducing: int = 256,
                  retrain_every: int = 200, n_epochs: int = 60,
                  batch_size: int = 128, max_buffer: int = 5000,
-                 lr: float = 5e-3, device: str = "cpu"):
+                 lr: float = 5e-3, device: str = "cpu",
+                 max_steps_per_refit: int = 500):
         self.n_dims = n_dims
         self.n_inducing = n_inducing
         self.retrain_every = retrain_every
@@ -63,6 +64,7 @@ class GPyTorchSVGPAdapter(OnlineRegressor):
         self.batch_size = batch_size
         self.max_buffer = max_buffer
         self.lr = lr
+        self.max_steps_per_refit = max_steps_per_refit
         self.device = torch.device(device)
         self._X_buf: list[np.ndarray] = []
         self._y_buf: list[float] = []
@@ -121,15 +123,22 @@ class GPyTorchSVGPAdapter(OnlineRegressor):
 
         n_data = X_t.size(0)
         bs = min(self.batch_size, n_data)
+        total_steps = 0
+        budget = self.max_steps_per_refit
         for _ in range(self.n_epochs):
+            if total_steps >= budget:
+                break
             perm = torch.randperm(n_data)
             for i in range(0, n_data, bs):
+                if total_steps >= budget:
+                    break
                 j = perm[i:i + bs]
                 optimizer.zero_grad()
                 out = self._model(X_t[j])
                 loss = -mll(out, y_t[j])
                 loss.backward()
                 optimizer.step()
+                total_steps += 1
         self._trained = True
 
     def predict(self, X):
