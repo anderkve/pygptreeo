@@ -232,6 +232,44 @@ def plot_summary_bars(results: dict, problems: list, out_path: str):
     plt.close(fig)
 
 
+def plot_pareto(results: dict, problems: list, out_path: str):
+    """Scatter of final NRMSE vs. cumulative update time per method/problem."""
+    fig, axes = plt.subplots(
+        1, len(problems), figsize=(4.5 * len(problems), 4.0),
+        squeeze=False,
+    )
+    for i, problem in enumerate(problems):
+        ax = axes[0][i]
+        for method in METHOD_ORDER:
+            runs = results.get((method, problem))
+            if not runs:
+                continue
+            xs = [r["cum_update_time"][-1] for r in runs
+                  if len(r["cum_update_time"]) > 0]
+            ys = [r["nrmse"][-1] for r in runs if len(r["nrmse"]) > 0]
+            if not xs:
+                continue
+            ax.scatter(
+                xs, ys, s=90,
+                color=METHOD_COLOR[method], edgecolor="black", linewidth=0.7,
+                label=METHOD_LABEL[method], zorder=3,
+            )
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel("total update time [s]")
+        ax.set_ylabel("final NRMSE")
+        ax.set_title(problem)
+        ax.grid(True, which="both", alpha=0.3)
+        if i == 0:
+            ax.legend(fontsize=8, frameon=False, loc="best")
+    fig.suptitle("Accuracy vs. compute budget (lower-left is better)",
+                 fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="benchmarks/data")
@@ -256,6 +294,10 @@ def main():
     plot_summary_bars(
         results, args.problems,
         os.path.join(args.plots_dir, "summary.png"),
+    )
+    plot_pareto(
+        results, args.problems,
+        os.path.join(args.plots_dir, "pareto.png"),
     )
     print(f"Wrote plots to {args.plots_dir}/")
 
