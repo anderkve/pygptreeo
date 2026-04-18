@@ -31,35 +31,58 @@ import numpy as np
 
 
 METHOD_ORDER = [
-    "pygptreeo",
-    "sklearn_gp",
-    "gpytorch_svgp",
-    "random_forest",
-    "river_knn",
+    # Baselines
+    "pygptreeo", "pygptreeo_A",
+    "sklearn_gp", "sklearn_gp_A",
+    "gpytorch_svgp", "gpytorch_svgp_A",
+    "random_forest", "random_forest_A",
+    "river_knn", "river_knn_A",
+    # Variants
+    "pygptreeo_B", "pygptreeo_C",
+    "sklearn_gp_B", "gpytorch_svgp_B",
+    "river_knn_B",
 ]
 
 METHOD_LABEL = {
-    "pygptreeo": "pygptreeo",
-    "sklearn_gp": "sklearn GP (N≤400)",
-    "gpytorch_svgp": "GPyTorch SVGP",
-    "random_forest": "RandomForest (refit)",
-    "river_knn": "River kNN",
+    "pygptreeo": "pygptreeo (A)",
+    "pygptreeo_A": "pygptreeo (A)",
+    "pygptreeo_B": "pygptreeo (B: Nbar=100)",
+    "pygptreeo_C": "pygptreeo (C: Matern-only)",
+    "sklearn_gp": "sklearn GP (A: N≤400)",
+    "sklearn_gp_A": "sklearn GP (A: N≤400)",
+    "sklearn_gp_B": "sklearn GP (B: N≤1200)",
+    "gpytorch_svgp": "SVGP (A: 256 ind.)",
+    "gpytorch_svgp_A": "SVGP (A: 256 ind.)",
+    "gpytorch_svgp_B": "SVGP (B: 512 ind., 3× steps)",
+    "random_forest": "RandomForest (A)",
+    "random_forest_A": "RandomForest (A)",
+    "river_knn": "River kNN (A: k=8)",
+    "river_knn_A": "River kNN (A: k=8)",
+    "river_knn_B": "River kNN (B: k=3)",
 }
 
 METHOD_COLOR = {
-    "pygptreeo": "#d7263d",
-    "sklearn_gp": "#1b9e77",
-    "gpytorch_svgp": "#7570b3",
-    "random_forest": "#e6ab02",
-    "river_knn": "#666666",
+    "pygptreeo": "#d7263d", "pygptreeo_A": "#d7263d",
+    "pygptreeo_B": "#ff6b8a", "pygptreeo_C": "#8b0000",
+    "sklearn_gp": "#1b9e77", "sklearn_gp_A": "#1b9e77",
+    "sklearn_gp_B": "#0a5d47",
+    "gpytorch_svgp": "#7570b3", "gpytorch_svgp_A": "#7570b3",
+    "gpytorch_svgp_B": "#3f3a7d",
+    "random_forest": "#e6ab02", "random_forest_A": "#e6ab02",
+    "river_knn": "#666666", "river_knn_A": "#666666",
+    "river_knn_B": "#999999",
 }
 
 METHOD_LS = {
-    "pygptreeo": "-",
-    "sklearn_gp": "--",
-    "gpytorch_svgp": "-.",
-    "random_forest": ":",
-    "river_knn": (0, (3, 1, 1, 1)),
+    "pygptreeo": "-", "pygptreeo_A": "-",
+    "pygptreeo_B": "-", "pygptreeo_C": (0, (5, 2)),
+    "sklearn_gp": "--", "sklearn_gp_A": "--",
+    "sklearn_gp_B": (0, (5, 1)),
+    "gpytorch_svgp": "-.", "gpytorch_svgp_A": "-.",
+    "gpytorch_svgp_B": (0, (3, 1, 1, 1, 1, 1)),
+    "random_forest": ":", "random_forest_A": ":",
+    "river_knn": (0, (3, 1, 1, 1)), "river_knn_A": (0, (3, 1, 1, 1)),
+    "river_knn_B": (0, (1, 1)),
 }
 
 

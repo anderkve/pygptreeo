@@ -13,21 +13,25 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from .base import OnlineRegressor
 
 
-def _make_configured_gpr_class(n_dims: int):
+def _make_configured_gpr_class(n_dims: int, kernel_spec: str = "matern+rq"):
     """Factory returning a fresh GPR subclass whose kernel matches ``n_dims``.
 
     We can't pass ``n_dims`` to ``__init__`` because sklearn's parameter
     validation requires every constructor kwarg to be a stored attribute that
     matches its declared type spec.
+
+    ``kernel_spec`` selects the leaf-GP kernel:
+
+    - ``"matern+rq"`` (default): ``Constant * (AnisotropicRQ + Matern-1.5)`` —
+      the richer kernel used by pygptreeo's example scripts.
+    - ``"matern"``: ``Constant * Matern-1.5`` — matches the single-kernel
+      used by `sklearn_gp` and the GPyTorch SVGP adapter, so the variant
+      is an apples-to-apples kernel comparison.
     """
 
-    class _ConfiguredGPR(GaussianProcessRegressor):
-        def __init__(self, kernel=None, *, alpha=1e-6,
-                     optimizer="fmin_l_bfgs_b", n_restarts_optimizer=1,
-                     normalize_y=False, copy_X_train=True, n_targets=None,
-                     random_state=None):
-            super().__init__()
-            self.kernel = ConstantKernel(
+    if kernel_spec == "matern+rq":
+        def _build():
+            return ConstantKernel(
                 constant_value=1.0, constant_value_bounds=(1e-3, 1e8)
             ) * (AnisotropicRationalQuadratic(
                 length_scale=[1.0] * n_dims,
@@ -39,6 +43,25 @@ def _make_configured_gpr_class(n_dims: int):
                 length_scale=[1.0] * n_dims,
                 length_scale_bounds=[(1e-5, 1e5)] * n_dims,
             ))
+    elif kernel_spec == "matern":
+        def _build():
+            return ConstantKernel(
+                constant_value=1.0, constant_value_bounds=(1e-3, 1e8)
+            ) * Matern(
+                nu=1.5,
+                length_scale=[1.0] * n_dims,
+                length_scale_bounds=[(1e-5, 1e5)] * n_dims,
+            )
+    else:
+        raise ValueError(f"Unknown kernel_spec {kernel_spec!r}")
+
+    class _ConfiguredGPR(GaussianProcessRegressor):
+        def __init__(self, kernel=None, *, alpha=1e-6,
+                     optimizer="fmin_l_bfgs_b", n_restarts_optimizer=1,
+                     normalize_y=False, copy_X_train=True, n_targets=None,
+                     random_state=None):
+            super().__init__()
+            self.kernel = _build()
             self.min_length_scale = 0.001
             self.alpha = alpha
             self.optimizer = optimizer
@@ -58,10 +81,12 @@ class PyGPTreeOAdapter(OnlineRegressor):
     supports_uncertainty = True
 
     def __init__(self, n_dims: int, Nbar: int = 200, theta: float = 1e-4,
-                 retrain_step: int = 200, sigma_rel: float = 1e-3):
+                 retrain_step: int = 200, sigma_rel: float = 1e-3,
+                 kernel_spec: str = "matern+rq"):
         self.n_dims = n_dims
         self.sigma_rel = sigma_rel
-        gpr_cls = _make_configured_gpr_class(n_dims)
+        self.kernel_spec = kernel_spec
+        gpr_cls = _make_configured_gpr_class(n_dims, kernel_spec=kernel_spec)
         self.tree = GPTree(
             GPR=_SklearnGPAdapter(gpr_cls()),
             Nbar=Nbar,

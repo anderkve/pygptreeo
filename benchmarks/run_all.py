@@ -44,18 +44,59 @@ from benchmarks.harness import (
 from benchmarks.problems import PROBLEMS
 
 
-def _make_pygptreeo(d: int):
-    return PyGPTreeOAdapter(d, Nbar=200, retrain_step=200, theta=1e-4,
-                            sigma_rel=1e-3)
+# Iteration 04 introduces per-method variants. Suffix convention:
+#   "_A"      — baseline (matches the hyperparameters used in iter 03)
+#   "_B"      — stress variant (usually more compute or a different
+#                regime — either shows "more resources wouldn't rescue
+#                the alternative" or "pygptreeo is robust across
+#                hyperparameters")
+#   "pygptreeo_C" — kernel ablation: pygptreeo with only Matern-1.5
+#                (drops AnisotropicRQ so it matches the other GP-based
+#                methods' kernel).  Addresses the "pygptreeo gets a
+#                richer kernel" fairness concern.
+# The bare legacy names (`pygptreeo`, `sklearn_gp`, …) are aliased to
+# `_A` so that .npz files produced before iter 04 still load cleanly.
 
 
-def _make_sklearn_gp(d: int):
-    # sklearn exact GP is O(N^3) per refit. Iteration 03 dials the budget
-    # down hard (and turns off optimiser restarts) so the adapter actually
-    # finishes on non-trivial problems inside the subprocess timeout.
-    # Under 6 D: 400 training points, at 6+ D: 250.  No optimiser restarts
-    # (`n_restarts_optimizer=0`) — sklearn already does one bfgs from the
-    # initial kernel each fit, which is enough for this scale.
+# ---------- pygptreeo --------------------------------------------------
+
+def _make_pygptreeo_A(d: int):
+    """Baseline: Nbar=200, retrain_every=200, Matern+RQ kernel."""
+    return PyGPTreeOAdapter(
+        d, Nbar=200, retrain_step=200, theta=1e-4, sigma_rel=1e-3,
+        kernel_spec="matern+rq",
+    )
+
+
+def _make_pygptreeo_B(d: int):
+    """Smaller leaves, faster retrain cadence, same kernel as baseline.
+
+    Tests whether Nbar=200 is near-optimal or whether more, smaller
+    leaves would help on curved problems like rosenbrock.
+    """
+    return PyGPTreeOAdapter(
+        d, Nbar=100, retrain_step=100, theta=1e-4, sigma_rel=1e-3,
+        kernel_spec="matern+rq",
+    )
+
+
+def _make_pygptreeo_C(d: int):
+    """Kernel ablation: Nbar=200, retrain=200, but Matern-1.5 only.
+
+    Gives an apples-to-apples comparison with `sklearn_gp`'s kernel.
+    If `pygptreeo_C` still beats `sklearn_gp_B`, the "richer kernel"
+    criticism is defused.
+    """
+    return PyGPTreeOAdapter(
+        d, Nbar=200, retrain_step=200, theta=1e-4, sigma_rel=1e-3,
+        kernel_spec="matern",
+    )
+
+
+# ---------- sklearn_gp -------------------------------------------------
+
+def _make_sklearn_gp_A(d: int):
+    """Baseline: max_train=400 (d<=5) or 250 (d>=6), no optimiser restarts."""
     max_train = 400 if d <= 5 else 250
     return SklearnGPAdapter(
         d, retrain_every=200, max_train_points=max_train,
@@ -63,27 +104,83 @@ def _make_sklearn_gp(d: int):
     )
 
 
-def _make_svgp(d: int):
-    return GPyTorchSVGPAdapter(d, retrain_every=200, n_epochs=60,
-                               n_inducing=256, max_buffer=5000, lr=5e-3,
-                               max_steps_per_refit=500)
+def _make_sklearn_gp_B(d: int):
+    """Best-case: larger reservoir + one optimiser restart.
+
+    Use with --max-wall-time 600.  Not meant for borehole_8d — exact GP
+    is hopeless there at these scales even without a budget cap.
+    """
+    if d <= 2:
+        max_train = 1200
+    elif d <= 5:
+        max_train = 600
+    else:
+        max_train = 250
+    return SklearnGPAdapter(
+        d, retrain_every=200, max_train_points=max_train,
+        n_restarts_optimizer=1,
+    )
 
 
-def _make_rf(d: int):
-    return RandomForestAdapter(d, retrain_every=200, n_estimators=300,
-                               max_train_points=20000)
+# ---------- gpytorch SVGP ---------------------------------------------
+
+def _make_svgp_A(d: int):
+    """Baseline."""
+    return GPyTorchSVGPAdapter(
+        d, retrain_every=200, n_epochs=60,
+        n_inducing=256, max_buffer=5000, lr=5e-3,
+        max_steps_per_refit=500,
+    )
 
 
-def _make_river_knn(d: int):
+def _make_svgp_B(d: int):
+    """Heavy variant: 2x inducing, 2x epochs, 3x inner-loop step cap."""
+    return GPyTorchSVGPAdapter(
+        d, retrain_every=200, n_epochs=120,
+        n_inducing=512, max_buffer=5000, lr=5e-3,
+        max_steps_per_refit=1500,
+    )
+
+
+# ---------- random_forest ---------------------------------------------
+
+def _make_rf_A(d: int):
+    return RandomForestAdapter(
+        d, retrain_every=200, n_estimators=300,
+        max_train_points=20000,
+    )
+
+
+# ---------- river_knn -------------------------------------------------
+
+def _make_river_knn_A(d: int):
     return RiverKNNAdapter(d, n_neighbors=8, window_size=4000)
 
 
+def _make_river_knn_B(d: int):
+    """Local variant: smaller k, shorter sliding window."""
+    return RiverKNNAdapter(d, n_neighbors=3, window_size=1000)
+
+
 METHODS = {
-    "pygptreeo": _make_pygptreeo,
-    "sklearn_gp": _make_sklearn_gp,
-    "gpytorch_svgp": _make_svgp,
-    "random_forest": _make_rf,
-    "river_knn": _make_river_knn,
+    # Variant-explicit names (preferred going forward).
+    "pygptreeo_A": _make_pygptreeo_A,
+    "pygptreeo_B": _make_pygptreeo_B,
+    "pygptreeo_C": _make_pygptreeo_C,
+    "sklearn_gp_A": _make_sklearn_gp_A,
+    "sklearn_gp_B": _make_sklearn_gp_B,
+    "gpytorch_svgp_A": _make_svgp_A,
+    "gpytorch_svgp_B": _make_svgp_B,
+    "random_forest_A": _make_rf_A,
+    "river_knn_A": _make_river_knn_A,
+    "river_knn_B": _make_river_knn_B,
+    # Legacy aliases (point to the `_A` baselines so pre-iter-04 .npz
+    # files produced under the bare names are still comparable).
+    "pygptreeo": _make_pygptreeo_A,
+    "sklearn_gp": _make_sklearn_gp_A,
+    "gpytorch_svgp": _make_svgp_A,
+    "random_forest": _make_rf_A,
+    "river_knn": _make_river_knn_A,
 }
 
 
