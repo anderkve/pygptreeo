@@ -86,19 +86,51 @@ METHOD_LS = {
 }
 
 
+# Legacy method names (without the _A/_B suffix) map to the `_A`
+# baseline variant, so a .npz saved under the bare name loads under
+# both keys. This keeps pre-iter-04 data comparable with the new
+# variant nomenclature in plot_headline / plot_wilcoxon_variants.
+_LEGACY_TO_A = {
+    "pygptreeo": "pygptreeo_A",
+    "sklearn_gp": "sklearn_gp_A",
+    "gpytorch_svgp": "gpytorch_svgp_A",
+    "random_forest": "random_forest_A",
+    "river_knn": "river_knn_A",
+}
+
+
 def load_all(data_dir: str) -> dict:
-    """Return {(method, problem, schedule): [per-seed dicts]}."""
+    """Return {(method, problem, schedule): [per-seed dicts]}.
+
+    Legacy bare method names (``pygptreeo`` etc.) are also registered
+    under their canonical ``*_A`` variant keys so the new iter-05
+    plotters can find them without each having to duplicate the
+    alias logic.
+    """
     results = defaultdict(list)
     for path in sorted(glob.glob(os.path.join(data_dir, "*.npz"))):
         data = np.load(path, allow_pickle=True)
         cfg = json.loads(str(data["config_json"]))
-        key = (cfg["method_name"], cfg["problem_name"], cfg.get("schedule", "iid"))
+        method = cfg["method_name"]
+        key = (method, cfg["problem_name"], cfg.get("schedule", "iid"))
         r = {"seed": cfg["seed"]}
         for k in data.files:
             if k == "config_json":
                 continue
             r[k] = data[k]
         results[key].append(r)
+        # Also register under the canonical _A key if this was a legacy
+        # bare-name run — but only if we don't already have data under
+        # the canonical key from a direct variant run.
+        canonical = _LEGACY_TO_A.get(method)
+        if canonical is not None:
+            alt_key = (canonical, cfg["problem_name"],
+                       cfg.get("schedule", "iid"))
+            # Only alias if the canonical slot wasn't written by a
+            # direct `_A` run (avoid double-counting seeds).
+            if not any(rr.get("seed") == cfg["seed"]
+                       for rr in results.get(alt_key, [])):
+                results[alt_key].append(r)
     return dict(results)
 
 
@@ -538,6 +570,228 @@ def write_calibration_table(results, problems, out_path, schedule="iid"):
     )
 
 
+def plot_headline(results, problems, out_path, schedule="iid"):
+    """Paper-ready 1x3 figure: NRMSE / CRPS / coverage_95 bars.
+
+    Rows are problems; for each problem we show bars over the 7
+    baseline-plus-pygptreeo-variant methods (`_A` of every method plus
+    `pygptreeo_B` and `pygptreeo_C`). The point of this figure is to
+    put the paper's headline "pygptreeo wins on every metric" claim
+    into a single image.
+    """
+    selected = [
+        "pygptreeo_A", "pygptreeo_B", "pygptreeo_C",
+        "sklearn_gp_A", "gpytorch_svgp_A", "random_forest_A", "river_knn_A",
+    ]
+    metrics = [
+        ("nrmse",           "Final NRMSE (↓)",        "log"),
+        ("crps",            "Final CRPS (↓)",         "log"),
+        ("coverage_95",     "Empirical 95 % coverage", "linear"),
+    ]
+    fig, axes = plt.subplots(
+        1, len(metrics), figsize=(4.2 * len(metrics), 4.0),
+        squeeze=False, sharex=False,
+    )
+
+    x_pos = np.arange(len(problems))
+    n_bars = len(selected)
+    bar_w = 0.8 / n_bars
+
+    for j, (key, title, yscale) in enumerate(metrics):
+        ax = axes[0][j]
+        for i, method in enumerate(selected):
+            offset = (i - (n_bars - 1) / 2.0) * bar_w
+            heights, lo_err, hi_err = [], [], []
+            for problem in problems:
+                runs = results.get((method, problem, schedule), [])
+                vals = [float(r[key][-1]) for r in runs
+                        if key in r and len(r[key]) > 0
+                        and np.isfinite(float(r[key][-1]))]
+                if not vals:
+                    heights.append(np.nan)
+                    lo_err.append(0); hi_err.append(0)
+                    continue
+                med = np.median(vals)
+                heights.append(med)
+                if len(vals) > 1:
+                    q1 = float(np.percentile(vals, 25))
+                    q3 = float(np.percentile(vals, 75))
+                    lo_err.append(med - q1)
+                    hi_err.append(q3 - med)
+                else:
+                    lo_err.append(0); hi_err.append(0)
+            ax.bar(x_pos + offset, heights, bar_w,
+                   color=METHOD_COLOR.get(method, "#888"),
+                   edgecolor="black", linewidth=0.4,
+                   yerr=[lo_err, hi_err] if any(lo_err) or any(hi_err) else None,
+                   capsize=2,
+                   label=METHOD_LABEL.get(method, method))
+        if yscale == "log":
+            ax.set_yscale("log")
+        if key == "coverage_95":
+            ax.axhline(0.95, color="black", linestyle="--",
+                       linewidth=1, alpha=0.7)
+            ax.set_ylim(-0.02, 1.05)
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(problems, rotation=25, ha="right", fontsize=9)
+        ax.set_title(title, fontsize=11)
+        ax.grid(True, axis="y", alpha=0.3)
+
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=min(7, len(labels)),
+               bbox_to_anchor=(0.5, -0.06), frameon=False, fontsize=9)
+    fig.suptitle(
+        "pygptreeo vs. alternatives — median over seeds, IQR error bars",
+        fontsize=13,
+    )
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.tight_layout(rect=[0, 0.02, 1, 0.95])
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_wilcoxon_variants(results, problems, out_path, schedule="iid"):
+    """Per-variant-baseline Wilcoxon grid.
+
+    Three sub-panels: baselines pygptreeo_A, pygptreeo_B, pygptreeo_C.
+    Each panel shows, per problem, the median NRMSE ratio
+    (alternative / baseline) with every non-pygptreeo alternative that
+    has data. Horizontal line at ratio=1 = parity.
+
+    Demonstrates that pygptreeo wins regardless of which config you
+    anchor on.
+    """
+    variants = ["pygptreeo_A", "pygptreeo_B", "pygptreeo_C"]
+    alternatives = [
+        "sklearn_gp_A", "sklearn_gp_B",
+        "gpytorch_svgp_A", "gpytorch_svgp_B",
+        "random_forest_A",
+        "river_knn_A", "river_knn_B",
+    ]
+    fig, axes = plt.subplots(
+        1, len(variants), figsize=(4.5 * len(variants), 4.0),
+        squeeze=False, sharey=True,
+    )
+    x_pos = np.arange(len(problems))
+    n_alt = len(alternatives)
+    bar_w = 0.8 / max(1, n_alt)
+
+    for p_i, baseline in enumerate(variants):
+        ax = axes[0][p_i]
+        ax.axhline(1.0, color="black", linestyle="--",
+                   linewidth=1, alpha=0.7)
+        for i, alt in enumerate(alternatives):
+            offset = (i - (n_alt - 1) / 2.0) * bar_w
+            heights = []
+            for problem in problems:
+                base_runs = results.get((baseline, problem, schedule), [])
+                alt_runs = results.get((alt, problem, schedule), [])
+                base_by_seed = {int(r["seed"]): r for r in base_runs}
+                alt_by_seed = {int(r["seed"]): r for r in alt_runs}
+                common = sorted(set(base_by_seed) & set(alt_by_seed))
+                ratios = []
+                for s in common:
+                    a = base_by_seed[s].get("nrmse")
+                    b = alt_by_seed[s].get("nrmse")
+                    if a is None or b is None or len(a) == 0 or len(b) == 0:
+                        continue
+                    av, bv = float(a[-1]), float(b[-1])
+                    if av > 0 and np.isfinite(av) and np.isfinite(bv):
+                        ratios.append(bv / av)
+                heights.append(np.median(ratios) if ratios else np.nan)
+            ax.bar(x_pos + offset, heights, bar_w,
+                   color=METHOD_COLOR.get(alt, "#888"),
+                   edgecolor="black", linewidth=0.4,
+                   label=METHOD_LABEL.get(alt, alt))
+        ax.set_yscale("log")
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(problems, rotation=25, ha="right", fontsize=8)
+        ax.set_title(f"baseline = {METHOD_LABEL.get(baseline, baseline)}")
+        ax.grid(True, axis="y", which="both", alpha=0.3)
+        if p_i == 0:
+            ax.set_ylabel("median final NRMSE ratio (alt / baseline)")
+
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center",
+               ncol=min(n_alt, 5), bbox_to_anchor=(0.5, -0.02),
+               frameon=False, fontsize=8)
+    fig.suptitle(
+        "Per-problem NRMSE ratio vs each pygptreeo variant "
+        "(dashed line = parity; above = alternative is worse)",
+        fontsize=12,
+    )
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.tight_layout(rect=[0, 0.04, 1, 0.93])
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_ratio_bars_mean_std(results, problems, out_path,
+                             baseline="pygptreeo_A", schedule="iid"):
+    """Companion to plot_wilcoxon_per_problem, but showing mean ± std
+    across seeds instead of median. Variance visibility for the paper."""
+    alternatives = [m for m in METHOD_ORDER
+                    if m not in ("pygptreeo_A", "pygptreeo_B", "pygptreeo_C",
+                                 "pygptreeo", "river_knn", "river_knn_A")
+                    and m in METHOD_LABEL]
+    # Dedupe label aliasing:
+    seen_labels = set()
+    uniq = []
+    for m in alternatives:
+        lbl = METHOD_LABEL.get(m, m)
+        if lbl in seen_labels:
+            continue
+        seen_labels.add(lbl)
+        uniq.append(m)
+    alternatives = uniq
+
+    fig, ax = plt.subplots(figsize=(1.5 + 1.4 * len(problems), 4.0))
+    x_pos = np.arange(len(problems))
+    n_alt = len(alternatives)
+    bar_w = 0.8 / max(1, n_alt)
+    for i, alt in enumerate(alternatives):
+        offset = (i - (n_alt - 1) / 2.0) * bar_w
+        means, stds = [], []
+        for problem in problems:
+            base_runs = results.get((baseline, problem, schedule), [])
+            alt_runs = results.get((alt, problem, schedule), [])
+            base_by_seed = {int(r["seed"]): r for r in base_runs}
+            alt_by_seed = {int(r["seed"]): r for r in alt_runs}
+            common = sorted(set(base_by_seed) & set(alt_by_seed))
+            ratios = []
+            for s in common:
+                a = base_by_seed[s].get("nrmse")
+                b = alt_by_seed[s].get("nrmse")
+                if a is None or b is None or len(a) == 0 or len(b) == 0:
+                    continue
+                av, bv = float(a[-1]), float(b[-1])
+                if av > 0 and np.isfinite(av) and np.isfinite(bv):
+                    ratios.append(bv / av)
+            if ratios:
+                means.append(float(np.mean(ratios)))
+                stds.append(float(np.std(ratios)))
+            else:
+                means.append(np.nan); stds.append(0.0)
+        ax.bar(x_pos + offset, means, bar_w,
+               color=METHOD_COLOR.get(alt, "#888"),
+               edgecolor="black", linewidth=0.4,
+               yerr=stds, capsize=3,
+               label=METHOD_LABEL.get(alt, alt))
+    ax.axhline(1.0, color="black", linestyle="--", linewidth=1, alpha=0.7)
+    ax.set_yscale("log")
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(problems, rotation=25, ha="right", fontsize=9)
+    ax.set_ylabel(f"mean final NRMSE ratio (alt / {baseline})")
+    ax.set_title("Per-problem NRMSE ratio vs pygptreeo baseline "
+                 "— mean ± std across seeds")
+    ax.legend(fontsize=8, frameon=False, loc="best")
+    ax.grid(True, axis="y", which="both", alpha=0.3)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_wilcoxon_table(results, problems, out_path,
                         baseline="pygptreeo", metric="nrmse", schedule="iid"):
     """Wilcoxon signed-rank p-values + median NRMSE ratios vs baseline.
@@ -663,6 +917,13 @@ def main():
                results, args.problems, metric="nrmse", schedule=args.schedule)
     _write_all("wilcoxon_per_problem.png", plot_wilcoxon_per_problem,
                results, args.problems, metric="nrmse", schedule=args.schedule)
+    _write_all("wilcoxon_variants.png", plot_wilcoxon_variants,
+               results, args.problems, schedule=args.schedule)
+    _write_all("wilcoxon_per_problem_mean_std.png", plot_ratio_bars_mean_std,
+               results, args.problems, baseline="pygptreeo_A",
+               schedule=args.schedule)
+    _write_all("headline.png", plot_headline,
+               results, args.problems, schedule=args.schedule)
     _write_all("scaling.png", plot_scaling,
                results, args.problems, method="pygptreeo",
                schedule=args.schedule)

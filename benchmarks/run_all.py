@@ -105,20 +105,29 @@ def _make_sklearn_gp_A(d: int):
 
 
 def _make_sklearn_gp_B(d: int):
-    """Best-case: larger reservoir + one optimiser restart.
+    """Best-case: larger reservoir + (on 2-D) one optimiser restart.
 
     Use with --max-wall-time 600.  Not meant for borehole_8d — exact GP
     is hopeless there at these scales even without a budget cap.
+
+    On 5-D problems the optimiser restart alone blows past the 300 s
+    per-fit budget, so for d >= 5 we keep the bigger reservoir (600
+    points) but drop restarts to 0 — the paper point of the `_B`
+    variant is "what does a bigger reservoir do?", not "what does
+    one more bfgs restart do?".
     """
     if d <= 2:
         max_train = 1200
+        n_restarts = 1
     elif d <= 5:
         max_train = 600
+        n_restarts = 0
     else:
         max_train = 250
+        n_restarts = 0
     return SklearnGPAdapter(
         d, retrain_every=200, max_train_points=max_train,
-        n_restarts_optimizer=1,
+        n_restarts_optimizer=n_restarts,
     )
 
 
