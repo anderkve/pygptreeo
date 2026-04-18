@@ -22,11 +22,13 @@ class SklearnGPAdapter(OnlineRegressor):
     supports_uncertainty = True
 
     def __init__(self, n_dims: int, retrain_every: int = 200,
-                 max_train_points: int = 1500, random_state: int = 0):
+                 max_train_points: int = 1500, random_state: int = 0,
+                 n_restarts_optimizer: int = 1):
         self.n_dims = n_dims
         self.retrain_every = retrain_every
         self.max_train_points = max_train_points
         self.random_state = random_state
+        self.n_restarts_optimizer = n_restarts_optimizer
         self._X_buf: list[np.ndarray] = []
         self._y_buf: list[np.ndarray] = []
         self._steps_since_refit = 0
@@ -44,7 +46,7 @@ class SklearnGPAdapter(OnlineRegressor):
             kernel=kernel,
             alpha=1e-6,
             normalize_y=True,
-            n_restarts_optimizer=1,
+            n_restarts_optimizer=self.n_restarts_optimizer,
             random_state=self.random_state,
         )
 

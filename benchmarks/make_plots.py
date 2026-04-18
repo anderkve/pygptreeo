@@ -40,7 +40,7 @@ METHOD_ORDER = [
 
 METHOD_LABEL = {
     "pygptreeo": "pygptreeo",
-    "sklearn_gp": "sklearn GP (refit)",
+    "sklearn_gp": "sklearn GP (N≤400)",
     "gpytorch_svgp": "GPyTorch SVGP",
     "random_forest": "RandomForest (refit)",
     "river_knn": "River kNN",
@@ -364,6 +364,157 @@ def plot_shift_vs_iid(results, problems, out_path,
     plt.close(fig)
 
 
+def plot_wilcoxon_per_problem(results, problems, out_path,
+                              baseline="pygptreeo", metric="nrmse",
+                              schedule="iid"):
+    """Grouped bar chart: per-problem median NRMSE ratio vs baseline.
+
+    x = problem, grouped bars per alternative, y = median ratio (alt/base)
+    over matched seeds. No p-values.
+    """
+    alternatives = [m for m in METHOD_ORDER
+                    if m != baseline and m != "river_knn"]
+    ratios = np.full((len(alternatives), len(problems)), np.nan)
+    for i, alt in enumerate(alternatives):
+        for j, problem in enumerate(problems):
+            base_runs = results.get((baseline, problem, schedule), [])
+            alt_runs = results.get((alt, problem, schedule), [])
+            base_by_seed = {int(r["seed"]): r for r in base_runs}
+            alt_by_seed = {int(r["seed"]): r for r in alt_runs}
+            common = sorted(set(base_by_seed) & set(alt_by_seed))
+            if not common:
+                continue
+            vals = []
+            for s in common:
+                a = base_by_seed[s].get(metric)
+                b = alt_by_seed[s].get(metric)
+                if a is None or b is None or len(a) == 0 or len(b) == 0:
+                    continue
+                av, bv = float(a[-1]), float(b[-1])
+                if av > 0 and np.isfinite(av) and np.isfinite(bv):
+                    vals.append(bv / av)
+            if vals:
+                ratios[i, j] = float(np.median(vals))
+
+    fig, ax = plt.subplots(figsize=(1.5 + 1.2 * len(problems), 4.0))
+    x = np.arange(len(problems))
+    bar_w = 0.8 / max(1, len(alternatives))
+    for i, alt in enumerate(alternatives):
+        offset = (i - (len(alternatives) - 1) / 2.0) * bar_w
+        ax.bar(x + offset, ratios[i], bar_w,
+               color=METHOD_COLOR[alt], edgecolor="black",
+               linewidth=0.4, label=METHOD_LABEL[alt])
+    ax.axhline(1.0, color="black", linestyle="--", linewidth=1, alpha=0.7)
+    ax.set_yscale("log")
+    ax.set_xticks(x)
+    ax.set_xticklabels(problems, rotation=20, ha="right", fontsize=9)
+    ax.set_ylabel(f"median final {metric.upper()} ratio (alt / {baseline})")
+    ax.set_title(f"Per-problem final {metric.upper()} ratio vs {baseline} "
+                 f"— log scale, dashed line = parity")
+    ax.legend(fontsize=9, frameon=False, loc="best")
+    ax.grid(True, axis="y", which="both", alpha=0.3)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_scaling(results, problems, out_path, method="pygptreeo",
+                 schedule="iid"):
+    """Per-point update time in ms, one panel per problem.
+
+    y = diff(cum_update_time) / diff(checkpoints) * 1000  [ms/point]
+    """
+    fig, axes = plt.subplots(
+        1, len(problems), figsize=(3.4 * len(problems), 3.4),
+        squeeze=False, sharey=True,
+    )
+    for i, problem in enumerate(problems):
+        ax = axes[0][i]
+        runs = results.get((method, problem, schedule))
+        if not runs:
+            ax.set_visible(False); continue
+        curves = []
+        xref = None
+        for r in runs:
+            cks = np.asarray(r.get("checkpoints"), dtype=float)
+            cum = np.asarray(r.get("cum_update_time"), dtype=float)
+            if cks.size < 2:
+                continue
+            dt = np.diff(cum)
+            dn = np.diff(cks)
+            per = np.where(dn > 0, dt / dn * 1000.0, np.nan)
+            curves.append(per)
+            xref = cks[1:] if xref is None or len(cks[1:]) > len(xref) else xref
+        if not curves:
+            ax.set_visible(False); continue
+        max_len = max(len(c) for c in curves)
+        padded = np.full((len(curves), max_len), np.nan)
+        for k, c in enumerate(curves):
+            padded[k, :len(c)] = c
+        med = np.nanmedian(padded, axis=0)
+        q1 = (np.nanpercentile(padded, 25, axis=0)
+              if padded.shape[0] > 1 else med)
+        q3 = (np.nanpercentile(padded, 75, axis=0)
+              if padded.shape[0] > 1 else med)
+        ax.plot(xref[:max_len], med, color=METHOD_COLOR[method],
+                linewidth=2.0, label=f"{METHOD_LABEL[method]} per-point update")
+        if padded.shape[0] > 1:
+            ax.fill_between(xref[:max_len], q1, q3,
+                            color=METHOD_COLOR[method], alpha=0.18,
+                            linewidth=0)
+        # Reference log-N line (visual guide, not a fit).
+        ref_x = np.asarray(xref[:max_len])
+        if ref_x.size >= 2:
+            ref_y = np.log(np.clip(ref_x, 2, None)) / np.log(ref_x[0] + 1)
+            ref_y = ref_y * float(med[0]) / ref_y[0]
+            ax.plot(ref_x, ref_y, "k:", linewidth=1, alpha=0.5,
+                    label="reference ~log N")
+        ax.set_xscale("log"); ax.set_yscale("log")
+        ax.set_xlabel("points processed")
+        if i == 0:
+            ax.set_ylabel(f"{method} update time [ms/point]")
+        ax.set_title(problem)
+        ax.grid(True, which="both", alpha=0.3)
+        if i == 0:
+            ax.legend(fontsize=8, frameon=False, loc="best")
+    fig.suptitle(f"Per-point update-time scaling of {method}", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def write_calibration_table(results, problems, out_path, schedule="iid"):
+    """Save a structured .npz that the paper text can cite directly."""
+    nominal = np.array([0.50, 0.6827, 0.90, 0.95])
+    cov_keys = ["coverage_50", "coverage_1sigma", "coverage_90",
+                "coverage_95"]
+    emp = np.full((len(METHOD_ORDER), len(problems), nominal.size), np.nan)
+    n_seeds = np.zeros((len(METHOD_ORDER), len(problems)), dtype=int)
+    for i, m in enumerate(METHOD_ORDER):
+        for j, p in enumerate(problems):
+            runs = results.get((m, p, schedule))
+            if not runs:
+                continue
+            n_seeds[i, j] = len(runs)
+            for k, key in enumerate(cov_keys):
+                vals = [float(r[key][-1]) for r in runs
+                        if key in r and len(r[key]) > 0
+                        and np.isfinite(float(r[key][-1]))]
+                if vals:
+                    emp[i, j, k] = float(np.nanmedian(vals))
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    np.savez(
+        out_path,
+        methods=np.asarray(METHOD_ORDER),
+        problems=np.asarray(problems),
+        nominal_levels=nominal,
+        empirical_coverage=emp,
+        n_seeds=n_seeds,
+    )
+
+
 def plot_wilcoxon_table(results, problems, out_path,
                         baseline="pygptreeo", metric="nrmse", schedule="iid"):
     """Wilcoxon signed-rank p-values + median NRMSE ratios vs baseline.
@@ -487,6 +638,17 @@ def main():
                schedule=args.schedule)
     _write_all("wilcoxon_nrmse.png", plot_wilcoxon_table,
                results, args.problems, metric="nrmse", schedule=args.schedule)
+    _write_all("wilcoxon_per_problem.png", plot_wilcoxon_per_problem,
+               results, args.problems, metric="nrmse", schedule=args.schedule)
+    _write_all("scaling.png", plot_scaling,
+               results, args.problems, method="pygptreeo",
+               schedule=args.schedule)
+    # Also save a calibration summary table (structured .npz) into each
+    # output directory, for paper citation.
+    for d in out_dirs:
+        write_calibration_table(results, args.problems,
+                                os.path.join(d, "calibration_table.npz"),
+                                schedule=args.schedule)
     if not args.no_shift_plot:
         # Only attempt if shift data exists for any (method, problem).
         have_shift = any(

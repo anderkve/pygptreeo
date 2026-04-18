@@ -50,12 +50,17 @@ def _make_pygptreeo(d: int):
 
 
 def _make_sklearn_gp(d: int):
-    # sklearn exact GP is O(N^3) per refit; give high-d problems a smaller
-    # training cap so borehole_8d (and any 6+ -D problem) completes in a
-    # reasonable time. Under 6 dimensions, keep the bigger cap.
-    max_train = 1500 if d <= 5 else 500
-    return SklearnGPAdapter(d, retrain_every=200,
-                            max_train_points=max_train)
+    # sklearn exact GP is O(N^3) per refit. Iteration 03 dials the budget
+    # down hard (and turns off optimiser restarts) so the adapter actually
+    # finishes on non-trivial problems inside the subprocess timeout.
+    # Under 6 D: 400 training points, at 6+ D: 250.  No optimiser restarts
+    # (`n_restarts_optimizer=0`) — sklearn already does one bfgs from the
+    # initial kernel each fit, which is enough for this scale.
+    max_train = 400 if d <= 5 else 250
+    return SklearnGPAdapter(
+        d, retrain_every=200, max_train_points=max_train,
+        n_restarts_optimizer=0,
+    )
 
 
 def _make_svgp(d: int):
@@ -216,6 +221,16 @@ def _run_one(method_name, problem_name, schedule, seed, args):
                 f"medNLPD={mednlpd:.3f} | cov68={cov68:.2f} | badσ={bad:.2f} | "
                 f"aborted={aborted}"
             )
+            # Cheap trip-wire for the MoE-variance upstream regression: if
+            # median NLPD ever shoots past 10^3, print a warning so we see
+            # it in the driver log (bug we fixed in iter 02 pushed this to
+            # ~10^12 on rosenbrock_2d).
+            if abs(mednlpd) > 1e3:
+                print(
+                    f"    [WARN] NLPD sanity: {method_name}/{problem_name}/"
+                    f"seed{seed} medNLPD={mednlpd:.2e} magnitude > 1e3 "
+                    f"— possible upstream regression"
+                )
         else:
             print(f"    no checkpoints reached (stub written) in {wall:.1f}s")
     else:
