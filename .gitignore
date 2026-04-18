@@ -169,6 +169,10 @@ out_*.txt
 performance_metrics*.png
 plot.png
 
+# Keep the benchmark figures and saved numerical results for the paper.
+!benchmarks/plots/*.png
+!benchmarks/data/*.npz
+
 # Temporary/backup files
 *.myedit.py
 *jules*.py
