@@ -1,0 +1,35 @@
+# pygptreeo benchmark run summary
+iter_dir: benchmarks/iterations/iteration_09
+timestamp_utc: 2026-04-18T16:41:50.230563+00:00
+commit_sha: 1c67e0a027620dff61bd197bc2710b07c51728ec
+schedule: iid
+Reliability: 60 / 60 pygptreeo* runs have frac_pathological_std[-1] == 0 (100.0 %)
+
+# method  problem  final_NRMSE  final_cov95  n_seeds
+pygptreeo                smooth_sines_2d    1.2320e-05 0.938 n=3
+pygptreeo                rosenbrock_2d      2.4408e-05 0.902 n=3
+pygptreeo                friedman1_5d       3.3373e-04 0.936 n=3
+sklearn_gp               smooth_sines_2d    4.4121e-04 0.996 n=2
+sklearn_gp               rosenbrock_2d      5.8532e-04 0.996 n=3
+sklearn_gp               friedman1_5d       1.6556e-03 0.995 n=3
+gpytorch_svgp            smooth_sines_2d    1.4956e-03 1.000 n=3
+gpytorch_svgp            rosenbrock_2d      1.3694e-03 1.000 n=3
+gpytorch_svgp            friedman1_5d       3.2839e-03 0.998 n=2
+random_forest            smooth_sines_2d    9.9079e-03 0.995 n=3
+random_forest            rosenbrock_2d      1.2805e-02 0.995 n=3
+random_forest            friedman1_5d       5.0773e-02 0.986 n=3
+random_forest            borehole_8d        2.7790e-02 0.993 n=3
+river_knn                smooth_sines_2d    2.3053e-01 0.009 n=3
+river_knn                rosenbrock_2d      1.8718e-01 0.009 n=3
+river_knn                friedman1_5d       1.7875e-01 0.009 n=3
+river_knn                borehole_8d        1.8906e-01 0.006 n=3
+pygptreeo_B              rosenbrock_2d      2.1275e-05 0.917 n=3
+pygptreeo_B              friedman1_5d       3.8553e-04 0.889 n=2
+pygptreeo_C              rosenbrock_2d      1.7962e-04 0.779 n=5
+pygptreeo_C              friedman1_5d       7.0587e-04 0.864 n=3
+sklearn_gp_B             rosenbrock_2d      2.4971e-04 0.998 n=2
+sklearn_gp_B             friedman1_5d       7.6314e-04 1.000 n=3
+gpytorch_svgp_B          rosenbrock_2d      1.6435e-03 0.999 n=3
+gpytorch_svgp_B          friedman1_5d       3.0846e-03 0.999 n=3
+river_knn_B              rosenbrock_2d      2.3440e-01 0.003 n=3
+river_knn_B              friedman1_5d       1.5870e-01 0.008 n=3

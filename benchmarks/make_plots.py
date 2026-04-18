@@ -796,6 +796,59 @@ def plot_ratio_bars_mean_std(results, problems, out_path,
     plt.close(fig)
 
 
+def write_run_summary(results, problems, out_path,
+                      reliability_line="", schedule="iid"):
+    """Plain-text, grep-able dump of the key numbers for one iteration.
+
+    One line per (method, problem) cell plus reliability + HEAD SHA.
+    Paired with `paper_table.md` — makes snapshots trivially diffable
+    across iterations to spot regressions.
+    """
+    import datetime
+    import subprocess
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(out_path)) or ".",
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        sha = "(git sha unavailable)"
+
+    lines = []
+    lines.append(f"# pygptreeo benchmark run summary")
+    lines.append(f"iter_dir: {os.path.dirname(out_path)}")
+    lines.append(f"timestamp_utc: {datetime.datetime.now(datetime.timezone.utc).isoformat()}")
+    lines.append(f"commit_sha: {sha}")
+    lines.append(f"schedule: {schedule}")
+    if reliability_line:
+        lines.append(reliability_line)
+    lines.append("")
+    lines.append("# method  problem  final_NRMSE  final_cov95  n_seeds")
+    # Deduplicate method labels (bare + _A alias etc.) by label
+    seen_labels = set()
+    ordered_methods = []
+    for m in METHOD_ORDER:
+        lbl = METHOD_LABEL.get(m, m)
+        if lbl in seen_labels:
+            continue
+        seen_labels.add(lbl)
+        ordered_methods.append(m)
+
+    for m in ordered_methods:
+        for p in problems:
+            runs = results.get((m, p, schedule), [])
+            n, mean, se, med, _ = _extract_cell_stats(runs, "nrmse")
+            _, cov_mean, _, cov_med, _ = _extract_cell_stats(runs, "coverage_95")
+            if n == 0:
+                continue
+            nrmse_str = f"{mean:.4e}" if n >= 3 else f"{med:.4e}"
+            cov_str = f"{cov_med:.3f}" if n >= 1 else "—"
+            lines.append(f"{m:<24s} {p:<18s} {nrmse_str} {cov_str} n={n}")
+    with open(out_path, "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
 def _extract_cell_stats(runs, key):
     """Return (n, mean, se, median, vals) for the `key` metric's final
     checkpoint across seed-level runs."""
@@ -1073,12 +1126,14 @@ def main():
             pygp_total += 1
             if float(arr[-1]) == 0.0:
                 pygp_clean += 1
+    reliability_line = ""
     if pygp_total > 0:
         pct = 100.0 * pygp_clean / pygp_total
-        print(
+        reliability_line = (
             f"Reliability: {pygp_clean} / {pygp_total} pygptreeo* runs "
             f"have frac_pathological_std[-1] == 0 ({pct:.1f} %)"
         )
+        print(reliability_line)
 
     out_dirs = [args.plots_dir]
     if args.iter_dir:
@@ -1119,6 +1174,10 @@ def main():
                                 schedule=args.schedule)
         write_paper_tables(results, args.problems, d,
                            schedule=args.schedule)
+        write_run_summary(results, args.problems,
+                          os.path.join(d, "run_summary.txt"),
+                          reliability_line=reliability_line,
+                          schedule=args.schedule)
     if not args.no_shift_plot:
         # Only attempt if shift data exists for any (method, problem).
         have_shift = any(

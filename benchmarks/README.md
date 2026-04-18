@@ -77,13 +77,13 @@ Every cell in `paper_table.md`/`.tex` is one of:
 
 ## Reliability
 
-Across every iteration since the upstream fix in iter 01, *every* `pygptreeo*` run has `frac_pathological_std[-1] == 0.0`. `make_plots.py:main` prints a verbatim one-line reliability statement after loading:
+Across every iteration since the upstream fix in iter 01 (commit **`3b79da6`** — *"Fix catastrophic cancellation in MoE variance + neg-variance sigma=0"*), *every* `pygptreeo*` run has `frac_pathological_std[-1] == 0.0`. `make_plots.py:main` prints a verbatim one-line reliability statement after loading:
 
 ```
 Reliability: N / N pygptreeo* runs have frac_pathological_std[-1] == 0 (100.0 %)
 ```
 
-See `benchmarks/iterations/iteration_NN/summary.md` for the latest count.
+See `benchmarks/iterations/iteration_NN/run_summary.txt` for the per-iteration reliability line plus the commit SHA at the time of regeneration.
 
 ## Files
 

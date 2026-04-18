@@ -39,7 +39,16 @@ python benchmarks/run_all.py \
 # training steps), river_knn_B (smaller k), pygptreeo_poe.
 
 python benchmarks/run_all.py \
-    --methods pygptreeo_B pygptreeo_C pygptreeo_poe \
+    --methods pygptreeo_B pygptreeo_C \
+    --problems rosenbrock_2d friedman1_5d \
+    --seeds 0 1 2 \
+    --n-stream 2000 --checkpoint-every 200 --n-test 1000 \
+    --max-wall-time 300
+
+# pygptreeo_poe seeds 0 1 2 — the MoE-vs-PoE comparison is reported
+# at n=3 in the paper as of iteration 09.
+python benchmarks/run_all.py \
+    --methods pygptreeo_poe \
     --problems rosenbrock_2d friedman1_5d \
     --seeds 0 1 2 \
     --n-stream 2000 --checkpoint-every 200 --n-test 1000 \
