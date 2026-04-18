@@ -1,105 +1,118 @@
 # pygptreeo continual-emulation benchmark
 
-This directory contains a benchmark comparing `pygptreeo` against four strong
-alternative Python packages/algorithms on a suite of continual regression
-problems. The same online interface is used for every method.
+Benchmarks `pygptreeo` against four well-known Python continual-regression baselines on a suite of continual-emulation problems. Every method is driven through the same `OnlineRegressor` adapter so the harness is identical across runs.
 
-## Methods under test and their compute budget (iteration 01)
-
-All methods run on a single CPU thread (`OMP_NUM_THREADS=1`). The budgets
-below were chosen by the reviewer to give every method its honest best shot
-on a ~3000-point stream without any method blowing past ~5 minutes per run.
-
-| Key              | Description                                                                                          | Capacity knob                             | Refit / update cadence                |
-| ---------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------- |
-| `pygptreeo`      | Dynamically growing tree of local GPs (Matern-1.5 + anisotropic RQ, MoE aggregation, calibrated σ).  | `Nbar=200` points per leaf                | Online per-point + node retrain / 200 |
-| `sklearn_gp`     | Global `GaussianProcessRegressor` (Matern-1.5), refit on a **uniform reservoir** over stream history.| `max_train_points=1500`                   | Refit every 200 stream points         |
-| `gpytorch_svgp`  | Streaming sparse variational GP (Matern-1.5 ARD) with inducing points learned by SVI.               | `n_inducing=256`, `max_buffer=5000`        | Refit every 200 stream points, 60 SVI epochs @ lr=5e-3 |
-| `random_forest`  | `RandomForestRegressor` with 300 trees; predictive σ = across-tree std.                             | `n_estimators=300`, `max_train_points=20000` | Refit every 200 stream points        |
-| `river_knn`      | True online k-NN (`KNNRegressor`, k=8, sliding window 4000); σ = std of k-NN target values.         | window 4000                                | Per-point online, no refit            |
-
-## Test problems
-
-All inputs are in `[0, 1]^d` and internally mapped to each problem's natural
-domain. The default iteration-01 problem set (`run_all.py` default):
-
-| Problem           | Dim | Character                                                                    |
-| ----------------- | --- | ---------------------------------------------------------------------------- |
-| `smooth_sines_2d` | 2   | Smooth analytic; GPs should excel (sanity check).                            |
-| `rosenbrock_2d`   | 2   | Curved valley, highly non-linear, output range O(10^3).                      |
-| `friedman1_5d`    | 5   | Friedman-1 (10 sin(π x0 x1) + 20 (x2-0.5)^2 + 10 x3 + 5 x4). Tests ARD.      |
-| `borehole_8d`     | 8   | Classic 8-D water-flow emulator. Output range O(100). Medium dim, smooth.    |
-
-Kept in `problems.py` but **not** in the default set:
-`piston_7d` (smooth 7-D physical simulator),
-`eggholder_2d` (adversarially multi-modal),
-`rastrigin_3d` (very many local minima),
-`step_3d` (intentional discontinuity — a known-pathological case for smooth-kernel methods; useful only as a diagnostic).
-
-The stream uses **independent RNGs** for the stream (`seed`) and the test set
-(`seed + 10_000`), so test-set points cannot correlate with stream draws.
-
-**Schedule options** (`--schedules` in `run_all.py`):
-- `iid` (default): uniform U[0, 1]^d.
-- `shift`: first half of the stream from U[0, 0.5]^d, second half from U[0.5, 1]^d — a covariate-shift stress test.
-- `sobol`: scrambled Sobol low-discrepancy sequence.
-
-## Metrics (iteration 01)
-
-At every checkpoint the method is evaluated on the held-out test set
-(default `n_test=1000`). All metrics are computed with a physically motivated
-std floor of `1e-6 * (y_test_range)` and cap of `1e3 * y_test_range` so that
-a single catastrophic std=0 prediction cannot destroy a mean NLPD.
-
-Accuracy: `rmse`, `nrmse`, `mae`.
-
-Probabilistic quality: `nlpd` (mean), `median_nlpd`, `nlpd_trimmed` (mean
-after trimming the 5/95th percentiles of per-point NLPD), and `crps`
-(closed-form CRPS for Gaussian predictives).
-
-Calibration: `coverage_50`, `coverage_1sigma` (nominal 0.6827), `coverage_2sigma`
-(0.9545), `coverage_90`, `coverage_95`.
-
-Uncertainty hygiene: `frac_pathological_std` — fraction of test points whose
-predicted σ is non-finite, ≤ 0, or above the cap. Reported separately rather
-than silently hidden by the floor.
-
-Compute: `cum_update_time`, `cum_predict_time` (wall-clock seconds).
-
-## Reproducing
+## One-line "press go"
 
 ```bash
-# One-shot: run everything and plot.
-OMP_NUM_THREADS=1 python benchmarks/run_all.py
-python benchmarks/make_plots.py
-
-# Subset:
-OMP_NUM_THREADS=1 python benchmarks/run_all.py \
-    --methods pygptreeo gpytorch_svgp \
-    --problems rosenbrock_2d \
-    --seeds 0 1 \
-    --n-stream 2000
+bash benchmarks/regenerate_paper.sh
 ```
 
-Results are cached in `benchmarks/data/*.npz` and re-runs skip existing files
-(use `--force` to recompute). Plots are written to `benchmarks/plots/`.
+That script:
+1. runs every `(method, problem, seed, schedule)` combination cited in the paper tables,
+2. skips any `.npz` that already exists (idempotent; safe to re-run),
+3. re-generates every figure and writes fresh `paper_table.md` + `paper_table.tex` into `benchmarks/iterations/iteration_08/` and `benchmarks/plots/`.
+
+Typical wall-clock: ≈ 45–75 minutes on one CPU thread, depending on how much of the benchmark grid is already on disk.
+
+## Canonical paper snapshot
+
+`benchmarks/iterations/iteration_07/` is the **pinned** directory cited by the paper text. Numbers copied into the draft should come from:
+
+- `benchmarks/iterations/iteration_07/paper_table.md` — numbers, markdown
+- `benchmarks/iterations/iteration_07/paper_table.tex` — same numbers, LaTeX `booktabs`
+- `benchmarks/iterations/iteration_07/headline.png` — the single-image paper headline (NRMSE / CRPS / coverage_95)
+- `benchmarks/iterations/iteration_07/wilcoxon_variants.png` — "pygptreeo wins regardless of which variant is the baseline"
+- `benchmarks/iterations/iteration_07/shift_vs_iid.png` — covariate-shift stress test
+- `benchmarks/iterations/iteration_07/calibration.png` + `calibration_table.npz` — reliability diagram + raw numbers
+- `benchmarks/iterations/iteration_07/data/` — raw `.npz` results used to produce the above
+
+If you re-run `regenerate_paper.sh` you get a **new** snapshot under `iterations/iteration_08/`. Iteration-07 stays frozen. Compare the two if you want to verify reproducibility.
+
+## Methods (variant suffix convention)
+
+Every method has at least an `_A` baseline in the `METHODS` registry of `benchmarks/run_all.py`. Some have a `_B` stress / ablation variant. `pygptreeo` has a kernel-ablation `_C` and an aggregation-ablation `_poe`:
+
+| Registry key      | Description                                                                     |
+| ----------------- | ------------------------------------------------------------------------------- |
+| `pygptreeo_A`     | Baseline: `Nbar=200`, retrain every 200 pts, `Matern+AnisotropicRQ` kernel.     |
+| `pygptreeo_B`     | `Nbar=100`, retrain every 100. Same kernel. Locality stress variant.            |
+| `pygptreeo_C`     | `Nbar=200`, **Matern-only** kernel. Apples-to-apples with `sklearn_gp`.         |
+| `pygptreeo_poe`   | Baseline `_A` config, but `aggregation="poe"` instead of `"moe"`.               |
+| `sklearn_gp_A`    | Reservoir-refit exact GP, `N ≤ 400` (d ≤ 5) or 250 (d ≥ 6), 0 optimiser restarts. |
+| `sklearn_gp_B`    | Larger reservoir: `N ≤ 1200` on d ≤ 2 and 600 on d ≥ 5, 1 restart on d ≤ 2.      |
+| `gpytorch_svgp_A` | SVGP, 256 inducing, 60 epochs, up to 500 SVI steps per refit.                    |
+| `gpytorch_svgp_B` | SVGP heavy: 512 inducing, 120 epochs, 1500 SVI steps.                            |
+| `random_forest_A` | 300 trees, periodic refit, across-tree std as predictive σ.                      |
+| `river_knn_A`     | Online k-NN, k=8, sliding window 4000.                                           |
+| `river_knn_B`     | Online k-NN, k=3, sliding window 1000.                                           |
+
+Legacy bare names (`pygptreeo`, `sklearn_gp`, …) in older `.npz` files alias to the `_A` baseline in `make_plots.load_all`.
+
+## Problems
+
+Inputs in `[0, 1]^d`, internally mapped to each problem's natural domain. Test-set rng is independent from the stream rng (`seed + 10_000`).
+
+| Problem           | Dim | Character                                                        |
+| ----------------- | --- | ---------------------------------------------------------------- |
+| `smooth_sines_2d` | 2   | Smooth analytic; GPs should excel — sanity check.                |
+| `rosenbrock_2d`   | 2   | Curved valley, output range O(10^3).                             |
+| `friedman1_5d`    | 5   | 10 sin(π x0 x1) + 20 (x2-0.5)² + 10 x3 + 5 x4. Tests ARD.        |
+| `borehole_8d`     | 8   | Classic 8-D water-flow emulator (Morris, Mitchell & Ylvisaker).  |
+
+Schedules: `iid` (default), `shift` (first half U[0,0.5]^d, second U[0.5,1]^d), `sobol`.
+
+## Paper table — cell format
+
+Every cell in `paper_table.md`/`.tex` is one of:
+
+- `mean ± 1.96·SE (n=k)`  when n ≥ 3 (the common case)
+- `median (n=k)`  when 2 ≤ n < 3
+- `value`  for n = 1
+- `—`  for n = 0 (no data)
+
+## `data_long/`
+
+`benchmarks/data_long/` holds single-seed runs of `pygptreeo_A` at `n_stream = 5000` for the three non-trivial problems (`rosenbrock_2d`, `friedman1_5d`, `borehole_8d`), used only to establish whether NRMSE keeps descending past the short-stream horizon. Regenerated by step 4 of `regenerate_paper.sh`. Not used in `paper_table.md`.
+
+## Reliability
+
+Across every iteration since the upstream fix in iter 01, *every* `pygptreeo*` run has `frac_pathological_std[-1] == 0.0`. `make_plots.py:main` prints a verbatim one-line reliability statement after loading:
+
+```
+Reliability: N / N pygptreeo* runs have frac_pathological_std[-1] == 0 (100.0 %)
+```
+
+See `benchmarks/iterations/iteration_NN/summary.md` for the latest count.
 
 ## Files
 
 ```
 benchmarks/
 ├── adapters/                 # OnlineRegressor wrappers for each package
-│   ├── base.py
-│   ├── pygptreeo_adapter.py
-│   ├── sklearn_gp_adapter.py
-│   ├── gpytorch_svgp_adapter.py
-│   ├── rf_adapter.py
-│   └── river_knn_adapter.py
-├── harness.py                # Streaming loop, metrics, result saving
-├── problems.py               # Target functions and Problem dataclass
-├── run_all.py                # Main driver
-├── make_plots.py             # Reads data/, writes plots/
-├── smoke_test.py             # Quick adapter sanity check
-├── data/                     # Saved .npz results (one per run)
-└── plots/                    # Generated PNG figures
+├── harness.py                # Streaming loop, metrics, per-checkpoint saves,
+│                               subprocess-safe timeouts
+├── problems.py               # Target functions; Problem dataclass;
+│                               iid / shift / sobol schedules
+├── run_all.py                # METHODS registry, subprocess driver,
+│                               NLPD-sanity trip-wire
+├── make_plots.py             # load_all + every plot + paper_table writer
+├── regenerate_paper.sh       # One-command reproduction
+├── smoke_test.py             # Five-minute "does anything work?" check
+├── data/                     # Short-stream (≤ 3000 pts) .npz results
+├── data_long/                # 5000-pt single-seed asymptote runs
+├── iterations/               # Reviewer/implementer logs + per-iter plot
+│   ├── README.md             #   snapshots
+│   ├── iteration_00_baseline/
+│   ├── iteration_01/ ... iteration_08/
+└── plots/                    # HEAD of the latest plot/table outputs
 ```
+
+## Development log
+
+Each numbered `iterations/iteration_NN/` directory contains a `review.md`
+(the critical reviewer's punch-list for that round) and a `summary.md`
+(the implementer's honest after-action report), together with the
+`.png` artefacts produced at the end of that iteration. Read them in
+order (`iteration_00_baseline/` through `iteration_08/`) for the full
+chronology of how the benchmark was built.
