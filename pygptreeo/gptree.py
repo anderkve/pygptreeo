@@ -438,15 +438,38 @@ class GPTree:
             # The default: mixture of experts, following the DLGP paper
             if self.aggregation == "default" or self.aggregation == "moe":
 
+                # Collect per-leaf predictions first so we can combine them
+                # with a numerically stable MoE variance formula. The naive
+                #   var = sum_k p_k * (sigma_k^2 + mu_k^2) - mean^2
+                # suffers catastrophic cancellation when |mu_k| is large
+                # relative to the cross-leaf variance (e.g. mu ~ 1e3 and the
+                # true cross-leaf spread is ~1e-3: float64 underflows the
+                # subtraction to zero or a small negative, and the returned
+                # sigma comes out as exactly 0 or NaN). We instead use the
+                # mathematically equivalent
+                #   var = sum_k p_k * sigma_k^2   (aleatoric)
+                #       + sum_k p_k * (mu_k - mean)^2   (epistemic)
+                # which is a sum of non-negative terms and is stable.
+                mus_list = []
+                vars_list = []
+                ps_list = []
                 for leaf, ptilde in zip(leaves, pred_leaf_probs):
-
                     mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
                     # mu_leaf and sigma_leaf have shape (1, n_outputs)
+                    mus_list.append(mu_leaf[0, :])
+                    vars_list.append(sigma_leaf[0, :]**2)
+                    ps_list.append(ptilde)
 
-                    mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
-                    var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + mu_leaf[0, :]**2)
+                mus_arr = np.asarray(mus_list)       # (n_leaves, n_outputs)
+                vars_arr = np.asarray(vars_list)     # (n_leaves, n_outputs)
+                ps_arr = np.asarray(ps_list)[:, None]  # (n_leaves, 1)
 
-                var_DLGP[i, :] += -mean_DLGP[i, :]**2
+                mean_i = np.sum(ps_arr * mus_arr, axis=0)  # (n_outputs,)
+                aleatoric = np.sum(ps_arr * vars_arr, axis=0)
+                epistemic = np.sum(ps_arr * (mus_arr - mean_i[None, :])**2, axis=0)
+
+                mean_DLGP[i, :] = mean_i
+                var_DLGP[i, :] = aleatoric + epistemic
 
             # Generalized product of experts
             elif self.aggregation == "poe":
@@ -510,25 +533,36 @@ class GPTree:
         std_DLGP: np.ndarray
             The posterior standard deviation used to quantify the uncertainty in the prediction. Has shape=(N_test, 1).
         """
-        mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
-        var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
+        # Two-pass, numerically stable MoE combination (see predict_recursive
+        # for the derivation). We first collect the per-leaf means, variances,
+        # and weights so we can combine them without catastrophic cancellation
+        # in the variance formula.
+        leaf_records = []
 
         for leaf in tqdm(self.root.leaves, disable=not show_progress, desc="Predicting"):
 
             ptilde = leaf.marg_prob(X_test)  # Shape: (n_test, 1)
 
-            # We can skip this leaf if its prediction contribute zero for all points in X_test
+            # Skip leaves that contribute zero everywhere.
             if np.all(ptilde == 0.0):
                 continue
 
             mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
             # mu_leaf and sigma_leaf have shape (n_test, n_outputs)
+            leaf_records.append((ptilde, mu_leaf, sigma_leaf))
 
-            # Broadcast ptilde to match shape (n_test, n_outputs)
-            mean_DLGP += ptilde * mu_leaf
-            var_DLGP += ptilde * (sigma_leaf**2 + mu_leaf**2)
+        mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
+        var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
 
-        var_DLGP += -mean_DLGP**2
+        if leaf_records:
+            # Pass 1: MoE mean.
+            for ptilde, mu_leaf, _ in leaf_records:
+                mean_DLGP += ptilde * mu_leaf
+
+            # Pass 2: aleatoric + epistemic variance, computed as a sum of
+            # non-negative terms.
+            for ptilde, mu_leaf, sigma_leaf in leaf_records:
+                var_DLGP += ptilde * (sigma_leaf ** 2 + (mu_leaf - mean_DLGP) ** 2)
 
         return mean_DLGP, np.sqrt(var_DLGP)
 

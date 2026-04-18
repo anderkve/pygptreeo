@@ -1327,6 +1327,25 @@ class GPNode(Node):
         mu_pred = np.zeros((n_samples, self.n_outputs))
         sigma_pred = np.zeros((n_samples, self.n_outputs))
 
+        def _noise_floor_scaled(gpr):
+            """The intrinsic homoscedastic noise floor sqrt(alpha).
+
+            sklearn's `GaussianProcessRegressor.predict` clips any numerically
+            negative posterior variance to exactly zero, which leaks through
+            `GPTree.predict` as `sigma == 0` at test points near the training
+            set. That is a numerical artefact, not a modelling statement: the
+            GP's model of the data has an explicit homoscedastic noise term
+            `alpha` on the diagonal of the kernel matrix, and the predictive
+            variance should never be smaller than that noise.  We therefore
+            floor the returned sigma at sqrt(alpha) in the scaled space.
+            """
+            alpha = getattr(gpr, "alpha", 0.0)
+            try:
+                alpha_val = float(np.max(alpha))
+            except (TypeError, ValueError):
+                alpha_val = 0.0
+            return float(np.sqrt(max(alpha_val, 1e-16)))
+
         if self.use_standard_scaling and self.X_scaler is not None:
             # Transform input to standardized space (same for all outputs)
             x_scaled = self.X_scaler.transform(x)
@@ -1335,6 +1354,12 @@ class GPNode(Node):
             for i in range(self.n_outputs):
                 # Get prediction in scaled space
                 mu_scaled_i, sigma_scaled_i = self.my_GPRs[i].predict(x_scaled, return_std=return_std)
+
+                # Floor the sigma at the intrinsic GP noise level (see
+                # `_noise_floor_scaled`). This prevents the sklearn
+                # neg-variance clipping from producing sigma = 0 exactly.
+                floor = _noise_floor_scaled(self.my_GPRs[i])
+                sigma_scaled_i = np.maximum(sigma_scaled_i, floor)
 
                 # Inverse transform mean: mu_original = mu_scaled * scale_y + mean_y
                 mu_pred[:, i] = self.y_scalers[i].inverse_transform(mu_scaled_i.reshape(-1, 1)).flatten()
@@ -1347,6 +1372,8 @@ class GPNode(Node):
             # No scaling - predict on raw data for each output
             for i in range(self.n_outputs):
                 mu_i, sigma_i = self.my_GPRs[i].predict(x, return_std=return_std)
+                floor = _noise_floor_scaled(self.my_GPRs[i])
+                sigma_i = np.maximum(sigma_i, floor)
                 mu_pred[:, i] = mu_i.flatten()
                 sigma_pred[:, i] = sigma_i
 
