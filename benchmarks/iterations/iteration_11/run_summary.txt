@@ -1,6 +1,6 @@
 # pygptreeo benchmark run summary
-iter_dir: benchmarks/plots
-timestamp_utc: 2026-04-19T08:03:33.287423+00:00
+iter_dir: benchmarks/iterations/iteration_11
+timestamp_utc: 2026-04-19T08:03:33.313097+00:00
 commit_sha: d75fbb0a61edafd62493c44c3c74229ee6a371ac
 schedule: iid
 Reliability: 76 / 76 pygptreeo* runs have frac_pathological_std[-1] == 0 (100.0 %)

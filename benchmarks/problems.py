@@ -169,7 +169,8 @@ class Problem:
         return X, y
 
     def sample_schedule(self, n: int, rng: np.random.Generator,
-                        schedule: str = "iid"):
+                        schedule: str = "iid",
+                        likelihood: str = "bimodal_gauss"):
         """Draw the stream under a particular sampling schedule.
 
         - ``iid``: uniform U[0, 1]^d (the default / no distribution shift).
@@ -210,7 +211,100 @@ class Problem:
             X = eng.random(n)
             y = self.fn(X)
             return X, y
+        if schedule == "de":
+            X = _sample_differential_evolution(
+                n=n, dim=self.dim, rng=rng, likelihood=likelihood,
+            )
+            y = self.fn(X)
+            return X, y
+        if schedule == "mcmc":
+            X = _sample_mcmc(
+                n=n, dim=self.dim, rng=rng, likelihood=likelihood,
+            )
+            y = self.fn(X)
+            return X, y
         raise ValueError(f"unknown schedule '{schedule}'")
+
+
+def _sample_differential_evolution(n: int, dim: int,
+                                   rng: np.random.Generator,
+                                   likelihood: str) -> np.ndarray:
+    """Run DE on the chosen auxiliary log-likelihood and log every
+    function evaluation in visit order. Returns the first ``n``.
+
+    DE minimises; since ``log L`` is the quantity we want to *maximise*,
+    the DE objective is ``-log L``.
+    """
+    from scipy.optimize import differential_evolution
+    from benchmarks.likelihoods import LIKELIHOODS
+
+    log_lik = LIKELIHOODS[likelihood]
+    bounds = [(0.0, 1.0)] * dim
+    popsize = 100  # large population → slow convergence, more coverage
+    visits = []
+
+    def _objective(x):
+        x = np.asarray(x).reshape(1, dim)
+        val = -float(log_lik(x).ravel()[0])
+        # Clip x into the unit cube before we store it, so that what the
+        # emulator sees is a lawful input. DE's native mutation can
+        # step slightly outside the bounds during internal work; the
+        # optimiser re-clips but we also store the clipped value.
+        x_clipped = np.clip(x.ravel(), 0.0, 1.0)
+        visits.append(x_clipped)
+        return val
+
+    # We need roughly n / (popsize * dim) iterations of DE to accumulate
+    # n visits. `maxiter` is a cap on that, with a safety factor.
+    evals_per_iter = popsize * dim
+    maxiter = max(5, int(np.ceil(n / max(1, evals_per_iter)) * 2 + 5))
+
+    # Use DE with polish=False to avoid a late-stage L-BFGS burst that
+    # would suddenly add many local-search visits.
+    differential_evolution(
+        _objective,
+        bounds,
+        seed=int(rng.integers(2 ** 31 - 1)),
+        popsize=popsize,
+        mutation=(0.5, 1.5),
+        recombination=0.9,
+        tol=0.0,          # run until maxiter; do not early-stop
+        init="sobol",
+        polish=False,
+        maxiter=maxiter,
+        updating="deferred",
+    )
+
+    if len(visits) < n:
+        # Pad with uniform fills if DE converged before we had enough.
+        extra = n - len(visits)
+        visits.extend(list(rng.uniform(0.0, 1.0, size=(extra, dim))))
+    X = np.asarray(visits[:n], dtype=float)
+    return X
+
+
+def _sample_mcmc(n: int, dim: int, rng: np.random.Generator,
+                 likelihood: str, proposal_sigma: float = 0.1) -> np.ndarray:
+    """Random-walk Metropolis from a uniform start. Every step
+    (accepted or rejected) contributes its *current state* to the
+    stream — so the emulator sees realistic chain autocorrelation.
+    """
+    from benchmarks.likelihoods import LIKELIHOODS
+
+    log_lik = LIKELIHOODS[likelihood]
+    x = rng.uniform(0.0, 1.0, size=dim)
+    lp = float(log_lik(x.reshape(1, dim)).ravel()[0])
+    visits = np.empty((n, dim), dtype=float)
+    for i in range(n):
+        prop = x + rng.normal(0.0, proposal_sigma, size=dim)
+        lp_prop = float(log_lik(prop.reshape(1, dim)).ravel()[0])
+        if np.log(rng.random() + 1e-300) < (lp_prop - lp):
+            x = prop
+            lp = lp_prop
+        # Clip into the cube for storage (the penalty in the likelihood
+        # will have already rejected most out-of-box proposals).
+        visits[i] = np.clip(x, 0.0, 1.0)
+    return visits
 
 
 PROBLEMS = {
