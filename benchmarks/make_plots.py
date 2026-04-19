@@ -38,7 +38,7 @@ METHOD_ORDER = [
     "random_forest", "random_forest_A",
     "river_knn", "river_knn_A",
     # Variants
-    "pygptreeo_B", "pygptreeo_C",
+    "pygptreeo_B", "pygptreeo_C", "pygptreeo_D",
     "sklearn_gp_B", "gpytorch_svgp_B",
     "river_knn_B",
 ]
@@ -48,6 +48,7 @@ METHOD_LABEL = {
     "pygptreeo_A": "pygptreeo (A)",
     "pygptreeo_B": "pygptreeo (B: Nbar=100)",
     "pygptreeo_C": "pygptreeo (C: Matern-only)",
+    "pygptreeo_D": "pygptreeo (D: Nbar=100, retrain=100)",
     "pygptreeo_poe": "pygptreeo (PoE)",
     "sklearn_gp": "sklearn GP (A: N≤400)",
     "sklearn_gp_A": "sklearn GP (A: N≤400)",
@@ -65,6 +66,7 @@ METHOD_LABEL = {
 METHOD_COLOR = {
     "pygptreeo": "#d7263d", "pygptreeo_A": "#d7263d",
     "pygptreeo_B": "#ff6b8a", "pygptreeo_C": "#8b0000",
+    "pygptreeo_D": "#ff3366",
     "pygptreeo_poe": "#ff9b3a",
     "sklearn_gp": "#1b9e77", "sklearn_gp_A": "#1b9e77",
     "sklearn_gp_B": "#0a5d47",
@@ -78,6 +80,7 @@ METHOD_COLOR = {
 METHOD_LS = {
     "pygptreeo": "-", "pygptreeo_A": "-",
     "pygptreeo_B": "-", "pygptreeo_C": (0, (5, 2)),
+    "pygptreeo_D": (0, (4, 1)),
     "pygptreeo_poe": (0, (2, 2)),
     "sklearn_gp": "--", "sklearn_gp_A": "--",
     "sklearn_gp_B": (0, (5, 1)),
@@ -335,9 +338,19 @@ def plot_summary_bars(results, problems, out_path, schedule="iid"):
 
 
 def plot_pareto(results, problems, out_path, schedule="iid"):
+    """Per-problem Pareto plots + a final legend-only panel.
+
+    Each scatter point is one (method, seed) run; the larger diamond is
+    the per-method median. The final panel exists solely to deduplicate
+    the legend and show every method that appears in any of the data
+    panels — fixes the "missing markers" / "duplicate labels" problem
+    from earlier iterations.
+    """
+    n_panels = len(problems) + 1  # +1 for the legend panel
     fig, axes = plt.subplots(
-        1, len(problems), figsize=(4.0 * len(problems), 3.8), squeeze=False,
+        1, n_panels, figsize=(4.0 * n_panels, 3.8), squeeze=False,
     )
+    handles_by_label = {}
     for i, problem in enumerate(problems):
         ax = axes[0][i]
         for method in METHOD_ORDER:
@@ -352,21 +365,43 @@ def plot_pareto(results, problems, out_path, schedule="iid"):
                 ys.append(float(r["nrmse"][-1]))
             if not xs:
                 continue
-            ax.scatter(xs, ys, s=70, color=METHOD_COLOR[method],
-                       edgecolor="black", linewidth=0.5,
-                       label=METHOD_LABEL[method], zorder=3)
+            label = METHOD_LABEL[method]
+            sc = ax.scatter(xs, ys, s=70, color=METHOD_COLOR[method],
+                            edgecolor="black", linewidth=0.5,
+                            label=label, zorder=3)
             ax.scatter([np.median(xs)], [np.median(ys)], s=160,
                        color=METHOD_COLOR[method], edgecolor="black",
                        linewidth=1.2, marker="D", zorder=4)
+            # Stash a clean handle (single-marker proxy) for the legend
+            # panel — avoids the "duplicate labels per panel" issue.
+            if label not in handles_by_label:
+                from matplotlib.lines import Line2D
+                handles_by_label[label] = Line2D(
+                    [0], [0], marker="o", color="white",
+                    markerfacecolor=METHOD_COLOR[method],
+                    markeredgecolor="black", markersize=10, linewidth=0,
+                    label=label,
+                )
         ax.set_xscale("log"); ax.set_yscale("log")
-        ax.set_xlabel("total update time [s]");
-        if i == 0: ax.set_ylabel("final NRMSE")
+        ax.set_xlabel("total update time [s]")
+        if i == 0:
+            ax.set_ylabel("final NRMSE")
         ax.set_title(problem)
         ax.grid(True, which="both", alpha=0.3)
-        if i == 0:
-            ax.legend(fontsize=8, frameon=False, loc="best")
-    fig.suptitle("Accuracy vs compute budget — Pareto front "
-                 "(diamonds = per-method medians)", fontsize=13)
+
+    # Legend-only panel.
+    leg_ax = axes[0][-1]
+    leg_ax.axis("off")
+    if handles_by_label:
+        leg_ax.legend(
+            handles=list(handles_by_label.values()),
+            labels=list(handles_by_label.keys()),
+            loc="center", frameon=False, fontsize=10,
+            handlelength=2.0, borderpad=1.0,
+            title="methods (diamonds = medians)",
+            title_fontsize=11,
+        )
+    fig.suptitle("Accuracy vs compute budget — Pareto front", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -1196,9 +1231,14 @@ def main():
         )
         print(reliability_line)
 
+    # Per-iteration plots go in `<iter-dir>/plots/` — keeping the
+    # iteration history visually navigable. The global `plots/`
+    # directory continues to hold the latest snapshot.
     out_dirs = [args.plots_dir]
     if args.iter_dir:
-        out_dirs.append(args.iter_dir)
+        iter_plots = os.path.join(args.iter_dir, "plots")
+        os.makedirs(iter_plots, exist_ok=True)
+        out_dirs.append(iter_plots)
 
     def _write_all(basename, drawer, *drawer_args, **drawer_kwargs):
         for d in out_dirs:

@@ -222,6 +222,7 @@ def run_online_benchmark(
     method_name: str | None = None,
     verbose: bool = True,
     save_every_checkpoint_to: str | None = None,
+    schedule_kwargs: dict | None = None,
 ) -> RunResult:
     """Run one (method, problem, seed) benchmark.
 
@@ -240,6 +241,7 @@ def run_online_benchmark(
 
     X_stream, y_stream = problem.sample_schedule(
         n_stream, rng_stream, schedule=schedule,
+        **(schedule_kwargs or {}),
     )
     X_test, y_test = problem.sample(n_test, rng_test)
 

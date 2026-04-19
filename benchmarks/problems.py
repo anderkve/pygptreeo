@@ -170,7 +170,8 @@ class Problem:
 
     def sample_schedule(self, n: int, rng: np.random.Generator,
                         schedule: str = "iid",
-                        likelihood: str = "bimodal_gauss"):
+                        likelihood: str = "bimodal_gauss",
+                        de_popsize: int = 100):
         """Draw the stream under a particular sampling schedule.
 
         - ``iid``: uniform U[0, 1]^d (the default / no distribution shift).
@@ -214,6 +215,7 @@ class Problem:
         if schedule == "de":
             X = _sample_differential_evolution(
                 n=n, dim=self.dim, rng=rng, likelihood=likelihood,
+                popsize=de_popsize,
             )
             y = self.fn(X)
             return X, y
@@ -228,19 +230,23 @@ class Problem:
 
 def _sample_differential_evolution(n: int, dim: int,
                                    rng: np.random.Generator,
-                                   likelihood: str) -> np.ndarray:
+                                   likelihood: str,
+                                   popsize: int = 100) -> np.ndarray:
     """Run DE on the chosen auxiliary log-likelihood and log every
     function evaluation in visit order. Returns the first ``n``.
 
     DE minimises; since ``log L`` is the quantity we want to *maximise*,
-    the DE objective is ``-log L``.
+    the DE objective is ``-log L``. ``popsize`` is scipy's per-dimension
+    multiplier — the actual population per generation is ``popsize *
+    dim``. Larger ``popsize`` => slower convergence and broader cube
+    coverage in the early generations (good for "map the 2σ region of
+    the profile likelihood" workloads, not just "find the best fit").
     """
     from scipy.optimize import differential_evolution
     from benchmarks.likelihoods import LIKELIHOODS
 
     log_lik = LIKELIHOODS[likelihood]
     bounds = [(0.0, 1.0)] * dim
-    popsize = 100  # large population → slow convergence, more coverage
     visits = []
 
     def _objective(x):

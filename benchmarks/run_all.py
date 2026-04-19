@@ -93,6 +93,22 @@ def _make_pygptreeo_C(d: int):
     )
 
 
+def _make_pygptreeo_D(d: int):
+    """Fast-adapting variant: Nbar=100, retrain_step=100.
+
+    Targets streaming workloads where the input distribution is
+    non-stationary (DE early generations, MCMC mode hops). Smaller
+    leaves split sooner and the more frequent retrain cadence keeps
+    each leaf's kernel hyperparameters in sync with the local data.
+    Same `matern+rq` kernel as `_A` so the difference is purely the
+    leaf-size / retrain-cadence pair.
+    """
+    return PyGPTreeOAdapter(
+        d, Nbar=100, retrain_step=100, theta=1e-4, sigma_rel=1e-3,
+        kernel_spec="matern+rq",
+    )
+
+
 def _make_pygptreeo_poe(d: int):
     """Aggregation ablation: same baseline as _A but PoE (product of
     experts) instead of the default MoE (mixture of experts).
@@ -226,6 +242,7 @@ METHODS = {
     "pygptreeo_A": _make_pygptreeo_A,
     "pygptreeo_B": _make_pygptreeo_B,
     "pygptreeo_C": _make_pygptreeo_C,
+    "pygptreeo_D": _make_pygptreeo_D,
     "pygptreeo_poe": _make_pygptreeo_poe,
     "sklearn_gp_A": _make_sklearn_gp_A,
     "sklearn_gp_B": _make_sklearn_gp_B,
@@ -261,6 +278,9 @@ def parse_args():
     p.add_argument("--checkpoint-every", type=int, default=300)
     p.add_argument("--max-wall-time", type=float, default=1200.0,
                    help="Per-run wall-time ceiling in seconds (hard timeout).")
+    p.add_argument("--de-popsize", type=int, default=100,
+                   help="DE popsize per dimension (scipy convention). "
+                        "Larger => slower convergence, wider coverage.")
     p.add_argument("--force", action="store_true")
     p.add_argument("--out-dir", default="benchmarks/data")
     p.add_argument("--no-subprocess", action="store_true",
@@ -275,7 +295,8 @@ def _fname(method_name, problem_name, schedule, seed):
 
 
 def _child_target(method_name, problem_name, schedule, seed,
-                  n_stream, n_test, checkpoint_every, max_wall_time, out_file):
+                  n_stream, n_test, checkpoint_every, max_wall_time, out_file,
+                  schedule_kwargs):
     """Child-process entry. Runs one benchmark and writes results to disk."""
     warnings.filterwarnings("ignore")
     # Silence adapter stdout (pygptreeo prints a lot during tree splits).
@@ -295,6 +316,7 @@ def _child_target(method_name, problem_name, schedule, seed,
             method_name=method_name,
             verbose=False,
             save_every_checkpoint_to=out_file,
+            schedule_kwargs=schedule_kwargs,
         )
 
 
@@ -326,11 +348,12 @@ def _run_one(method_name, problem_name, schedule, seed, args):
     print(f"\n==> {method_name} | {problem_name} | sched={schedule} | seed {seed}")
     t0 = time.time()
 
+    schedule_kwargs = {"de_popsize": args.de_popsize}
     if args.no_subprocess:
         _child_target(
             method_name, problem_name, schedule, seed,
             args.n_stream, args.n_test, args.checkpoint_every,
-            args.max_wall_time, out_file,
+            args.max_wall_time, out_file, schedule_kwargs,
         )
     else:
         ctx = mp.get_context("spawn")
@@ -341,7 +364,7 @@ def _run_one(method_name, problem_name, schedule, seed, args):
             target=_child_target,
             args=(method_name, problem_name, schedule, seed,
                   args.n_stream, args.n_test, args.checkpoint_every,
-                  args.max_wall_time, out_file),
+                  args.max_wall_time, out_file, schedule_kwargs),
         )
         proc.start()
         proc.join(timeout=deadline)
