@@ -174,11 +174,13 @@ class Problem:
 
         - ``iid``: uniform U[0, 1]^d (the default / no distribution shift).
         - ``shift``: first half from U[0, 0.5]^d, second half from
-          U[0.5, 1]^d. A covariate-shift stress test: continual learners
-          that can update quickly should adapt; batch methods refitting on
-          a buffer must re-learn the new region.
-        - ``sobol``: low-discrepancy Sobol-like sequence via scipy, falling
-          back to uniform if scipy unavailable.
+          U[0.5, 1]^d. A covariate-shift stress test.
+        - ``sobol``: scrambled Sobol low-discrepancy sequence.
+        - ``lhs``: Latin hypercube sampling — space-filling design, draws
+          one point per per-dimension stratum, scrambled with ``rng``.
+          Mirrors the "design-of-experiments" workflow where an
+          experimenter picks a one-shot grid of emulator training points
+          rather than drawing iid.
         """
         if schedule == "iid":
             return self.sample(n, rng)
@@ -197,6 +199,15 @@ class Problem:
                 X = eng.random(n)
             except ImportError:
                 return self.sample(n, rng)
+            y = self.fn(X)
+            return X, y
+        if schedule == "lhs":
+            from scipy.stats import qmc
+            eng = qmc.LatinHypercube(
+                d=self.dim, scramble=True,
+                seed=int(rng.integers(2**31 - 1)),
+            )
+            X = eng.random(n)
             y = self.fn(X)
             return X, y
         raise ValueError(f"unknown schedule '{schedule}'")

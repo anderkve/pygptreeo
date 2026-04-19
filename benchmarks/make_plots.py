@@ -373,6 +373,67 @@ def plot_pareto(results, problems, out_path, schedule="iid"):
     plt.close(fig)
 
 
+def plot_schedule_comparison(results, problems, out_path,
+                             schedules=("iid", "lhs"),
+                             methods=None, metric="nrmse"):
+    """General 4-panel figure: grouped bars per method, one bar per schedule.
+
+    Generalises `plot_shift_vs_iid` to an arbitrary list of schedules
+    (used for iid vs LHS in iter 10 and for iid vs de/mcmc in iter 11).
+    """
+    if methods is None:
+        methods = [
+            "pygptreeo_A", "sklearn_gp_A", "gpytorch_svgp_A",
+            "random_forest_A", "river_knn_A",
+        ]
+    hatches = ["", "///", "xxx", "..."]
+    fig, axes = plt.subplots(
+        1, len(problems), figsize=(3.8 * len(problems), 4.0),
+        squeeze=False,
+    )
+    n_sched = len(schedules)
+    width = 0.8 / max(1, n_sched)
+    for p_i, problem in enumerate(problems):
+        ax = axes[0][p_i]
+        methods_present = []
+        for m in methods:
+            if any(results.get((m, problem, s)) for s in schedules):
+                methods_present.append(m)
+        x = np.arange(len(methods_present))
+        for s_i, sched in enumerate(schedules):
+            offset = (s_i - (n_sched - 1) / 2.0) * width
+            heights = []
+            for m in methods_present:
+                runs = results.get((m, problem, sched), [])
+                vals = [float(r[metric][-1]) for r in runs
+                        if metric in r and len(r[metric]) > 0
+                        and np.isfinite(float(r[metric][-1]))]
+                heights.append(float(np.nanmedian(vals)) if vals else np.nan)
+            ax.bar(
+                x + offset, heights, width,
+                color=[METHOD_COLOR.get(m, "#888") for m in methods_present],
+                edgecolor="black", linewidth=0.4,
+                label=sched,
+                hatch=hatches[s_i % len(hatches)],
+                alpha=1.0 if s_i == 0 else 0.75,
+            )
+        ax.set_xticks(x)
+        ax.set_xticklabels([METHOD_LABEL.get(m, m) for m in methods_present],
+                           rotation=35, ha="right", fontsize=8)
+        ax.set_yscale("log")
+        ax.set_title(problem)
+        ax.grid(True, axis="y", alpha=0.3)
+        if p_i == 0:
+            ax.set_ylabel(f"final {metric.upper()}")
+            ax.legend(fontsize=9, frameon=False, loc="best")
+    title = " vs ".join(schedules)
+    fig.suptitle(f"Sampling-schedule comparison ({title})", fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_shift_vs_iid(results, problems, out_path,
                       schedule_a="iid", schedule_b="shift"):
     """Grouped bar chart: final NRMSE under iid vs shift, per method."""
@@ -1187,6 +1248,20 @@ def main():
         if have_shift:
             _write_all("shift_vs_iid.png", plot_shift_vs_iid,
                        results, args.problems)
+    # LHS / adaptive-sampler schedule comparisons.
+    have_schedules = {s for (_m, _p, s) in results.keys()}
+    extra_scheds = [s for s in ("lhs", "de", "mcmc") if s in have_schedules]
+    for s in extra_scheds:
+        _write_all(
+            f"schedule_iid_vs_{s}.png", plot_schedule_comparison,
+            results, args.problems, schedules=("iid", s),
+        )
+    # Combined plot if both de and mcmc are present.
+    if {"de", "mcmc"}.issubset(have_schedules):
+        _write_all(
+            "schedule_de_vs_mcmc.png", plot_schedule_comparison,
+            results, args.problems, schedules=("iid", "de", "mcmc"),
+        )
     for d in out_dirs:
         print(f"Wrote plots to {d}/")
 
