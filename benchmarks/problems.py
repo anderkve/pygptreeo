@@ -313,12 +313,23 @@ def _sample_mcmc(n: int, dim: int, rng: np.random.Generator,
     return visits
 
 
+def _neg_banana(X: np.ndarray) -> np.ndarray:
+    """`-banana(X)`, used as a target `fn` so the chain samples from the
+    banana likelihood. Shape: curved ridge in the first two dims."""
+    from benchmarks.likelihoods import banana
+    return -banana(X)
+
+
 PROBLEMS = {
     "smooth_sines_2d": Problem("smooth_sines_2d", 2, smooth_sines),
     "rosenbrock_2d": Problem("rosenbrock_2d", 2, rosenbrock),
     "borehole_8d": Problem("borehole_8d", 8, borehole),
     "friedman1_5d": Problem("friedman1_5d", 5, friedman1),
     "piston_7d": Problem("piston_7d", 7, piston),
+    # Iter 15: banana-shaped likelihoods at two dims (the extra dims
+    # are nuisance parameters the chain must sample as noise).
+    "banana_2d": Problem("banana_2d", 2, _neg_banana),
+    "banana_5d": Problem("banana_5d", 5, _neg_banana),
     # Kept but not in the default benchmark set.
     "eggholder_2d": Problem("eggholder_2d", 2, eggholder),
     "rastrigin_3d": Problem("rastrigin_3d", 3, rastrigin),
