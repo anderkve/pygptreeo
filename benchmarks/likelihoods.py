@@ -52,6 +52,28 @@ def bimodal_gauss(X: np.ndarray) -> np.ndarray:
     return lp
 
 
+def banana(X: np.ndarray) -> np.ndarray:
+    """Curved 2-D Rosenbrock-like ridge on (x0, x1), flat on the rest.
+
+    log L(x) = -0.5 · (((x0 - 0.5)/sigma)^2
+                       + ((x1 - 0.5) - 4·(x0 - 0.5)^2)^2 / sigma^2)
+
+    with sigma = 0.05. Extra dimensions contribute nothing (flat
+    posterior on them). A classic stress test for chain mixing.
+    Out-of-unit-cube evaluations get the same penalty as `bimodal_gauss`.
+    """
+    X = np.atleast_2d(np.asarray(X, dtype=float))
+    sigma = 0.05
+    x0 = X[:, 0] - 0.5
+    x1 = X[:, 1] - 0.5
+    ridge = x1 - 4.0 * x0 * x0
+    lp = -0.5 * (x0 * x0 + ridge * ridge) / (sigma * sigma)
+    in_box = _in_unit_cube(X)
+    lp = np.where(in_box, lp, _OUT_OF_BOX_PENALTY)
+    return lp
+
+
 LIKELIHOODS = {
     "bimodal_gauss": bimodal_gauss,
+    "banana": banana,
 }

@@ -226,3 +226,97 @@ def energy_2d_01(s_ref: np.ndarray, s_alt: np.ndarray,
     d_rr = float(np.mean(cdist(xr, xr)))
     d_aa = float(np.mean(cdist(xa, xa)))
     return 2.0 * d_ra - d_rr - d_aa
+
+
+def mmd_rbf_joint(s_ref: np.ndarray, s_alt: np.ndarray,
+                  n_sub: int = 2000,
+                  rng: np.random.Generator | None = None) -> float:
+    """Unbiased MMD² with median-heuristic RBF kernel on the full
+    joint distribution. Sub-samples to n_sub rows per chain.
+    """
+    from scipy.spatial.distance import cdist
+    rng = rng if rng is not None else np.random.default_rng(0)
+    n_ref = min(n_sub, s_ref.shape[0])
+    n_alt = min(n_sub, s_alt.shape[0])
+    xr = s_ref[rng.choice(s_ref.shape[0], size=n_ref, replace=False)]
+    xa = s_alt[rng.choice(s_alt.shape[0], size=n_alt, replace=False)]
+    stacked = np.vstack([xr, xa])
+    sq = cdist(stacked, stacked, metric="sqeuclidean")
+    # Median heuristic on squared-distances (non-zero, off-diagonal).
+    off = sq[np.triu_indices_from(sq, k=1)]
+    med = float(np.median(off[off > 0])) if np.any(off > 0) else 1.0
+    gamma = 1.0 / max(med, 1e-12)
+    k_rr = np.exp(-gamma * cdist(xr, xr, metric="sqeuclidean"))
+    k_aa = np.exp(-gamma * cdist(xa, xa, metric="sqeuclidean"))
+    k_ra = np.exp(-gamma * cdist(xr, xa, metric="sqeuclidean"))
+    return float(k_rr.mean() + k_aa.mean() - 2.0 * k_ra.mean())
+
+
+def run_delayed_acceptance_chain(
+    method_factory, problem, seed, n_steps, proposal_sigma=0.05,
+    beta=1.0, f_min_scale=None,
+):
+    """Two-stage delayed-acceptance MCMC (Christen & Fox 2005).
+
+    Stage 1: emulator's mean μ screens proposals cheaply.
+    Stage 2: true logL is evaluated only on provisional accepts,
+             with a correction ratio so the target is exact.
+    """
+    rng = np.random.default_rng(seed)
+    if f_min_scale is None:
+        f_min, f_scale = estimate_f_scale(problem, rng)
+    else:
+        f_min, f_scale = f_min_scale
+    f_scale_eff = max(1e-12, 0.1 * f_scale)
+
+    def _true_logL(X):
+        return -beta * (problem.fn(np.atleast_2d(X)) - f_min) / f_scale_eff
+
+    method = method_factory(problem.dim)
+    x = rng.uniform(0.0, 1.0, size=problem.dim)
+    lp_true = float(_true_logL(x.reshape(1, -1)).ravel()[0])
+    method.update(x.reshape(1, -1), np.array([[lp_true]]))
+    mu_cur = lp_true
+
+    samples = np.empty((n_steps, problem.dim), dtype=float)
+    logLs = np.empty(n_steps, dtype=float)
+    n_accept = 0
+    n_first_stage_rejects = 0
+    n_true_evals = 1
+
+    t0 = time.time()
+    for i in range(n_steps):
+        prop = x + rng.normal(0.0, proposal_sigma, size=problem.dim)
+        if np.all((prop >= 0.0) & (prop <= 1.0)):
+            mean, _std = method.predict(prop.reshape(1, -1))
+            mu_prop = float(np.asarray(mean).ravel()[0])
+            u1 = rng.random()
+            if np.log(u1 + 1e-300) >= (mu_prop - mu_cur):
+                # Stage-1 reject (cheap).
+                n_first_stage_rejects += 1
+            else:
+                # Stage-2: evaluate truth + correction.
+                lp_true_prop = float(_true_logL(prop.reshape(1, -1)).ravel()[0])
+                n_true_evals += 1
+                method.update(prop.reshape(1, -1),
+                              np.array([[lp_true_prop]]))
+                # Correction ratio.
+                ratio = (lp_true_prop - mu_prop) - (lp_true - mu_cur)
+                u2 = rng.random()
+                if np.log(u2 + 1e-300) < ratio:
+                    x = prop
+                    lp_true = lp_true_prop
+                    mu_cur = mu_prop
+                    n_accept += 1
+        samples[i] = x
+        logLs[i] = lp_true
+    wall = time.time() - t0
+    method.close()
+    return {
+        "samples": samples, "logL": logLs,
+        "n_accept": int(n_accept), "n_proposals": int(n_steps),
+        "n_first_stage_rejects": int(n_first_stage_rejects),
+        "n_true_evals": int(n_true_evals),
+        "wall_time": float(wall),
+        "f_min_scale": (f_min, f_scale),
+    }
