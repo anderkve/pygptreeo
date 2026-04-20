@@ -45,39 +45,130 @@ def _final_speedup(r, n_stream):
 
 
 def plot_speedup_vs_threshold(results, problems, out_path,
-                              schedule="mcmc"):
-    """Line plot: speedup vs τ_σ, one line per method, one panel per problem."""
+                              schedules=("mcmc", "iid")):
+    """Two-row figure: speedup vs τ_σ, one row per schedule, one column
+    per problem, one line per method, shared legend.
+    """
     fig, axes = plt.subplots(
-        1, len(problems), figsize=(4.2 * len(problems), 3.8), squeeze=False,
+        len(schedules), len(problems),
+        figsize=(4.2 * len(problems), 3.4 * len(schedules)),
+        squeeze=False, sharex=True, sharey=True,
     )
-    for pi, problem in enumerate(problems):
-        ax = axes[0][pi]
-        by_method = defaultdict(list)
-        for (m, p, s, tau), runs in results.items():
-            if p != problem or s != schedule or not runs:
-                continue
-            r = runs[0]
-            if "cum_n_trained" not in r or len(r["cum_n_trained"]) == 0:
-                continue
-            n_stream = int(r["cum_n_trained"][-1] + r["cum_n_trusted"][-1])
-            speedup = _final_speedup(r, n_stream)
-            by_method[m].append((tau, speedup))
-        for m, xy in sorted(by_method.items(), key=lambda kv: METHOD_ORDER.index(kv[0]) if kv[0] in METHOD_ORDER else 99):
-            xy = sorted(xy)
-            xs = [t for (t, _) in xy]
-            ys = [s for (_, s) in xy]
-            ax.plot(xs, ys, "o-", color=METHOD_COLOR.get(m, "#888"),
-                    label=METHOD_LABEL.get(m, m), linewidth=2, markersize=7)
-        ax.set_xscale("log"); ax.set_yscale("log")
-        ax.set_xlabel(r"trust threshold $\tau_\sigma$ (relative to y-range)")
-        if pi == 0:
-            ax.set_ylabel("speedup = n_stream / n_trained")
-        ax.set_title(f"{problem}  (schedule = {schedule})")
-        ax.grid(True, which="both", alpha=0.3)
-        if pi == 0:
-            ax.legend(fontsize=8, frameon=False, loc="best")
+    handles_by_label = {}
+    for si, schedule in enumerate(schedules):
+        for pi, problem in enumerate(problems):
+            ax = axes[si][pi]
+            by_method = defaultdict(list)
+            for (m, p, s, tau), runs in results.items():
+                if p != problem or s != schedule or not runs:
+                    continue
+                r = runs[0]
+                if "cum_n_trained" not in r or len(r["cum_n_trained"]) == 0:
+                    continue
+                n_stream = int(r["cum_n_trained"][-1] + r["cum_n_trusted"][-1])
+                speedup = _final_speedup(r, n_stream)
+                by_method[m].append((tau, speedup))
+            for m, xy in sorted(
+                by_method.items(),
+                key=lambda kv: METHOD_ORDER.index(kv[0])
+                if kv[0] in METHOD_ORDER else 99,
+            ):
+                xy = sorted(xy)
+                xs = [t for (t, _) in xy]
+                ys = [s for (_, s) in xy]
+                color = METHOD_COLOR.get(m, "#888")
+                label = METHOD_LABEL.get(m, m)
+                ax.plot(xs, ys, "o-", color=color, label=label,
+                        linewidth=2, markersize=7)
+                handles_by_label.setdefault(label, color)
+            ax.set_xscale("log"); ax.set_yscale("log")
+            if si == len(schedules) - 1:
+                ax.set_xlabel(r"trust threshold $\tau_\sigma$"
+                              " (relative to y-range)")
+            if pi == 0:
+                ax.set_ylabel(f"speedup [{schedule}]")
+            if si == 0:
+                ax.set_title(problem)
+            ax.grid(True, which="both", alpha=0.3)
+    if handles_by_label:
+        from matplotlib.lines import Line2D
+        handles = [
+            Line2D([0], [0], color=c, marker="o", linewidth=2, label=l)
+            for l, c in handles_by_label.items()
+        ]
+        fig.legend(handles=handles, labels=list(handles_by_label.keys()),
+                   loc="upper right", bbox_to_anchor=(0.99, 0.97),
+                   ncol=1, fontsize=9, frameon=False)
     fig.suptitle("Trust-threshold deployment: speedup vs τ_σ", fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    fig.tight_layout(rect=[0, 0, 0.83, 0.94])
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_trained_vs_batch(results, problems, out_path,
+                          schedules=("mcmc", "iid"),
+                          tau_sigma_pick=1e-2):
+    """Cumulative n_trained as a function of stream step, one panel per
+    (problem, schedule) cell. Makes the MCMC-revisit plateau visible.
+    """
+    fig, axes = plt.subplots(
+        len(schedules), len(problems),
+        figsize=(4.4 * len(problems), 3.4 * len(schedules)),
+        squeeze=False, sharex=True, sharey=False,
+    )
+    handles_by_label = {}
+    for si, schedule in enumerate(schedules):
+        for pi, problem in enumerate(problems):
+            ax = axes[si][pi]
+            for (m, p, s, tau), runs in results.items():
+                if p != problem or s != schedule or not runs:
+                    continue
+                if abs(tau - tau_sigma_pick) / tau_sigma_pick > 0.1:
+                    continue
+                r = runs[0]
+                cum_t = np.asarray(r.get("cum_n_trained", []), dtype=float)
+                cum_s = np.asarray(r.get("cum_n_trusted", []), dtype=float)
+                if cum_t.size == 0:
+                    continue
+                # The cumulative arrays are at batch boundaries.
+                batch_size = int(cum_t[0] + cum_s[0]) if (cum_t.size > 0) else 1000
+                xs = (np.arange(1, cum_t.size + 1)) * batch_size
+                color = METHOD_COLOR.get(m, "#888")
+                label = METHOD_LABEL.get(m, m)
+                ax.plot(xs, cum_t, "-", color=color, linewidth=2,
+                        label=label)
+                handles_by_label.setdefault(label, color)
+            # Reference y=x line: every stream step trains.
+            xs_ref = ax.get_xlim()
+            ax.plot([0, max(xs_ref)], [0, max(xs_ref)],
+                    "--", color="black", linewidth=0.8, alpha=0.5,
+                    label="trains-on-everything (no skipping)")
+            handles_by_label.setdefault(
+                "trains-on-everything (no skipping)", "black"
+            )
+            if si == len(schedules) - 1:
+                ax.set_xlabel("stream step")
+            if pi == 0:
+                ax.set_ylabel(f"cum. n_trained [{schedule}]")
+            if si == 0:
+                ax.set_title(problem)
+            ax.grid(True, alpha=0.3)
+    if handles_by_label:
+        from matplotlib.lines import Line2D
+        handles = []
+        for label, c in handles_by_label.items():
+            ls = "--" if c == "black" else "-"
+            handles.append(Line2D([0], [0], color=c, linewidth=2,
+                                  linestyle=ls, label=label))
+        fig.legend(handles=handles, labels=list(handles_by_label.keys()),
+                   loc="upper right", bbox_to_anchor=(0.99, 0.97),
+                   ncol=1, fontsize=8, frameon=False)
+    fig.suptitle(
+        f"Cumulative true-function calls (τ_σ = {tau_sigma_pick:g})",
+        fontsize=13,
+    )
+    fig.tight_layout(rect=[0, 0, 0.81, 0.94])
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -217,8 +308,10 @@ def main():
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--problems", nargs="+",
                     default=["rosenbrock_2d", "borehole_8d"])
-    ap.add_argument("--schedule", default="mcmc")
+    ap.add_argument("--schedules", nargs="+", default=["mcmc", "iid"])
     ap.add_argument("--tau-sigma-pick", type=float, default=1e-2)
+    ap.add_argument("--tau-y-picks", nargs="+", type=float,
+                    default=[1e-3, 1e-2])
     args = ap.parse_args()
     results = load_all(args.data_dir)
     print(f"Loaded {sum(len(v) for v in results.values())} runs, "
@@ -226,17 +319,33 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     plot_speedup_vs_threshold(
         results, args.problems,
-        os.path.join(args.out_dir, "trust_speedup.png"), schedule=args.schedule,
+        os.path.join(args.out_dir, "trust_speedup.png"),
+        schedules=tuple(args.schedules),
     )
-    plot_quality_per_batch(
+    # Map a τ_y CLI pick to its column in DEFAULT_TAU_Y_GRID.
+    from benchmarks.trust_harness import DEFAULT_TAU_Y_GRID
+    grid = list(DEFAULT_TAU_Y_GRID)
+    for tau_y in args.tau_y_picks:
+        col = int(np.argmin(np.abs(np.asarray(grid) - tau_y)))
+        out = os.path.join(
+            args.out_dir, f"trust_quality_per_batch_tau{tau_y:g}.png",
+        )
+        plot_quality_per_batch(
+            results, args.problems, out,
+            tau_sigma_pick=args.tau_sigma_pick,
+            schedule=args.schedules[0],
+            tau_y_col=col,
+        )
+    for sched in args.schedules:
+        out = os.path.join(args.out_dir, f"trust_pareto_{sched}.png")
+        plot_trust_pareto(
+            results, args.problems, out, schedule=sched,
+        )
+    plot_trained_vs_batch(
         results, args.problems,
-        os.path.join(args.out_dir, "trust_quality_per_batch.png"),
-        tau_sigma_pick=args.tau_sigma_pick, schedule=args.schedule,
-    )
-    plot_trust_pareto(
-        results, args.problems,
-        os.path.join(args.out_dir, "trust_pareto.png"),
-        schedule=args.schedule,
+        os.path.join(args.out_dir, "trained_vs_batch.png"),
+        schedules=tuple(args.schedules),
+        tau_sigma_pick=args.tau_sigma_pick,
     )
     print(f"Wrote plots to {args.out_dir}/")
 
