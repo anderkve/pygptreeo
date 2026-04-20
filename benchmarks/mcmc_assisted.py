@@ -191,3 +191,38 @@ def wasserstein1_marginals(s_ref: np.ndarray, s_alt: np.ndarray) -> float:
     for j in range(d):
         out += float(np.mean(np.abs(sr[:, j] - sa[:, j])))
     return out / d
+
+
+def ks_marginals_max(s_ref: np.ndarray, s_alt: np.ndarray) -> float:
+    """Max over dimensions of the two-sample KS statistic. Catches
+    tail mismatches that W1 averages away."""
+    from scipy.stats import ks_2samp
+    d = s_ref.shape[1]
+    return float(max(
+        ks_2samp(s_ref[:, j], s_alt[:, j]).statistic for j in range(d)
+    ))
+
+
+def energy_2d_01(s_ref: np.ndarray, s_alt: np.ndarray,
+                 n_sub: int = 2000,
+                 rng: np.random.Generator | None = None) -> float:
+    """Energy distance between reference and assisted chains on the
+    (x[0], x[1]) 2-D marginal. Sub-samples each chain to ``n_sub``
+    points. Uses the classical Rizzo--Szekely formula:
+
+        E = 2 E[|X-Y|] - E[|X-X'|] - E[|Y-Y'|]
+
+    (positive = distributions differ; 0 = identical). Cheap O(n_sub²).
+    """
+    if s_ref.shape[1] < 2:
+        return float("nan")
+    from scipy.spatial.distance import cdist
+    rng = rng if rng is not None else np.random.default_rng(0)
+    n_ref = min(n_sub, s_ref.shape[0])
+    n_alt = min(n_sub, s_alt.shape[0])
+    xr = s_ref[rng.choice(s_ref.shape[0], size=n_ref, replace=False), :2]
+    xa = s_alt[rng.choice(s_alt.shape[0], size=n_alt, replace=False), :2]
+    d_ra = float(np.mean(cdist(xr, xa)))
+    d_rr = float(np.mean(cdist(xr, xr)))
+    d_aa = float(np.mean(cdist(xa, xa)))
+    return 2.0 * d_ra - d_rr - d_aa

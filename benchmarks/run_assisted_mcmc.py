@@ -13,10 +13,16 @@ from benchmarks.problems import PROBLEMS
 from benchmarks.run_all import METHODS
 from benchmarks.mcmc_assisted import (
     estimate_f_scale,
+    energy_2d_01,
+    ks_marginals_max,
     run_assisted_chain,
     run_reference_chain,
     wasserstein1_marginals,
 )
+
+# Per-problem tuning, chosen in the iter 14 review.
+_BETA_PER_PROBLEM = {"rosenbrock_2d": 0.5, "borehole_8d": 2.0}
+_SIGMA_PER_PROBLEM = {"rosenbrock_2d": 0.04, "borehole_8d": 0.08}
 
 
 def _ref_fname(problem, seed):
@@ -50,6 +56,10 @@ def main():
     t0 = time.time()
     for problem_name in args.problems:
         problem = PROBLEMS[problem_name]
+        beta = _BETA_PER_PROBLEM.get(problem_name, 1.0)
+        proposal_sigma = _SIGMA_PER_PROBLEM.get(
+            problem_name, args.proposal_sigma,
+        )
         for seed in args.seeds:
             ref_file = os.path.join(args.out_dir, _ref_fname(problem_name, seed))
             if os.path.exists(ref_file) and not args.force:
@@ -61,20 +71,22 @@ def main():
                 f_min, f_scale = estimate_f_scale(problem, rng_pre)
                 print(
                     f"\n==> reference | {problem_name} | seed {seed} "
-                    f"(f_min={f_min:.3f}, f_scale={f_scale:.3f})"
+                    f"(β={beta} σprop={proposal_sigma} "
+                    f"f_min={f_min:.3f}, f_scale={f_scale:.3f})"
                 )
                 ref = run_reference_chain(
                     problem, seed=seed, n_steps=args.n_steps,
-                    proposal_sigma=args.proposal_sigma,
+                    proposal_sigma=proposal_sigma, beta=beta,
                     f_min_scale=(f_min, f_scale),
                 )
                 cfg = {
                     "kind": "reference", "problem_name": problem_name,
                     "seed": seed, "n_steps": args.n_steps,
-                    "proposal_sigma": args.proposal_sigma,
+                    "proposal_sigma": proposal_sigma, "beta": beta,
                 }
                 _save(ref_file, {**ref, "f_min": np.float64(f_min),
-                                 "f_scale": np.float64(f_scale)}, cfg)
+                                 "f_scale": np.float64(f_scale),
+                                 "beta": np.float64(beta)}, cfg)
                 print(
                     f"    accept={ref['n_accept']/args.n_steps:.2f} | "
                     f"wall={ref['wall_time']:.1f}s"
@@ -97,22 +109,31 @@ def main():
                     asst = run_assisted_chain(
                         METHODS[method], problem, seed=seed,
                         n_steps=args.n_steps, tau_sigma=tau,
-                        proposal_sigma=args.proposal_sigma,
+                        proposal_sigma=proposal_sigma, beta=beta,
                         f_min_scale=(f_min, f_scale),
                     )
-                    # W1 distance against reference.
-                    w1 = wasserstein1_marginals(ref["samples"], asst["samples"])
+                    # Fidelity metrics. Burn-in 10 %.
+                    burn = args.n_steps // 10
+                    ref_burn = ref["samples"][burn:]
+                    asst_burn = asst["samples"][burn:]
+                    w1 = wasserstein1_marginals(ref_burn, asst_burn)
+                    ks = ks_marginals_max(ref_burn, asst_burn)
+                    e2d = energy_2d_01(ref_burn, asst_burn)
                     cfg = {
                         "kind": "assisted",
                         "method_name": method, "problem_name": problem_name,
                         "seed": seed, "n_steps": args.n_steps,
                         "tau_sigma": tau,
-                        "proposal_sigma": args.proposal_sigma,
+                        "proposal_sigma": proposal_sigma, "beta": beta,
                     }
                     _save(out_file, {
-                        **asst, "w1_marginals": np.float64(w1),
+                        **asst,
+                        "w1_marginals": np.float64(w1),
+                        "ks_marginals_max": np.float64(ks),
+                        "energy_2d_01": np.float64(e2d),
                         "f_min": np.float64(f_min),
                         "f_scale": np.float64(f_scale),
+                        "beta": np.float64(beta),
                     }, cfg)
                     speedup = args.n_steps / max(1, asst["n_used_true"])
                     print(
@@ -120,7 +141,8 @@ def main():
                         f"emu_used={asst['n_used_emu']} "
                         f"true_used={asst['n_used_true']} "
                         f"speedup={speedup:.2f}x | "
-                        f"W1={w1:.4f} | wall={asst['wall_time']:.1f}s"
+                        f"W1={w1:.4f} KS={ks:.3f} E2d={e2d:.4f} | "
+                        f"wall={asst['wall_time']:.1f}s"
                     )
     print(f"\nAll done in {time.time() - t0:.1f}s")
 
