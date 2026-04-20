@@ -302,6 +302,52 @@ def plot_trust_pareto(results, problems, out_path, schedule="mcmc"):
     plt.close(fig)
 
 
+def plot_trust_error_p90(results, problems, out_path,
+                         tau_sigma_pick=1e-2, schedule="mcmc"):
+    """Per-1000-step p90 of |mu - f| on trusted steps, by method.
+
+    Answers referee item §2.5: trusted-prediction error should be a
+    headline deployment metric. p90 catches what median hides.
+    """
+    fig, axes = plt.subplots(
+        1, len(problems), figsize=(5.2 * len(problems), 3.8), squeeze=False,
+    )
+    for pi, problem in enumerate(problems):
+        ax = axes[0][pi]
+        methods = []
+        for (m, p, s, tau), runs in sorted(results.items()):
+            if p != problem or s != schedule or not runs:
+                continue
+            if abs(tau - tau_sigma_pick) / tau_sigma_pick < 0.05:
+                methods.append(m)
+        methods = [m for m in METHOD_ORDER if m in methods]
+        if not methods:
+            ax.text(0.5, 0.5, "no runs", ha="center", va="center")
+            ax.set_title(problem); continue
+        for m in methods:
+            r = results[(m, problem, schedule, tau_sigma_pick)][0]
+            arr = np.asarray(r.get("batch_trusted_err_p90", []), dtype=float)
+            if arr.size == 0:
+                continue
+            xs = np.arange(1, arr.size + 1)
+            ax.plot(xs, arr, "o-", color=METHOD_COLOR.get(m, "#888"),
+                    label=METHOD_LABEL.get(m, m), linewidth=2, markersize=5)
+        ax.set_yscale("log")
+        ax.set_xlabel("1000-step batch")
+        if pi == 0:
+            ax.set_ylabel(r"p90 of $|\mu - f|$ on trusted steps")
+        ax.set_title(f"{problem}  (τ_σ = {tau_sigma_pick:g})")
+        ax.grid(True, which="both", alpha=0.3)
+        if pi == 0:
+            ax.legend(fontsize=8, frameon=False, loc="best")
+    fig.suptitle("Deployment-relevant error: p90 of trusted predictions",
+                 fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", required=True)
@@ -346,6 +392,12 @@ def main():
         os.path.join(args.out_dir, "trained_vs_batch.png"),
         schedules=tuple(args.schedules),
         tau_sigma_pick=args.tau_sigma_pick,
+    )
+    plot_trust_error_p90(
+        results, args.problems,
+        os.path.join(args.out_dir, "trust_error_p90.png"),
+        tau_sigma_pick=args.tau_sigma_pick,
+        schedule=args.schedules[0],
     )
     print(f"Wrote plots to {args.out_dir}/")
 
