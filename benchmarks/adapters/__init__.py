@@ -4,6 +4,7 @@ from .sklearn_gp_adapter import SklearnGPAdapter
 from .gpytorch_svgp_adapter import GPyTorchSVGPAdapter
 from .rf_adapter import RandomForestAdapter
 from .river_knn_adapter import RiverKNNAdapter
+from .lagp_adapter import LocalApproxGPAdapter
 
 __all__ = [
     "OnlineRegressor",
@@ -12,4 +13,5 @@ __all__ = [
     "GPyTorchSVGPAdapter",
     "RandomForestAdapter",
     "RiverKNNAdapter",
+    "LocalApproxGPAdapter",
 ]

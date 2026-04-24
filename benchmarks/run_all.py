@@ -37,6 +37,7 @@ from benchmarks.adapters import (
     GPyTorchSVGPAdapter,
     RandomForestAdapter,
     RiverKNNAdapter,
+    LocalApproxGPAdapter,
 )
 from benchmarks.harness import (
     run_online_benchmark, save_result, RunConfig, RunResult,
@@ -237,6 +238,18 @@ def _make_river_knn_B(d: int):
     return RiverKNNAdapter(d, n_neighbors=3, window_size=1000)
 
 
+# ---------- local-approximate GP (laGP-style) -------------------------
+
+def _make_lagp_A(d: int):
+    """laGP baseline: k=200 per-query neighbourhood, Matern-1.5."""
+    return LocalApproxGPAdapter(d, k=200)
+
+
+def _make_lagp_B(d: int):
+    """laGP variant: k=100 (matches `pygptreeo (D)` leaf budget)."""
+    return LocalApproxGPAdapter(d, k=100)
+
+
 METHODS = {
     # Variant-explicit names (preferred going forward).
     "pygptreeo_A": _make_pygptreeo_A,
@@ -251,6 +264,8 @@ METHODS = {
     "random_forest_A": _make_rf_A,
     "river_knn_A": _make_river_knn_A,
     "river_knn_B": _make_river_knn_B,
+    "lagp_A": _make_lagp_A,
+    "lagp_B": _make_lagp_B,
     # Legacy aliases (point to the `_A` baselines so pre-iter-04 .npz
     # files produced under the bare names are still comparable).
     "pygptreeo": _make_pygptreeo_A,
