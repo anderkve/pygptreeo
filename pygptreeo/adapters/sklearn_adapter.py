@@ -201,52 +201,6 @@ class SklearnGPAdapter(GPRegressorInterface):
         """
         self._gpr.kernel = kernel
 
-    def get_hyperparameters(self):
-        """
-        Get the kernel hyperparameters as a flat vector (log-space ``theta``).
-
-        For a trained GP, the optimized hyperparameters of ``kernel_`` are
-        returned. For an untrained GP, the initial kernel's ``theta`` is
-        returned. Returns None if no kernel is set.
-
-        Returns
-        -------
-        np.ndarray or None
-            A copy of the kernel's ``theta`` vector, or None.
-        """
-        if self.is_trained():
-            return np.copy(self._gpr.kernel_.theta)
-        if self._gpr.kernel is not None:
-            return np.copy(self._gpr.kernel.theta)
-        return None
-
-    def set_hyperparameters(self, theta) -> None:
-        """
-        Set the initial kernel hyperparameters from a log-space ``theta`` vector.
-
-        This sets ``theta`` on the GP's *initial* kernel, so it is used as the
-        starting point of the next ``fit`` call (warm start). The values are
-        clipped to the kernel's bounds for safety, and the call is silently
-        skipped if the vector length does not match the kernel's number of
-        (non-fixed) hyperparameters.
-
-        Parameters
-        ----------
-        theta : np.ndarray
-            A 1-D array of log-space hyperparameters.
-        """
-        kernel = self._gpr.kernel
-        if kernel is None or theta is None:
-            return
-        theta = np.asarray(theta, dtype=float)
-        bounds = kernel.bounds  # log-space bounds, shape (n_dims, 2)
-        if theta.shape[0] != bounds.shape[0]:
-            # Incompatible kernel structure; skip rather than crash.
-            return
-        theta = np.clip(theta, bounds[:, 0], bounds[:, 1])
-        kernel.theta = theta
-        self._gpr.kernel = kernel
-
     # Provide access to the underlying scikit-learn GPR for advanced users
     @property
     def sklearn_gpr(self) -> GaussianProcessRegressor:
