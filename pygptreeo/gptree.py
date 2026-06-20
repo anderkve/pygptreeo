@@ -28,6 +28,7 @@ from tqdm import tqdm
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 from pygptreeo.gp_interface import GPRegressorInterface
+from pygptreeo.hyperparameter_pool import HyperparameterPool
 
 
 class GPTree:
@@ -80,6 +81,7 @@ class GPTree:
                  max_n_pred_leaves: Optional[int] = None,
                  aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
+                 pool_hyperparameters: Optional[bool] = False,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -105,6 +107,12 @@ class GPTree:
                 'default'/'moe' or 'poe'. Defaults to 'default'.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
                 For multi-output GPs, independent GPs are trained for each output.
+            pool_hyperparameters (Optional[bool]): If True, leaf nodes share a
+                tree-global pool of learned kernel hyperparameters. Each leaf is
+                warm-started from the robust (median) consensus of the other
+                leaves before fitting, which improves sample efficiency for
+                young leaves. Unlike parent-to-child hyperparameter inheritance,
+                this is compatible with standard scaling. Defaults to False.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -118,8 +126,14 @@ class GPTree:
         self.GPR = GPR
         self.splitting_strategy = splitting_strategy
         self.n_outputs = n_outputs
+
+        # Tree-global hyperparameter pool, shared by reference with every node.
+        self.pool_hyperparameters = pool_hyperparameters
+        self.hp_pool = HyperparameterPool(n_outputs=n_outputs, enabled=pool_hyperparameters)
+
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
-                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs, **kwargs)  # Initialize root node of the GPTree
+                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
+                          hp_pool=self.hp_pool, **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 

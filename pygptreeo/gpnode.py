@@ -86,7 +86,8 @@ class GPNode(Node):
                  n_split_candidates: Optional[int] = 3,
                  split_eval_train_fraction: Optional[float] = 0.6,
                  split_eval_min_points: Optional[int] = 20,
-                 n_outputs: Optional[int] = 1):
+                 n_outputs: Optional[int] = 1,
+                 hp_pool=None):
         """Initializes a GPNode.
 
         Args:
@@ -154,6 +155,10 @@ class GPNode(Node):
 
         self.Nbar = Nbar
         self.n_outputs = n_outputs
+
+        # Shared tree-global hyperparameter pool (None if pooling is disabled).
+        # All nodes of a tree reference the same pool object.
+        self.hp_pool = hp_pool
 
         # For multi-output support: create a list of independent GPs
         # For backward compatibility, single output (n_outputs=1) still works
@@ -325,6 +330,7 @@ class GPNode(Node):
             'split_eval_train_fraction': self.split_eval_train_fraction,
             'split_eval_min_points': self.split_eval_min_points,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
+            'hp_pool': self.hp_pool,  # Share the tree-global hyperparameter pool
         }
 
         # Create child nodes with a copy of the parent GP (use first GP from list for template)
@@ -525,6 +531,12 @@ class GPNode(Node):
         maintain their GPR model once their responsibilities have been passed
         to their children, thus saving memory.
         """
+        # This node is no longer a leaf, so drop its contribution to the
+        # tree-global hyperparameter pool to avoid biasing the estimate with
+        # stale values from an internal node.
+        if self.hp_pool is not None:
+            self.hp_pool.remove(self.name)
+
         if self.my_GPR is not None:
             del self.my_GPR
         for gpr in self.my_GPRs:
@@ -788,6 +800,17 @@ class GPNode(Node):
         if (self.n_points_since_retrain >= self.retrain_every_n_points) or (self.n_points >= self.Nbar) or force_training:
             self.n_points_since_retrain = 0
 
+            # Warm-start each GP from the tree-global pooled hyperparameter
+            # estimate (if pooling is enabled and the pool is non-empty). This
+            # gives young leaves a robust starting point and reduces the number
+            # of optimizer iterations needed by mature leaves.
+            pool_active = self.hp_pool is not None and self.hp_pool.enabled
+            if pool_active:
+                for i in range(self.n_outputs):
+                    est = self.hp_pool.estimate(i)
+                    if est is not None:
+                        self.my_GPRs[i].set_hyperparameters(est)
+
             # Combine own points and shared points
             X_train = np.vstack((self.my_X_data, self.shared_X_data))
             y_train = np.vstack((self.my_y_data, self.shared_y_data))  # Shape: (N, n_outputs)
@@ -831,6 +854,12 @@ class GPNode(Node):
                     alpha_train_i = sigma_train_i ** 2  # Convert to variance
                     self.my_GPRs[i].alpha = alpha_train_i.flatten()
                     self.my_GPRs[i].fit(X_train, y_train_i)
+
+            # Contribute this leaf's freshly learned hyperparameters back to the
+            # tree-global pool so that other leaves can benefit from them.
+            if pool_active:
+                for i in range(self.n_outputs):
+                    self.hp_pool.update(self.name, i, self.my_GPRs[i].get_hyperparameters())
 
             did_train = True
         return did_train

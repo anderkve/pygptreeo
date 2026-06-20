@@ -164,3 +164,40 @@ class GPRegressorInterface(ABC):
             The kernel object to set. The exact type depends on the GP implementation.
         """
         pass
+
+    def get_hyperparameters(self) -> Optional[np.ndarray]:
+        """
+        Get the kernel hyperparameters as a flat numeric vector.
+
+        This is used for tree-global hyperparameter pooling. The vector should
+        be in whatever (typically log-) space is natural for the backend, as
+        long as it is consistent with :meth:`set_hyperparameters`.
+
+        The default implementation returns None, which disables pooling for
+        backends that do not support it. Backends that do support it should
+        override this method.
+
+        Returns
+        -------
+        np.ndarray or None
+            A 1-D array of hyperparameters, or None if not available.
+        """
+        return None
+
+    def set_hyperparameters(self, theta: np.ndarray) -> None:
+        """
+        Set the kernel hyperparameters from a flat numeric vector.
+
+        This is used to warm-start a GP from a pooled hyperparameter estimate
+        before fitting. The vector must use the same representation as returned
+        by :meth:`get_hyperparameters`.
+
+        The default implementation is a no-op, which (together with the default
+        :meth:`get_hyperparameters`) disables pooling for unsupported backends.
+
+        Parameters
+        ----------
+        theta : np.ndarray
+            A 1-D array of hyperparameters.
+        """
+        pass
