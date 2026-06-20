@@ -34,6 +34,7 @@ DEFAULT_OVERLAP = 0.001  # Default initial overlap for node boundaries
 DEFAULT_N_POINTS_PRED_PERF = 25  # Number of recent predictions tracked for calibration
 DEFAULT_SIGMA_SCALER = 10.0  # Initial sigma scaling factor for uncertainty calibration
 TARGET_COVERAGE = 0.68  # Target coverage for calibrated uncertainty (1 sigma)
+MIN_POINTS_TO_FIT = 5  # Min points before an incremental backend's first full fit
 
 np.set_printoptions(suppress=True)
 
@@ -86,7 +87,8 @@ class GPNode(Node):
                  n_split_candidates: Optional[int] = 3,
                  split_eval_train_fraction: Optional[float] = 0.6,
                  split_eval_min_points: Optional[int] = 20,
-                 n_outputs: Optional[int] = 1):
+                 n_outputs: Optional[int] = 1,
+                 incremental_updates: Optional[bool] = True):
         """Initializes a GPNode.
 
         Args:
@@ -154,6 +156,17 @@ class GPNode(Node):
 
         self.Nbar = Nbar
         self.n_outputs = n_outputs
+
+        # If True, incorporate new points into the leaf GP via exact rank-1
+        # updates between full re-fits (only active for GP backends that
+        # support it; a no-op otherwise, so the default is safe).
+        self.incremental_updates = incremental_updates
+
+        # Minimum number of points before an incremental-capable backend does
+        # its first (bootstrap) full fit, after which rank-1 updates can run.
+        self._min_points_to_fit = MIN_POINTS_TO_FIT
+        # Number of points present at the last full fit (set during fit_my_GPR).
+        self._n_points_at_last_fit = 0
 
         # For multi-output support: create a list of independent GPs
         # For backward compatibility, single output (n_outputs=1) still works
@@ -298,6 +311,10 @@ class GPNode(Node):
         self.n_points = 0
         self.n_shared_points = 0
 
+        # Number of points present at the last full fit (for growth-triggered
+        # re-optimization with incremental backends).
+        self._n_points_at_last_fit = 0
+
         # Initialize merge tracking - each point tracks how many merges it represents
         self.merge_counts = np.array([]).reshape((0, 1))
 
@@ -325,6 +342,7 @@ class GPNode(Node):
             'split_eval_train_fraction': self.split_eval_train_fraction,
             'split_eval_min_points': self.split_eval_min_points,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
+            'incremental_updates': self.incremental_updates,
         }
 
         # Create child nodes with a copy of the parent GP (use first GP from list for template)
@@ -784,8 +802,31 @@ class GPNode(Node):
             bool: True if the GPR was trained in this call, False otherwise.
         """
         did_train = False
-        # Only train the GP if the buffer is full, the node is full, or if force_training=True
-        if (self.n_points_since_retrain >= self.retrain_every_n_points) or (self.n_points >= self.Nbar) or force_training:
+
+        # Standard triggers: retrain buffer full, node full, or forced.
+        do_fit = ((self.n_points_since_retrain >= self.retrain_every_n_points)
+                  or (self.n_points >= self.Nbar)
+                  or force_training)
+
+        # Extra triggers for incremental-capable backends. These are tied to the
+        # backend capability (not the incremental_updates flag) so that the
+        # leaf-fitting cadence is identical whether or not rank-1 updates are
+        # used -- isolating the effect of the updates themselves. They have no
+        # effect on backends that do not support incremental updates, so the
+        # default scikit-learn behaviour is unchanged.
+        if self.my_GPRs[0].supports_incremental_update():
+            trained = self.my_GPRs[0].is_trained()
+            # Bootstrap: do the first full fit as soon as there are enough points,
+            # so that rank-1 updates have a Cholesky factor to extend.
+            if (not trained) and (self.n_points >= self._min_points_to_fit):
+                do_fit = True
+            # Re-optimize hyperparameters once the data has grown substantially
+            # since the last fit (frequent early, sparse later).
+            if trained and self._n_points_at_last_fit > 0 \
+                    and self.n_points >= 2 * self._n_points_at_last_fit:
+                do_fit = True
+
+        if do_fit:
             self.n_points_since_retrain = 0
 
             # Combine own points and shared points
@@ -832,8 +873,73 @@ class GPNode(Node):
                     self.my_GPRs[i].alpha = alpha_train_i.flatten()
                     self.my_GPRs[i].fit(X_train, y_train_i)
 
+            # Record the training-set size for growth-triggered re-optimization.
+            self._n_points_at_last_fit = X_train.shape[0]
             did_train = True
         return did_train
+
+
+    def incremental_update_gp(self, x: np.ndarray, y: Union[float, np.ndarray],
+                              sigma: Union[float, np.ndarray]):
+        """Incorporate a single new point into each leaf GP via a rank-1 update.
+
+        This keeps the kernel hyperparameters fixed (set at the last full
+        :meth:`fit_my_GPR`) and updates the GP's Cholesky factor in O(n^2), so
+        the posterior reflects the new point immediately without a full refit.
+
+        It is a no-op unless the GP backend supports incremental updates and the
+        node's GP has already been fully fitted at least once. To keep the GP's
+        training set consistent with the node, it is also skipped when the node
+        currently holds shared points (gradual splitting), which are only
+        reconciled at a full refit.
+
+        Args:
+            x (np.ndarray): The new input point (original space), shape (1, n_features).
+            y (float or np.ndarray): The corresponding target value(s).
+            sigma (float or np.ndarray): The per-point uncertainty (std dev).
+
+        Returns:
+            bool: True if at least one GP was updated, False otherwise.
+        """
+        if not self.incremental_updates:
+            return False
+        # Shared (gradual-splitting) points are not tracked incrementally.
+        if self.n_shared_points > 0:
+            return False
+
+        x = np.asarray(x).reshape(1, -1)
+
+        # Normalize y to shape (n_outputs,)
+        if isinstance(y, (int, float, np.floating)):
+            y_arr = np.full(self.n_outputs, float(y))
+        else:
+            y_arr = np.atleast_1d(np.asarray(y)).reshape(-1)
+
+        # Normalize sigma to shape (n_outputs,)
+        if isinstance(sigma, (int, float, np.floating)):
+            sigma_arr = np.full(self.n_outputs, float(sigma))
+        else:
+            sigma_arr = np.atleast_1d(np.asarray(sigma)).reshape(-1)
+            if sigma_arr.shape[0] == 1 and self.n_outputs > 1:
+                sigma_arr = np.tile(sigma_arr, self.n_outputs)
+
+        did_update = False
+        for i in range(self.n_outputs):
+            gp = self.my_GPRs[i]
+            if not (gp.supports_incremental_update() and gp.is_trained()):
+                continue
+
+            if self.use_standard_scaling and self.X_scaler is not None:
+                x_scaled = self.X_scaler.transform(x)
+                y_scaled = self.y_scalers[i].transform([[y_arr[i]]])[0, 0]
+                y_scale = self.y_scalers[i].scale_[0]
+                alpha_scaled = (sigma_arr[i] / y_scale) ** 2  # variance in scaled space
+                gp.add_observation(x_scaled, y_scaled, alpha_scaled)
+            else:
+                gp.add_observation(x, y_arr[i], sigma_arr[i] ** 2)
+            did_update = True
+
+        return did_update
 
 
     def _compute_dimensional_uncertainty(self):
