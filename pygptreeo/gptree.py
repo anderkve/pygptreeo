@@ -258,6 +258,19 @@ class GPTree:
             # for child in node.children:
             #     child.fit_my_GPR()
 
+            # For incremental-capable backends, fit each child on its own data
+            # right away ("retrain on split"). This localizes the child's GP and,
+            # crucially, establishes its own Cholesky factor so that subsequent
+            # points can be incorporated via rank-1 updates for the rest of the
+            # leaf's life -- otherwise a leaf would split before ever doing an
+            # own-data fit (e.g. when retrain_every_n_points >= Nbar) and the
+            # incremental updates would never engage. No-op for backends that do
+            # not support incremental updates (e.g. the default scikit-learn one,
+            # whose children keep inheriting the parent's GP as before).
+            for child in node.children:
+                if child.my_GPRs[0].supports_incremental_update():
+                    child.fit_my_GPR(force_training=True)
+
             # GP and training data of non-leaf nodes is not needed
             node.delete_data(delete_own_data=True, delete_shared_data=True)
             node.delete_my_GPR()
