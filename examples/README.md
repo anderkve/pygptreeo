@@ -74,20 +74,16 @@ OMP_NUM_THREADS=1 python benchmark_split_direction.py [target] [n_points]
 
 Compares every available `split_dimension_criteria` on the same streaming data
 set and tracks batch metrics as a function of the number of processed points:
-`max_spread`, `max_variance`, `max_uncertainty`, `min_lengthscale`, `oblique`,
-and `random`. The `min_lengthscale` criterion splits the dimension with the
-smallest fitted ARD length scale (i.e. where the GP says the function varies
-fastest); `oblique` splits perpendicular to the estimated dominant direction of
-variation (a non-axis-aligned cut). Both reuse the trained GP.
+`max_spread`, `max_variance`, `max_uncertainty`, `min_lengthscale`, and
+`random`. The `min_lengthscale` criterion splits the dimension with the smallest
+fitted ARD length scale (i.e. where the GP says the function varies fastest),
+reusing the trained GP.
 
-`target` is `aniso_chirp` (default), `diagonal`, or `eggholder`; `n_points`
-defaults to 20000. The `aniso_chirp` target is anisotropic and heterogeneous
-(rough/chirped along `x0`, but smooth along a wider `x1` that misleads the
-spread-based criteria), where the choice of split *axis* matters most; the
-`diagonal` target varies only along the `(1,1,...)` diagonal and is flat in the
-perpendicular directions, which the axis-aligned criteria can only resolve by
-staircasing many cuts but `oblique` resolves directly; `eggholder` is a
-roughly-isotropic, uniformly-rough reference where all criteria behave similarly.
+`target` is one of the standard benchmark functions (`eggholder`, `himmelblau`,
+`rosenbrock`, `rastrigin`, `levy`, `custom`) or the synthetic `aniso_chirp`
+(default); `n_points` defaults to 20000. The `aniso_chirp` target is anisotropic
+and heterogeneous (rough/chirped along `x0`, but smooth along a wider `x1` that
+misleads the spread-based criteria), where the choice of split axis matters most.
 The script writes a comparison figure and a CSV of batch metrics (NRMSE,
 accuracy, coverage, leaf count, predict/update times) per criterion.
 
@@ -151,17 +147,6 @@ Key parameters to experiment with:
     scale, i.e. where the GP says the function varies fastest. Requires an
     anisotropic (ARD) kernel and a trained GP; falls back to `max_spread`
     otherwise.
-  - `'oblique'`: split along a hyperplane perpendicular to the estimated dominant
-    direction of variation (the leading eigenvector of the GP's gradient
-    outer-product / "active subspace"), rather than along a coordinate axis.
-    The child nodes additionally fit their GPs in the rotated active-subspace
-    frame, so the split direction becomes a coordinate axis and the axis-aligned
-    ARD kernel can model the (now axis-aligned) variation efficiently -- without
-    this rotation an oblique cut produces thin slabs that the axis-aligned kernel
-    fits poorly. Useful for functions with diagonal ridge structure. Requires a
-    trained single-output GP in >= 2 dimensions; falls back to `max_spread`
-    otherwise. Costs roughly 2x the update time (active-subspace estimate per
-    split plus a forced child refit in the new frame).
 
 ### Custom Kernel Configuration
 

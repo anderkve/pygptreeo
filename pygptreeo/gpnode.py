@@ -110,11 +110,7 @@ class GPNode(Node):
                 'max_uncertainty' (split on dimension where GP is most uncertain),
                 'min_lengthscale' (split on dimension with the smallest fitted ARD
                 length scale, i.e. where the GP says the function varies fastest),
-                'oblique' (split perpendicular to the estimated dominant direction
-                of variation, i.e. a non-axis-aligned cut; child nodes additionally
-                fit their GPs in the rotated active-subspace frame so the cut
-                direction becomes a coordinate axis), 'random' (random dimension).
-                Defaults to 'max_spread'.
+                'random' (random dimension). Defaults to 'max_spread'.
             use_standard_scaling (Optional[bool]): If True, standardizes both X and y
                 data before fitting the GP and inverse transforms predictions.
                 Defaults to False. Cannot be used together with use_hyperparameter_inheritance.
@@ -229,19 +225,6 @@ class GPNode(Node):
         self.split_index = 0       # 'j' in the DLGP article
         self.split_position = 0.0  # 's' in the DLGP article
         self.overlap = DEFAULT_OVERLAP  # 'o' in the DLGP article
-        # Optional oblique split direction (unit vector of length n_features).
-        # When set, the split boundary is the hyperplane (x . split_direction) =
-        # split_position instead of an axis-aligned cut on split_index. None for
-        # the usual axis-aligned splits.
-        self.split_direction = None
-        # Optional rotation matrix (orthonormal, n_features x n_features) applied
-        # to inputs before the local GP is fitted / queried, so that an oblique
-        # split direction becomes a coordinate axis in the GP's frame and the
-        # axis-aligned (ARD) kernel can model it efficiently. None means identity.
-        # Routing (prob_func) always stays in the original coordinate system.
-        self.rotation = None
-        # Rotation handed to this node's children (set when it splits obliquely).
-        self._child_rotation = None
         self.name = name
 
         self.n_points_pred_perf = DEFAULT_N_POINTS_PRED_PERF
@@ -348,12 +331,6 @@ class GPNode(Node):
         
         self.left.is_left = True
         self.right.is_left = False
-
-        # By default children fit their GPs in the same frame as this node. An
-        # oblique split overrides this with the active-subspace basis afterwards
-        # (see GPTree.update_tree), so the split direction becomes an axis.
-        self.left.rotation = self.rotation
-        self.right.rotation = self.rotation
 
         self.children = [self.left, self.right]
         self.is_leaf = False
@@ -809,9 +786,6 @@ class GPNode(Node):
             y_train = np.vstack((self.my_y_data, self.shared_y_data))  # Shape: (N, n_outputs)
             sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))  # Shape: (N, n_outputs)
 
-            # Fit the GP in this node's (optionally rotated) frame.
-            X_train = self._to_gp_frame(X_train)
-
             if self.use_standard_scaling and X_train.shape[0] > 0:
                 # Fit scalers on the combined training data
                 self._fit_scalers(X_train, y_train)
@@ -1183,30 +1157,6 @@ class GPNode(Node):
                 in the chosen split dimension.
         """
 
-        # Oblique split: cut perpendicular to the dominant direction of variation
-        # (an estimated "active subspace" direction), rather than along a single
-        # feature axis. This is the only criterion that sets self.split_direction.
-        if self.split_dimension_criteria == 'oblique':
-            basis = self._compute_oblique_basis()
-            if basis is not None:
-                direction = basis[:, 0]
-                self.split_direction = direction
-                # Children fit their GPs in this active-subspace frame so that the
-                # split direction becomes a coordinate axis for the ARD kernel.
-                self._child_rotation = basis
-                # Bookkeeping: keep split_index pointing at the dominant axis.
-                self.split_index = int(np.argmax(np.abs(direction)))
-                coord = self.my_X_data @ direction
-                self.split_position = self._position_from_coord(coord)
-                spread = float(coord.max() - coord.min()) if coord.size > 0 else 0.0
-                self.overlap = theta * spread if spread > 0 else DEFAULT_OVERLAP
-                return
-            # If the basis could not be estimated (e.g. GP not trained yet), fall
-            # back to the axis-aligned max_spread criterion (handled in the
-            # criteria chain below).
-            self.split_direction = None
-            self._child_rotation = None
-
         # If split evaluation is enabled, find best split by testing candidates
         if self.enable_split_evaluation:
             best_index, best_position = self.find_best_split_dimension(theta)
@@ -1286,16 +1236,6 @@ class GPNode(Node):
                 self.split_index = np.random.randint(0, self.n_features)
             else:
                 self.split_index = 0 # Default to 0 if no features
-        elif self.split_dimension_criteria == 'oblique':
-            # Reached only as the axis-aligned fallback when the oblique direction
-            # could not be estimated (handled at the top of this method).
-            if self.my_X_data.shape[0] > 0:
-                w = np.empty(self.n_features)
-                for i in range(self.n_features):
-                    w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
-                self.split_index = np.argmax(w)
-            else:
-                self.split_index = 0
         else:
             raise ValueError(f"Unknown split_dimension_criteria: {self.split_dimension_criteria}")
 
@@ -1340,132 +1280,9 @@ class GPNode(Node):
         self.overlap = theta * current_dim_spread
 
 
-    def _position_from_coord(self, coord: np.ndarray):
-        """Split position along a 1D coordinate array, per split_position_method."""
-        if coord.size == 0:
-            return 0.0
-        method = self.split_position_method
-        if method == 'median':
-            return float(np.median(coord))
-        elif method == 'mean':
-            return float(np.mean(coord))
-        elif method == 'random':
-            lo, hi = float(coord.min()), float(coord.max())
-            return lo if lo == hi else float(np.random.uniform(lo, hi))
-        elif method == 'randomchoice':
-            return float(np.random.choice(coord))
-        else:
-            raise ValueError(f"Unknown split_position_method argument: '{self.split_position_method}'. The valid options are 'median', 'mean', 'random' and 'randomchoice'")
-
-
-    def _compute_oblique_basis(self):
-        """Estimate the local active-subspace eigenbasis from the node's GP.
-
-        Uses central finite-difference gradients of the node's GP at a sample of
-        training points to build the averaged gradient outer-product
-        C = mean(g g^T), and returns the orthonormal eigenbasis of C ordered by
-        decreasing eigenvalue. The leading column is the dominant direction of
-        variation (the function's main ridge); the trailing columns span the
-        directions in which the function is flattest. Squaring the gradients
-        (g g^T) makes the estimate robust to oscillatory functions whose gradients
-        change sign.
-
-        The leading eigenvector is used as the oblique split direction, and the
-        whole basis is used as the rotation handed to the child nodes, so that in
-        the children's GP frame the split direction is a coordinate axis.
-
-        Returns:
-            np.ndarray or None: An (n_features, n_features) orthonormal matrix
-            whose columns are eigenvectors ordered by decreasing eigenvalue, or
-            None if it cannot be estimated (GP untrained, multi-output, fewer than
-            two features/points, or a degenerate gradient field).
-        """
-        if self.n_outputs != 1:
-            return None
-        if self.my_X_data is None or self.my_X_data.shape[0] < 2:
-            return None
-        if self.n_features < 2:
-            return None  # Oblique splitting is only meaningful in >= 2 dimensions
-        if not self.my_GPRs[0].is_trained():
-            return None
-
-        nf = self.n_features
-        n_pts = self.my_X_data.shape[0]
-        n_sample = min(30, n_pts)
-        if n_sample < n_pts:
-            idx = np.random.choice(n_pts, size=n_sample, replace=False)
-            Xs = self.my_X_data[idx]
-        else:
-            Xs = self.my_X_data
-
-        # Per-dimension finite-difference step: a small fraction of the spread.
-        spread = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
-        h = np.maximum(spread * 1e-2, 1e-6)
-
-        grads = np.zeros((Xs.shape[0], nf))
-        try:
-            for d in range(nf):
-                Xp = Xs.copy(); Xp[:, d] += h[d]
-                Xm = Xs.copy(); Xm[:, d] -= h[d]
-                mu_p, _ = self.predict(Xp, return_std=True, use_calibrated_sigma=False)
-                mu_m, _ = self.predict(Xm, return_std=True, use_calibrated_sigma=False)
-                grads[:, d] = (mu_p[:, 0] - mu_m[:, 0]) / (2.0 * h[d])
-        except Exception:
-            return None
-
-        # Gradient covariance (active subspace) and its eigenbasis.
-        C = grads.T @ grads / Xs.shape[0]
-        if not np.all(np.isfinite(C)) or np.allclose(C, 0.0):
-            return None
-        eigvals, eigvecs = np.linalg.eigh(C)  # ascending eigenvalues
-        # Reorder columns by decreasing eigenvalue.
-        basis = eigvecs[:, ::-1]
-        if not np.all(np.isfinite(basis)):
-            return None
-        return basis
-
-
-    def _compute_oblique_direction(self):
-        """Return the leading active-subspace direction (unit vector), or None.
-
-        Thin wrapper around :meth:`_compute_oblique_basis` returning its first
-        column (the dominant direction of variation).
-        """
-        basis = self._compute_oblique_basis()
-        if basis is None:
-            return None
-        return basis[:, 0]
-
-
-    def _to_gp_frame(self, X: np.ndarray):
-        """Map inputs into this node's GP frame (apply the rotation if any)."""
-        if self.rotation is not None:
-            return X @ self.rotation
-        return X
-
-
-    def split_coordinate(self, X: np.ndarray):
-        """Return the 1D coordinate used by this node's split for points X.
-
-        For an axis-aligned split this is simply the chosen feature column,
-        ``X[:, split_index]``. For an oblique split it is the projection onto the
-        split direction, ``X @ split_direction``. Both ``split_position`` and
-        ``overlap`` are expressed in this coordinate.
-
-        Args:
-            X (np.ndarray): Points of shape (n_samples, n_features).
-
-        Returns:
-            np.ndarray: Coordinate values of shape (n_samples,).
-        """
-        if self.split_direction is not None:
-            return X @ self.split_direction
-        return X[:, self.split_index]
-
-
     def prob_func(self, x: np.array):
         """ The default probability function as suggested in the DLGP article. """
-        prob = (self.split_coordinate(x) - self.split_position)/self.overlap + 0.5
+        prob = (x[:, self.split_index] - self.split_position)/self.overlap + 0.5
         prob[prob < 0] = 0
         prob[prob > 1] = 1
 
@@ -1523,10 +1340,6 @@ class GPNode(Node):
         # Initialize output arrays
         mu_pred = np.zeros((n_samples, self.n_outputs))
         sigma_pred = np.zeros((n_samples, self.n_outputs))
-
-        # Map inputs into the node's GP frame (rotation, if any). The GP and its
-        # scaler were fitted in this frame.
-        x = self._to_gp_frame(x)
 
         if self.use_standard_scaling and self.X_scaler is not None:
             # Transform input to standardized space (same for all outputs)

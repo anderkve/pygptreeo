@@ -223,16 +223,14 @@ class GPTree:
                 node.split_training_data()
 
                 # Since we are doing gradual splitting, give
-                # each child a copy of the other child's data. Order the shared
-                # data by the (possibly oblique) split coordinate so the points
-                # nearest the boundary come first.
-                order = node.split_coordinate(node.children[1].my_X_data).argsort()
+                # each child a copy of the other child's data
+                order = node.children[1].my_X_data[:,node.split_index].argsort()
                 node.children[0].shared_X_data = node.children[1].my_X_data[order]
                 node.children[0].shared_y_data = node.children[1].my_y_data[order]
                 node.children[0].shared_sigma_data = node.children[1].my_sigma_data[order]
                 node.children[0].n_shared_points = node.children[0].shared_X_data.shape[0]
 
-                order = node.split_coordinate(node.children[0].my_X_data).argsort()[::-1]
+                order = node.children[0].my_X_data[:,node.split_index].argsort()[::-1]
                 node.children[1].shared_X_data = node.children[0].my_X_data[order]
                 node.children[1].shared_y_data = node.children[0].my_y_data[order]
                 node.children[1].shared_sigma_data = node.children[0].my_sigma_data[order]
@@ -241,16 +239,6 @@ class GPTree:
             else:
                 # Standard splitting
                 node.split_training_data()
-
-            # For an oblique split, give the children the active-subspace frame so
-            # that the split direction is a coordinate axis in their GP. The GP and
-            # scaler the children inherited from the parent were fitted in the
-            # parent's frame, so they must be refitted in the new frame to be valid.
-            if node.split_direction is not None and node._child_rotation is not None:
-                for child in node.children:
-                    child.rotation = node._child_rotation
-                    if child.my_X_data.shape[0] + child.shared_X_data.shape[0] > 0:
-                        child.fit_my_GPR(force_training=True)
 
             # Retrain the child-node GPs?
             # for child in node.children:

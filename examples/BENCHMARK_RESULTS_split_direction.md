@@ -8,13 +8,7 @@ Compares every `split_dimension_criteria` available in `GPTree`/`GPNode`:
 - `min_lengthscale` — split the dimension with the smallest fitted ARD length
   scale, i.e. where the GP says the function varies fastest (reuses the GP's
   already-optimized hyperparameters)
-- `oblique` — split perpendicular to the estimated dominant direction of
-  variation (a non-axis-aligned cut); children fit their GPs in the rotated
-  active-subspace frame (see Target C)
 - `random` — split a random dimension
-
-Targets A and B below isolate the choice of split *axis* (the axis-aligned
-criteria); Target C covers the non-axis-aligned `oblique` criterion.
 
 All runs: streaming, 20 000 points, batches of 2 000, `Nbar=200`,
 `retrain_every_n_points=50`, `theta=1e-4`, anisotropic Matérn(3/2) ARD kernel,
@@ -77,63 +71,10 @@ Final-batch metrics:
   default here — i.e. **harmless** when there is no anisotropy to exploit — and
   remains the cheapest of the GP-aware options.
 
-## Target C — `diagonal` (oblique structure)
+## Target C — standard benchmark functions
 
-A plane wave that varies only along the `(1,1,1)` diagonal and is flat in the
-perpendicular directions. Every axis-aligned criterion must "staircase" many
-cuts to resolve the diagonal wavefronts; the `oblique` criterion cuts along the
-diagonal directly. Reproduce with:
-
-```bash
-OMP_NUM_THREADS=1 python examples/benchmark_split_direction.py diagonal 20000
-```
-
-NRMSE as a function of processed points (axis-aligned criteria shown by their
-best, `max_uncertainty`):
-
-| points | max_spread | min_lengthscale | max_uncertainty | oblique (no rotation) | **oblique (with rotation)** |
-|-------:|-----------:|----------------:|----------------:|----------------------:|----------------------------:|
-|  2 000 | 0.1323     | 0.1329          | 0.1321          | 0.1282                | **0.1023** |
-|  4 000 | 0.0285     | 0.0256          | 0.0271          | 0.0224                | **0.0025** |
-|  8 000 | 0.0149     | 0.0141          | 0.0121          | 0.0308                | **0.0006** |
-| 12 000 | 0.0096     | 0.0090          | 0.0082          | 0.0260                | **0.0016** |
-| 16 000 | 0.0076     | 0.0062          | 0.0085          | 0.0297                | **0.0000** |
-| 20 000 | 0.0059     | 0.0058          | 0.0052          | 0.0271                | **0.0000** |
-
-The "oblique (no rotation)" column is an earlier implementation that chose the
-oblique cut but still fit the leaf GP in the original coordinates. It illustrates
-why the rotation is essential:
-
-- **Choosing an oblique cut alone is not enough — and hurts at depth.** Without
-  rotation, oblique starts well (best at 4 000 points) but then *plateaus around
-  0.027* while the axis-aligned criteria keep improving. The reason is geometric:
-  an oblique cut produces leaves that are thin slabs perpendicular to the
-  diagonal but wide in the flat directions, and an axis-aligned ARD kernel cannot
-  represent "varies along the diagonal, flat perpendicular" unless the diagonal
-  is a coordinate axis. A controlled check makes this concrete — fitting the same
-  130 points covering the same range of variation:
-
-  | leaf shape (same #points, same variation) | GP RMSE |
-  |-------------------------------------------|--------:|
-  | axis-aligned box                          | 0.009   |
-  | oblique slab, original frame              | 0.097   |
-  | oblique slab, **rotated** (diagonal-aligned) frame | 0.000 |
-
-- **Rotating the child frame fixes it completely.** When each child fits its GP
-  in the active-subspace frame (so the cut direction is a coordinate axis), the
-  plane wave becomes a 1-D function along one axis and the ARD kernel models it
-  essentially exactly: NRMSE falls to ~0 by 14 000 points — about 10–50× better
-  than any axis-aligned criterion at the same number of points. Empirical
-  coverage stays ~0.68. The cost is ~1.8× the update time (an active-subspace
-  estimate per split plus a forced child refit in the new frame).
-
-This is the shipped behaviour of the `oblique` criterion.
-
-## Target D — standard benchmark functions
-
-The `diagonal` target above is a best case constructed *for* oblique splitting.
-On the project's standard benchmark functions (3-D, sampled on `[0,1]^3`,
-20 000 points), the picture is very different. Final-batch NRMSE:
+The same five criteria on the project's standard functions (3-D, sampled on
+`[0,1]^3`, 20 000 points). Final-batch NRMSE:
 
 | criterion        | rosenbrock | rastrigin | eggholder |
 |------------------|-----------:|----------:|----------:|
@@ -141,50 +82,47 @@ On the project's standard benchmark functions (3-D, sampled on `[0,1]^3`,
 | max_variance     | 0.0001     | 0.0552    | 0.0444    |
 | max_uncertainty  | **0.0000** | 0.0604    | **0.0428** |
 | min_lengthscale  | **0.0000** | 0.0599    | 0.0446    |
-| oblique          | 0.0003     | 0.0683    | 0.0428    |
 | random           | 0.0002     | 0.0620    | 0.0467    |
 
 Reproduce with e.g. `python examples/benchmark_split_direction.py rosenbrock 20000`.
 
-- **Oblique never wins on these functions, and is sometimes clearly worse**, at
-  ~1.5–2× the update cost. Across the whole run (not just the final batch) it
-  never leads at any number of processed points:
-  - `rastrigin` is a *separable* sum of per-axis terms, so it is already
-    perfectly axis-aligned; rotating to an oblique frame mixes axes that were
-    optimally separated and oblique is the **worst** criterion (0.068 vs 0.054
-    for plain `max_spread`).
-  - `rosenbrock`'s curved valley is resolved fine by small axis-aligned leaves —
-    the GP-aware axis criteria reach ~0 error and oblique is marginally worse
-    (0.0003).
-  - `eggholder` is roughly isotropic, so the estimated direction is ~a coordinate
-    axis and oblique simply ties the axis-aligned criteria.
-- The reason the `diagonal` target was so favourable is that it has a *single,
-  global, exactly off-axis* ridge that axis-aligned cuts can only staircase.
-  Real benchmark functions do not have that structure: they are either
-  axis-aligned-favourable (separable/grid) or, once the tree has localised into
-  small leaves, well modelled by an axis-aligned GP regardless of global shape.
-- `min_lengthscale` is again either the best or within noise of the best on every
-  function, confirming it as the safe axis-aligned default.
+- `rosenbrock`'s valley is resolved well once leaves are small: the GP-aware
+  criteria reach ~0 error and the data-only ones are nearly as good.
+- `rastrigin` is a *separable* sum of per-axis terms; the simple `max_spread` is
+  marginally best and the criteria are all within ~0.01 of each other.
+- `eggholder` is roughly isotropic, so all criteria tie (~0.043); `random` is
+  marginally worst.
+- `min_lengthscale` is the best or within noise of the best on every function,
+  confirming it as the safe axis-aligned default.
+
+## Note: oblique (non-axis-aligned) splits — evaluated and removed
+
+An `oblique` criterion was also implemented and benchmarked: it cut perpendicular
+to the GP's estimated dominant direction of variation (the leading eigenvector of
+the gradient outer-product / "active subspace") and had each child fit its GP in
+the rotated active-subspace frame, so the cut direction became a coordinate axis.
+The child-frame rotation is essential — without it an oblique cut produces thin
+slabs that an axis-aligned ARD kernel models poorly (a controlled fit of the same
+130 points over the same variation: axis-aligned box RMSE 0.009, oblique slab
+0.097, oblique slab in the rotated frame 0.000).
+
+On a synthetic plane wave along the `(1,1,1)` diagonal — a best case built *for*
+oblique splitting — it was dramatically better (NRMSE ~0 vs ~0.005 for the best
+axis-aligned criterion). But on the standard functions it provided **no benefit
+and was sometimes clearly worse**, at ~1.5–2× the update cost: marginally worse
+on `rosenbrock` (0.0003 vs ~0.0000), clearly worst on the separable `rastrigin`
+(0.0683 vs 0.0543 — rotating mixes axes that were already optimally separated),
+and a tie on `eggholder`. Because real functions rarely have a single global
+off-axis ridge, and because the criterion added ~200 lines touching the hot
+fit/predict/routing paths, it was removed. The implementation remains in git
+history (commit `3b3dd88`) for reference.
 
 ## Takeaway
 
-- **Choosing the split axis:** `min_lengthscale` is the best general axis-aligned
-  criterion for ARD kernels. It ties the most accurate criterion
-  (`max_uncertainty`) on structured/anisotropic problems — ~10× better than the
-  spread/variance defaults — is a no-op on isotropic problems, and is cheaper
-  than `max_uncertainty` because it reuses the GP's already-optimized
-  hyperparameters instead of probing the GP on a grid at every split.
-- **Going oblique:** for functions with a genuine, global, off-axis ridge (the
-  synthetic `diagonal` target), the `oblique` criterion can do dramatically
-  better — but only because it *also rotates each child's GP frame* so the split
-  direction is a coordinate axis (the split geometry and the kernel geometry must
-  agree; choosing an oblique cut while keeping an axis-aligned kernel hurts at
-  depth). **On the standard benchmark functions, however, oblique provides no
-  benefit and is sometimes clearly worse** (Target D), at ~1.5–2× the update
-  cost, because those functions are either axis-aligned-favourable or are well
-  modelled locally once the tree has localised into small leaves. So oblique is a
-  niche tool: enable it only when you specifically expect strong, global,
-  off-axis structure. It reduces to axis-aligned behaviour when the estimated
-  direction is ~a coordinate axis, and falls back to `max_spread` when the
-  direction cannot be estimated. For general use, prefer the axis-aligned
-  `min_lengthscale`.
+`min_lengthscale` is the best general choice of split-dimension criterion for ARD
+kernels: it ties the most accurate criterion (`max_uncertainty`) on
+structured/anisotropic problems — ~10× better than the spread/variance defaults —
+is a no-op on isotropic problems, and is cheaper than `max_uncertainty` because
+it reuses the GP's already-optimized hyperparameters instead of probing the GP on
+a grid at every split. It requires an anisotropic (ARD) kernel and a trained GP,
+and falls back to `max_spread` otherwise.
