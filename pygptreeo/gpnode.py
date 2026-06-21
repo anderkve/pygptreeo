@@ -1389,25 +1389,19 @@ class GPNode(Node):
     def update_sigma_scaler(self):
         """ Update the scaling factor for the prediction uncertainty.
 
-        For multi-output: updates each output's sigma scaler independently.
-
-        The scaler is set directly (closed form) to the empirical
-        ``TARGET_COVERAGE`` quantile of the normalized residuals
-        ``|residual| / sigma_pred``. Requiring a fraction ``TARGET_COVERAGE`` of
-        points to satisfy ``|residual| < scaler * sigma_pred`` is exactly the
-        same as requiring ``scaler`` to be the ``TARGET_COVERAGE`` quantile of
-        ``|residual| / sigma_pred``, so it can be computed directly with
-        ``np.quantile`` -- no iterative root finding.
+        The scaler is the ``TARGET_COVERAGE`` quantile of the normalized
+        residuals ``|residual| / sigma_pred``, i.e. the value for which a
+        fraction ``TARGET_COVERAGE`` of points satisfy
+        ``|residual| < scaler * sigma_pred``. For multi-output, each output is
+        calibrated independently.
         """
         target_coverage = TARGET_COVERAGE
 
-        # Update sigma scaler for each output
         for i in range(self.n_outputs):
             residuals_i = self.residuals_list[i]
             sigma_preds_i = self.sigma_preds_list[i]
 
-            # Before we have collected self.n_points_pred_perf points, just set the
-            # sigma_scaler such that all residuals are covered (conservative).
+            # Until the window is full, cover all residuals seen so far.
             if residuals_i.shape[0] < self.n_points_pred_perf:
                 if len(sigma_preds_i) > 0 and np.max(sigma_preds_i) > 0:
                     self.sigma_scalers[i] = np.max(np.abs(residuals_i) / (sigma_preds_i + 1e-10))
@@ -1415,8 +1409,6 @@ class GPNode(Node):
                     self.sigma_scalers[i] = DEFAULT_SIGMA_SCALER
                 continue
 
-            # Closed form: the scaler is the TARGET_COVERAGE quantile of the
-            # normalized residuals |residual| / sigma_pred.
             ratios = np.abs(residuals_i) / (sigma_preds_i + 1e-10)
             self.sigma_scalers[i] = max(float(np.quantile(ratios, target_coverage)), 1e-9)
 

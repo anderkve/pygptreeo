@@ -1,4 +1,4 @@
-"""Tests for the closed-form uncertainty calibration (sigma scaler)."""
+"""Tests for the uncertainty calibration (sigma scaler)."""
 
 import io
 import os
@@ -24,7 +24,7 @@ def _silent(func, *args, **kwargs):
 
 
 class TestCalibrationUnit(unittest.TestCase):
-    """Direct tests of the closed-form update_sigma_scaler."""
+    """Direct tests of update_sigma_scaler."""
 
     def _scaler(self, res, sp):
         node = GPNode(0, my_GPR=Default_GPR())
@@ -52,7 +52,7 @@ class TestCalibrationUnit(unittest.TestCase):
         self.assertLessEqual(abs(coverage - TARGET_COVERAGE), 0.08)
 
     def test_degenerate_inputs_handled(self):
-        # All residuals tiny -> small finite scaler, no failure modes.
+        # Near-zero residuals give a small, finite, positive scaler.
         scaler = self._scaler(np.full(25, 1e-8), np.ones(25))
         self.assertTrue(np.isfinite(scaler) and scaler > 0)
 
