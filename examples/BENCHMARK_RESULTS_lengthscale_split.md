@@ -66,11 +66,18 @@ Final-batch metrics:
 
 - **#1 ≈ baseline**: with no anisotropy to exploit, the length-scale criterion
   picks essentially the same dimensions as `max_spread`. It is harmless.
-- **#2 hurts here**: because the function is rough *everywhere*, the resolution
-  criterion fires constantly and shrinks every leaf to the floor (~34 points),
-  producing 4× more, data-starved leaves — worse accuracy, though ~5× faster.
-  On uniformly-rough targets, `split_on_resolution` should be left off (or
-  `resolution_budget` raised well above the per-leaf roughness).
+- **#2 hurts here, and no budget rescues it**: eggholder is rough at *every*
+  scale, so `spread_d / length_scale_d` is large in every leaf no matter how
+  small. The resolution criterion therefore fires constantly and shrinks leaves
+  toward the floor (`min_points_for_resolution_split`), producing 4× more,
+  data-starved leaves (~34 points each) — worse accuracy, though ~5× faster.
+  A budget sweep confirms this is not a tuning artifact: raising
+  `resolution_budget` from 3 → 25 only drops the leaf count from 242 → 143 and
+  leaves NRMSE stuck at ~0.14 (baseline ~0.07), because there is no scale at
+  which eggholder looks locally smooth. On functions that are rough at all
+  scales, `split_on_resolution` should simply be left off (its default). The one
+  knob that *does* bound the downside is `min_points_for_resolution_split`, which
+  caps how small (and how data-starved) a leaf can get.
 
 ## Takeaways
 
@@ -78,11 +85,14 @@ Final-batch metrics:
   anisotropic problems and a no-op on isotropic ones, at no extra cost (it reuses
   the GP's already-fitted length scales — cheaper than the grid-based
   `max_uncertainty` criterion).
-- **#2 (`split_on_resolution`) is a targeted tool**: it pays off on functions
-  whose roughness is *heterogeneous* (some regions need finer leaves than
-  others), where it improves accuracy and/or speed. On uniformly-rough functions
-  it just trades accuracy for speed, so the `resolution_budget` should be tuned
-  to the problem.
+- **#2 (`split_on_resolution`) is a conditional tool, off by default**: it pays
+  off only when roughness is *heterogeneous* — i.e. there is scale separation, so
+  some regions can grow into large, data-rich leaves while others need refining.
+  On functions that are rough at all scales (no scale separation, e.g.
+  eggholder) it has nothing to exploit: it just shrinks every leaf and trades a
+  lot of accuracy for speed, and no `resolution_budget` recovers the baseline.
+  Enable it only when you expect that structure; `min_points_for_resolution_split`
+  bounds the worst case.
 - The two compose cleanly: a resolution-triggered split is directed at the
   under-resolved dimension, which is exactly the dimension `min_lengthscale`
   would choose — so **#1 + #2** gives the best accuracy *and* the fastest run on
