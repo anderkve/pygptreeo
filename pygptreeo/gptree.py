@@ -80,7 +80,6 @@ class GPTree:
                  max_n_pred_leaves: Optional[int] = None,
                  aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
-                 calibration_method: Optional[str] = 'quantile',
                  **kwargs):
         """Initializes the GPTree.
 
@@ -106,11 +105,6 @@ class GPTree:
                 'default'/'moe' or 'poe'. Defaults to 'default'.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
                 For multi-output GPs, independent GPs are trained for each output.
-            calibration_method (Optional[str]): Method used to calibrate the
-                predictive uncertainty scaler. 'quantile' (default) sets the
-                scaler directly to the empirical target-coverage quantile of the
-                normalized residuals (closed form). 'rootfind' is the legacy
-                bracketed root-finding approach. Both target the same coverage.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -125,8 +119,7 @@ class GPTree:
         self.splitting_strategy = splitting_strategy
         self.n_outputs = n_outputs
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
-                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
-                          calibration_method=calibration_method, **kwargs)  # Initialize root node of the GPTree
+                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs, **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 
