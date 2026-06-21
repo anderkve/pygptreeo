@@ -1,47 +1,44 @@
-"""Benchmark for length-scale-driven splitting (#1) and resolution-based
-adaptive splitting (#2).
+"""Benchmark: comparing split-dimension criteria for GPTree.
 
-This script compares four GPTree configurations on the same streaming data set,
-following the pygptreeo "house style" of tracking batch metrics as a function of
-the number of processed points:
+This script compares every available `split_dimension_criteria` on the same
+streaming data set, following the pygptreeo "house style" of tracking batch
+metrics as a function of the number of processed points:
 
-    baseline          : split_dimension_criteria='max_spread'           (neither idea)
-    #1 min_lengthscale: split_dimension_criteria='min_lengthscale'       (idea #1 only)
-    #2 resolution     : max_spread + split_on_resolution=True            (idea #2 only)
-    #1 + #2           : min_lengthscale + split_on_resolution=True       (both ideas)
+    max_spread       : split the dimension with the largest data range (default)
+    max_variance     : split the dimension with the largest data variance
+    max_uncertainty  : split where the GP is most uncertain (grid-based, costly)
+    min_lengthscale  : split the dimension with the smallest fitted ARD length
+                       scale, i.e. where the GP says the function varies fastest
+    random           : split a random dimension
 
-Idea #1 chooses the split dimension using the GP's own fitted ARD length scales
-(split where the function varies fastest), instead of the raw data spread.
+`min_lengthscale` (idea #1) reuses the GP's already-optimized ARD length scales,
+so it is much cheaper than `max_uncertainty` while targeting the same goal:
+split where the local function has the most structure.
 
-Idea #2 lets a leaf split before reaching Nbar whenever its region spans more
-than `resolution_budget` length scales in some dimension, concentrating leaves in
-rough regions while letting smooth regions accumulate more data.
-
-For each configuration and each batch of `BATCH_SIZE` points we record:
-    - average prediction time per point
-    - average tree-update time per point
+For each criterion and each batch of `BATCH_SIZE` points we record:
     - batch NRMSE
     - fraction of predictions within 4% of the true value
     - empirical coverage of the 1-sigma uncertainty band
     - number of leaves in the tree
+    - average prediction time per point
+    - average tree-update time per point
 
 The script writes a comparison figure (one panel per metric, one line per
-configuration) and a CSV of the raw batch metrics.
+criterion) and a CSV of the raw batch metrics.
 
 Usage
 -----
-    OMP_NUM_THREADS=1 python examples/benchmark_lengthscale_split.py [target] [n_points]
+    OMP_NUM_THREADS=1 python examples/benchmark_split_direction.py [target] [n_points]
 
     target   : 'aniso_chirp' (default) or 'eggholder'
     n_points : total number of streamed points (default 20000)
 
-The 'aniso_chirp' target is designed to exercise both ideas:
-    - it varies fast and "chirps" (frequency grows) along x0  -> rough, heterogeneous
-    - it is smooth and linear along x1, but x1 has the LARGEST input spread, which
-      deliberately misleads the spread-based baseline into splitting the wrong
-      (smooth) dimension.
-The 'eggholder' target is a standard, roughly-isotropic, uniformly-rough
-reference where these structural assumptions do NOT hold.
+The 'aniso_chirp' target is anisotropic and heterogeneous: rough and chirped
+along x0 (frequency grows with x0), but smooth/linear along x1 -- and x1 has the
+LARGEST input spread, which deliberately misleads the spread-based criteria into
+splitting the wrong (smooth) dimension. This is where the choice of split
+dimension matters most. The 'eggholder' target is roughly isotropic and
+uniformly rough, so all criteria pick comparable dimensions (a null reference).
 """
 
 import os
@@ -77,11 +74,12 @@ BATCH_SIZE = 2000
 N_DIMS = 3
 NBAR = 200
 THETA = 1e-4
-RETRAIN_STEP = 50          # < Nbar so the GP is trained before a leaf fills up
-RESOLUTION_BUDGET = 3.0    # for idea #2 (a leaf may span this many length scales)
+RETRAIN_STEP = 50          # < Nbar so the GP (and its length scales) is fresh at a split
 
 WITHIN_FRACTION = 0.04     # "within 4%" accuracy threshold
 SEED = 512312
+
+CRITERIA = ["max_spread", "max_variance", "max_uncertainty", "min_lengthscale", "random"]
 
 
 # ----------------------------------------------------------------------------
@@ -105,9 +103,6 @@ def make_data(target, n_points, n_dims, seed):
         hi = np.array([1.0, 3.0, 1.0])
         X = rng.uniform(lo[:n_dims], hi[:n_dims], (n_points, n_dims))
         x0 = X[:, 0]
-        # Instantaneous frequency 1 -> ~17 cycles/unit across x0: smooth near
-        # x0=0, increasingly rough toward x0=1 (so Nbar-sized leaves are
-        # under-resolved at high x0, which is where idea #2 should refine).
         y = np.sin(2 * np.pi * (1.0 + 8.0 * x0) * x0)
         if n_dims > 1:
             y = y + 0.3 * X[:, 1]
@@ -131,29 +126,9 @@ def make_gpr(n_dims):
 
 
 # ----------------------------------------------------------------------------
-# Configurations
+# Single-criterion streaming run
 # ----------------------------------------------------------------------------
-def make_configs(budget):
-    return {
-        "baseline": dict(split_dimension_criteria="max_spread"),
-        "#1 min_lengthscale": dict(split_dimension_criteria="min_lengthscale"),
-        "#2 resolution": dict(
-            split_dimension_criteria="max_spread",
-            split_on_resolution=True,
-            resolution_budget=budget,
-        ),
-        "#1 + #2": dict(
-            split_dimension_criteria="min_lengthscale",
-            split_on_resolution=True,
-            resolution_budget=budget,
-        ),
-    }
-
-
-# ----------------------------------------------------------------------------
-# Single-configuration streaming run
-# ----------------------------------------------------------------------------
-def run_config(name, extra_kwargs, X, y, n_dims):
+def run_criterion(criterion, X, y, n_dims):
     """Stream all points through one GPTree config, returning batch-metric history."""
     y_range = float(np.max(y) - np.min(y))
 
@@ -167,7 +142,7 @@ def run_config(name, extra_kwargs, X, y, n_dims):
         splitting_strategy="gradual",
         max_n_pred_leaves=3,
         aggregation="moe",
-        **extra_kwargs,
+        split_dimension_criteria=criterion,
     )
 
     hist = {k: [] for k in [
@@ -215,10 +190,10 @@ def run_config(name, extra_kwargs, X, y, n_dims):
     for k in hist:
         hist[k] = np.array(hist[k])
 
+    total = (np.sum(hist["update_time"]) + np.sum(hist["predict_time"])) * BATCH_SIZE
     sys.stderr.write(
-        f"  {name:20s} done: leaves={hist['n_leaves'][-1]:5d}  "
-        f"final NRMSE={hist['nrmse'][-1]:.4f}  "
-        f"total time={np.sum(hist['update_time'])*BATCH_SIZE + np.sum(hist['predict_time'])*BATCH_SIZE:7.1f}s\n"
+        f"  {criterion:16s} done: leaves={hist['n_leaves'][-1]:5d}  "
+        f"final NRMSE={hist['nrmse'][-1]:.4f}  total time={total:7.1f}s\n"
     )
     return hist
 
@@ -236,23 +211,25 @@ def plot_comparison(results, target, outfile):
         ("update_time", "Avg update time / point (s)", True),
     ]
     colors = {
-        "baseline": "tab:gray",
-        "#1 min_lengthscale": "tab:blue",
-        "#2 resolution": "tab:orange",
-        "#1 + #2": "tab:green",
+        "max_spread": "tab:gray",
+        "max_variance": "tab:brown",
+        "max_uncertainty": "tab:orange",
+        "min_lengthscale": "tab:green",
+        "random": "tab:red",
     }
 
     fig, axs = plt.subplots(3, 2, figsize=(15, 13), sharex=True)
     fig.suptitle(
-        f"pyGPTreeo: length-scale split (#1) & resolution split (#2) — target='{target}'",
+        f"pyGPTreeo: split-dimension criteria — target='{target}'",
         fontsize=15,
     )
     axs = axs.ravel()
 
     for ax, (key, label, logy) in zip(axs, panels):
         for name, hist in results.items():
+            lw = 2.6 if name == "min_lengthscale" else 1.8
             ax.plot(hist["points"], hist[key], marker="o", markersize=3,
-                    linewidth=2.0, label=name, color=colors.get(name))
+                    linewidth=lw, label=name, color=colors.get(name))
         ax.set_ylabel(label)
         ax.set_title(label)
         ax.grid(True, alpha=0.4)
@@ -276,7 +253,7 @@ def plot_comparison(results, target, outfile):
 def save_csv(results, outfile):
     keys = ["predict_time", "update_time", "nrmse", "within", "coverage", "n_leaves"]
     with open(outfile, "w") as f:
-        f.write("config,points," + ",".join(keys) + "\n")
+        f.write("criterion,points," + ",".join(keys) + "\n")
         for name, hist in results.items():
             for j, p in enumerate(hist["points"]):
                 row = [f"{hist[k][j]:.6g}" for k in keys]
@@ -288,33 +265,31 @@ def save_csv(results, outfile):
 # Main
 # ----------------------------------------------------------------------------
 def main():
-    np.random.seed(SEED)
     X, y = make_data(TARGET, N_POINTS, N_DIMS, SEED)
-    configs = make_configs(RESOLUTION_BUDGET)
 
     sys.stderr.write(
         f"Benchmark: target='{TARGET}'  N={N_POINTS}  n_dims={N_DIMS}  "
-        f"Nbar={NBAR}  retrain={RETRAIN_STEP}  budget={RESOLUTION_BUDGET}\n"
+        f"Nbar={NBAR}  retrain={RETRAIN_STEP}\n"
     )
 
     results = {}
-    for name, kw in configs.items():
-        sys.stderr.write(f"Running config: {name} ...\n")
-        # Same data stream and seed for every config (fair comparison).
+    for criterion in CRITERIA:
+        sys.stderr.write(f"Running criterion: {criterion} ...\n")
+        # Same data stream and seed for every criterion (fair comparison).
         np.random.seed(SEED)
-        results[name] = run_config(name, kw, X, y, N_DIMS)
+        results[criterion] = run_criterion(criterion, X, y, N_DIMS)
 
     suffix = f"{TARGET}_{N_POINTS}"
-    plot_comparison(results, TARGET, f"benchmark_lengthscale_split_{suffix}.png")
-    save_csv(results, f"benchmark_lengthscale_split_{suffix}.csv")
+    plot_comparison(results, TARGET, f"benchmark_split_direction_{suffix}.png")
+    save_csv(results, f"benchmark_split_direction_{suffix}.csv")
 
     # Console summary (final batch).
     sys.stderr.write("\n=== Final-batch summary ===\n")
-    sys.stderr.write(f"{'config':20s} {'leaves':>7s} {'NRMSE':>9s} "
+    sys.stderr.write(f"{'criterion':16s} {'leaves':>7s} {'NRMSE':>9s} "
                      f"{'within':>8s} {'coverage':>9s}\n")
     for name, h in results.items():
         sys.stderr.write(
-            f"{name:20s} {int(h['n_leaves'][-1]):7d} {h['nrmse'][-1]:9.4f} "
+            f"{name:16s} {int(h['n_leaves'][-1]):7d} {h['nrmse'][-1]:9.4f} "
             f"{h['within'][-1]:8.3f} {h['coverage'][-1]:9.3f}\n"
         )
 

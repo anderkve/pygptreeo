@@ -65,31 +65,27 @@ OMP_NUM_THREADS=1 python performance_test.py
 
 The performance test generates a plot (`plot.png`) showing various metrics over time.
 
-### Length-scale & resolution split benchmark
+### Split-dimension criteria benchmark
 
 ```bash
 cd examples
-OMP_NUM_THREADS=1 python benchmark_lengthscale_split.py [target] [n_points]
+OMP_NUM_THREADS=1 python benchmark_split_direction.py [target] [n_points]
 ```
 
-Compares four GPTree configurations on the same streaming data set and tracks
-batch metrics as a function of the number of processed points:
-
-- **baseline**: split dimension chosen by data spread (`max_spread`).
-- **#1 min_lengthscale**: split dimension chosen by the GP's smallest fitted ARD
-  length scale (split where the function varies fastest).
-- **#2 resolution**: lets a leaf split *before* reaching `Nbar` when its region
-  spans more than `resolution_budget` length scales in some dimension
-  (`split_on_resolution=True`); the early split is directed at that
-  under-resolved dimension.
-- **#1 + #2**: both ideas together.
+Compares every available `split_dimension_criteria` on the same streaming data
+set and tracks batch metrics as a function of the number of processed points:
+`max_spread`, `max_variance`, `max_uncertainty`, `min_lengthscale`, and
+`random`. The `min_lengthscale` criterion splits the dimension with the smallest
+fitted ARD length scale (i.e. where the GP says the function varies fastest),
+reusing the GP's already-optimized hyperparameters.
 
 `target` is `aniso_chirp` (default) or `eggholder`; `n_points` defaults to 20000.
 The `aniso_chirp` target is anisotropic and heterogeneous (rough/chirped along
-`x0`, smooth along a wider `x1`), which is where both ideas help; `eggholder` is
-a roughly-isotropic, uniformly-rough reference where the structural assumptions
-do not hold. The script writes a comparison figure and a CSV of batch metrics
-(NRMSE, accuracy, coverage, leaf count, predict/update times) per configuration.
+`x0`, but smooth along a wider `x1` that misleads the spread-based criteria),
+which is where the choice of split dimension matters most; `eggholder` is a
+roughly-isotropic, uniformly-rough reference where all criteria behave similarly.
+The script writes a comparison figure and a CSV of batch metrics (NRMSE,
+accuracy, coverage, leaf count, predict/update times) per criterion.
 
 ### Animated Visualization
 
@@ -148,17 +144,9 @@ Key parameters to experiment with:
     range / variance
   - `'max_uncertainty'`: split where the GP is most uncertain (grid-based, costly)
   - `'min_lengthscale'`: split the dimension with the smallest fitted ARD length
-    scale, i.e. where the GP says the function varies fastest (idea #1). Requires
-    an anisotropic (ARD) kernel and a trained GP; falls back to `max_spread`
+    scale, i.e. where the GP says the function varies fastest. Requires an
+    anisotropic (ARD) kernel and a trained GP; falls back to `max_spread`
     otherwise.
-
-- `split_on_resolution`: Enable resolution-based adaptive splitting (default: False, idea #2)
-  - When True, a leaf may split before reaching `Nbar` if its region spans more
-    than `resolution_budget` length scales in some dimension. The early split is
-    directed at the under-resolved dimension. Concentrates leaves in rough regions
-    while letting smooth regions accumulate more data per leaf.
-  - `resolution_budget` (default 8.0): number of length scales a leaf may span
-    before an early split is triggered.
 
 ### Custom Kernel Configuration
 
