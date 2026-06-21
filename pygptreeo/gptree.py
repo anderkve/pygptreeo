@@ -203,8 +203,9 @@ class GPTree:
         if allow_training:
             did_retrain = node.fit_my_GPR()
 
-        # If the node is full, generate child nodes
-        if node.n_points >= node.Nbar:
+        # If the node is full (or its region spans too many length scales when
+        # resolution-based splitting is enabled), generate child nodes
+        if node.should_split():
             # Create child nodes. Each child node gets a copy of the current parent GP.
             node.generate_children(self.GPR, self.n_features)
             

@@ -85,6 +85,9 @@ class GPNode(Node):
                  n_split_candidates: Optional[int] = 3,
                  split_eval_train_fraction: Optional[float] = 0.6,
                  split_eval_min_points: Optional[int] = 20,
+                 split_on_resolution: Optional[bool] = False,
+                 resolution_budget: Optional[float] = 8.0,
+                 min_points_for_resolution_split: Optional[int] = None,
                  n_outputs: Optional[int] = 1):
         """Initializes a GPNode.
 
@@ -108,6 +111,8 @@ class GPNode(Node):
                 split dimension. Valid options: 'max_spread' (split on dimension with
                 largest range), 'max_variance' (split on dimension with highest variance),
                 'max_uncertainty' (split on dimension where GP is most uncertain),
+                'min_lengthscale' (split on dimension with the smallest fitted ARD
+                length scale, i.e. where the GP says the function varies fastest),
                 'random' (random dimension). Defaults to 'max_spread'.
             use_standard_scaling (Optional[bool]): If True, standardizes both X and y
                 data before fitting the GP and inverse transforms predictions.
@@ -137,6 +142,20 @@ class GPNode(Node):
                 to use for training during split evaluation. Defaults to 0.6.
             split_eval_min_points (Optional[int]): Minimum points required in a region
                 to evaluate that split. Defaults to 20.
+            split_on_resolution (Optional[bool]): If True, a leaf may split before
+                reaching Nbar whenever its data region spans too many length scales,
+                i.e. when max_d (spread_d / length_scale_d) >= resolution_budget. This
+                makes the tree subdivide rough regions early while letting smooth
+                regions accumulate more data. Nbar still acts as a hard cap on the
+                number of points per leaf. Defaults to False.
+            resolution_budget (Optional[float]): The maximum number of length scales a
+                leaf region may span (in any dimension) before a resolution-based split
+                is triggered. Only used when split_on_resolution is True. Defaults to 8.0.
+            min_points_for_resolution_split (Optional[int]): Minimum number of points a
+                leaf must hold before a resolution-based split can be triggered. This
+                guards against splitting before the GP has been trained and before each
+                child would have enough data. If None, defaults to
+                max(retrain_every_n_points, 20). Only used when split_on_resolution=True.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
                 For multi-output GPs, independent GPs are trained for each output.
         """
@@ -192,6 +211,18 @@ class GPNode(Node):
         self.n_split_candidates = n_split_candidates
         self.split_eval_train_fraction = split_eval_train_fraction
         self.split_eval_min_points = split_eval_min_points
+
+        # Resolution-based (adaptive-Nbar) splitting parameters
+        self.split_on_resolution = split_on_resolution
+        self.resolution_budget = resolution_budget
+        if min_points_for_resolution_split is None:
+            self.min_points_for_resolution_split = max(retrain_every_n_points, 20)
+        else:
+            self.min_points_for_resolution_split = min_points_for_resolution_split
+        # When a split is triggered by the resolution criterion (rather than by
+        # reaching Nbar), this holds the dimension that triggered it, so that the
+        # split is directed at the under-resolved dimension. None otherwise.
+        self._resolution_split_index = None
 
         self.parent_split_index = None
         self.parent_split_position = None
@@ -319,6 +350,9 @@ class GPNode(Node):
             'n_split_candidates': self.n_split_candidates,
             'split_eval_train_fraction': self.split_eval_train_fraction,
             'split_eval_min_points': self.split_eval_min_points,
+            'split_on_resolution': self.split_on_resolution,
+            'resolution_budget': self.resolution_budget,
+            'min_points_for_resolution_split': self.min_points_for_resolution_split,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
         }
 
@@ -1155,6 +1189,21 @@ class GPNode(Node):
                 in the chosen split dimension.
         """
 
+        # If this split was triggered by the resolution criterion, split the
+        # specific dimension that is under-resolved, overriding the configured
+        # split_dimension_criteria for this (early) split only.
+        if self._resolution_split_index is not None:
+            self.split_index = self._resolution_split_index
+            self._resolution_split_index = None
+            if self.my_X_data.shape[0] > 0:
+                current_dim_spread = (np.max(self.my_X_data[:, self.split_index])
+                                      - np.min(self.my_X_data[:, self.split_index]))
+            else:
+                current_dim_spread = 0.0
+            self.split_position = self._compute_split_position()
+            self.overlap = theta * current_dim_spread
+            return
+
         # If split evaluation is enabled, find best split by testing candidates
         if self.enable_split_evaluation:
             best_index, best_position = self.find_best_split_dimension(theta)
@@ -1208,6 +1257,27 @@ class GPNode(Node):
                     self.split_index = np.argmax(w)
                 else:
                     self.split_index = 0 # Default to 0 if no data
+        elif self.split_dimension_criteria == 'min_lengthscale':
+            # Split on the dimension with the smallest fitted ARD length scale,
+            # i.e. the direction in which the GP says the function varies fastest.
+            # This reuses the hyperparameters the GP has already optimized, so it
+            # is far cheaper than the grid-based 'max_uncertainty' criterion.
+            length_scales = None
+            if self.my_X_data.shape[0] > 1 and self.my_GPRs[0].is_trained():
+                length_scales = self.my_GPRs[0].get_length_scales(self.n_features)
+
+            if length_scales is not None:
+                self.split_index = int(np.argmin(length_scales))
+            else:
+                # Fallback to max_spread if length scales are unavailable
+                # (e.g. GP not yet trained, or kernel has no length scale).
+                if self.my_X_data.shape[0] > 0:
+                    w = np.empty(self.n_features)
+                    for i in range(self.n_features):
+                        w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
+                    self.split_index = np.argmax(w)
+                else:
+                    self.split_index = 0
         elif self.split_dimension_criteria == 'random':
             if self.n_features > 0:
                 self.split_index = np.random.randint(0, self.n_features)
@@ -1223,38 +1293,107 @@ class GPNode(Node):
         else:
             current_dim_spread = 0.0 # Default if no data
 
-        self.split_position = None
-        if self.my_X_data.shape[0] == 0: # No data, place split in the middle (0 if not scaled) or handle as error?
-            self.split_position = 0.0 
+        self.split_position = self._compute_split_position()
+
+        self.overlap = theta * current_dim_spread
+
+
+    def _compute_split_position(self):
+        """Compute the split position along the current ``self.split_index``.
+
+        Uses ``self.split_position_method`` ('median', 'mean', 'random' or
+        'randomchoice') applied to the node's data in the chosen split dimension.
+
+        Returns:
+            float: The position at which to split along ``self.split_index``.
+        """
+        if self.my_X_data.shape[0] == 0:
+            # No data, place split in the middle (0 if not scaled).
+            return 0.0
         elif self.split_position_method == 'median':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.median(self.my_X_data[:, self.split_index])
-            else: # Should not happen if split_index logic is robust
-                self.split_position = 0.0
+            return np.median(self.my_X_data[:, self.split_index])
         elif self.split_position_method == 'mean':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.mean(self.my_X_data[:, self.split_index])
-            else: # Should not happen
-                self.split_position = 0.0
+            return np.mean(self.my_X_data[:, self.split_index])
         elif self.split_position_method == 'random':
-            if self.my_X_data.shape[0] > 0:
-                min_val = np.min(self.my_X_data[:, self.split_index])
-                max_val = np.max(self.my_X_data[:, self.split_index])
-                if min_val == max_val: # All points are the same
-                    self.split_position = min_val
-                else:
-                    self.split_position = np.random.uniform(min_val, max_val, 1)[0]
-            else: # Should not happen
-                self.split_position = 0.0
+            min_val = np.min(self.my_X_data[:, self.split_index])
+            max_val = np.max(self.my_X_data[:, self.split_index])
+            if min_val == max_val:  # All points are the same
+                return min_val
+            return np.random.uniform(min_val, max_val, 1)[0]
         elif self.split_position_method == 'randomchoice':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.random.choice(self.my_X_data[:, self.split_index])
-            else: # Should not happen
-                self.split_position = 0.0
+            return np.random.choice(self.my_X_data[:, self.split_index])
         else:
             raise ValueError(f"Unknown split_position_method argument: '{self.split_position_method}'. The valid options are 'median', 'mean', 'random' and 'randomchoice'")
 
-        self.overlap = theta * current_dim_spread
+
+    def _resolution_ratios(self):
+        """Compute per-dimension resolution ratios spread_d / length_scale_d.
+
+        The ratio measures how many fitted length scales the node's data region
+        spans in each dimension. Both quantities are expressed in the space the
+        GP was trained on: when standard scaling is enabled the raw data spread is
+        divided by the per-feature scale so that it is comparable to the length
+        scales (which the GP learns in scaled space).
+
+        Returns:
+            np.ndarray or None: Array of shape (n_features,) with the resolution
+            ratio per dimension, or None if length scales are unavailable (e.g.
+            the GP is untrained or the kernel exposes no length scale).
+        """
+        if self.my_X_data is None or self.my_X_data.shape[0] < 2:
+            return None
+        if not self.my_GPRs[0].is_trained():
+            return None
+
+        length_scales = self.my_GPRs[0].get_length_scales(self.n_features)
+        if length_scales is None:
+            return None
+
+        spread = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
+
+        # Express the spread in the GP's training space so that it is directly
+        # comparable to the fitted length scales.
+        if self.use_standard_scaling and self.X_scaler is not None:
+            scale = np.where(self.X_scaler.scale_ > 0, self.X_scaler.scale_, 1.0)
+            spread = spread / scale
+
+        return spread / np.maximum(length_scales, 1e-12)
+
+
+    def should_split(self):
+        """Decide whether this leaf node should split into two children.
+
+        A node always splits once it reaches its hard capacity ``Nbar``. In
+        addition, when ``split_on_resolution`` is enabled, a node may split early
+        (before reaching ``Nbar``) if its data region spans more than
+        ``resolution_budget`` length scales in some dimension, i.e. when the local
+        GP is being asked to model variation on a scale finer than a single GP
+        comfortably resolves. This concentrates leaves in rough regions while
+        letting smooth regions accumulate more data per leaf.
+
+        Returns:
+            bool: True if the node should split, False otherwise.
+        """
+        # A fresh decision: clear any previously stored resolution split target.
+        self._resolution_split_index = None
+
+        # Hard capacity cap: always split when full. Such splits use the
+        # configured split_dimension_criteria (see compute_split_position_and_overlap).
+        if self.n_points >= self.Nbar:
+            return True
+
+        # Optional early split based on local resolution requirements.
+        if self.split_on_resolution and self.n_points >= self.min_points_for_resolution_split:
+            ratios = self._resolution_ratios()
+            if ratios is not None and np.max(ratios) >= self.resolution_budget:
+                # Direct the split at the under-resolved dimension. This both
+                # targets the resolution where it is needed and guarantees the
+                # split actually reduces the triggering ratio (the dimension's
+                # spread is roughly halved), preventing runaway splitting.
+                self._resolution_split_index = int(np.argmax(ratios))
+                return True
+
+        return False
 
 
     def prob_func(self, x: np.array):

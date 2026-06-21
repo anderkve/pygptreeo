@@ -65,6 +65,32 @@ OMP_NUM_THREADS=1 python performance_test.py
 
 The performance test generates a plot (`plot.png`) showing various metrics over time.
 
+### Length-scale & resolution split benchmark
+
+```bash
+cd examples
+OMP_NUM_THREADS=1 python benchmark_lengthscale_split.py [target] [n_points]
+```
+
+Compares four GPTree configurations on the same streaming data set and tracks
+batch metrics as a function of the number of processed points:
+
+- **baseline**: split dimension chosen by data spread (`max_spread`).
+- **#1 min_lengthscale**: split dimension chosen by the GP's smallest fitted ARD
+  length scale (split where the function varies fastest).
+- **#2 resolution**: lets a leaf split *before* reaching `Nbar` when its region
+  spans more than `resolution_budget` length scales in some dimension
+  (`split_on_resolution=True`); the early split is directed at that
+  under-resolved dimension.
+- **#1 + #2**: both ideas together.
+
+`target` is `aniso_chirp` (default) or `eggholder`; `n_points` defaults to 20000.
+The `aniso_chirp` target is anisotropic and heterogeneous (rough/chirped along
+`x0`, smooth along a wider `x1`), which is where both ideas help; `eggholder` is
+a roughly-isotropic, uniformly-rough reference where the structural assumptions
+do not hold. The script writes a comparison figure and a CSV of batch metrics
+(NRMSE, accuracy, coverage, leaf count, predict/update times) per configuration.
+
 ### Animated Visualization
 
 ```bash
@@ -116,6 +142,23 @@ Key parameters to experiment with:
 
 - `use_calibrated_sigma`: Enable uncertainty calibration (default: True)
   - Adjusts prediction uncertainties to achieve target coverage
+
+- `split_dimension_criteria`: How a node picks its split dimension (default: 'max_spread')
+  - `'max_spread'` / `'max_variance'`: split the dimension with the largest data
+    range / variance
+  - `'max_uncertainty'`: split where the GP is most uncertain (grid-based, costly)
+  - `'min_lengthscale'`: split the dimension with the smallest fitted ARD length
+    scale, i.e. where the GP says the function varies fastest (idea #1). Requires
+    an anisotropic (ARD) kernel and a trained GP; falls back to `max_spread`
+    otherwise.
+
+- `split_on_resolution`: Enable resolution-based adaptive splitting (default: False, idea #2)
+  - When True, a leaf may split before reaching `Nbar` if its region spans more
+    than `resolution_budget` length scales in some dimension. The early split is
+    directed at the under-resolved dimension. Concentrates leaves in rough regions
+    while letting smooth regions accumulate more data per leaf.
+  - `resolution_budget` (default 8.0): number of length scales a leaf may span
+    before an early split is triggered.
 
 ### Custom Kernel Configuration
 
