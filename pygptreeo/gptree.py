@@ -80,7 +80,6 @@ class GPTree:
                  max_n_pred_leaves: Optional[int] = None,
                  aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
-                 incremental_updates: Optional[bool] = True,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -106,11 +105,6 @@ class GPTree:
                 'default'/'moe' or 'poe'. Defaults to 'default'.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
                 For multi-output GPs, independent GPs are trained for each output.
-            incremental_updates (Optional[bool]): If True, leaf GPs incorporate
-                each new point via an exact rank-1 Cholesky update between full
-                re-fits. This only has an effect for GP backends that support it
-                (e.g. IncrementalGP); for other backends it is a harmless no-op.
-                Defaults to True.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -124,11 +118,8 @@ class GPTree:
         self.GPR = GPR
         self.splitting_strategy = splitting_strategy
         self.n_outputs = n_outputs
-        self.incremental_updates = incremental_updates
-
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
-                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
-                          incremental_updates=incremental_updates, **kwargs)  # Initialize root node of the GPTree
+                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs, **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 
@@ -211,11 +202,6 @@ class GPTree:
         # Retrain GP? The node will decide based Nbar and/or its buffer of training points
         if allow_training:
             did_retrain = node.fit_my_GPR()
-            # If no full (re-)fit happened this step, incorporate the new point
-            # cheaply via an exact rank-1 update (no-op unless the GP backend
-            # supports incremental updates and has been fitted at least once).
-            if not did_retrain:
-                node.incremental_update_gp(x, y, sigma)
 
         # If the node is full, generate child nodes
         if node.n_points >= node.Nbar:
@@ -257,19 +243,6 @@ class GPTree:
             # Retrain the child-node GPs?
             # for child in node.children:
             #     child.fit_my_GPR()
-
-            # For incremental-capable backends, fit each child on its own data
-            # right away ("retrain on split"). This localizes the child's GP and,
-            # crucially, establishes its own Cholesky factor so that subsequent
-            # points can be incorporated via rank-1 updates for the rest of the
-            # leaf's life -- otherwise a leaf would split before ever doing an
-            # own-data fit (e.g. when retrain_every_n_points >= Nbar) and the
-            # incremental updates would never engage. No-op for backends that do
-            # not support incremental updates (e.g. the default scikit-learn one,
-            # whose children keep inheriting the parent's GP as before).
-            for child in node.children:
-                if child.my_GPRs[0].supports_incremental_update():
-                    child.fit_my_GPR(force_training=True)
 
             # GP and training data of non-leaf nodes is not needed
             node.delete_data(delete_own_data=True, delete_shared_data=True)

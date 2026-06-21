@@ -45,7 +45,6 @@ from pygptreeo.gptree import GPTree
 from pygptreeo.gpforest import GPForest
 from pygptreeo.kernels import AnisotropicRationalQuadratic, AdditiveKernel
 from pygptreeo.gp_interface import GPRegressorInterface
-from pygptreeo.incremental_gp import IncrementalGP
 from pygptreeo.adapters import SklearnGPAdapter
 
 # Conditionally import GPyTorch adapter if available
