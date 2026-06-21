@@ -202,35 +202,16 @@ class SklearnGPAdapter(GPRegressorInterface):
         self._gpr.kernel = kernel
 
     def get_length_scales(self, n_features: int):
-        """
-        Extract per-dimension length scales from the (fitted) sklearn kernel.
+        """Per-dimension length scales from the fitted kernel, or None.
 
-        Walks all 'length_scale' hyperparameters in the (possibly composite)
-        kernel and combines them into a single per-dimension length scale. For a
-        trained GP the optimized length scales are used; otherwise the initial
-        ones. Anisotropic length-scale vectors (one value per dimension) are used
-        as-is; isotropic (scalar) length scales are broadcast across dimensions.
-
-        When several kernel components each contribute length scales (e.g. a sum
-        of an anisotropic RQ and a Matern kernel), the per-dimension minimum is
-        taken, since the shortest length scale is what governs the resolution
-        needed in that dimension.
-
-        Parameters
-        ----------
-        n_features : int
-            Number of input dimensions.
-
-        Returns
-        -------
-        Optional[np.ndarray]
-            Array of shape (n_features,) of effective length scales, or None if
-            the kernel exposes no usable length-scale hyperparameter.
+        Collects every 'length_scale' hyperparameter of the (possibly composite)
+        kernel; anisotropic vectors are used as-is, scalars are broadcast. When
+        several components contribute, the per-dimension minimum is taken (the
+        shortest length scale governs the resolution).
         """
         kernel = self.get_kernel()
         if kernel is None:
             return None
-
         try:
             params = kernel.get_params(deep=True)
         except Exception:
@@ -238,20 +219,16 @@ class SklearnGPAdapter(GPRegressorInterface):
 
         ls_arrays = []
         for key, val in params.items():
-            # Match 'length_scale' but not 'length_scale_bounds'
-            if not key.endswith('length_scale'):
+            if not key.endswith('length_scale'):  # excludes 'length_scale_bounds'
                 continue
             arr = np.atleast_1d(np.asarray(val, dtype=float)).ravel()
             if arr.size == n_features:
                 ls_arrays.append(arr)
             elif arr.size == 1:
                 ls_arrays.append(np.full(n_features, arr.item()))
-            # Mismatched sizes are ignored.
 
         if not ls_arrays:
             return None
-
-        # Combine components: the shortest length scale dominates resolution.
         return np.min(np.vstack(ls_arrays), axis=0)
 
     # Provide access to the underlying scikit-learn GPR for advanced users

@@ -72,20 +72,9 @@ cd examples
 OMP_NUM_THREADS=1 python benchmark_split_direction.py [target] [n_points]
 ```
 
-Compares every available `split_dimension_criteria` on the same streaming data
-set and tracks batch metrics as a function of the number of processed points:
-`max_spread`, `max_variance`, `max_uncertainty`, `min_lengthscale`, and
-`random`. The `min_lengthscale` criterion splits the dimension with the smallest
-fitted ARD length scale (i.e. where the GP says the function varies fastest),
-reusing the trained GP.
-
-`target` is one of the standard benchmark functions (`eggholder`, `himmelblau`,
-`rosenbrock`, `rastrigin`, `levy`, `custom`) or the synthetic `aniso_chirp`
-(default); `n_points` defaults to 20000. The `aniso_chirp` target is anisotropic
-and heterogeneous (rough/chirped along `x0`, but smooth along a wider `x1` that
-misleads the spread-based criteria), where the choice of split axis matters most.
-The script writes a comparison figure and a CSV of batch metrics (NRMSE,
-accuracy, coverage, leaf count, predict/update times) per criterion.
+Plots batch NRMSE vs processed points for each `split_dimension_criteria` on the
+same stream. `target` is a standard function (`eggholder`, `rosenbrock`, …) or
+the synthetic `aniso_chirp` (default); see `BENCHMARK_RESULTS_split_direction.md`.
 
 ### Animated Visualization
 
@@ -139,14 +128,10 @@ Key parameters to experiment with:
 - `use_calibrated_sigma`: Enable uncertainty calibration (default: True)
   - Adjusts prediction uncertainties to achieve target coverage
 
-- `split_dimension_criteria`: How a node picks its split dimension (default: 'max_spread')
-  - `'max_spread'` / `'max_variance'`: split the dimension with the largest data
-    range / variance
-  - `'max_uncertainty'`: split where the GP is most uncertain (grid-based, costly)
-  - `'min_lengthscale'`: split the dimension with the smallest fitted ARD length
-    scale, i.e. where the GP says the function varies fastest. Requires an
-    anisotropic (ARD) kernel and a trained GP; falls back to `max_spread`
-    otherwise.
+- `split_dimension_criteria`: how a node picks its split dimension. One of
+  `'max_spread'`, `'max_variance'`, `'max_uncertainty'`, `'random'`, or
+  `'min_lengthscale'` (split the dimension with the smallest fitted ARD length
+  scale; needs an ARD kernel and a trained GP, else falls back to `max_spread`).
 
 ### Custom Kernel Configuration
 

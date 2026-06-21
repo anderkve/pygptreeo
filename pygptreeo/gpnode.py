@@ -1211,26 +1211,19 @@ class GPNode(Node):
                 else:
                     self.split_index = 0 # Default to 0 if no data
         elif self.split_dimension_criteria == 'min_lengthscale':
-            # Split on the dimension with the smallest fitted ARD length scale,
-            # i.e. the direction in which the GP says the function varies fastest.
-            # This reuses the hyperparameters the GP has already optimized, so it
-            # is far cheaper than the grid-based 'max_uncertainty' criterion.
+            # Split where the GP's smallest fitted ARD length scale is, i.e. where
+            # the function varies fastest. Falls back to max_spread if length
+            # scales are unavailable (GP untrained or kernel has none).
             length_scales = None
             if self.my_X_data.shape[0] > 1 and self.my_GPRs[0].is_trained():
                 length_scales = self.my_GPRs[0].get_length_scales(self.n_features)
-
             if length_scales is not None:
                 self.split_index = int(np.argmin(length_scales))
+            elif self.my_X_data.shape[0] > 0:
+                spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
+                self.split_index = int(np.argmax(spreads))
             else:
-                # Fallback to max_spread if length scales are unavailable
-                # (e.g. GP not yet trained, or kernel has no length scale).
-                if self.my_X_data.shape[0] > 0:
-                    w = np.empty(self.n_features)
-                    for i in range(self.n_features):
-                        w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
-                    self.split_index = np.argmax(w)
-                else:
-                    self.split_index = 0
+                self.split_index = 0
         elif self.split_dimension_criteria == 'random':
             if self.n_features > 0:
                 self.split_index = np.random.randint(0, self.n_features)

@@ -166,29 +166,10 @@ class GPRegressorInterface(ABC):
         pass
 
     def get_length_scales(self, n_features: int) -> Optional[np.ndarray]:
-        """
-        Return the fitted per-dimension length scales of the (anisotropic) kernel.
+        """Return the fitted per-dimension ARD length scales, or None.
 
-        This exposes the ARD length scales that the GP has learned, so that the
-        tree can use them to guide structural decisions (e.g. choosing the split
-        dimension or deciding when a leaf needs to subdivide). The length scales
-        are returned in the space the GP was trained on.
-
-        This is an optional capability. Backends that cannot (or do not wish to)
-        expose length scales should return None, in which case the tree falls
-        back to data-spread-based heuristics.
-
-        Parameters
-        ----------
-        n_features : int
-            The number of input dimensions. Used to broadcast isotropic kernels
-            and to validate anisotropic length-scale vectors.
-
-        Returns
-        -------
-        Optional[np.ndarray]
-            An array of shape (n_features,) with one effective length scale per
-            input dimension, or None if length scales are not available (e.g. the
-            GP is untrained or the kernel has no length-scale hyperparameter).
+        Optional capability used by the 'min_lengthscale' split criterion.
+        Backends that cannot expose length scales return None (the tree then
+        falls back to data spread). The returned array has shape (n_features,).
         """
         return None
