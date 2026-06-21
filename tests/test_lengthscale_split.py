@@ -62,6 +62,34 @@ class TestMinLengthScaleSplit(unittest.TestCase):
             node.compute_split_position_and_overlap(theta=1e-4)
         self.assertEqual(node.split_index, 1)
 
+    def test_scale_invariant_without_standardization(self):
+        """Without standard scaling, length scales are normalised by per-dim std
+        so dimensions with very different ranges stay comparable."""
+        np.random.seed(2)
+        nd = 2
+        # dim 0 spans [0, 100] with 2.5 cycles; dim 1 spans [0, 1] with 1.2 cycles.
+        # dim 0 varies faster *relative to its range*, so it should be split, but
+        # its raw length scale is far larger than dim 1's -- a naive argmin on raw
+        # length scales would wrongly pick dim 1.
+        X = np.column_stack([np.random.uniform(0, 100, 200),
+                             np.random.uniform(0, 1, 200)])
+        y = np.sin(2 * np.pi * 2.5 * X[:, 0] / 100) + np.sin(2 * np.pi * 1.2 * X[:, 1])
+
+        node = GPNode(0, my_GPR=_anisotropic_gpr(nd), Nbar=400,
+                      split_dimension_criteria='min_lengthscale',
+                      use_standard_scaling=False)
+        node.init_data_set(nd)
+        for xi, yi in zip(X, y):
+            node.store_point(xi.reshape(1, -1), float(yi), 1e-3, increment_buffer=False)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            node.fit_my_GPR(force_training=True)
+            # Raw length scales would (wrongly) point at dim 1...
+            self.assertEqual(int(np.argmin(node.my_GPRs[0].get_length_scales(nd))), 1)
+            # ...but the std-normalised criterion correctly picks dim 0.
+            node.compute_split_position_and_overlap(theta=1e-4)
+        self.assertEqual(node.split_index, 0)
+
     def test_falls_back_to_spread_when_untrained(self):
         """With no trained GP, min_lengthscale splits the widest dimension."""
         node = GPNode(0, my_GPR=_anisotropic_gpr(2), Nbar=200,

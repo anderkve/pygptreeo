@@ -1212,12 +1212,20 @@ class GPNode(Node):
                     self.split_index = 0 # Default to 0 if no data
         elif self.split_dimension_criteria == 'min_lengthscale':
             # Split where the GP's smallest fitted ARD length scale is, i.e. where
-            # the function varies fastest. Falls back to max_spread if length
-            # scales are unavailable (GP untrained or kernel has none).
+            # the function varies fastest relative to its spread. Falls back to
+            # max_spread if length scales are unavailable (GP untrained or kernel
+            # has none).
             length_scales = None
             if self.my_X_data.shape[0] > 1 and self.my_GPRs[0].is_trained():
                 length_scales = self.my_GPRs[0].get_length_scales(self.n_features)
             if length_scales is not None:
+                # Compare length scales in units of each dimension's std so the
+                # choice is scale-invariant. With standard scaling the GP frame
+                # already has std ~ 1 (no-op); without it, normalise by the raw
+                # per-dimension std so dimensions in different units stay comparable.
+                if not self.use_standard_scaling and self.my_X_data.shape[0] > 1:
+                    stds = np.std(self.my_X_data, axis=0)
+                    length_scales = length_scales / np.where(stds > 0, stds, 1.0)
                 self.split_index = int(np.argmin(length_scales))
             elif self.my_X_data.shape[0] > 0:
                 spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
