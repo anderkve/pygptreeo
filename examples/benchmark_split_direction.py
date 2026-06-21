@@ -9,6 +9,8 @@ metrics as a function of the number of processed points:
     max_uncertainty  : split where the GP is most uncertain (grid-based, costly)
     min_lengthscale  : split the dimension with the smallest fitted ARD length
                        scale, i.e. where the GP says the function varies fastest
+    oblique          : split perpendicular to the estimated dominant direction of
+                       variation (a non-axis-aligned cut)
     random           : split a random dimension
 
 `min_lengthscale` (idea #1) reuses the GP's already-optimized ARD length scales,
@@ -30,8 +32,12 @@ Usage
 -----
     OMP_NUM_THREADS=1 python examples/benchmark_split_direction.py [target] [n_points]
 
-    target   : 'aniso_chirp' (default) or 'eggholder'
+    target   : 'aniso_chirp' (default), 'diagonal', or 'eggholder'
     n_points : total number of streamed points (default 20000)
+
+The 'diagonal' target is a plane wave along the (1,1,...) diagonal, flat in the
+perpendicular directions -- the case the oblique criterion is designed for, and
+which every axis-aligned criterion must resolve by staircasing many cuts.
 
 The 'aniso_chirp' target is anisotropic and heterogeneous: rough and chirped
 along x0 (frequency grows with x0), but smooth/linear along x1 -- and x1 has the
@@ -79,7 +85,7 @@ RETRAIN_STEP = 50          # < Nbar so the GP (and its length scales) is fresh a
 WITHIN_FRACTION = 0.04     # "within 4%" accuracy threshold
 SEED = 512312
 
-CRITERIA = ["max_spread", "max_variance", "max_uncertainty", "min_lengthscale", "random"]
+CRITERIA = ["max_spread", "max_variance", "max_uncertainty", "min_lengthscale", "oblique", "random"]
 
 
 # ----------------------------------------------------------------------------
@@ -108,6 +114,16 @@ def make_data(target, n_points, n_dims, seed):
             y = y + 0.3 * X[:, 1]
         if n_dims > 2:
             y = y + 0.2 * np.sin(2 * np.pi * 0.3 * X[:, 2])
+        return X, y
+
+    if target == "diagonal":
+        # Diagonal plane wave: the function varies only along the (1,1,...)
+        # diagonal and is flat in the perpendicular directions. Axis-aligned
+        # splits must "staircase" many cuts to resolve the diagonal wavefronts;
+        # an oblique split aligned with the diagonal resolves it directly.
+        X = rng.uniform(0.0, 1.0, (n_points, n_dims))
+        s = X.sum(axis=1) / np.sqrt(n_dims)
+        y = np.sin(2 * np.pi * 2.5 * s)
         return X, y
 
     raise ValueError(f"Unknown target '{target}'")
@@ -215,6 +231,7 @@ def plot_comparison(results, target, outfile):
         "max_variance": "tab:brown",
         "max_uncertainty": "tab:orange",
         "min_lengthscale": "tab:green",
+        "oblique": "tab:blue",
         "random": "tab:red",
     }
 
@@ -227,7 +244,7 @@ def plot_comparison(results, target, outfile):
 
     for ax, (key, label, logy) in zip(axs, panels):
         for name, hist in results.items():
-            lw = 2.6 if name == "min_lengthscale" else 1.8
+            lw = 2.6 if name in ("min_lengthscale", "oblique") else 1.8
             ax.plot(hist["points"], hist[key], marker="o", markersize=3,
                     linewidth=lw, label=name, color=colors.get(name))
         ax.set_ylabel(label)
