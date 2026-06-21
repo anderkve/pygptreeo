@@ -200,14 +200,13 @@ class IncrementalGP(GPRegressorInterface):
         return kernel(X)
 
     def clone(self) -> "IncrementalGP":
-        # Clone the configuration only; trained state is not carried over
-        # (child nodes train their own GP).
-        return IncrementalGP(
-            kernel=deepcopy(self.kernel),
-            optimizer=self.optimizer,
-            n_restarts_optimizer=self.n_restarts_optimizer,
-            jitter=self.jitter,
-        )
+        # Deep-copy everything, including any fitted state. This mirrors the
+        # scikit-learn adapter: a child node created on a split inherits a copy
+        # of the parent's trained GP so it can predict immediately (warm start).
+        # The child must still be re-fit on its own local data before its GP is
+        # extended with rank-1 updates (enforced by GPNode via the
+        # _gp_fitted_on_own_data flag).
+        return deepcopy(self)
 
     def get_kernel(self):
         return self.kernel_ if self.kernel_ is not None else self.kernel

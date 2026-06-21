@@ -79,13 +79,23 @@ class TestIncrementalGPUnit(unittest.TestCase):
         gp.add_observation(self.X[0:1], self.y[0], self.noise[0])  # must not raise
         self.assertFalse(gp.is_trained())
 
-    def test_clone_resets_trained_state(self):
+    def test_clone_preserves_trained_state(self):
+        # clone() deep-copies the fitted state (warm start), mirroring the
+        # sklearn adapter, so a freshly-split child can predict immediately.
         gp = IncrementalGP(kernel=_fixed_kernel(), optimizer=None)
         gp.alpha = self.noise[:10]
         _silent(gp.fit, self.X[:10], self.y[:10])
         clone = gp.clone()
         self.assertTrue(gp.is_trained())
-        self.assertFalse(clone.is_trained())
+        self.assertTrue(clone.is_trained())
+        mu_a, sd_a = gp.predict(self.Xt, return_std=True)
+        mu_b, sd_b = clone.predict(self.Xt, return_std=True)
+        np.testing.assert_allclose(mu_a, mu_b)
+        np.testing.assert_allclose(sd_a, sd_b)
+        # The clone is independent: extending it does not affect the original.
+        clone.add_observation(self.X[10:11], self.y[10], self.noise[10])
+        self.assertEqual(gp.X_train_.shape[0], 10)
+        self.assertEqual(clone.X_train_.shape[0], 11)
 
 
 class TestDefaultBackendUnaffected(unittest.TestCase):
@@ -122,10 +132,15 @@ class TestTreeIncrementalIntegration(unittest.TestCase):
 
     def test_incremental_keeps_gp_in_sync_with_node(self):
         gpt, _ = self._run(incremental=True, R=40)
+        checked = 0
         for leaf in gpt.root.leaves:
-            if leaf.my_GPRs[0].is_trained() and leaf.n_shared_points == 0:
-                # Every stored point should be in the GP's training set.
+            # Once a leaf has been fit on its own data (so rank-1 updates are
+            # active), every stored point should be in the GP's training set.
+            # Leaves still on an inherited parent GP are excluded.
+            if leaf._gp_fitted_on_own_data and leaf.n_shared_points == 0:
                 self.assertEqual(leaf.my_GPRs[0].X_train_.shape[0], leaf.n_points)
+                checked += 1
+        self.assertGreater(checked, 0, "expected at least one own-data-fit leaf")
 
     def test_incremental_improves_accuracy_over_lazy_refit(self):
         _, rmse_on = self._run(incremental=True, R=40)

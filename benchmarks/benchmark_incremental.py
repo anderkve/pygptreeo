@@ -33,9 +33,26 @@ import warnings
 
 import numpy as np
 
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern
+
 from pygptreeo import GPTree, IncrementalGP
 
 warnings.filterwarnings("ignore")
+
+
+def make_gpr(fixed_hyperparameters):
+    """Build an IncrementalGP backend.
+
+    If fixed_hyperparameters is True, the kernel hyperparameters are fixed and
+    optimization is disabled, so all regimes share identical hyperparameters and
+    the comparison isolates the effect of *which points* are in the GP. In that
+    case incremental updates should reproduce full-refit-every-point exactly.
+    """
+    if fixed_hyperparameters:
+        kernel = (ConstantKernel(1.0, "fixed")
+                  * Matern(length_scale=0.3, length_scale_bounds="fixed", nu=1.5))
+        return IncrementalGP(kernel=kernel, optimizer=None)
+    return IncrementalGP()
 
 
 # --------------------------------------------------------------------------- #
@@ -74,11 +91,16 @@ def nlpd(mu, sd, y):
 # One run
 # --------------------------------------------------------------------------- #
 def run_one(incremental, retrain_every, X_train, y_train, X_test, y_test,
-            Nbar, theta, noise_sigma, checkpoints, seed):
+            Nbar, theta, noise_sigma, checkpoints, seed, fixed_hyperparameters=False):
     np.random.seed(seed)
-    gpt = GPTree(GPR=IncrementalGP(), Nbar=Nbar, theta=theta,
+    # With fixed hyperparameters we also disable standard scaling, otherwise the
+    # per-fit StandardScaler (refit at different cadences across regimes) would
+    # make the effective kernel differ between configs -- defeating the point of
+    # isolating the rank-1 update effect.
+    gpt = GPTree(GPR=make_gpr(fixed_hyperparameters), Nbar=Nbar, theta=theta,
                  retrain_every_n_points=retrain_every,
-                 incremental_updates=incremental)
+                 incremental_updates=incremental,
+                 use_standard_scaling=not fixed_hyperparameters)
     sig = np.full(len(X_train), noise_sigma)
 
     out = {"rmse": [], "nlpd": [], "time": []}
@@ -114,6 +136,9 @@ def main():
     p.add_argument("--seeds", type=int, default=3)
     p.add_argument("--no-gold", action="store_true",
                    help="skip the expensive full-refit-every-point reference")
+    p.add_argument("--fixed", action="store_true",
+                   help="fix kernel hyperparameters (isolates the rank-1 effect; "
+                        "incremental should then match full-refit exactly)")
     p.add_argument("--no-plot", action="store_true")
     args = p.parse_args()
 
@@ -130,7 +155,8 @@ def main():
         configs.append(("full (R=1)", False, 1))
 
     print(f"Benchmark: incremental rank-1 updates | Nbar={args.Nbar} R={args.R} "
-          f"noise={args.noise} seeds={args.seeds}")
+          f"noise={args.noise} seeds={args.seeds} "
+          f"hyperparameters={'fixed' if args.fixed else 'optimized'}")
     print(f"Checkpoints (N): {checkpoints}\n")
 
     results = {label: [] for label, _, _ in configs}
@@ -140,7 +166,8 @@ def main():
         for label, inc, R in configs:
             results[label].append(
                 run_one(inc, R, X_tr, y_tr, X_te, y_te,
-                        args.Nbar, args.theta, args.noise, checkpoints, seed))
+                        args.Nbar, args.theta, args.noise, checkpoints, seed,
+                        args.fixed))
         print(f"  seed {seed} done")
 
     def agg(label, key):
