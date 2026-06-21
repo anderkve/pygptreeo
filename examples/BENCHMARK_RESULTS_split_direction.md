@@ -129,6 +129,43 @@ why the rotation is essential:
 
 This is the shipped behaviour of the `oblique` criterion.
 
+## Target D — standard benchmark functions
+
+The `diagonal` target above is a best case constructed *for* oblique splitting.
+On the project's standard benchmark functions (3-D, sampled on `[0,1]^3`,
+20 000 points), the picture is very different. Final-batch NRMSE:
+
+| criterion        | rosenbrock | rastrigin | eggholder |
+|------------------|-----------:|----------:|----------:|
+| max_spread       | 0.0001     | **0.0543** | 0.0431    |
+| max_variance     | 0.0001     | 0.0552    | 0.0444    |
+| max_uncertainty  | **0.0000** | 0.0604    | **0.0428** |
+| min_lengthscale  | **0.0000** | 0.0599    | 0.0446    |
+| oblique          | 0.0003     | 0.0683    | 0.0428    |
+| random           | 0.0002     | 0.0620    | 0.0467    |
+
+Reproduce with e.g. `python examples/benchmark_split_direction.py rosenbrock 20000`.
+
+- **Oblique never wins on these functions, and is sometimes clearly worse**, at
+  ~1.5–2× the update cost. Across the whole run (not just the final batch) it
+  never leads at any number of processed points:
+  - `rastrigin` is a *separable* sum of per-axis terms, so it is already
+    perfectly axis-aligned; rotating to an oblique frame mixes axes that were
+    optimally separated and oblique is the **worst** criterion (0.068 vs 0.054
+    for plain `max_spread`).
+  - `rosenbrock`'s curved valley is resolved fine by small axis-aligned leaves —
+    the GP-aware axis criteria reach ~0 error and oblique is marginally worse
+    (0.0003).
+  - `eggholder` is roughly isotropic, so the estimated direction is ~a coordinate
+    axis and oblique simply ties the axis-aligned criteria.
+- The reason the `diagonal` target was so favourable is that it has a *single,
+  global, exactly off-axis* ridge that axis-aligned cuts can only staircase.
+  Real benchmark functions do not have that structure: they are either
+  axis-aligned-favourable (separable/grid) or, once the tree has localised into
+  small leaves, well modelled by an axis-aligned GP regardless of global shape.
+- `min_lengthscale` is again either the best or within noise of the best on every
+  function, confirming it as the safe axis-aligned default.
+
 ## Takeaway
 
 - **Choosing the split axis:** `min_lengthscale` is the best general axis-aligned
@@ -137,12 +174,17 @@ This is the shipped behaviour of the `oblique` criterion.
   spread/variance defaults — is a no-op on isotropic problems, and is cheaper
   than `max_uncertainty` because it reuses the GP's already-optimized
   hyperparameters instead of probing the GP on a grid at every split.
-- **Going oblique:** for functions with genuine diagonal (non-axis-aligned) ridge
-  structure, the `oblique` criterion can do dramatically better still — but only
-  because it *also rotates each child's GP frame* so the split direction is a
-  coordinate axis. The split geometry and the kernel geometry must agree:
-  choosing an oblique cut while keeping an axis-aligned kernel actually hurts at
-  depth. Oblique costs ~1.8× the update time and is most worthwhile when you
-  expect off-axis structure; on axis-aligned problems it reduces to the
-  axis-aligned behaviour (the estimated direction is ~a coordinate axis), and it
-  falls back to `max_spread` when the direction cannot be estimated.
+- **Going oblique:** for functions with a genuine, global, off-axis ridge (the
+  synthetic `diagonal` target), the `oblique` criterion can do dramatically
+  better — but only because it *also rotates each child's GP frame* so the split
+  direction is a coordinate axis (the split geometry and the kernel geometry must
+  agree; choosing an oblique cut while keeping an axis-aligned kernel hurts at
+  depth). **On the standard benchmark functions, however, oblique provides no
+  benefit and is sometimes clearly worse** (Target D), at ~1.5–2× the update
+  cost, because those functions are either axis-aligned-favourable or are well
+  modelled locally once the tree has localised into small leaves. So oblique is a
+  niche tool: enable it only when you specifically expect strong, global,
+  off-axis structure. It reduces to axis-aligned behaviour when the estimated
+  direction is ~a coordinate axis, and falls back to `max_spread` when the
+  direction cannot be estimated. For general use, prefer the axis-aligned
+  `min_lengthscale`.

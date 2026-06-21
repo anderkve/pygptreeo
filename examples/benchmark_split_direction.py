@@ -32,7 +32,10 @@ Usage
 -----
     OMP_NUM_THREADS=1 python examples/benchmark_split_direction.py [target] [n_points]
 
-    target   : 'aniso_chirp' (default), 'diagonal', or 'eggholder'
+    target   : one of the standard benchmark functions
+               ('eggholder', 'himmelblau', 'rosenbrock', 'rastrigin', 'levy',
+               'custom'), or one of the synthetic targets 'aniso_chirp' /
+               'diagonal'. Default 'aniso_chirp'.
     n_points : total number of streamed points (default 20000)
 
 The 'diagonal' target is a plane wave along the (1,1,...) diagonal, flat in the
@@ -67,7 +70,19 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from pygptreeo import GPTree
 from pygptreeo.adapters import SklearnGPAdapter
-from target_functions import Eggholder
+from target_functions import (
+    Eggholder, Himmelblau, Rosenbrock, Rastrigin, Levy, Custom,
+)
+
+# Standard benchmark target functions (sampled on [0, 1]^n_dims).
+STANDARD_TARGETS = {
+    "eggholder": Eggholder,
+    "himmelblau": Himmelblau,
+    "rosenbrock": Rosenbrock,
+    "rastrigin": Rastrigin,
+    "levy": Levy,
+    "custom": Custom,
+}
 
 
 # ----------------------------------------------------------------------------
@@ -95,9 +110,9 @@ def make_data(target, n_points, n_dims, seed):
     """Return (X, y) for the requested target on a fixed random stream."""
     rng = np.random.RandomState(seed)
 
-    if target == "eggholder":
+    if target in STANDARD_TARGETS:
         X = rng.uniform(0.0, 1.0, (n_points, n_dims))
-        y = Eggholder(X.T)
+        y = STANDARD_TARGETS[target](X.T)
         return X, y
 
     if target == "aniso_chirp":
