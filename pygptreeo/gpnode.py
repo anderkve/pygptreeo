@@ -86,7 +86,8 @@ class GPNode(Node):
                  n_split_candidates: Optional[int] = 3,
                  split_eval_train_fraction: Optional[float] = 0.6,
                  split_eval_min_points: Optional[int] = 20,
-                 n_outputs: Optional[int] = 1):
+                 n_outputs: Optional[int] = 1,
+                 calibration_method: Optional[str] = 'quantile'):
         """Initializes a GPNode.
 
         Args:
@@ -154,6 +155,10 @@ class GPNode(Node):
 
         self.Nbar = Nbar
         self.n_outputs = n_outputs
+
+        # Method used to calibrate the predictive uncertainty scaler.
+        # 'quantile' (default) is the closed-form replacement for 'rootfind'.
+        self.calibration_method = calibration_method
 
         # For multi-output support: create a list of independent GPs
         # For backward compatibility, single output (n_outputs=1) still works
@@ -325,6 +330,7 @@ class GPNode(Node):
             'split_eval_train_fraction': self.split_eval_train_fraction,
             'split_eval_min_points': self.split_eval_min_points,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
+            'calibration_method': self.calibration_method,
         }
 
         # Create child nodes with a copy of the parent GP (use first GP from list for template)
@@ -1399,6 +1405,19 @@ class GPNode(Node):
         """ Update the scaling factor for the prediction uncertainty.
 
         For multi-output: updates each output's sigma scaler independently.
+
+        Two methods are available, selected by ``self.calibration_method``:
+
+        - ``'quantile'`` (default): closed-form. The scaler is set directly to
+          the empirical ``TARGET_COVERAGE`` quantile of the normalized residuals
+          ``|residual| / sigma_pred``. This is exactly the value the legacy
+          method searches for: requiring a fraction ``TARGET_COVERAGE`` of points
+          to satisfy ``|residual| < scaler * sigma_pred`` is the same as requiring
+          ``scaler`` to be the ``TARGET_COVERAGE`` quantile of ``|residual|/sigma_pred``.
+          Computing it directly avoids the per-point bracketed root finding (and
+          its bracket-expansion loop and convergence/failure handling).
+        - ``'rootfind'`` (legacy): solve ``coverage(scaler) = TARGET_COVERAGE``
+          with a bracketed root finder.
         """
         target_coverage = TARGET_COVERAGE
 
@@ -1408,7 +1427,8 @@ class GPNode(Node):
             sigma_preds_i = self.sigma_preds_list[i]
 
             # Before we have collected self.n_points_pred_perf points, just set the
-            # sigma_scaler such that all residuals are covered
+            # sigma_scaler such that all residuals are covered (conservative).
+            # Shared by both methods.
             if residuals_i.shape[0] < self.n_points_pred_perf:
                 if len(sigma_preds_i) > 0 and np.max(sigma_preds_i) > 0:
                     self.sigma_scalers[i] = np.max(np.abs(residuals_i) / (sigma_preds_i + 1e-10))
@@ -1417,25 +1437,38 @@ class GPNode(Node):
                 self.sigma_scaler_inits[i] = self.sigma_scalers[i]
                 continue
 
-            def coverage_deviation(x):
-                deviation = np.sum(np.abs(residuals_i) < x * sigma_preds_i) / self.n_points_pred_perf - target_coverage
-                return deviation
+            if self.calibration_method == 'quantile':
+                # Closed form: the scaler is the TARGET_COVERAGE quantile of the
+                # normalized residuals |residual| / sigma_pred.
+                ratios = np.abs(residuals_i) / (sigma_preds_i + 1e-10)
+                self.sigma_scalers[i] = max(float(np.quantile(ratios, target_coverage)), 1e-9)
 
-            # Make sure we start from a range that brackets the root of coverage_deviation
-            x_bracket = [0.0, 2 * self.sigma_scaler_inits[i]]
-            try:
-                while coverage_deviation(x_bracket[0]) * coverage_deviation(x_bracket[1]) > 0:
-                    self.sigma_scaler_inits[i] *= 2
-                    x_bracket[1] = 2 * self.sigma_scaler_inits[i]
-                    if x_bracket[1] > 1e6:  # Prevent infinite loop
-                        break
+            elif self.calibration_method == 'rootfind':
+                def coverage_deviation(x):
+                    deviation = np.sum(np.abs(residuals_i) < x * sigma_preds_i) / self.n_points_pred_perf - target_coverage
+                    return deviation
 
-                sol = root_scalar(coverage_deviation, x0=self.sigma_scaler_inits[i], bracket=x_bracket, maxiter=50)
-                if sol.converged:
-                    self.sigma_scalers[i] = np.max([sol.root, 1e-9])
-            except:
-                # If root finding fails, keep current scaler
-                pass
+                # Make sure we start from a range that brackets the root of coverage_deviation
+                x_bracket = [0.0, 2 * self.sigma_scaler_inits[i]]
+                try:
+                    while coverage_deviation(x_bracket[0]) * coverage_deviation(x_bracket[1]) > 0:
+                        self.sigma_scaler_inits[i] *= 2
+                        x_bracket[1] = 2 * self.sigma_scaler_inits[i]
+                        if x_bracket[1] > 1e6:  # Prevent infinite loop
+                            break
+
+                    sol = root_scalar(coverage_deviation, x0=self.sigma_scaler_inits[i], bracket=x_bracket, maxiter=50)
+                    if sol.converged:
+                        self.sigma_scalers[i] = np.max([sol.root, 1e-9])
+                except:
+                    # If root finding fails, keep current scaler
+                    pass
+
+            else:
+                raise ValueError(
+                    f"Unknown calibration_method: '{self.calibration_method}'. "
+                    f"Valid options are 'quantile' and 'rootfind'."
+                )
 
         # Also update single sigma_scaler for backward compatibility (single output case)
         if self.n_outputs == 1:
