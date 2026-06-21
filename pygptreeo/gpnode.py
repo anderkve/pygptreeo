@@ -21,7 +21,6 @@ from typing import Callable, Optional, Type, Union
 # Third-party imports
 import numpy as np
 from binarytree import Node
-from scipy.optimize import root_scalar
 from sklearn.gaussian_process.kernels import ConstantKernel, ExpSineSquared, Matern, WhiteKernel
 from sklearn.preprocessing import StandardScaler
 
@@ -233,25 +232,21 @@ class GPNode(Node):
             self.mu_preds = np.array([])
             self.sigma_preds = np.array([])
             self.sigma_scaler = DEFAULT_SIGMA_SCALER
-            self.sigma_scaler_init = DEFAULT_SIGMA_SCALER
             # Also store as lists for unified handling
             self.residuals_list = [np.array([])]
             self.mu_preds_list = [np.array([])]
             self.sigma_preds_list = [np.array([])]
             self.sigma_scalers = [DEFAULT_SIGMA_SCALER]
-            self.sigma_scaler_inits = [DEFAULT_SIGMA_SCALER]
         else:
             self.residuals = None  # Not used for multi-output
             self.mu_preds = None
             self.sigma_preds = None
             self.sigma_scaler = None
-            self.sigma_scaler_init = None
             # Use lists instead
             self.residuals_list = [np.array([]) for _ in range(n_outputs)]
             self.mu_preds_list = [np.array([]) for _ in range(n_outputs)]
             self.sigma_preds_list = [np.array([]) for _ in range(n_outputs)]
             self.sigma_scalers = [DEFAULT_SIGMA_SCALER for _ in range(n_outputs)]
-            self.sigma_scaler_inits = [DEFAULT_SIGMA_SCALER for _ in range(n_outputs)]
 
         print(f"Created node {self.name}")
 
@@ -353,8 +348,6 @@ class GPNode(Node):
             self.right.sigma_preds = self.sigma_preds.copy()
             self.left.sigma_scaler = self.sigma_scaler
             self.right.sigma_scaler = self.sigma_scaler
-            self.left.sigma_scaler_init = self.sigma_scaler_init
-            self.right.sigma_scaler_init = self.sigma_scaler_init
 
         # Copy lists for multi-output (or single-output stored as lists)
         self.left.residuals_list = [arr.copy() for arr in self.residuals_list]
@@ -365,8 +358,6 @@ class GPNode(Node):
         self.right.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
         self.left.sigma_scalers = self.sigma_scalers.copy()
         self.right.sigma_scalers = self.sigma_scalers.copy()
-        self.left.sigma_scaler_inits = self.sigma_scaler_inits.copy()
-        self.right.sigma_scaler_inits = self.sigma_scaler_inits.copy()
 
         # Inherit parent's optimized kernel hyperparameters if enabled
         # This gives children a warm-start for their GP optimization
@@ -1398,46 +1389,29 @@ class GPNode(Node):
     def update_sigma_scaler(self):
         """ Update the scaling factor for the prediction uncertainty.
 
-        For multi-output: updates each output's sigma scaler independently.
+        The scaler is the ``TARGET_COVERAGE`` quantile of the normalized
+        residuals ``|residual| / sigma_pred``, i.e. the value for which a
+        fraction ``TARGET_COVERAGE`` of points satisfy
+        ``|residual| < scaler * sigma_pred``. For multi-output, each output is
+        calibrated independently.
         """
         target_coverage = TARGET_COVERAGE
 
-        # Update sigma scaler for each output
         for i in range(self.n_outputs):
             residuals_i = self.residuals_list[i]
             sigma_preds_i = self.sigma_preds_list[i]
 
-            # Before we have collected self.n_points_pred_perf points, just set the
-            # sigma_scaler such that all residuals are covered
+            # Until the window is full, cover all residuals seen so far.
             if residuals_i.shape[0] < self.n_points_pred_perf:
                 if len(sigma_preds_i) > 0 and np.max(sigma_preds_i) > 0:
                     self.sigma_scalers[i] = np.max(np.abs(residuals_i) / (sigma_preds_i + 1e-10))
                 else:
                     self.sigma_scalers[i] = DEFAULT_SIGMA_SCALER
-                self.sigma_scaler_inits[i] = self.sigma_scalers[i]
                 continue
 
-            def coverage_deviation(x):
-                deviation = np.sum(np.abs(residuals_i) < x * sigma_preds_i) / self.n_points_pred_perf - target_coverage
-                return deviation
-
-            # Make sure we start from a range that brackets the root of coverage_deviation
-            x_bracket = [0.0, 2 * self.sigma_scaler_inits[i]]
-            try:
-                while coverage_deviation(x_bracket[0]) * coverage_deviation(x_bracket[1]) > 0:
-                    self.sigma_scaler_inits[i] *= 2
-                    x_bracket[1] = 2 * self.sigma_scaler_inits[i]
-                    if x_bracket[1] > 1e6:  # Prevent infinite loop
-                        break
-
-                sol = root_scalar(coverage_deviation, x0=self.sigma_scaler_inits[i], bracket=x_bracket, maxiter=50)
-                if sol.converged:
-                    self.sigma_scalers[i] = np.max([sol.root, 1e-9])
-            except:
-                # If root finding fails, keep current scaler
-                pass
+            ratios = np.abs(residuals_i) / (sigma_preds_i + 1e-10)
+            self.sigma_scalers[i] = max(float(np.quantile(ratios, target_coverage)), 1e-9)
 
         # Also update single sigma_scaler for backward compatibility (single output case)
         if self.n_outputs == 1:
             self.sigma_scaler = self.sigma_scalers[0]
-            self.sigma_scaler_init = self.sigma_scaler_inits[0]
