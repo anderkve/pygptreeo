@@ -7,7 +7,60 @@ import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 
 from pygptreeo import GPTree, make_additive_kernel
+from pygptreeo.kernels import AdditiveKernel
 from pygptreeo.adapters import SklearnGPAdapter
+
+
+def _reference_K(kern, X, Y, ls):
+    """Independent, un-vectorized reference for the additive kernel matrix."""
+    def k1d(a, b, l):
+        d2 = ((a[:, None] - b[None, :]) ** 2) / l ** 2
+        if kern.base_kernel == 'rbf':
+            return np.exp(-0.5 * d2)
+        r = np.sqrt(d2)
+        s = np.sqrt(3) * r
+        return (1 + s) * np.exp(-s)
+    K = np.zeros((len(X), len(Y)))
+    for term in kern.interaction_terms:
+        t = np.ones((len(X), len(Y)))
+        for d in term:
+            t = t * k1d(X[:, d], Y[:, d], ls[d])
+        K += t
+    return K
+
+
+class TestAdditiveKernelNumerics(unittest.TestCase):
+    """The vectorized kernel must match a naive reference and finite-diff grads."""
+
+    def test_kernel_matches_reference(self):
+        rng = np.random.RandomState(0)
+        for base in ('matern', 'rbf'):
+            for nd, depth in [(3, 1), (4, 2), (6, 2), (5, 3)]:
+                ls = np.exp(rng.uniform(-1, 1, nd))
+                k = AdditiveKernel(nd, interaction_depth=depth, base_kernel=base,
+                                   length_scale=ls, length_scale_bounds=(1e-4, 1e4))
+                X = rng.uniform(0, 1, (7, nd))
+                Y = rng.uniform(0, 1, (5, nd))
+                np.testing.assert_allclose(k(X, Y), _reference_K(k, X, Y, ls),
+                                           rtol=0, atol=1e-12)
+
+    def test_gradient_matches_finite_differences(self):
+        rng = np.random.RandomState(1)
+        for base in ('matern', 'rbf'):
+            for nd, depth in [(3, 1), (4, 2), (6, 2)]:
+                ls = np.exp(rng.uniform(-0.5, 0.5, nd))
+                k = AdditiveKernel(nd, interaction_depth=depth, base_kernel=base,
+                                   length_scale=ls, length_scale_bounds=(1e-4, 1e4))
+                X = rng.uniform(0, 1, (6, nd))
+                _, G = k(X, eval_gradient=True)
+                theta0, eps = k.theta.copy(), 1e-6
+                Gnum = np.zeros_like(G)
+                for j in range(len(theta0)):
+                    tp = theta0.copy(); tp[j] += eps; k.theta = tp; Kp = k(X)
+                    tm = theta0.copy(); tm[j] -= eps; k.theta = tm; Km = k(X)
+                    Gnum[:, :, j] = (Kp - Km) / (2 * eps)
+                k.theta = theta0
+                np.testing.assert_allclose(G, Gnum, rtol=0, atol=1e-6)
 
 
 def fit_gpr(kernel, X, y):

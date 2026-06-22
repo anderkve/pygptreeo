@@ -452,8 +452,54 @@ class AdditiveKernel(Kernel):
             K = self._compute_kernel(X, Y, length_scale)
             return K
 
+    def _per_dim_1d(self, X, Y, length_scale, eval_gradient=False):
+        """Compute the 1-D base kernel (and gradient) for every input dimension.
+
+        Each dimension's 1-D kernel matrix is computed exactly once here and then
+        reused across all interaction terms that contain that dimension. This is
+        the key to the vectorized assembly: a depth-``p`` kernel over ``d`` inputs
+        contains terms whose sizes sum to O(d^p), so the old per-term-per-dim
+        evaluation recomputed each dimension's (expensive, transcendental) 1-D
+        kernel many times; computing them once is an O(d^{p-1}) reduction in those
+        evaluations.
+
+        The per-dimension formulas are identical to ``_compute_1d_kernel`` /
+        ``_compute_1d_kernel_gradient`` so results are numerically unchanged.
+
+        Returns
+        -------
+        K1d : list of ndarray
+            ``K1d[d]`` is the (n_X, n_Y) 1-D kernel for dimension ``d``.
+        g1d : list of ndarray or None
+            ``g1d[d]`` is the (n_X, n_Y) derivative w.r.t. ``log(length_scale[d])``,
+            or None when ``eval_gradient`` is False.
+        """
+        sqrt3 = np.sqrt(3)
+        K1d = []
+        g1d = [] if eval_gradient else None
+        for d in range(self.input_dim):
+            diff = X[:, d][:, None] - Y[:, d][None, :]
+            dists_sq = (diff * diff) / (length_scale[d] ** 2)
+            if self.base_kernel == 'rbf':
+                K = np.exp(-0.5 * dists_sq)
+                if eval_gradient:
+                    # d/dlog(l) exp(-0.5 r^2/l^2) = (r^2/l^2) * K = dists_sq * K.
+                    # (The previous implementation carried a spurious extra factor
+                    # of length_scale here; verified against finite differences.)
+                    g1d.append(dists_sq * K)
+            elif self.base_kernel == 'matern':
+                sqrt3_r = sqrt3 * np.sqrt(dists_sq)
+                exp_term = np.exp(-sqrt3_r)
+                K = (1.0 + sqrt3_r) * exp_term
+                if eval_gradient:
+                    g1d.append(3.0 * dists_sq * exp_term)
+            else:
+                raise ValueError(f"Unknown base_kernel: {self.base_kernel}")
+            K1d.append(K)
+        return K1d, g1d
+
     def _compute_kernel(self, X, Y, length_scale):
-        """Compute the additive kernel matrix.
+        """Compute the additive kernel matrix (vectorized over dimensions).
 
         Parameters
         ----------
@@ -469,25 +515,19 @@ class AdditiveKernel(Kernel):
         K : ndarray of shape (n_samples_X, n_samples_Y)
             Kernel matrix
         """
+        K1d, _ = self._per_dim_1d(X, Y, length_scale, eval_gradient=False)
+
         K = np.zeros((X.shape[0], Y.shape[0]))
-
-        # Sum over all interaction terms
         for term_dims in self.interaction_terms:
-            # Compute product of 1D kernels for this term
-            K_term = np.ones((X.shape[0], Y.shape[0]))
-            for dim in term_dims:
-                # Extract dimension and compute 1D kernel
-                X_dim = X[:, dim:dim+1]
-                Y_dim = Y[:, dim:dim+1]
-                K_dim = self._compute_1d_kernel(X_dim, Y_dim, length_scale[dim])
-                K_term *= K_dim
-
+            K_term = K1d[term_dims[0]].copy()
+            for dim in term_dims[1:]:
+                K_term *= K1d[dim]
             K += K_term
 
         return K
 
     def _compute_kernel_gradient(self, X, Y, length_scale):
-        """Compute kernel and gradient with respect to log(length_scale).
+        """Compute kernel and gradient w.r.t. log(length_scale) (vectorized).
 
         Parameters
         ----------
@@ -505,40 +545,46 @@ class AdditiveKernel(Kernel):
         K_gradient : ndarray of shape (n_samples_X, n_samples_Y, n_dims)
             Gradient w.r.t. log(length_scale)
         """
-        K = np.zeros((X.shape[0], Y.shape[0]))
-        K_gradient = np.zeros((X.shape[0], Y.shape[0], self.input_dim))
+        K1d, g1d = self._per_dim_1d(X, Y, length_scale, eval_gradient=True)
 
-        # For each interaction term
+        nx, ny = X.shape[0], Y.shape[0]
+        K = np.zeros((nx, ny))
+        K_gradient = np.zeros((nx, ny, self.input_dim))
+
         for term_dims in self.interaction_terms:
-            # Compute the kernel for this term and its gradient
-            K_term = np.ones((X.shape[0], Y.shape[0]))
-            K_1d_list = []  # Store individual 1D kernels
-            grad_1d_list = []  # Store individual 1D gradients
+            k = len(term_dims)
+            # Fast paths for the common main-effect and pairwise terms; these
+            # cover interaction_depth <= 2 with no division or temporaries.
+            if k == 1:
+                d0 = term_dims[0]
+                K += K1d[d0]
+                K_gradient[:, :, d0] += g1d[d0]
+            elif k == 2:
+                a, b = term_dims
+                Ka, Kb = K1d[a], K1d[b]
+                K += Ka * Kb
+                # Product rule: d/dlog l_a [k_a k_b] = (dk_a/dlog l_a) k_b, etc.
+                K_gradient[:, :, a] += g1d[a] * Kb
+                K_gradient[:, :, b] += Ka * g1d[b]
+            else:
+                # General case: product of the others via prefix/suffix products
+                # (numerically stable, avoids dividing by a possibly-tiny kernel).
+                factors = [K1d[d] for d in term_dims]
+                K_term = factors[0].copy()
+                for f in factors[1:]:
+                    K_term *= f
+                K += K_term
 
-            # Compute all 1D kernels in this product
-            for dim in term_dims:
-                X_dim = X[:, dim:dim+1]
-                Y_dim = Y[:, dim:dim+1]
-                K_1d, grad_1d = self._compute_1d_kernel_gradient(
-                    X_dim, Y_dim, length_scale[dim]
-                )
-                K_1d_list.append(K_1d)
-                grad_1d_list.append(grad_1d)
-                K_term *= K_1d
-
-            # Add this term to total kernel
-            K += K_term
-
-            # Compute gradient for each dimension in this term
-            for i, dim in enumerate(term_dims):
-                # Gradient via product rule:
-                # d/d(log l_i) [k₁ × k₂ × ... × kₙ] = k₁ × ... × (dk_i/d(log l_i)) × ... × kₙ
-                grad_term = grad_1d_list[i]
-                for j in range(len(term_dims)):
-                    if j != i:
-                        grad_term = grad_term * K_1d_list[j]
-
-                K_gradient[:, :, dim] += grad_term
+                prefix = [None] * k
+                pre = np.ones((nx, ny))
+                for i in range(k):
+                    prefix[i] = pre
+                    pre = pre * factors[i]
+                suf = np.ones((nx, ny))
+                for i in range(k - 1, -1, -1):
+                    others = prefix[i] * suf
+                    K_gradient[:, :, term_dims[i]] += g1d[term_dims[i]] * others
+                    suf = suf * factors[i]
 
         return K, K_gradient
 
@@ -598,10 +644,10 @@ class AdditiveKernel(Kernel):
         dists_sq = np.sum((X[:, np.newaxis, :] - Y[np.newaxis, :, :]) ** 2, axis=2) / (length_scale ** 2)
 
         if self.base_kernel == 'rbf':
-            # RBF: k = exp(-0.5 * r²)
-            # d/d(log l) k = d/dl k * l = (r²) * k * l
+            # RBF: k = exp(-0.5 * r²),  r² = dists_sq = Δ²/l²
+            # d/d(log l) k = (Δ²/l²) * k = dists_sq * k
             K = np.exp(-0.5 * dists_sq)
-            grad = dists_sq * K * length_scale
+            grad = dists_sq * K
 
         elif self.base_kernel == 'matern':
             # Matérn 1.5: k = (1 + sqrt(3)*r) * exp(-sqrt(3)*r)
