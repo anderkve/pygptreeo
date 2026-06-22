@@ -216,6 +216,15 @@ class SklearnGPAdapter(GPRegressorInterface):
             if hasattr(self._gpr, attr):
                 delattr(self._gpr, attr)
 
+    def log_marginal_likelihood(self) -> float:
+        """Log marginal likelihood at the fitted kernel hyperparameters.
+
+        Returns ``-inf`` if the GP has not been fitted yet.
+        """
+        if not self.is_trained():
+            return float("-inf")
+        return float(self._gpr.log_marginal_likelihood(self._gpr.kernel_.theta))
+
     def get_length_scales(self, n_features: int):
         """Per-dimension length scales from the fitted kernel, or None.
 

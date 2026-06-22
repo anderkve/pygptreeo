@@ -177,6 +177,16 @@ class GPRegressorInterface(ABC):
         """
         pass
 
+    def log_marginal_likelihood(self) -> float:
+        """Log marginal likelihood (model evidence) at the fitted hyperparameters.
+
+        Used to compare different kernels on the same data for automatic kernel
+        selection (see :class:`pygptreeo.auto_select.AutoSelectGPR`). Returns
+        ``-inf`` when unavailable or untrained. Backends that cannot expose it
+        keep the default.
+        """
+        return float("-inf")
+
     def get_length_scales(self, n_features: int) -> Optional[np.ndarray]:
         """Return the fitted per-dimension ARD length scales, or None.
 

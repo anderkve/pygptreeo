@@ -48,6 +48,7 @@ from pygptreeo.kernels import (AnisotropicRationalQuadratic, AdditiveKernel,
                                build_pruned_gpr, OrderAdditiveKernel,
                                make_order_additive_kernel)
 from pygptreeo.interaction_screen import PairInteractionScreen
+from pygptreeo.auto_select import AutoSelectGPR, make_auto_gpr
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.adapters import SklearnGPAdapter
 
