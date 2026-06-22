@@ -56,8 +56,11 @@ class AutoSelectGPR(GPRegressorInterface):
     additive_gpr : GPRegressorInterface
         Untrained additive template (e.g. ``make_order_additive_kernel(rescue=False)``).
     lml_margin : float, default=0.0
-        Additive is selected only if ``LML_additive > LML_baseline + lml_margin``
-        (nats). Larger values bias ambiguous regions toward the safe baseline.
+        Per-training-point evidence margin: additive is selected only if
+        ``LML_additive > LML_baseline + lml_margin * n_train`` (nats per point).
+        Larger values bias ambiguous regions toward the safe baseline; ``~0.1``
+        cleanly separates clear additive wins from superficially-additive
+        non-additive regions in the benchmarks.
 
     Attributes
     ----------
@@ -101,7 +104,12 @@ class AutoSelectGPR(GPRegressorInterface):
         lml_b = gb.log_marginal_likelihood()
         lml_a = ga.log_marginal_likelihood()
         self.last_lml = (lml_b, lml_a)
-        if lml_a > lml_b + self.lml_margin:
+        # The evidence difference between two models grows ~linearly with the
+        # number of data points, so the margin is applied per training point:
+        # a clear additive win has a large per-point LML advantage, while a
+        # superficially-additive non-additive region (e.g. a broad bump) has a
+        # tiny one and stays on the safe baseline.
+        if lml_a > lml_b + self.lml_margin * X.shape[0]:
             self._selected = ga
             self.verdict = "additive"
             self._committed_additive = True   # commit -> children inherit, skip test
@@ -166,7 +174,7 @@ class AutoSelectGPR(GPRegressorInterface):
                 f"lml_margin={self.lml_margin})")
 
 
-def make_auto_gpr(n_features, alpha=1e-6, n_restarts_optimizer=0, lml_margin=2.0,
+def make_auto_gpr(n_features, alpha=1e-6, n_restarts_optimizer=2, lml_margin=0.1,
                   max_order=2, base_kernel="matern", length_scale_bounds=(1e-5, 1e5)):
     """Convenience builder for an :class:`AutoSelectGPR` over ``n_features`` inputs.
 

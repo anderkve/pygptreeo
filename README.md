@@ -121,6 +121,34 @@ gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100,
 Compare it against the baseline and the explicit additive kernel at different
 leaf sizes with `examples/benchmark_order_additive_nbar.py`.
 
+### Automatic kernel selection (additive vs baseline)
+
+The additive kernels are a big win when the target is additive but lose to a
+plain Matern when it is genuinely non-additive. If you don't know which you have,
+`AutoSelectGPR` decides per region: it wraps a cheap baseline GP and a cheap
+(rescue-free) additive GP, and on each leaf fit keeps whichever has the higher
+**log marginal likelihood** (model evidence) on that region's data.
+
+```python
+from pygptreeo import GPTree, make_auto_gpr
+gpt = GPTree(GPR=make_auto_gpr(n_features, lml_margin=0.1), Nbar=100,
+             use_standard_scaling=True, splitting_strategy="gradual")
+```
+
+It is a drop-in `GPRegressorInterface`, so the tree needs no changes — the
+verdict rides along on the `clone()` the tree already does when it spawns
+children. Two structural facts keep it cheap and safe: an **additive verdict is
+inheritable** (additive on a box ⇒ additive on every sub-box), so a committed
+node's descendants skip the test; and a per-point `lml_margin` defaults ambiguous
+regions to the safe baseline. This is the cheap, hard-selection alternative to
+the `rescue=True` blend, which experiments showed is usually *worse* than the
+better single kernel at leaf scale (its extra hyperparameters are hard to fit
+from ~`Nbar` points). On the benchmarks, `auto` matches the better fixed kernel
+on every target — the large additive wins on additive targets (e.g. `levy`
+~10× better than baseline) and the baseline on non-additive ones (`bump`,
+`coswave`) — without being told which. Reproduce with
+`examples/benchmark_auto_select.py`.
+
 ### Pruning unused interactions as the tree grows
 
 A depth-2 additive kernel carries a pairwise term for *every* pair of inputs
