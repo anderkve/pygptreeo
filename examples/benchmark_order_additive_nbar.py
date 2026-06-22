@@ -41,12 +41,16 @@ def baseline_kernel(d):
 
 
 def build_kernel(kind, d):
+    # RESCUE=0 drops the full-D Matern rescue term from the additive kernels
+    # (leaving just the additive block), e.g. to isolate the additive structure
+    # or speed up large-Nbar runs. Defaults to on.
+    rescue = os.environ.get("RESCUE", "1") != "0"
     if kind == "baseline":
         return baseline_kernel(d)
     if kind == "additive":
-        return make_additive_kernel(d, interaction_depth=2, rescue=True)
+        return make_additive_kernel(d, interaction_depth=2, rescue=rescue)
     if kind == "order":
-        return make_order_additive_kernel(d, max_order=2, rescue=True)
+        return make_order_additive_kernel(d, max_order=2, rescue=rescue)
     raise ValueError(kind)
 
 
