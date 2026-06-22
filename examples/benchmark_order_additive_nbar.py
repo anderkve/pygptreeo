@@ -105,7 +105,13 @@ def main():
             Xte = np.random.RandomState(SEED + 777).uniform(0, 1, (NTEST, d))
             yte = f(Xte.T)
             res = {}
+            # KINDS env var selects conditions (e.g. KINDS=baseline,order to skip
+            # the expensive explicit additive kernel at large Nbar).
+            kinds = os.environ.get("KINDS", "baseline,additive,order").split(",")
             for kind in ("baseline", "additive", "order"):
+                if kind not in kinds:
+                    res[kind] = (float("nan"),) * 4
+                    continue
                 np.random.seed(SEED)
                 res[kind] = run(kind, X, y, Xte, yte, d, Nbar, retrain)
             b, a, o = res["baseline"], res["additive"], res["order"]
