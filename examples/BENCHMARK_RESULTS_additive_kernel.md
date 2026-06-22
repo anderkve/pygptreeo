@@ -65,13 +65,19 @@ targets improve.
 
 ## Results — 6D, N = 2500 (higher-dimensional scaling)
 
-| target      | baseline | add_d2_rescue | best vs baseline |
-|-------------|---------:|--------------:|-----------------:|
-| rosenbrock  | 0.0122   | **0.0036**    | **−70.3%**       |
+| target      | baseline | add_d2_rescue | add_d2_norescue | best vs baseline |
+|-------------|---------:|--------------:|----------------:|-----------------:|
+| rosenbrock  | 0.0122   | **0.0036**    | 0.0044          | **−70.3%**       |
+| rastrigin   | 0.1374   | 0.1223        | **0.1159**      | **−15.7%**       |
+| levy        | 0.1154   | **0.0768**    | 0.0793          | **−33.4%**       |
+| himmelblau  | 0.0836   | 0.0462        | **0.0442**      | **−47.2%**       |
 
 Higher dimension is exactly where per-leaf data is most starved and the additive
-representation pays off most; the rosenbrock gain holds (and the earlier
-depth-screening run found rastrigin −18% and rosenbrock −67% at 6D as well).
+representation pays off most: every 6D target improves by 16–70%, including
+himmelblau (a *log* of an additive function, i.e. not itself additive), which the
+rescue term still lets the additive structure exploit. The relative gains are
+larger and more uniform than at 4D — the additive kernel scales better with input
+dimension, which is the goal.
 
 ## Takeaway
 
