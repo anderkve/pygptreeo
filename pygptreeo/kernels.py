@@ -362,22 +362,29 @@ class AdditiveKernel(Kernel):
     """
 
     def __init__(self, input_dim, interaction_depth=1, base_kernel='rbf',
-                 length_scale=1.0, length_scale_bounds=(1e-3, 1e3)):
+                 length_scale=1.0, length_scale_bounds=(1e-3, 1e3), terms=None):
         # Store constructor parameters as regular attributes (sklearn needs this)
         self.input_dim = input_dim
         self.interaction_depth = interaction_depth
         self.base_kernel = base_kernel
         self.length_scale_bounds = length_scale_bounds
+        self.terms = terms
 
-        # Generate interaction term indices
-        # For example, with input_dim=3, depth=2:
+        # Generate interaction term indices.
+        # If an explicit ``terms`` list is supplied (e.g. by the interaction
+        # pruner), use it verbatim; this is how a leaf drops the pairwise terms
+        # that its region's data say carry no interaction signal. Otherwise
+        # enumerate every subset up to interaction_depth. For input_dim=3, depth=2:
         # Order 1: [(0,), (1,), (2,)]
         # Order 2: [(0,1), (0,2), (1,2)]
-        self._interaction_terms = []
-        for order in range(1, min(interaction_depth + 1, input_dim + 1)):
-            self._interaction_terms.extend(
-                list(combinations(range(input_dim), order))
-            )
+        if terms is not None:
+            self._interaction_terms = [tuple(t) for t in terms]
+        else:
+            self._interaction_terms = []
+            for order in range(1, min(interaction_depth + 1, input_dim + 1)):
+                self._interaction_terms.extend(
+                    list(combinations(range(input_dim), order))
+                )
 
         self._n_terms = len(self._interaction_terms)
 
@@ -811,3 +818,155 @@ def make_additive_kernel(n_features,
     )
 
     return additive + rescue_term
+
+
+def prune_additive_kernel(kernel, keep_pairs):
+    """Return a copy of ``kernel`` with its ``AdditiveKernel`` restricted to a
+    pruned set of interaction terms.
+
+    Used by interaction pruning: a leaf keeps every order-1 (main-effect) term
+    but only the pairwise terms in ``keep_pairs``; the rest are dropped, which
+    shrinks a depth-2 additive structure from ``d + C(d,2)`` terms toward ``d``.
+    Everything else in the (possibly composite) kernel -- the constant-kernel
+    amplitudes, the full-D rescue Matern, length scales and bounds -- is copied
+    through unchanged, so the safety net and warm-start values are preserved.
+
+    Parameters
+    ----------
+    kernel : sklearn.gaussian_process.kernels.Kernel
+        A kernel produced by :func:`make_additive_kernel` (or any kernel that
+        contains exactly one :class:`AdditiveKernel`).
+    keep_pairs : iterable of tuple
+        Pairwise terms ``(i, j)`` to retain. Main-effect terms are always kept.
+
+    Returns
+    -------
+    Kernel
+        A deep copy of ``kernel`` with the additive term set pruned. If no
+        ``AdditiveKernel`` is found the kernel is returned unchanged (a copy).
+    """
+    from copy import deepcopy
+
+    keep_pairs = {tuple(sorted(p)) for p in keep_pairs}
+
+    def _walk(k):
+        if isinstance(k, AdditiveKernel):
+            terms = [(d,) for d in range(k.input_dim)]
+            terms.extend(sorted(keep_pairs))
+            return AdditiveKernel(
+                input_dim=k.input_dim,
+                interaction_depth=k.interaction_depth,
+                base_kernel=k.base_kernel,
+                length_scale=np.array(k.length_scale, dtype=float),
+                length_scale_bounds=k.length_scale_bounds,
+                terms=terms,
+            )
+        # Composite kernels (Sum, Product) expose their operands as k1, k2.
+        params = k.get_params(deep=False)
+        if "k1" in params and "k2" in params:
+            k.k1 = _walk(k.k1)
+            k.k2 = _walk(k.k2)
+        return k
+
+    return _walk(deepcopy(kernel))
+
+
+def kernel_has_additive(kernel):
+    """True if ``kernel`` contains an :class:`AdditiveKernel` (so it is prunable)."""
+    if isinstance(kernel, AdditiveKernel):
+        return True
+    try:
+        params = kernel.get_params(deep=False)
+    except Exception:
+        return False
+    if "k1" in params and "k2" in params:
+        return kernel_has_additive(kernel.k1) or kernel_has_additive(kernel.k2)
+    return False
+
+
+def build_pruned_gpr(template_gpr, keep_pairs):
+    """Clone a GPR template and prune its additive kernel to ``keep_pairs``.
+
+    The returned GPR is **untrained**: any fitted state copied from the template
+    is discarded (via :meth:`reset_training`) before pruning, so the pruned
+    kernel starts from the template's *initial* hyperparameters and the caller
+    must fit it on the node's own data. This matters because the template may
+    already be trained (e.g. it is the root's GP): inheriting its fitted kernel
+    would both ignore the local data and -- since the fitted kernel still has
+    the full term set -- silently undo the pruning at prediction time.
+
+    Backends whose kernel has no ``AdditiveKernel`` (or that do not expose
+    get/set_kernel) get a plain untrained clone, so pruning silently no-ops.
+
+    Parameters
+    ----------
+    template_gpr : GPRegressorInterface
+        The per-node GPR template (full additive kernel).
+    keep_pairs : iterable of tuple
+        Pairwise terms to retain.
+
+    Returns
+    -------
+    GPRegressorInterface
+        A fresh, untrained GPR whose additive kernel keeps only ``keep_pairs``.
+    """
+    new_gpr = template_gpr.clone()
+    new_gpr.reset_training()  # forget any inherited fit -> get_kernel is initial
+    try:
+        kernel = new_gpr.get_kernel()
+    except Exception:
+        return new_gpr
+    if kernel is None or not kernel_has_additive(kernel):
+        return new_gpr
+    new_gpr.set_kernel(prune_additive_kernel(kernel, keep_pairs))
+    return new_gpr
+
+
+def _initial_full_kernel(template_gpr):
+    """The template's *initial* (unfitted) kernel, regardless of training state."""
+    probe = template_gpr.clone()
+    probe.reset_training()
+    try:
+        return probe.get_kernel()
+    except Exception:
+        return None
+
+
+def build_warm_pruned_gpr(parent_gpr, template_gpr, keep_pairs):
+    """Build a child GPR that predicts warm but will *fit* a pruned kernel.
+
+    This is what a node uses to create a child when interaction pruning is
+    active. The child is a clone of the (locally trained) ``parent_gpr``, so
+    until it retrains it predicts with the parent's fitted kernel -- exactly the
+    warm-start the tree already relies on, and the reason pruning does not need
+    an extra fit per node. Its ``kernel`` (the template for its *next* fit) is
+    set to the additive kernel pruned to ``keep_pairs``, built from the pristine
+    full kernel of ``template_gpr``. So when the child eventually retrains (it
+    does so once, just before it splits), it trains the cheaper pruned kernel;
+    its own children then inherit that pruned-trained kernel as their warm start,
+    and pruning compounds down the tree with no extra fits.
+
+    Falls back to a plain warm clone of the parent if the template kernel has no
+    ``AdditiveKernel`` to prune.
+
+    Parameters
+    ----------
+    parent_gpr : GPRegressorInterface
+        The splitting node's (trained) GPR; the source of the warm start.
+    template_gpr : GPRegressorInterface
+        The pristine per-tree GPR template, used only to recover the full
+        initial additive kernel that is then pruned.
+    keep_pairs : iterable of tuple
+        Pairwise terms to retain.
+
+    Returns
+    -------
+    GPRegressorInterface
+        A warm clone of the parent whose next fit uses the pruned kernel.
+    """
+    child = parent_gpr.clone()
+    full_initial = _initial_full_kernel(template_gpr)
+    if full_initial is None or not kernel_has_additive(full_initial):
+        return child
+    child.set_kernel(prune_additive_kernel(full_initial, keep_pairs))
+    return child

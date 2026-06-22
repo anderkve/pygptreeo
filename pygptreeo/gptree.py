@@ -28,6 +28,7 @@ from tqdm import tqdm
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 from pygptreeo.gp_interface import GPRegressorInterface
+from pygptreeo.interaction_screen import PairInteractionScreen
 
 
 class GPTree:
@@ -168,6 +169,16 @@ class GPTree:
         if self.first_point:
             self.n_features = x.size
             self.root.init_data_set(self.n_features)
+            # Seed the root's interaction screen; children inherit copies of it.
+            if getattr(self.root, "prune_interactions", False):
+                self.root.interaction_screen = PairInteractionScreen(
+                    self.n_features,
+                    n_bins=self.root.interaction_n_bins,
+                    warmup_points=self.root.interaction_warmup,
+                    abs_floor=self.root.interaction_abs_floor,
+                    rel_factor=self.root.interaction_rel_factor,
+                    low_pct=self.root.interaction_low_pct,
+                )
             self.first_point = False
 
         # Find a leaf node for the new (x,y,sigma) point
@@ -176,6 +187,12 @@ class GPTree:
         node = self.root
         while not node.is_leaf:
             node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
+
+        # Feed the point into this leaf's interaction screen (accumulates the
+        # region-local statistics used to prune the additive kernel of any
+        # children this leaf later spawns). Uses the first output for the score.
+        if node.interaction_screen is not None:
+            node.interaction_screen.update(x, np.ravel(y)[0])
 
         # Check if this point should be merged with a nearby point (updates existing point in-place)
         if node.should_merge_point(x, y, sigma):

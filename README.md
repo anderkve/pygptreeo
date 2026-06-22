@@ -13,6 +13,7 @@ pyGPTreeO is a Python tool designed for online/continual regression tasks. It im
 *   **Ensemble Method**: Includes `GPForest` for running an ensemble of multiple GPTrees, which can improve prediction stability and accuracy.
 *   **Customizable GPRs**: Allows users to define and use their own scikit-learn compatible Gaussian Process Regressor models within the tree nodes.
 *   **Additive Leaf Kernels**: An optional low-order *additive* leaf kernel (`make_additive_kernel`) that improves sample efficiency and scaling to higher-dimensional problems, with a built-in full-dimensional "rescue" term that prevents any degradation on non-additive targets. See "Improving sample efficiency in higher dimensions" below.
+*   **Interaction Pruning**: With `prune_interactions=True`, each node discovers from its own region's data which input pairs actually interact and gives its children an additive kernel pruned to those pairs — collapsing toward main-effects on separable regions, for cheaper, often more accurate leaf GPs. See "Pruning unused interactions as the tree grows" below.
 
 ## How it Works (Briefly)
 GPTreeO builds a binary tree where each node represents a specific region of the input space.
@@ -96,6 +97,34 @@ On the standard benchmark functions this gives large held-out NRMSE reductions
 (e.g. up to ~80% on `rosenbrock`/`levy`) with no degradation on any target. See
 `examples/BENCHMARK_RESULTS_additive_kernel.md` and reproduce with
 `examples/benchmark_additive_kernel.py`.
+
+### Pruning unused interactions as the tree grows
+
+A depth-2 additive kernel carries a pairwise term for *every* pair of inputs
+(`d + C(d,2)` terms), but most targets only couple a few pairs — and an
+additively separable target couples none. `prune_interactions=True` makes each
+node discover, from its own region's data, which pairs actually interact, and
+gives the children it spawns an additive kernel restricted to those pairs:
+
+```python
+gpt = GPTree(GPR=Default_GPR(kernel=make_additive_kernel(n_features, interaction_depth=2),
+                             alpha=1e-6),
+             Nbar=80, use_standard_scaling=True, splitting_strategy="gradual",
+             prune_interactions=True)
+```
+
+Discovery is **region-local and hierarchical**: every node carries a model-free
+2-way ANOVA interaction screen, and when it splits each child inherits a copy of
+the accumulated statistics and keeps refining it on its own points — so evidence
+both accumulates down the tree and localises as leaves deepen. Children are warm
+clones of their parent (they predict immediately) whose *next* fit uses the
+pruned kernel, so pruning compounds down the tree with no extra GP fits. The
+full-dimensional rescue term remains the safety net, which is what lets the
+default settings prune aggressively. On the benchmark functions this leaves
+accuracy neutral-to-better — large gains on separable targets (e.g. `levy`) — at
+equal or better speed; the one cost is a small accuracy hit on targets whose
+pairwise coupling is essential (e.g. `rosenbrock`), bounded by the rescue term.
+Reproduce with `examples/benchmark_interaction_pruning.py`.
 
 ## Running Examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:

@@ -201,6 +201,21 @@ class SklearnGPAdapter(GPRegressorInterface):
         """
         self._gpr.kernel = kernel
 
+    def reset_training(self) -> None:
+        """Discard scikit-learn's fitted attributes so the GP is untrained again.
+
+        After fitting, scikit-learn stores ``kernel_`` (and the training set,
+        Cholesky factor, etc.) on the estimator. Setting a new ``kernel`` does
+        not clear these, so ``predict`` would keep using the stale fitted
+        kernel. This removes them, so ``is_trained()`` becomes False and the
+        next ``fit`` rebuilds everything from the (possibly pruned) ``kernel``.
+        """
+        for attr in ("kernel_", "X_train_", "y_train_", "alpha_", "L_",
+                     "_y_train_mean", "_y_train_std",
+                     "log_marginal_likelihood_value_"):
+            if hasattr(self._gpr, attr):
+                delattr(self._gpr, attr)
+
     def get_length_scales(self, n_features: int):
         """Per-dimension length scales from the fitted kernel, or None.
 

@@ -165,6 +165,18 @@ class GPRegressorInterface(ABC):
         """
         pass
 
+    def reset_training(self) -> None:
+        """Discard any fitted state, returning the GP to an untrained condition.
+
+        After this call :meth:`is_trained` must return False and the next
+        :meth:`predict` falls back to the prior until :meth:`fit` is called
+        again. Used by interaction pruning: a child built from a (possibly
+        trained) template must forget the template's fit before being refit on
+        its own data with a pruned kernel. The default is a no-op for backends
+        that have no separate fitted state.
+        """
+        pass
+
     def get_length_scales(self, n_features: int) -> Optional[np.ndarray]:
         """Return the fitted per-dimension ARD length scales, or None.
 

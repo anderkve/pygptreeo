@@ -85,6 +85,12 @@ class GPNode(Node):
                  n_split_candidates: Optional[int] = 3,
                  split_eval_train_fraction: Optional[float] = 0.6,
                  split_eval_min_points: Optional[int] = 20,
+                 prune_interactions: Optional[bool] = False,
+                 interaction_n_bins: Optional[int] = 6,
+                 interaction_warmup: Optional[int] = 150,
+                 interaction_abs_floor: Optional[float] = 0.012,
+                 interaction_rel_factor: Optional[float] = 2.5,
+                 interaction_low_pct: Optional[float] = 40.0,
                  n_outputs: Optional[int] = 1):
         """Initializes a GPNode.
 
@@ -139,6 +145,22 @@ class GPNode(Node):
                 to use for training during split evaluation. Defaults to 0.6.
             split_eval_min_points (Optional[int]): Minimum points required in a region
                 to evaluate that split. Defaults to 20.
+            prune_interactions (Optional[bool]): If True, the node carries a
+                PairInteractionScreen that discovers which input pairs interact in
+                its region; children are then created with an additive leaf kernel
+                pruned to those pairs. Only meaningful with an additive leaf kernel
+                (see make_additive_kernel); a no-op otherwise. Defaults to False.
+            interaction_n_bins (Optional[int]): Bins per dimension for the
+                interaction screen's 2-way tables. Defaults to 6.
+            interaction_warmup (Optional[int]): Accumulated points (including those
+                inherited from ancestors) before a node's screen is trusted to prune.
+                Defaults to 150.
+            interaction_abs_floor, interaction_rel_factor, interaction_low_pct
+                (Optional[float]): Pruning aggressiveness. A pair is kept only if its
+                interaction score clears both ``interaction_abs_floor`` and
+                ``interaction_rel_factor`` times the ``interaction_low_pct`` percentile
+                (noise floor) of all pair scores. Larger values prune more. Defaults
+                to 0.012, 2.5 and 40.0.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
                 For multi-output GPs, independent GPs are trained for each output.
         """
@@ -194,6 +216,19 @@ class GPNode(Node):
         self.n_split_candidates = n_split_candidates
         self.split_eval_train_fraction = split_eval_train_fraction
         self.split_eval_min_points = split_eval_min_points
+
+        # Interaction pruning parameters. When enabled, each node carries a
+        # PairInteractionScreen (set by the tree on the root, inherited by
+        # children) that discovers which input pairs actually interact in this
+        # node's region; children are then created with an additive kernel
+        # pruned to those pairs. See pygptreeo.interaction_screen.
+        self.prune_interactions = prune_interactions
+        self.interaction_n_bins = interaction_n_bins
+        self.interaction_warmup = interaction_warmup
+        self.interaction_abs_floor = interaction_abs_floor
+        self.interaction_rel_factor = interaction_rel_factor
+        self.interaction_low_pct = interaction_low_pct
+        self.interaction_screen = None
 
         self.parent_split_index = None
         self.parent_split_position = None
@@ -321,13 +356,38 @@ class GPNode(Node):
             'n_split_candidates': self.n_split_candidates,
             'split_eval_train_fraction': self.split_eval_train_fraction,
             'split_eval_min_points': self.split_eval_min_points,
+            'prune_interactions': self.prune_interactions,
+            'interaction_n_bins': self.interaction_n_bins,
+            'interaction_warmup': self.interaction_warmup,
+            'interaction_abs_floor': self.interaction_abs_floor,
+            'interaction_rel_factor': self.interaction_rel_factor,
+            'interaction_low_pct': self.interaction_low_pct,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
         }
 
+        # Decide the child GP kernel. With interaction pruning on, if this node's
+        # accumulated interaction screen is ready it tells us which input pairs
+        # actually interact in this region. Children are then created as warm
+        # clones of this (trained) node -- so they predict immediately, like the
+        # usual warm-start -- but with their *next fit* set to use an additive
+        # kernel pruned to those pairs (see build_warm_pruned_gpr). When the
+        # screen is not ready (or pruning is off) we clone the parent GP exactly
+        # as before. Pruning takes effect at leaf creation, compounding down the
+        # tree as nodes retrain on their pruned kernels before splitting.
+        keep_pairs = None
+        if self.prune_interactions and self.interaction_screen is not None:
+            keep_pairs = self.interaction_screen.active_pairs()  # None until warmed up
+
+        if keep_pairs is not None:
+            from pygptreeo.kernels import build_warm_pruned_gpr
+            make_child_gpr = lambda: build_warm_pruned_gpr(self.my_GPRs[0], GPR, keep_pairs)
+        else:
+            make_child_gpr = lambda: self.my_GPRs[0].clone()
+
         # Create child nodes with a copy of the parent GP (use first GP from list for template)
         # Use the clone() method from GP interface for proper copying
-        self.left = GPNode(0, my_GPR=self.my_GPRs[0].clone(), name=self.name + "0", **node_config_kwargs)
-        self.right = GPNode(0, my_GPR=self.my_GPRs[0].clone(), name=self.name + "1", **node_config_kwargs)
+        self.left = GPNode(0, my_GPR=make_child_gpr(), name=self.name + "0", **node_config_kwargs)
+        self.right = GPNode(0, my_GPR=make_child_gpr(), name=self.name + "1", **node_config_kwargs)
         
         self.left.is_left = True
         self.right.is_left = False
@@ -338,6 +398,13 @@ class GPNode(Node):
         for child in self.children:
             child.parent = self
             child.init_data_set(n_features)
+
+        # Each child inherits a copy of this node's accumulated interaction
+        # statistics, then keeps updating it with its own region-local points
+        # (statistics accumulate down the tree and localise as leaves deepen).
+        if self.prune_interactions and self.interaction_screen is not None:
+            self.left.interaction_screen = self.interaction_screen.copy()
+            self.right.interaction_screen = self.interaction_screen.copy()
 
         # Copy important numbers over to the child nodes
         # Handle both single-output and multi-output cases
@@ -362,8 +429,12 @@ class GPNode(Node):
         self.right.sigma_scalers = self.sigma_scalers.copy()
 
         # Inherit parent's optimized kernel hyperparameters if enabled
-        # This gives children a warm-start for their GP optimization
-        if self.use_hyperparameter_inheritance:
+        # This gives children a warm-start for their GP optimization.
+        # Skipped when the children were just given a freshly pruned kernel
+        # (keep_pairs is not None): that pruned kernel is the point, and the
+        # parent's trained kernel has the unpruned term set, so overwriting
+        # would undo the pruning.
+        if self.use_hyperparameter_inheritance and keep_pairs is None:
             # For each output, copy the trained kernel to children using the GP interface
             for i in range(self.n_outputs):
                 if self.my_GPRs[i].is_trained():
