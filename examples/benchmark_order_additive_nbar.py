@@ -76,7 +76,16 @@ def main():
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 4000
     dims = [int(x) for x in sys.argv[3].split(",")] if len(sys.argv) > 3 else [6]
     targets = sys.argv[4].split(",") if len(sys.argv) > 4 else list(FUNCS)
-    retrain = max(50, Nbar // 5)
+    # retrain_every_n_points. Default heuristic, overridable via RETRAIN env var;
+    # RETRAIN=lazy means retrain only when a leaf is full (== Nbar), i.e. each
+    # node is trained once, just before it splits (cheapest, fewest fits).
+    env_retrain = os.environ.get("RETRAIN")
+    if env_retrain == "lazy":
+        retrain = Nbar
+    elif env_retrain is not None:
+        retrain = int(env_retrain)
+    else:
+        retrain = max(50, Nbar // 5)
 
     for d in dims:
         print(f"\n##### Nbar={Nbar}  d={d}  N={N}  retrain_every={retrain} "
