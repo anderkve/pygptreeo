@@ -201,6 +201,36 @@ class SklearnGPAdapter(GPRegressorInterface):
         """
         self._gpr.kernel = kernel
 
+    def get_length_scales(self, n_features: int):
+        """Per-dimension length scales from the fitted kernel, or None.
+
+        Collects every 'length_scale' hyperparameter of the (possibly composite)
+        kernel; anisotropic vectors are used as-is, scalars are broadcast. When
+        several components contribute, the per-dimension minimum is taken (the
+        shortest length scale governs the resolution).
+        """
+        kernel = self.get_kernel()
+        if kernel is None:
+            return None
+        try:
+            params = kernel.get_params(deep=True)
+        except Exception:
+            return None
+
+        ls_arrays = []
+        for key, val in params.items():
+            if not key.endswith('length_scale'):  # excludes 'length_scale_bounds'
+                continue
+            arr = np.atleast_1d(np.asarray(val, dtype=float)).ravel()
+            if arr.size == n_features:
+                ls_arrays.append(arr)
+            elif arr.size == 1:
+                ls_arrays.append(np.full(n_features, arr.item()))
+
+        if not ls_arrays:
+            return None
+        return np.min(np.vstack(ls_arrays), axis=0)
+
     # Provide access to the underlying scikit-learn GPR for advanced users
     @property
     def sklearn_gpr(self) -> GaussianProcessRegressor:

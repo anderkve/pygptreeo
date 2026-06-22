@@ -164,3 +164,12 @@ class GPRegressorInterface(ABC):
             The kernel object to set. The exact type depends on the GP implementation.
         """
         pass
+
+    def get_length_scales(self, n_features: int) -> Optional[np.ndarray]:
+        """Return the fitted per-dimension ARD length scales, or None.
+
+        Optional capability used by the 'min_lengthscale' split criterion.
+        Backends that cannot expose length scales return None (the tree then
+        falls back to data spread). The returned array has shape (n_features,).
+        """
+        return None

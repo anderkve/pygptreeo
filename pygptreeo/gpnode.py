@@ -108,6 +108,8 @@ class GPNode(Node):
                 split dimension. Valid options: 'max_spread' (split on dimension with
                 largest range), 'max_variance' (split on dimension with highest variance),
                 'max_uncertainty' (split on dimension where GP is most uncertain),
+                'min_lengthscale' (split on dimension with the smallest fitted ARD
+                length scale, i.e. where the GP says the function varies fastest),
                 'random' (random dimension). Defaults to 'max_spread'.
             use_standard_scaling (Optional[bool]): If True, standardizes both X and y
                 data before fitting the GP and inverse transforms predictions.
@@ -1208,6 +1210,28 @@ class GPNode(Node):
                     self.split_index = np.argmax(w)
                 else:
                     self.split_index = 0 # Default to 0 if no data
+        elif self.split_dimension_criteria == 'min_lengthscale':
+            # Split where the GP's smallest fitted ARD length scale is, i.e. where
+            # the function varies fastest relative to its spread. Falls back to
+            # max_spread if length scales are unavailable (GP untrained or kernel
+            # has none).
+            length_scales = None
+            if self.my_X_data.shape[0] > 1 and self.my_GPRs[0].is_trained():
+                length_scales = self.my_GPRs[0].get_length_scales(self.n_features)
+            if length_scales is not None:
+                # Compare length scales in units of each dimension's std so the
+                # choice is scale-invariant. With standard scaling the GP frame
+                # already has std ~ 1 (no-op); without it, normalise by the raw
+                # per-dimension std so dimensions in different units stay comparable.
+                if not self.use_standard_scaling and self.my_X_data.shape[0] > 1:
+                    stds = np.std(self.my_X_data, axis=0)
+                    length_scales = length_scales / np.where(stds > 0, stds, 1.0)
+                self.split_index = int(np.argmin(length_scales))
+            elif self.my_X_data.shape[0] > 0:
+                spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
+                self.split_index = int(np.argmax(spreads))
+            else:
+                self.split_index = 0
         elif self.split_dimension_criteria == 'random':
             if self.n_features > 0:
                 self.split_index = np.random.randint(0, self.n_features)
@@ -1225,7 +1249,7 @@ class GPNode(Node):
 
         self.split_position = None
         if self.my_X_data.shape[0] == 0: # No data, place split in the middle (0 if not scaled) or handle as error?
-            self.split_position = 0.0 
+            self.split_position = 0.0
         elif self.split_position_method == 'median':
             if self.my_X_data.shape[0] > 0:
                 self.split_position = np.median(self.my_X_data[:, self.split_index])

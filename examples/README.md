@@ -65,6 +65,17 @@ OMP_NUM_THREADS=1 python performance_test.py
 
 The performance test generates a plot (`plot.png`) showing various metrics over time.
 
+### Split-dimension criteria benchmark
+
+```bash
+cd examples
+OMP_NUM_THREADS=1 python benchmark_split_direction.py [target] [n_points]
+```
+
+Plots batch NRMSE vs processed points for each `split_dimension_criteria` on the
+same stream. `target` is a standard function (`eggholder`, `rosenbrock`, …) or
+the synthetic `aniso_chirp` (default); see `BENCHMARK_RESULTS_split_direction.md`.
+
 ### Animated Visualization
 
 ```bash
@@ -116,6 +127,11 @@ Key parameters to experiment with:
 
 - `use_calibrated_sigma`: Enable uncertainty calibration (default: True)
   - Adjusts prediction uncertainties to achieve target coverage
+
+- `split_dimension_criteria`: how a node picks its split dimension. One of
+  `'max_spread'`, `'max_variance'`, `'max_uncertainty'`, `'random'`, or
+  `'min_lengthscale'` (split the dimension with the smallest fitted ARD length
+  scale; needs an ARD kernel and a trained GP, else falls back to `max_spread`).
 
 ### Custom Kernel Configuration
 
