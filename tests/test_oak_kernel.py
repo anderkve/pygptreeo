@@ -1,6 +1,6 @@
-"""Tests for the prototype per-order additive kernel (variant A, Newton-Girard).
+"""Tests for the per-order additive kernel (OrderAdditiveKernel, Newton-Girard).
 
-See pygptreeo/kernels_oak.py. The gradient-vs-finite-difference test is the
+See pygptreeo/kernels.py. The gradient-vs-finite-difference test is the
 important one: the kernel ships analytic gradients to sklearn's optimizer.
 """
 import numpy as np
@@ -8,7 +8,7 @@ import pytest
 from sklearn.base import clone
 from sklearn.gaussian_process import GaussianProcessRegressor
 
-from pygptreeo.kernels_oak import OrderAdditiveKernel, make_order_additive_kernel
+from pygptreeo.kernels import OrderAdditiveKernel, make_order_additive_kernel
 
 
 @pytest.mark.parametrize("d,D,base", [(4, 2, "matern"), (6, 3, "matern"),

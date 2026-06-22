@@ -19,8 +19,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 
-from pygptreeo.kernels import AdditiveKernel, make_additive_kernel
-from pygptreeo.kernels_oak import OrderAdditiveKernel, make_order_additive_kernel
+from pygptreeo.kernels import (AdditiveKernel, make_additive_kernel,
+                               OrderAdditiveKernel, make_order_additive_kernel)
 import target_functions as tf
 
 FUNCS = {n: getattr(tf, n.capitalize()) for n in

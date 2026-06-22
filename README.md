@@ -98,6 +98,29 @@ On the standard benchmark functions this gives large held-out NRMSE reductions
 `examples/BENCHMARK_RESULTS_additive_kernel.md` and reproduce with
 `examples/benchmark_additive_kernel.py`.
 
+### A cheaper additive kernel: `make_order_additive_kernel`
+
+`make_additive_kernel` builds the additive structure by enumerating every
+interaction term explicitly, so a depth-`D` kernel over `d` inputs assembles
+`O(d^D)` product matrices on each evaluation. `make_order_additive_kernel`
+(`OrderAdditiveKernel`) is a drop-in alternative that uses the Duvenaud/OAK
+construction: it gives each interaction *order* a single variance and assembles
+all orders from the per-dimension kernels via the Newton–Girard recursion in
+`O(d·D)`, independent of the number of terms. It keeps the same rescue term and
+the same sample efficiency (it adds essentially no hyperparameters), but is much
+cheaper to evaluate as `d` or the interaction order grows — making higher
+`max_order` practical. Its gradients are analytic.
+
+```python
+from pygptreeo import GPTree, Default_GPR, make_order_additive_kernel
+kernel = make_order_additive_kernel(n_features, max_order=2, rescue=True)
+gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100,
+             use_standard_scaling=True, splitting_strategy="gradual")
+```
+
+Compare it against the baseline and the explicit additive kernel at different
+leaf sizes with `examples/benchmark_order_additive_nbar.py`.
+
 ### Pruning unused interactions as the tree grows
 
 A depth-2 additive kernel carries a pairwise term for *every* pair of inputs
