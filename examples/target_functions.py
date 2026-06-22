@@ -222,3 +222,63 @@ def Custom(x):
     func += Eggholder(x) / 6.
     func += Levy(x)
     return func
+
+def Bump(x, ell=0.3):
+    """A genuinely non-additive radial Gaussian bump.
+
+    ``f(x) = exp(-||x - 0.5||^2 / (2 ell^2)) = prod_i exp(-(x_i - 0.5)^2 / (2 ell^2))``
+
+    Unlike the other targets in this module (which are sums of 1-D or
+    adjacent-pair terms, i.e. additive up to interaction order 2), this function
+    is a *product* of one-dimensional Gaussians. Localizing the peak requires
+    *all* coordinates to be near 0.5 simultaneously, so its variance lives in the
+    high-order interaction terms of the ANOVA decomposition -- a sum of low-order
+    pieces cannot represent it. It is, however, exactly the kind of smooth,
+    full-dimensional bump that a stationary RBF/Matern kernel models natively.
+    It is therefore a deliberate failure case for the additive leaf kernels
+    (``make_additive_kernel`` / ``make_order_additive_kernel`` with ``rescue=False``)
+    and a case where the plain full-D baseline kernel should win -- and where the
+    rescue term should let the additive kernels recover baseline performance.
+
+    Args:
+        x (np.ndarray): Inputs with values in ``[0,1]``; shape ``(dim,)`` or, as
+            used by the benchmarks, ``(dim, n_samples)``.
+        ell (float): Width of the bump. Smaller = more localized = more strongly
+            high-order.
+
+    Returns:
+        np.ndarray or float: ``f(x)``, in ``(0, 1]``.
+    """
+    x = np.asarray(x, dtype=float)
+    r2 = np.sum((x - 0.5) ** 2, axis=0)
+    return np.exp(-r2 / (2.0 * ell ** 2))
+
+
+def Coswave(x, freq=0.5):
+    """A maximally non-additive tensor product of mean-zero cosines.
+
+    ``f(x) = prod_i cos(2 pi freq x_i)`` on ``[0,1]^dim``.
+
+    Each 1-D factor ``cos(2 pi freq x_i)`` integrates to zero over ``[0,1]`` (for
+    the default ``freq=0.5``, i.e. ``cos(pi x_i)``), so in the ANOVA (functional)
+    decomposition of ``f`` *every* term except the single full, ``dim``-way
+    interaction term is exactly zero. There is therefore no main-effect or
+    low-order structure at all: an additive model up to interaction order 2 can
+    capture *none* of this function's variance and can do no better than
+    predicting the mean. The default ``freq=0.5`` keeps each factor monotonic on
+    ``[0,1]`` (half a period), so ``f`` is smooth and low-frequency enough for a
+    stationary full-D kernel to fit -- which is what makes this a clean
+    demonstration that the additive leaf kernels (with ``rescue=False``) lose to
+    the baseline, while the rescue term recovers it. (Higher ``freq`` becomes too
+    oscillatory in high dimension for *any* small-sample method, baseline
+    included.) This is the extreme companion to :func:`Bump`.
+
+    Args:
+        x (np.ndarray): Inputs in ``[0,1]``; shape ``(dim,)`` or ``(dim, n_samples)``.
+        freq (float): Cosine periods per unit interval. Default 0.5 (half period).
+
+    Returns:
+        np.ndarray or float: ``f(x)`` in ``[-1, 1]``.
+    """
+    x = np.asarray(x, dtype=float)
+    return np.prod(np.cos(2.0 * np.pi * freq * x), axis=0)

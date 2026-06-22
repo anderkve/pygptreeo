@@ -31,7 +31,8 @@ from pygptreeo.kernels import make_additive_kernel, make_order_additive_kernel
 import target_functions as tf
 
 FUNCS = {n: getattr(tf, n.capitalize()) for n in
-         ["eggholder", "himmelblau", "rosenbrock", "rastrigin", "levy", "custom"]}
+         ["eggholder", "himmelblau", "rosenbrock", "rastrigin", "levy", "custom",
+          "bump", "coswave"]}
 THETA, SEED, NTEST = 1e-4, 20240617, 1500
 
 
