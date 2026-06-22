@@ -10,7 +10,7 @@ import numpy as np
 from itertools import combinations
 from sklearn.gaussian_process.kernels import Kernel, Hyperparameter, StationaryKernelMixin, NormalizedKernelMixin
 from sklearn.gaussian_process.kernels import _check_length_scale
-from sklearn.gaussian_process.kernels import RBF, Matern
+from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel
 
 
 class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
@@ -661,3 +661,107 @@ class AdditiveKernel(Kernel):
                 f"base_kernel='{self.base_kernel}', "
                 f"length_scale={ls_repr}, "
                 f"n_terms={self.n_terms})")
+
+
+def make_additive_kernel(n_features,
+                         interaction_depth=2,
+                         base_kernel='matern',
+                         length_scale=1.0,
+                         length_scale_bounds=(1e-4, 1e4),
+                         amplitude=1.0,
+                         amplitude_bounds=(1e-3, 1e8),
+                         rescue=True,
+                         rescue_nu=1.5,
+                         rescue_length_scale_bounds=(1e-5, 1e5)):
+    """Build a low-order additive GP kernel with a full-dimensional rescue term.
+
+    The returned kernel is
+
+        c1 * AdditiveKernel(interaction_depth)            [additive structure]
+      + c2 * Matern(ARD over all n_features dimensions)   [full-D rescue]
+
+    where ``c1`` and ``c2`` are independent, learnable ``ConstantKernel``
+    amplitudes (the second term is omitted when ``rescue=False``).
+
+    Why this helps sample efficiency
+    --------------------------------
+    A leaf GP in a GPTree sees only ``~Nbar`` points. A full-dimensional kernel
+    must estimate a function over all of that leaf's box from those few points,
+    so its sample complexity grows steeply with dimension. An additive kernel
+    instead models the function as a sum of one- and two-dimensional pieces, so
+    its effective dimensionality is the largest interaction order (1 or 2), not
+    ``n_features``. Every point then constrains every low-order piece, which is
+    exactly the regime where the curse of dimensionality is mild. Many real
+    targets (and all of this repository's benchmark functions) are sums of 1-D
+    or adjacent-pair terms, so the additive terms capture the structure with far
+    fewer points than a full-D kernel.
+
+    The rescue term is what makes this safe. On a genuinely high-order /
+    non-additive target the additive terms cannot fit the function; the
+    marginal-likelihood optimization then grows ``c2`` and shrinks ``c1``, so the
+    model falls back to the ordinary full-D Matern (the current default) and does
+    not degrade. On an additive target the opposite happens: ``c2`` shrinks and
+    the cheaper additive representation dominates. The mix is chosen per leaf
+    from data, with no manual tuning.
+
+    Parameters
+    ----------
+    n_features : int
+        Number of input dimensions.
+    interaction_depth : int, default=2
+        Maximum interaction order of the additive terms. 1 = purely additive
+        (sum of 1-D effects); 2 = main effects + all pairwise interactions.
+        Depth 2 is the safe default: it subsumes depth 1 and also captures
+        pairwise-coupled targets (e.g. Rosenbrock) that depth 1 cannot represent.
+    base_kernel : {'matern', 'rbf'}, default='matern'
+        1-D base kernel used inside each additive term. 'matern' (nu=1.5)
+        matches the library default.
+    length_scale, length_scale_bounds : float/array, pair
+        Initial length scale(s) and optimization bounds for the additive terms.
+    amplitude, amplitude_bounds : float, pair
+        Initial value and bounds for each ``ConstantKernel`` amplitude.
+    rescue : bool, default=True
+        Whether to add the full-D Matern rescue term. Strongly recommended; it
+        guarantees the additive kernel never does worse than the plain Matern on
+        non-additive targets.
+    rescue_nu : float, default=1.5
+        ``nu`` for the rescue Matern.
+    rescue_length_scale_bounds : pair, default=(1e-5, 1e5)
+        Per-dimension length-scale bounds for the rescue Matern.
+
+    Returns
+    -------
+    sklearn.gaussian_process.kernels.Kernel
+        A composed kernel ready to hand to a ``GaussianProcessRegressor`` (e.g.
+        via ``Default_GPR(kernel=...)`` or a ``SklearnGPAdapter``).
+
+    Examples
+    --------
+    >>> from pygptreeo.kernels import make_additive_kernel
+    >>> from pygptreeo import GPTree, Default_GPR
+    >>> kernel = make_additive_kernel(n_features=6, interaction_depth=2)
+    >>> gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6))
+    """
+    additive = ConstantKernel(amplitude, amplitude_bounds) * AdditiveKernel(
+        input_dim=n_features,
+        interaction_depth=interaction_depth,
+        base_kernel=base_kernel,
+        length_scale=length_scale,
+        length_scale_bounds=length_scale_bounds,
+    )
+
+    if not rescue:
+        return additive
+
+    if np.ndim(length_scale) == 0:
+        rescue_ls = [float(length_scale)] * n_features
+    else:
+        rescue_ls = list(np.asarray(length_scale, dtype=float))
+
+    rescue_term = ConstantKernel(amplitude, amplitude_bounds) * Matern(
+        nu=rescue_nu,
+        length_scale=rescue_ls,
+        length_scale_bounds=[rescue_length_scale_bounds] * n_features,
+    )
+
+    return additive + rescue_term

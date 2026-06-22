@@ -12,6 +12,7 @@ pyGPTreeO is a Python tool designed for online/continual regression tasks. It im
 *   **Online Prediction**: Capable of making predictions at any point during the learning process.
 *   **Ensemble Method**: Includes `GPForest` for running an ensemble of multiple GPTrees, which can improve prediction stability and accuracy.
 *   **Customizable GPRs**: Allows users to define and use their own scikit-learn compatible Gaussian Process Regressor models within the tree nodes.
+*   **Additive Leaf Kernels**: An optional low-order *additive* leaf kernel (`make_additive_kernel`) that improves sample efficiency and scaling to higher-dimensional problems, with a built-in full-dimensional "rescue" term that prevents any degradation on non-additive targets. See "Improving sample efficiency in higher dimensions" below.
 
 ## How it Works (Briefly)
 GPTreeO builds a binary tree where each node represents a specific region of the input space.
@@ -66,6 +67,35 @@ for i in range(len(X_test)):
 # print("\nGPTree structure:")
 # print(gpt.root)
 ```
+
+## Improving sample efficiency in higher dimensions
+Each leaf GP is trained on at most `Nbar` points, so a full-dimensional kernel
+has to learn the leaf's function over *all* input dimensions from a small sample —
+sample complexity that grows quickly with dimension. For targets with additive or
+low-order interaction structure (very common in practice), a low-order **additive
+kernel** learns the same function far more sample-efficiently, because each
+observation constrains every one- and two-dimensional piece of the model.
+
+`make_additive_kernel` builds such a kernel, plus a full-dimensional Matérn
+"rescue" term whose learnable amplitude lets the model fall back to the ordinary
+kernel on non-additive targets — so it cannot do worse than the default:
+
+```python
+import numpy as np
+from pygptreeo import GPTree, Default_GPR, make_additive_kernel
+
+n_features = 6
+kernel = make_additive_kernel(n_features, interaction_depth=2, rescue=True)
+gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=80,
+             use_standard_scaling=True, splitting_strategy="gradual",
+             split_dimension_criteria="min_lengthscale")
+# ... then stream data with gpt.update_tree(x, y, sigma) as usual.
+```
+
+On the standard benchmark functions this gives large held-out NRMSE reductions
+(e.g. up to ~80% on `rosenbrock`/`levy`) with no degradation on any target. See
+`examples/BENCHMARK_RESULTS_additive_kernel.md` and reproduce with
+`examples/benchmark_additive_kernel.py`.
 
 ## Running Examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:
