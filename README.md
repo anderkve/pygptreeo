@@ -12,7 +12,7 @@ pyGPTreeO is a Python tool designed for online/continual regression tasks. It im
 *   **Online Prediction**: Capable of making predictions at any point during the learning process.
 *   **Ensemble Method**: Includes `GPForest` for running an ensemble of multiple GPTrees, which can improve prediction stability and accuracy.
 *   **Customizable GPRs**: Allows users to define and use their own scikit-learn compatible Gaussian Process Regressor models within the tree nodes.
-*   **Sample-efficient additive kernels**: `NewtonGirardAdditiveKernel` exploits low interaction-order structure with only `O(d)` hyperparameters, improving sample efficiency on functions that decompose into low-dimensional terms.
+*   **Sample-efficient additive kernels**: `NewtonGirardAdditiveKernel` exploits low interaction-order structure with only `O(d)` hyperparameters, improving sample efficiency on functions that decompose into low-dimensional terms. The `AdditiveMaternKernel` shorthand pairs it with a Matérn catch-all in a single call for use as a general-purpose leaf kernel.
 
 ## How it Works (Briefly)
 GPTreeO builds a binary tree where each node represents a specific region of the input space.
@@ -89,29 +89,41 @@ of dimensionality for such functions while remaining cheap to fit.
 
 The recommended leaf kernel pairs an order-2 additive component with a *separate* Matérn
 "catch-all" (with its own length scales) that absorbs any higher-order or rougher
-residual:
+residual. The `AdditiveMaternKernel` shorthand builds exactly this combination in one
+call:
 
 ```python
 import numpy as np
-from pygptreeo import GPTree, Default_GPR, NewtonGirardAdditiveKernel
-from sklearn.gaussian_process.kernels import ConstantKernel, Matern
+from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
 
 d = 4  # input dimensionality
 
 # order-2 additive (main effects + pairwise) + a separate Matern catch-all
-kernel = (NewtonGirardAdditiveKernel(length_scale=[1.0] * d, order_std=[1.0, 1.0])
-          + ConstantKernel() * Matern(nu=1.5, length_scale=[1.0] * d))
+kernel = AdditiveMaternKernel(d=d, order=2, nu=1.5)
 
 gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
 # then feed data and predict exactly as in the Usage Example above
 ```
 
-`order_std` has one entry per active interaction order, and its length sets the maximum
-order `Q` (`[1.0, 1.0]` ⇒ orders 1 and 2). All hyperparameters — the `d` shared length
-scales, the per-order variances, and the catch-all — are tuned per leaf by
-marginal-likelihood maximisation. When a function has no low-order structure to exploit,
-the additive amplitudes are simply down-weighted and the kernel degrades gracefully to
-the plain Matérn catch-all, so it is safe to use as a general-purpose leaf kernel.
+`order` sets the maximum interaction order `Q` of the additive component (`order=2` ⇒
+orders 1 and 2; `order=1` ⇒ purely additive main effects), and `nu` is the smoothness of
+the Matérn catch-all. All hyperparameters — the `d` additive length scales, the per-order
+variances, the separate Matérn length scales, and the catch-all amplitude — are tuned per
+leaf by marginal-likelihood maximisation. When a function has no low-order structure to
+exploit, the additive amplitudes are simply down-weighted and the kernel degrades
+gracefully to the plain Matérn catch-all, so it is safe to use as a general-purpose leaf
+kernel.
+
+The shorthand returns an ordinary scikit-learn composite kernel; the equivalent explicit
+construction (useful if you want to customise the pieces) is:
+
+```python
+from pygptreeo import NewtonGirardAdditiveKernel
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern
+
+kernel = (NewtonGirardAdditiveKernel(length_scale=[1.0] * d, order_std=[1.0, 1.0])
+          + ConstantKernel() * Matern(nu=1.5, length_scale=[1.0] * d))
+```
 
 ## Running Examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:

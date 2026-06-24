@@ -11,7 +11,7 @@ from itertools import combinations
 from math import comb
 from sklearn.gaussian_process.kernels import Kernel, Hyperparameter, StationaryKernelMixin, NormalizedKernelMixin
 from sklearn.gaussian_process.kernels import _check_length_scale
-from sklearn.gaussian_process.kernels import RBF, Matern
+from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel
 
 
 class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
@@ -794,3 +794,144 @@ class NewtonGirardAdditiveKernel(Kernel):
         sig = np.atleast_1d(self.order_std)
         return (f"{self.__class__.__name__}(d={len(ls)}, max_order={len(sig)}, "
                 f"order_std=[{', '.join(f'{s:.3g}' for s in sig)}])")
+
+
+def _broadcast_length(value, n, name):
+    """Return ``value`` as a 1-D float array of length ``n``.
+
+    A scalar is broadcast to every entry; an array-like must already have
+    length ``n`` (a clear error is raised otherwise).
+    """
+    arr = np.atleast_1d(np.asarray(value, dtype=float)).ravel()
+    if arr.size == 1:
+        return np.full(n, arr.item())
+    if arr.size != n:
+        raise ValueError(
+            f"{name} must be a scalar or an array of length {n}, "
+            f"got length {arr.size}"
+        )
+    return arr
+
+
+def AdditiveMaternKernel(
+    d,
+    *,
+    order=2,
+    nu=1.5,
+    length_scale=1.0,
+    order_std=1.0,
+    constant_value=1.0,
+    matern_length_scale=1.0,
+    length_scale_bounds=(1e-2, 1e2),
+    order_std_bounds=(1e-3, 1e3),
+    constant_value_bounds=(1e-5, 1e5),
+    matern_length_scale_bounds=(1e-5, 1e5),
+):
+    """Shorthand for the sample-efficient additive + Matern catch-all kernel.
+
+    This is a convenience constructor for the leaf kernel recommended in the
+    README: a low-order :class:`NewtonGirardAdditiveKernel` (main effects +
+    low-order interactions, with only ``O(d)`` hyperparameters) summed with a
+    *separate* anisotropic Matern "catch-all" that has its own length scales and
+    absorbs any higher-order or rougher residual::
+
+        k(x, x') = NewtonGirardAdditiveKernel(order=Q)
+                   + ConstantKernel() * Matern(nu)
+
+    The additive component makes the kernel sample-efficient on functions that
+    decompose into low-dimensional terms, while the Matern component keeps it a
+    safe general-purpose choice: when there is no low-order structure to exploit,
+    marginal-likelihood optimisation simply down-weights the additive amplitudes
+    and the kernel degrades gracefully to the plain Matern. All hyperparameters
+    (the additive length scales and per-order variances, the Matern length
+    scales, and the catch-all amplitude) are tuned together when the host
+    :class:`~sklearn.gaussian_process.GaussianProcessRegressor` is fitted.
+
+    The returned object is an ordinary scikit-learn composite kernel (a
+    :class:`~sklearn.gaussian_process.kernels.Sum`), so it plugs directly into
+    :func:`~pygptreeo.Default_GPR`, :class:`~pygptreeo.GPTree`, and any
+    ``GaussianProcessRegressor``, and supports cloning, hyperparameter
+    optimisation, and per-dimension length-scale extraction unchanged.
+
+    Parameters
+    ----------
+    d : int
+        Input dimensionality (number of features). Must be a positive integer.
+    order : int, default=2
+        Maximum interaction order ``Q`` of the additive component. ``1`` gives a
+        purely additive (main-effects) model, ``2`` adds pairwise interactions,
+        and so on. Must satisfy ``1 <= order <= d`` (``order=d`` makes the top
+        additive term equivalent to the full ARD product kernel).
+    nu : float, default=1.5
+        Smoothness parameter of the Matern catch-all (e.g. ``0.5``, ``1.5``,
+        ``2.5``, or ``np.inf`` for the RBF limit). Held fixed during fitting, as
+        usual for scikit-learn's ``Matern``.
+    length_scale : float or array-like of shape (d,), default=1.0
+        Initial per-dimension length scales of the additive component. A scalar
+        is broadcast to all ``d`` dimensions.
+    order_std : float or array-like of shape (order,), default=1.0
+        Initial standard deviation (sqrt-variance) for each interaction order
+        ``1..order`` of the additive component. A scalar is broadcast to all
+        ``order`` entries.
+    constant_value : float, default=1.0
+        Initial amplitude (variance) of the ``ConstantKernel`` multiplying the
+        Matern catch-all.
+    matern_length_scale : float or array-like of shape (d,), default=1.0
+        Initial per-dimension length scales of the Matern catch-all. These are
+        independent of ``length_scale``. A scalar is broadcast to all ``d``
+        dimensions.
+    length_scale_bounds, order_std_bounds : pair of floats or "fixed"
+        Bounds for the additive component's length scales and per-order standard
+        deviations. Defaults match :class:`NewtonGirardAdditiveKernel`.
+    constant_value_bounds : pair of floats or "fixed", default=(1e-5, 1e5)
+        Bounds for the catch-all amplitude.
+    matern_length_scale_bounds : pair of floats or "fixed", default=(1e-5, 1e5)
+        Bounds for the Matern catch-all's length scales.
+
+    Returns
+    -------
+    sklearn.gaussian_process.kernels.Sum
+        The composite kernel ``additive + constant * matern``.
+
+    Examples
+    --------
+    >>> from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
+    >>>
+    >>> # Order-2 additive (main effects + pairwise) + Matern catch-all, in 4-D
+    >>> kernel = AdditiveMaternKernel(d=4, order=2)
+    >>> gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
+    >>>
+    >>> # Purely additive (main effects only), custom initial length scales
+    >>> kernel = AdditiveMaternKernel(d=5, order=1, length_scale=0.5)
+    """
+    # ---- Validate the structural parameters --------------------------------
+    if int(d) != d or d < 1:
+        raise ValueError(f"d must be a positive integer, got {d!r}")
+    d = int(d)
+    if int(order) != order or order < 1:
+        raise ValueError(f"order must be a positive integer, got {order!r}")
+    order = int(order)
+    if order > d:
+        raise ValueError(
+            f"order (Q={order}) cannot exceed the input dimensionality d={d}; "
+            f"the elementary symmetric polynomial of order q vanishes for q > d"
+        )
+
+    # ---- Build the per-dimension / per-order initial values ----------------
+    additive_ls = _broadcast_length(length_scale, d, "length_scale")
+    matern_ls = _broadcast_length(matern_length_scale, d, "matern_length_scale")
+    order_sigma = _broadcast_length(order_std, order, "order_std")
+
+    # ---- Assemble the composite kernel -------------------------------------
+    additive = NewtonGirardAdditiveKernel(
+        length_scale=additive_ls,
+        order_std=order_sigma,
+        length_scale_bounds=length_scale_bounds,
+        order_std_bounds=order_std_bounds,
+    )
+    catch_all = (
+        ConstantKernel(constant_value, constant_value_bounds)
+        * Matern(length_scale=matern_ls, nu=nu,
+                 length_scale_bounds=matern_length_scale_bounds)
+    )
+    return additive + catch_all

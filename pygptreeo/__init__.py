@@ -14,6 +14,8 @@ Main components:
     - SklearnGPAdapter: Adapter for scikit-learn GP regressors
     - GPyTorchAdapter: Adapter for GPyTorch models (if GPyTorch is installed)
     - AnisotropicRationalQuadratic: Custom kernel for multi-scale learning
+    - NewtonGirardAdditiveKernel: Sample-efficient low-order additive kernel
+    - AdditiveMaternKernel: Shorthand for the additive + Matern catch-all leaf kernel
 
 Typical usage:
     from pygptreeo import GPTree
@@ -43,7 +45,12 @@ from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 from pygptreeo.gptree import GPTree
 from pygptreeo.gpforest import GPForest
-from pygptreeo.kernels import AnisotropicRationalQuadratic, AdditiveKernel, NewtonGirardAdditiveKernel
+from pygptreeo.kernels import (
+    AnisotropicRationalQuadratic,
+    AdditiveKernel,
+    NewtonGirardAdditiveKernel,
+    AdditiveMaternKernel,
+)
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.adapters import SklearnGPAdapter
 
