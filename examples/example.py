@@ -5,6 +5,7 @@ how specific kernel configurations can be passed to the `GPTree`.
 """
 import numpy as np
 from pygptreeo import GPTree
+from pygptreeo.adapters import SklearnGPAdapter
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel
 import sys
@@ -96,7 +97,7 @@ mygpr = my_GPR_class()
 
 # Construct GPTree
 gpt = GPTree(
-    GPR=my_GPR_class(), 
+    GPR=SklearnGPAdapter(my_GPR_class()),
     Nbar=Nbar,
     theta=theta, 
     split_position_method='median',
@@ -120,8 +121,8 @@ for x,y in zip(X_input, y_input):
     # Compute prediction
     y_pred, y_pred_std = gpt.predict(x, show_progress=False)
 
-    # Update gpt with training point
-    gpt.update_tree(x, y)
+    # Update gpt with training point (sigma = per-point observation-noise std)
+    gpt.update_tree(x, y, 0.001 * np.abs(y))
 
     # Print point summary comparing predicted y to true y
     print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]}  y_pred: {y_pred[0][0]}  y_pred_std: {y_pred_std[0][0]}")
