@@ -12,6 +12,7 @@ pyGPTreeO is a Python tool designed for online/continual regression tasks. It im
 *   **Online Prediction**: Capable of making predictions at any point during the learning process.
 *   **Ensemble Method**: Includes `GPForest` for running an ensemble of multiple GPTrees, which can improve prediction stability and accuracy.
 *   **Customizable GPRs**: Allows users to define and use their own scikit-learn compatible Gaussian Process Regressor models within the tree nodes.
+*   **Sample-efficient additive kernels**: `NewtonGirardAdditiveKernel` exploits low interaction-order structure with only `O(d)` hyperparameters, improving sample efficiency on functions that decompose into low-dimensional terms.
 
 ## How it Works (Briefly)
 GPTreeO builds a binary tree where each node represents a specific region of the input space.
@@ -66,6 +67,51 @@ for i in range(len(X_test)):
 # print("\nGPTree structure:")
 # print(gpt.root)
 ```
+
+## Sample-efficient additive kernels
+
+For functions with low *interaction order* — i.e. well approximated by a sum of
+low-dimensional terms (main effects + pairwise interactions) rather than a fully joint
+`d`-dimensional surface — the leaf GPs can be made substantially more sample-efficient
+with an **additive kernel**. `NewtonGirardAdditiveKernel` models the covariance as a sum
+over interaction orders,
+
+```
+k(x, x') = Σ_q  σ_q² · e_q(z_1, …, z_d),     z_i = exp(-(x_i - x'_i)² / 2ℓ_i²),
+```
+
+where `e_q` is the order-`q` elementary symmetric polynomial of the per-dimension RBFs
+`z_i`. The `e_q` are evaluated from power sums via the Newton–Girard identities in
+`O(d·Q)` time, so the kernel has only `d` length scales + `Q` order variances (`O(d)`
+hyperparameters) instead of the `C(d, q)` terms a naive additive kernel would enumerate.
+A small maximum order `Q` (e.g. 2: main effects + pairwise interactions) breaks the curse
+of dimensionality for such functions while remaining cheap to fit.
+
+The recommended leaf kernel pairs an order-2 additive component with a *separate* Matérn
+"catch-all" (with its own length scales) that absorbs any higher-order or rougher
+residual:
+
+```python
+import numpy as np
+from pygptreeo import GPTree, Default_GPR, NewtonGirardAdditiveKernel
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern
+
+d = 4  # input dimensionality
+
+# order-2 additive (main effects + pairwise) + a separate Matern catch-all
+kernel = (NewtonGirardAdditiveKernel(length_scale=[1.0] * d, order_std=[1.0, 1.0])
+          + ConstantKernel() * Matern(nu=1.5, length_scale=[1.0] * d))
+
+gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
+# then feed data and predict exactly as in the Usage Example above
+```
+
+`order_std` has one entry per active interaction order, and its length sets the maximum
+order `Q` (`[1.0, 1.0]` ⇒ orders 1 and 2). All hyperparameters — the `d` shared length
+scales, the per-order variances, and the catch-all — are tuned per leaf by
+marginal-likelihood maximisation. When a function has no low-order structure to exploit,
+the additive amplitudes are simply down-weighted and the kernel degrades gracefully to
+the plain Matérn catch-all, so it is safe to use as a general-purpose leaf kernel.
 
 ## Running Examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:

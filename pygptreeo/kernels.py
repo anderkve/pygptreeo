@@ -8,6 +8,7 @@ for learning functions with low-dimensional structure.
 
 import numpy as np
 from itertools import combinations
+from math import comb
 from sklearn.gaussian_process.kernels import Kernel, Hyperparameter, StationaryKernelMixin, NormalizedKernelMixin
 from sklearn.gaussian_process.kernels import _check_length_scale
 from sklearn.gaussian_process.kernels import RBF, Matern
@@ -661,3 +662,135 @@ class AdditiveKernel(Kernel):
                 f"base_kernel='{self.base_kernel}', "
                 f"length_scale={ls_repr}, "
                 f"n_terms={self.n_terms})")
+
+
+class NewtonGirardAdditiveKernel(Kernel):
+    """Additive RBF kernel with per-order variances, via Newton-Girard recursion.
+
+    Models the target as a sum of interaction terms grouped by *order*::
+
+        k(x, x') = sum_{q=1}^{Q} sigma_q^2 * e_q(z_1, ..., z_d)
+
+    where ``z_i = exp(-(x_i - x'_i)^2 / (2 l_i^2))`` is a per-dimension RBF and ``e_q``
+    is the elementary symmetric polynomial of order q in ``(z_1, ..., z_d)``. The
+    ``e_q`` are computed from power sums via the Newton-Girard identities in
+    ``O(d * Q)`` -- never by enumerating the ``C(d, q)`` interaction terms -- so the
+    kernel has only ``d`` length scales + ``Q`` order-variances (``O(d)``
+    hyperparameters) and costs ``O(d * Q * n^2)`` to evaluate.
+
+    This is the data-efficient way to exploit low interaction order: an additive
+    (order-1) or low-order model needs far fewer samples than the fully-interacting
+    product kernel (the standard ARD RBF), which this strictly generalises -- the
+    order-``d`` term *is* the product kernel. Truncating to small ``Q`` (e.g. 1 or 2),
+    optionally plus a Matern/RBF catch-all for higher orders, keeps it cheap while
+    letting marginal-likelihood optimisation choose how much of each order to use.
+
+    Unlike :class:`AdditiveKernel` (which enumerates ``combinations`` and so scales
+    as ``C(d, q)``), this kernel stays linear in ``d``.
+
+    Parameters
+    ----------
+    length_scale : array-like of shape (n_features,)
+        Per-dimension length scales of the base RBF.
+    order_std : array-like of shape (max_order,)
+        Standard deviation (sqrt variance) for each interaction order ``1..Q``;
+        ``len(order_std)`` sets the maximum interaction order ``Q``.
+    length_scale_bounds, order_std_bounds : pair of floats or "fixed"
+        Bounds for the respective hyperparameters.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from pygptreeo.kernels import NewtonGirardAdditiveKernel
+    >>> from sklearn.gaussian_process.kernels import ConstantKernel, Matern
+    >>> # order-2 additive component + a Matern catch-all, in 5-D
+    >>> k = (NewtonGirardAdditiveKernel(length_scale=[1.0] * 5, order_std=[1.0, 1.0])
+    ...      + ConstantKernel(1.0) * Matern(length_scale=[1.0] * 5, nu=1.5))
+    """
+
+    def __init__(self, length_scale, order_std,
+                 length_scale_bounds=(1e-2, 1e2), order_std_bounds=(1e-3, 1e3)):
+        self.length_scale = length_scale
+        self.order_std = order_std
+        self.length_scale_bounds = length_scale_bounds
+        self.order_std_bounds = order_std_bounds
+
+    @property
+    def hyperparameter_length_scale(self):
+        return Hyperparameter("length_scale", "numeric", self.length_scale_bounds,
+                              len(np.atleast_1d(self.length_scale)))
+
+    @property
+    def hyperparameter_order_std(self):
+        return Hyperparameter("order_std", "numeric", self.order_std_bounds,
+                              len(np.atleast_1d(self.order_std)))
+
+    def _components(self, X, Y):
+        """Per-dimension RBF matrices Z_i and squared distances D_i."""
+        ls = np.atleast_1d(self.length_scale)
+        Zs, Ds = [], []
+        for i in range(X.shape[1]):
+            Di = (X[:, i][:, None] - Y[:, i][None, :]) ** 2
+            Zs.append(np.exp(-Di / (2.0 * ls[i] ** 2)))
+            Ds.append(Di)
+        return Zs, Ds, ls
+
+    @staticmethod
+    def _elem_sym(Zs, Q):
+        """Elementary symmetric polynomials E_0..E_Q via Newton-Girard (O(d*Q))."""
+        shape = Zs[0].shape
+        P = [None] + [sum(Z ** k for Z in Zs) for k in range(1, Q + 1)]   # power sums
+        E = [np.ones(shape)]                                              # E_0
+        for q in range(1, Q + 1):
+            acc = np.zeros(shape)
+            for k in range(1, q + 1):
+                acc = acc + ((-1) ** (k - 1)) * E[q - k] * P[k]
+            E.append(acc / q)
+        return E
+
+    def __call__(self, X, Y=None, eval_gradient=False):
+        X = np.atleast_2d(X)
+        Y = X if Y is None else np.atleast_2d(Y)
+        sig = np.atleast_1d(self.order_std)
+        d, Q = X.shape[1], len(sig)
+        Zs, Ds, ls = self._components(X, Y)
+        E = self._elem_sym(Zs, Q)
+        K = sum(sig[q - 1] ** 2 * E[q] for q in range(1, Q + 1))
+        if not eval_gradient:
+            return K
+
+        # Gradient w.r.t. log-hyperparameters, ordered as sklearn expects
+        # (alphabetical by name): length_scale (d) then order_std (Q). Fixed
+        # hyperparameters are omitted.
+        grads = []
+        if not self.hyperparameter_length_scale.fixed:
+            for i in range(d):
+                Gi = Zs[i] * (Ds[i] / ls[i] ** 2)            # dZ_i / dlog l_i
+                Eli = [np.ones(Zs[0].shape)]                 # leave-i-out E^{(\i)}_0
+                for r in range(1, Q):
+                    Eli.append(E[r] - Zs[i] * Eli[r - 1])    # E^{(\i)}_r
+                S = sum(sig[q - 1] ** 2 * Eli[q - 1] for q in range(1, Q + 1))
+                grads.append(Gi * S)                         # dE_q/dZ_i = E^{(\i)}_{q-1}
+        if not self.hyperparameter_order_std.fixed:
+            for q in range(1, Q + 1):
+                grads.append(2.0 * sig[q - 1] ** 2 * E[q])   # dK / dlog sigma_q
+        K_grad = (np.stack(grads, axis=2) if grads
+                  else np.empty((X.shape[0], Y.shape[0], 0)))
+        return K, K_grad
+
+    def diag(self, X):
+        # z_i(x, x) = 1, so e_q(1, ..., 1) = C(d, q): the diagonal is constant.
+        Xd = np.atleast_2d(X)
+        d = Xd.shape[1]
+        sig = np.atleast_1d(self.order_std)
+        val = sum(sig[q - 1] ** 2 * comb(d, q) for q in range(1, len(sig) + 1))
+        return np.full(Xd.shape[0], float(val))
+
+    def is_stationary(self):
+        return True
+
+    def __repr__(self):
+        ls = np.atleast_1d(self.length_scale)
+        sig = np.atleast_1d(self.order_std)
+        return (f"{self.__class__.__name__}(d={len(ls)}, max_order={len(sig)}, "
+                f"order_std=[{', '.join(f'{s:.3g}' for s in sig)}])")
