@@ -237,7 +237,7 @@ for x,y in zip(X_input, y_input):
         y_pred, y_pred_std, leaf_names = gpt.predict(x, show_progress=False, return_leaf_names=True)
 
         # Update tree
-        gpt.update_tree(x, y)
+        gpt.update_tree(x, y, 0.001 * np.abs(y))
 
         # Print point summary
         abs_err = np.abs(y_pred[0][0] - y[0][0])
