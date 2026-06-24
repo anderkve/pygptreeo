@@ -22,9 +22,9 @@ Typical usage:
 
     gpt = GPTree(Nbar=100, theta=1e-4)
 
-    for x, y in data_stream:
+    for x, y, sigma in data_stream:
         y_pred, y_std = gpt.predict(x)
-        gpt.update_tree(x, y)
+        gpt.update_tree(x, y, sigma)  # sigma: observation-noise std for this point
 """
 
 # Standard library imports

@@ -47,11 +47,13 @@ y_train = np.sin(X_train).ravel().reshape(-1, 1)
 
 # 3. Feed data points to the tree sequentially
 print("Training the GPTree...")
+sigma = 1e-3  # observation noise (standard deviation) for each point
 for i in range(len(X_train)):
     # GPTree expects 2D input for X and y for a single sample
     x_sample = X_train[i:i+1, :]
     y_sample = y_train[i:i+1, :]
-    gpt.update_tree(x_sample, y_sample)
+    # update_tree(x, y, sigma): sigma is the observation-noise std for this point
+    gpt.update_tree(x_sample, y_sample, sigma)
     if (i + 1) % 20 == 0:
         print(f"Processed {i+1}/{len(X_train)} points.")
 
