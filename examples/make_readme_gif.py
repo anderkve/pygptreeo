@@ -12,18 +12,21 @@ exploring -- a converged region of interest. As the stream proceeds you can
 watch pyGPTreeO's prediction "fill in" the true function where the data goes,
 while regions that never receive points stay unlearned and uncertain.
 
-Three panels, sharing the same x_1, x_2 axes:
+Four panels, sharing the same x_1, x_2 axes:
 
   1. Unknown target function (fixed reference heat map) with the incoming data
-     stream drawn on top: faded grey = points seen earlier, bright red = the
+     stream drawn on top: small white dots = points seen earlier, red = the
      points that just arrived.
   2. pyGPTreeO's current prediction. Each pixel is shown only as strongly as the
      model is confident there (low GP std -> opaque, high GP std -> transparent),
      so the learned function literally appears only where data has been seen. The
      thin white rectangles are the leaves of the GP tree -- the local GP models
      that the tree has grown, denser where more data has arrived.
-  3. pyGPTreeO's predictive uncertainty (GP standard deviation): low (dark) along
-     the visited band, high (bright) in the unvisited corners.
+  3. pyGPTreeO's predictive uncertainty (GP standard deviation): low (dark) where
+     data has been seen, high (bright) where it has not.
+  4. Absolute prediction error, |prediction - truth|: low (dark) where data has
+     been seen, confirming that the model is actually accurate -- not just
+     confident -- exactly in the sampled regions.
 
 Usage:
     python make_readme_gif.py                 # full-quality render
@@ -103,6 +106,10 @@ FN_VMIN = 0.0
 FN_VMAX = 7.0
 FN_LEVELS = 21
 UNC_LEVELS = 20  # discrete colour levels for the uncertainty (magma) colormap
+
+# Absolute prediction-error (inferno) colour scale.
+ERR_LEVELS = 20
+ERR_VMAX = 1.5
 
 # Predictive-std scale (calibrated for this target/setup): well-learned regions
 # sit near STD_LO, never-visited regions near/above STD_HI.
@@ -193,15 +200,27 @@ def update_quiet(gpt, x, y):
 # Figure scaffolding
 # --------------------------------------------------------------------------
 
-plt.rcParams.update({"font.size": 13, "axes.titlesize": 15})
-fig, (axT, axP, axU) = plt.subplots(1, 3, figsize=(15.0, 5.0))
-fig.subplots_adjust(left=0.035, right=0.895, bottom=0.10, top=0.80, wspace=0.30)
+plt.rcParams.update({"font.size": 13, "axes.titlesize": 14})
+fig = plt.figure(figsize=(20.0, 5.2))
 
 cmap_fn = plt.get_cmap("viridis", FN_LEVELS)   # 21 colours over y in [0, 7]
 cmap_unc = plt.get_cmap("magma", UNC_LEVELS)
+cmap_err = plt.get_cmap("inferno", ERR_LEVELS)
 norm_fn = colors.Normalize(vmin=vmin, vmax=vmax)
 
 extent = [0, 1, 0, 1]
+
+# Manual layout: four image panels in a row, each followed (where needed) by a
+# slim colour bar with room for its tick labels.
+PB, PH, PW, CW = 0.10, 0.70, 0.190, 0.008      # bottom, height, panel/cbar widths
+x = 0.028
+axT = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.010
+axP = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.006
+cax_fn = fig.add_axes([x, PB, CW, PH]); x += CW + 0.034
+axU = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.006
+cax_un = fig.add_axes([x, PB, CW, PH]); x += CW + 0.034
+axE = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.006
+cax_er = fig.add_axes([x, PB, CW, PH])
 
 # Panel 1: true function + data stream
 axT.imshow(Z_true, origin="lower", extent=extent, cmap=cmap_fn,
@@ -222,24 +241,33 @@ unc_im = axU.imshow(np.zeros((GRID, GRID)), origin="lower", extent=extent,
                     cmap=cmap_unc, aspect="auto", vmin=0.0, vmax=UNC_VMAX)
 axU.set_title("pyGPTreeO uncertainty\n(GP standard deviation)")
 
-for ax in (axT, axP, axU):
+# Panel 4: absolute prediction error vs the true function
+err_im = axE.imshow(np.zeros((GRID, GRID)), origin="lower", extent=extent,
+                    cmap=cmap_err, aspect="auto", vmin=0.0, vmax=ERR_VMAX)
+axE.set_title("pyGPTreeO error\n(|prediction $-$ truth|)")
+
+for ax in (axT, axP, axU, axE):
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
     ax.set_xlabel(r"$x_1$")
     ax.set_xticks([0, 0.5, 1]); ax.set_yticks([0, 0.5, 1])
 axT.set_ylabel(r"$x_2$")
+for ax in (axP, axU, axE):       # all panels share the same y-axis -> label once
+    ax.set_yticklabels([])
 axP.set_facecolor("0.85")  # neutral background showing through where unconfident
 
-# Shared colour bars
-cax_fn = fig.add_axes([0.602, 0.10, 0.010, 0.70])
+# Colour bars
 cb_fn = fig.colorbar(cm.ScalarMappable(norm=norm_fn, cmap=cmap_fn), cax=cax_fn, label="y")
 cb_fn.set_ticks(list(range(int(FN_VMIN), int(FN_VMAX) + 1)))
-cax_un = fig.add_axes([0.905, 0.10, 0.010, 0.70])
 cb_un = fig.colorbar(cm.ScalarMappable(norm=colors.Normalize(0, UNC_VMAX), cmap=cmap_unc),
                      cax=cax_un, label="GP std")
 cb_un.set_ticks([0, UNC_VMAX])
-cb_un.set_ticklabels(["0\n(learned)", "high\n(unknown)"])
+cb_un.set_ticklabels(["0", "high"])
+cb_er = fig.colorbar(cm.ScalarMappable(norm=colors.Normalize(0, ERR_VMAX), cmap=cmap_err),
+                     cax=cax_er, label="|prediction $-$ truth|")
+cb_er.set_ticks([0, ERR_VMAX])
+cb_er.set_ticklabels(["0\n(accurate)", "high\n(wrong)"])
 
-suptitle = fig.suptitle("", fontsize=18, y=0.955)
+suptitle = fig.suptitle("", fontsize=18, x=0.5, y=0.955)
 leaf_patches = []
 
 
@@ -273,6 +301,9 @@ def render_frame(n_seen):
 
     # Panel 3: uncertainty
     unc_im.set_data(std)
+
+    # Panel 4: absolute prediction error against the true function
+    err_im.set_data(np.abs(mu - Z_true))
 
     # Panel 1: data stream (faded older, bright newest batch)
     new_lo = max(0, n_seen - PTS_PER_FRAME)
