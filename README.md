@@ -88,8 +88,9 @@ The additive component uses only `d` length scales plus one variance per interac
 order, so it needs fewer data points to fit when the target really does decompose this
 way. `order` sets the highest interaction order (1 for main effects only, 2 to add
 pairwise terms) and `base` (`"rbf"` or `"matern"`) sets its smoothness. The catch-all
-soaks up whatever is left, so there is no harm in using this kernel when the target has no
-additive structure. Hyperparameters are tuned per leaf by marginal-likelihood maximisation.
+soaks up whatever is left. So even when the target has no additive structure, there is 
+typically little harm in using this kernel beyon the increased run time from fitting more 
+hyperparameters. The hyperparameters are tuned per leaf by marginal-likelihood maximisation.
 
 Other options:
 
