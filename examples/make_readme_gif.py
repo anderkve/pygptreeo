@@ -66,6 +66,9 @@ simplefilter("ignore", category=ConvergenceWarning)
 parser = argparse.ArgumentParser()
 parser.add_argument("--quick", action="store_true",
                     help="Small/fast preview render for iterating on the design.")
+parser.add_argument("--alt", action="store_true",
+                    help="Alternative version: Nbar=100 and a 0..1 colour range "
+                         "for the uncertainty/error panels, saved to a separate file.")
 parser.add_argument("--seed", type=int, default=4)
 args = parser.parse_args()
 
@@ -83,7 +86,7 @@ else:
     GRID = 70
     HOLD_FRAMES = 12
 
-NBAR = 50
+NBAR = 100 if args.alt else 50
 FPS = 12
 
 # Sampling schedule. The cluster centre sweeps the path and then settles on the
@@ -109,19 +112,21 @@ UNC_LEVELS = 20  # discrete colour levels for the uncertainty (magma) colormap
 
 # Absolute prediction-error (inferno) colour scale.
 ERR_LEVELS = 20
-ERR_VMAX = 1.5
+ERR_VMAX = 1.0 if args.alt else 1.5
 
 # Predictive-std scale (calibrated for this target/setup): well-learned regions
-# sit near STD_LO, never-visited regions near/above STD_HI.
+# sit near STD_LO, never-visited regions near/above STD_HI. STD_LO/STD_HI control
+# the prediction-panel opacity; UNC_VMAX only sets the uncertainty-panel range.
 STD_LO = 0.03
 STD_HI = 0.30
-UNC_VMAX = 0.40
+UNC_VMAX = 1.0 if args.alt else 0.40
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "example_plots", "animation")
 os.makedirs(OUT_DIR, exist_ok=True)
-GIF_PATH = os.path.join(OUT_DIR, "pygptreeo_local_learning.gif")
-PNG_PATH = os.path.join(OUT_DIR, "pygptreeo_local_learning_final.png")
+BASENAME = "pygptreeo_local_learning_nbar100" if args.alt else "pygptreeo_local_learning"
+GIF_PATH = os.path.join(OUT_DIR, BASENAME + ".gif")
+PNG_PATH = os.path.join(OUT_DIR, BASENAME + "_final.png")
 
 np.random.seed(args.seed)
 
@@ -260,12 +265,15 @@ cb_fn = fig.colorbar(cm.ScalarMappable(norm=norm_fn, cmap=cmap_fn), cax=cax_fn, 
 cb_fn.set_ticks(list(range(int(FN_VMIN), int(FN_VMAX) + 1)))
 cb_un = fig.colorbar(cm.ScalarMappable(norm=colors.Normalize(0, UNC_VMAX), cmap=cmap_unc),
                      cax=cax_un, label="GP std")
-cb_un.set_ticks([0, UNC_VMAX])
-cb_un.set_ticklabels(["0", "high"])
 cb_er = fig.colorbar(cm.ScalarMappable(norm=colors.Normalize(0, ERR_VMAX), cmap=cmap_err),
                      cax=cax_er, label="|prediction $-$ truth|")
-cb_er.set_ticks([0, ERR_VMAX])
-cb_er.set_ticklabels(["0\n(accurate)", "high\n(wrong)"])
+if args.alt:
+    # Both panels share an absolute 0..1 scale -> show numeric ticks.
+    cb_un.set_ticks([0.0, 0.5, 1.0]); cb_un.set_ticklabels(["0.0", "0.5", "1.0"])
+    cb_er.set_ticks([0.0, 0.5, 1.0]); cb_er.set_ticklabels(["0.0", "0.5", "1.0"])
+else:
+    cb_un.set_ticks([0, UNC_VMAX]); cb_un.set_ticklabels(["0", "high"])
+    cb_er.set_ticks([0, ERR_VMAX]); cb_er.set_ticklabels(["0\n(accurate)", "high\n(wrong)"])
 
 suptitle = fig.suptitle("", fontsize=18, x=0.5, y=0.955)
 leaf_patches = []
