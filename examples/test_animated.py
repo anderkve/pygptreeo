@@ -41,6 +41,7 @@ import matplotlib.gridspec as gridspec
 from matplotlib.animation import FuncAnimation
 import seaborn as sns
 from pygptreeo import GPTree
+from pygptreeo.adapters import SklearnGPAdapter
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel
 import sys
@@ -140,7 +141,7 @@ mygpr = my_GPR_class()
 
 # Construct GPTree
 gpt = GPTree(
-    GPR=my_GPR_class(), 
+    GPR=SklearnGPAdapter(my_GPR_class()),
     Nbar=Nbar,
     theta=theta, 
     split_position_method='median',
@@ -421,8 +422,8 @@ for x,y in zip(X_input, y_input):
     x = x.reshape((1, x.shape[0]))
     y = y.reshape((1,1))
 
-    # Update gpt
-    gpt.update_tree(x, y)
+    # Update gpt (sigma = per-point observation-noise std)
+    gpt.update_tree(x, y, 0.001 * np.abs(y))
 
     # Update plot
     if point_i % Nbar == 0:
