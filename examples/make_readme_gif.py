@@ -58,11 +58,68 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
+from sklearn.gaussian_process.kernels import (
+    Kernel, Hyperparameter, StationaryKernelMixin, NormalizedKernelMixin)
 from target_functions import Himmelblau, Eggholder
 
 from warnings import simplefilter
 from sklearn.exceptions import ConvergenceWarning
 simplefilter("ignore", category=ConvergenceWarning)
+
+
+class RotatedRBF(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
+    """2-D RBF with a full, *rotatable* metric (non-diagonal length-scale matrix).
+
+        k(x, x') = exp( -0.5 (x - x')^T A (x - x') ),
+        A = R(angle)^T diag(1/l1^2, 1/l2^2) R(angle)
+
+    Unlike an ARD/anisotropic kernel (diagonal A, axis-aligned), the anisotropy
+    axes can rotate, so a leaf GP can align a long length scale *along* a tilted
+    ridge and a short one across it. Hyperparameters (l1, l2, angle) are fit per
+    leaf by marginal likelihood; gradients are evaluated numerically in log-space.
+    """
+
+    def __init__(self, length_scale=(1.0, 1.0), angle=0.5,
+                 length_scale_bounds=(1e-2, 1e2), angle_bounds=(1e-2, float(np.pi))):
+        self.length_scale = length_scale
+        self.angle = angle
+        self.length_scale_bounds = length_scale_bounds
+        self.angle_bounds = angle_bounds
+
+    @property
+    def hyperparameter_angle(self):
+        return Hyperparameter("angle", "numeric", self.angle_bounds)
+
+    @property
+    def hyperparameter_length_scale(self):
+        return Hyperparameter("length_scale", "numeric", self.length_scale_bounds,
+                              len(self.length_scale))
+
+    @staticmethod
+    def _kmat(X, Y, angle, l1, l2):
+        c, s = np.cos(angle), np.sin(angle)
+        R = np.array([[c, -s], [s, c]])
+        A = R.T @ np.diag([1.0 / l1 ** 2, 1.0 / l2 ** 2]) @ R
+        diff = X[:, None, :] - Y[None, :, :]
+        d2 = np.einsum("ijk,kl,ijl->ij", diff, A, diff)
+        return np.exp(-0.5 * d2)
+
+    def __call__(self, X, Y=None, eval_gradient=False):
+        X = np.atleast_2d(X)
+        Y = X if Y is None else np.atleast_2d(Y)
+        l1, l2 = self.length_scale
+        p = [self.angle, l1, l2]                       # theta order: angle, l1, l2
+        K = self._kmat(X, Y, *p)
+        if not eval_gradient:
+            return K
+        eps = 1e-5
+        grad = np.empty(K.shape + (3,))
+        for i in range(3):                             # central diff in log-space
+            pu, pd = list(p), list(p)
+            pu[i] = p[i] * np.exp(eps)
+            pd[i] = p[i] * np.exp(-eps)
+            grad[:, :, i] = (self._kmat(X, Y, *pu) - self._kmat(X, Y, *pd)) / (2 * eps)
+        return K, grad
 
 
 # --------------------------------------------------------------------------
@@ -79,9 +136,11 @@ parser.add_argument("--target", choices=["himmelblau", "eggholder"],
 parser.add_argument("--final-only", action="store_true",
                     help="Run the full stream but render only the final frame "
                          "(saved as the PNG, no GIF) -- for previewing the end state.")
-parser.add_argument("--kernel", choices=["additive", "matern_rbf"], default="additive",
+parser.add_argument("--kernel", choices=["additive", "matern_rbf", "rotated"],
+                    default="additive",
                     help="Leaf GP kernel: 'additive' = AdditiveMaternKernel; "
-                         "'matern_rbf' = ConstantKernel*(anisotropic Matern(1.5)+RBF).")
+                         "'matern_rbf' = ConstantKernel*(anisotropic Matern(1.5)+RBF); "
+                         "'rotated' = ConstantKernel*RotatedRBF (non-diagonal metric).")
 parser.add_argument("--seed", type=int, default=4)
 args = parser.parse_args()
 
@@ -393,6 +452,9 @@ if args.kernel == "matern_rbf":
     # wrapped in a ConstantKernel (per-dimension length scales).
     kernel = ConstantKernel() * (Matern(length_scale=[1.0, 1.0], nu=1.5)
                                  + RBF(length_scale=[1.0, 1.0]))
+elif args.kernel == "rotated":
+    # Non-diagonal-metric RBF: anisotropy axes can rotate to align with ridges.
+    kernel = ConstantKernel() * RotatedRBF(length_scale=[1.0, 1.0], angle=0.5)
 else:
     kernel = AdditiveMaternKernel(d=2, order=2, nu=1.5)
 gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=NBAR, theta=0.05,
