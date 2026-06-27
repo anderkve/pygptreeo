@@ -82,7 +82,7 @@ else:
 NBAR = 40
 CLUSTER_SIGMA = 0.06
 FPS = 12
-GIF_COLORS = 128  # shared GIF palette size (keeps the file small but faithful)
+N_LEVELS = 20  # number of discrete colour levels in each colormap
 
 # Predictive-std scale (calibrated for this target/setup): well-learned regions
 # sit near STD_LO, never-visited regions near/above STD_HI.
@@ -162,8 +162,8 @@ plt.rcParams.update({"font.size": 13, "axes.titlesize": 15})
 fig, (axT, axP, axU) = plt.subplots(1, 3, figsize=(15.0, 5.0))
 fig.subplots_adjust(left=0.035, right=0.895, bottom=0.10, top=0.80, wspace=0.30)
 
-cmap_fn = plt.get_cmap("viridis")
-cmap_unc = plt.get_cmap("magma")
+cmap_fn = plt.get_cmap("viridis", N_LEVELS)   # discretised into N_LEVELS colours
+cmap_unc = plt.get_cmap("magma", N_LEVELS)
 norm_fn = colors.Normalize(vmin=vmin, vmax=vmax)
 
 extent = [0, 1, 0, 1]
@@ -273,13 +273,11 @@ frames.extend([frames[-1]] * HOLD_FRAMES)
 
 frames[-1].save(PNG_PATH)
 
-# Quantize all frames to one shared adaptive palette (built from a representative
-# dense frame). Without dithering this keeps the smooth heat maps faithful while
-# shrinking the GIF roughly 2x compared with per-frame palettes.
-palette_src = frames[len(frames) // 2].quantize(colors=GIF_COLORS, method=Image.MEDIANCUT)
-q_frames = [f.quantize(palette=palette_src, dither=Image.NONE) for f in frames]
-q_frames[0].save(GIF_PATH, save_all=True, append_images=q_frames[1:],
-                 duration=int(1000 / FPS), loop=0, optimize=True)
+# Save with a full per-frame palette (no shared/lossy quantization). Because the
+# colormaps are discretised into N_LEVELS colours, unchanged regions render as
+# exactly the same colour from frame to frame, so the animation stays stable.
+frames[0].save(GIF_PATH, save_all=True, append_images=frames[1:],
+               duration=int(1000 / FPS), loop=0, optimize=True)
 print(f"\nWrote {GIF_PATH}  ({len(frames)} frames, "
       f"{os.path.getsize(GIF_PATH) / 1e6:.1f} MB)")
 print(f"Wrote {PNG_PATH}")
