@@ -691,12 +691,18 @@ class NewtonGirardAdditiveKernel(Kernel):
     Parameters
     ----------
     length_scale : array-like of shape (n_features,)
-        Per-dimension length scales of the base RBF.
+        Per-dimension length scales of the base kernel.
     order_std : array-like of shape (max_order,)
         Standard deviation (sqrt variance) for each interaction order ``1..Q``;
         ``len(order_std)`` sets the maximum interaction order ``Q``.
     length_scale_bounds, order_std_bounds : pair of floats or "fixed"
         Bounds for the respective hyperparameters.
+    base : {"rbf", "matern"}, default="rbf"
+        Per-dimension base kernel. ``"rbf"`` (squared-exponential) is infinitely
+        smooth and is the best choice when the low-order structure is smooth;
+        ``"matern"`` (Matern-3/2, once differentiable) fits *rough* low-order
+        structure (kinks, sharp peaks) better. Both have a constant unit diagonal,
+        so only the smoothness of the modelled interactions changes.
 
     Examples
     --------
@@ -709,11 +715,13 @@ class NewtonGirardAdditiveKernel(Kernel):
     """
 
     def __init__(self, length_scale, order_std,
-                 length_scale_bounds=(1e-2, 1e2), order_std_bounds=(1e-3, 1e3)):
+                 length_scale_bounds=(1e-2, 1e2), order_std_bounds=(1e-3, 1e3),
+                 base="rbf"):
         self.length_scale = length_scale
         self.order_std = order_std
         self.length_scale_bounds = length_scale_bounds
         self.order_std_bounds = order_std_bounds
+        self.base = base
 
     @property
     def hyperparameter_length_scale(self):
@@ -726,14 +734,31 @@ class NewtonGirardAdditiveKernel(Kernel):
                               len(np.atleast_1d(self.order_std)))
 
     def _components(self, X, Y):
-        """Per-dimension RBF matrices Z_i and squared distances D_i."""
+        """Per-dimension base kernels Z_i and their log-length-scale derivatives G_i.
+
+        The per-dimension base is selected by ``self.base``:
+        ``"rbf"`` uses ``Z_i = exp(-D_i / 2 l_i^2)`` (infinitely smooth), ``"matern"``
+        uses a Matern-3/2 ``Z_i = (1 + sqrt3 r_i) exp(-sqrt3 r_i)`` with
+        ``r_i = sqrt(D_i)/l_i`` (once differentiable). ``G_i = dZ_i / dlog l_i``.
+        """
         ls = np.atleast_1d(self.length_scale)
-        Zs, Ds = [], []
+        base = getattr(self, "base", "rbf")
+        Zs, Gs = [], []
         for i in range(X.shape[1]):
             Di = (X[:, i][:, None] - Y[:, i][None, :]) ** 2
-            Zs.append(np.exp(-Di / (2.0 * ls[i] ** 2)))
-            Ds.append(Di)
-        return Zs, Ds, ls
+            if base == "rbf":
+                Zi = np.exp(-Di / (2.0 * ls[i] ** 2))
+                Zs.append(Zi)
+                Gs.append(Zi * (Di / ls[i] ** 2))               # dZ_i/dlog l_i (RBF)
+            elif base == "matern":
+                s3 = np.sqrt(3.0)
+                ri = np.sqrt(Di) / ls[i]
+                e = np.exp(-s3 * ri)
+                Zs.append((1.0 + s3 * ri) * e)                  # Matern-3/2
+                Gs.append(3.0 * (Di / ls[i] ** 2) * e)          # dZ_i/dlog l_i (Matern)
+            else:
+                raise ValueError(f"Unknown base {base!r}; use 'rbf' or 'matern'")
+        return Zs, Gs, ls
 
     @staticmethod
     def _elem_sym(Zs, Q):
@@ -753,7 +778,7 @@ class NewtonGirardAdditiveKernel(Kernel):
         Y = X if Y is None else np.atleast_2d(Y)
         sig = np.atleast_1d(self.order_std)
         d, Q = X.shape[1], len(sig)
-        Zs, Ds, ls = self._components(X, Y)
+        Zs, Gs, ls = self._components(X, Y)
         E = self._elem_sym(Zs, Q)
         K = sum(sig[q - 1] ** 2 * E[q] for q in range(1, Q + 1))
         if not eval_gradient:
@@ -765,7 +790,7 @@ class NewtonGirardAdditiveKernel(Kernel):
         grads = []
         if not self.hyperparameter_length_scale.fixed:
             for i in range(d):
-                Gi = Zs[i] * (Ds[i] / ls[i] ** 2)            # dZ_i / dlog l_i
+                Gi = Gs[i]                                   # dZ_i / dlog l_i
                 Eli = [np.ones(Zs[0].shape)]                 # leave-i-out E^{(\i)}_0
                 for r in range(1, Q):
                     Eli.append(E[r] - Zs[i] * Eli[r - 1])    # E^{(\i)}_r
@@ -793,6 +818,7 @@ class NewtonGirardAdditiveKernel(Kernel):
         ls = np.atleast_1d(self.length_scale)
         sig = np.atleast_1d(self.order_std)
         return (f"{self.__class__.__name__}(d={len(ls)}, max_order={len(sig)}, "
+                f"base='{getattr(self, 'base', 'rbf')}', "
                 f"order_std=[{', '.join(f'{s:.3g}' for s in sig)}])")
 
 
@@ -818,6 +844,7 @@ def AdditiveMaternKernel(
     *,
     order=2,
     nu=1.5,
+    base="rbf",
     length_scale=1.0,
     order_std=1.0,
     constant_value=1.0,
@@ -866,6 +893,12 @@ def AdditiveMaternKernel(
         Smoothness parameter of the Matern catch-all (e.g. ``0.5``, ``1.5``,
         ``2.5``, or ``np.inf`` for the RBF limit). Held fixed during fitting, as
         usual for scikit-learn's ``Matern``.
+    base : {"rbf", "matern"}, default="rbf"
+        Per-dimension base kernel of the additive component. Use ``"rbf"`` when the
+        target's low-order (additive / pairwise) structure is expected to be smooth,
+        and ``"matern"`` (Matern-3/2) when it is expected to be rough (kinks, sharp
+        peaks). Only the additive component's smoothness changes; the Matern
+        catch-all is unaffected.
     length_scale : float or array-like of shape (d,), default=1.0
         Initial per-dimension length scales of the additive component. A scalar
         is broadcast to all ``d`` dimensions.
@@ -928,6 +961,7 @@ def AdditiveMaternKernel(
         order_std=order_sigma,
         length_scale_bounds=length_scale_bounds,
         order_std_bounds=order_std_bounds,
+        base=base,
     )
     catch_all = (
         ConstantKernel(constant_value, constant_value_bounds)

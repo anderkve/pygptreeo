@@ -12,7 +12,7 @@ pyGPTreeO is a Python tool designed for online/continual regression tasks. It im
 *   **Online Prediction**: Capable of making predictions at any point during the learning process.
 *   **Ensemble Method**: Includes `GPForest` for running an ensemble of multiple GPTrees, which can improve prediction stability and accuracy.
 *   **Customizable GPRs**: Allows users to define and use their own scikit-learn compatible Gaussian Process Regressor models within the tree nodes.
-*   **Sample-efficient additive kernels**: `NewtonGirardAdditiveKernel` exploits low interaction-order structure with only `O(d)` hyperparameters, improving sample efficiency on functions that decompose into low-dimensional terms. The `AdditiveMaternKernel` shorthand pairs it with a Matérn catch-all in a single call for use as a general-purpose leaf kernel.
+*   **Sample-efficient additive kernels**: `NewtonGirardAdditiveKernel` exploits low interaction-order structure with only `O(d)` hyperparameters, improving sample efficiency on functions that decompose into low-dimensional terms. The `AdditiveMaternKernel` shorthand pairs it with a Matérn catch-all in a single call and is the **recommended default leaf kernel** (with a Matérn + RBF kernel as the suggested lightweight alternative — see [Recommended leaf kernel](#recommended-leaf-kernel-sample-efficient-additive-kernels)).
 
 ## How it Works (Briefly)
 GPTreeO builds a binary tree where each node represents a specific region of the input space.
@@ -70,7 +70,23 @@ for i in range(len(X_test)):
 # print(gpt.root)
 ```
 
-## Sample-efficient additive kernels
+## Recommended leaf kernel (sample-efficient additive kernels)
+
+**The recommended default leaf kernel is `AdditiveMaternKernel(d, order=2, nu=1.5)`** —
+an order-2 Newton–Girard additive component plus a separate Matérn catch-all. It is a
+good general-purpose choice: it is sample-efficient on targets with low-order
+(additive / pairwise) structure, and falls back gracefully to the plain Matérn catch-all
+when there is none.
+
+A practical guide, by what you expect of the target function:
+
+* **smooth low-order structure** → `AdditiveMaternKernel(d, order=2)` — the default
+  (an RBF per-dimension additive base, which fits smooth main effects / interactions well).
+* **rough low-order structure** (kinks, sharp peaks, discontinuous derivatives) →
+  `AdditiveMaternKernel(d, order=2, base="matern")` — a Matérn-3/2 per-dimension base,
+  which fits non-smooth low-order structure better than the RBF base.
+* **little low-order structure to exploit** (genuinely non-additive / strongly coupled) →
+  a `Matérn 1.5 + RBF` kernel (see [below](#alternative-a-matérn--rbf-leaf-kernel)).
 
 For functions with low *interaction order* — i.e. well approximated by a sum of
 low-dimensional terms (main effects + pairwise interactions) rather than a fully joint
@@ -89,7 +105,7 @@ hyperparameters) instead of the `C(d, q)` terms a naive additive kernel would en
 A small maximum order `Q` (e.g. 2: main effects + pairwise interactions) breaks the curse
 of dimensionality for such functions while remaining cheap to fit.
 
-The recommended leaf kernel pairs an order-2 additive component with a *separate* Matérn
+Concretely, the default kernel pairs an order-2 additive component with a *separate* Matérn
 "catch-all" (with its own length scales) that absorbs any higher-order or rougher
 residual. The `AdditiveMaternKernel` shorthand builds exactly this combination in one
 call:
@@ -108,8 +124,10 @@ gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
 ```
 
 `order` sets the maximum interaction order `Q` of the additive component (`order=2` ⇒
-orders 1 and 2; `order=1` ⇒ purely additive main effects), and `nu` is the smoothness of
-the Matérn catch-all. All hyperparameters — the `d` additive length scales, the per-order
+orders 1 and 2; `order=1` ⇒ purely additive main effects); `base` (`"rbf"` default, or
+`"matern"`) sets the smoothness of the additive component's per-dimension base — `"rbf"`
+for smooth low-order structure, `"matern"` for rough; and `nu` is the smoothness of the
+Matérn catch-all. All hyperparameters — the `d` additive length scales, the per-order
 variances, the separate Matérn length scales, and the catch-all amplitude — are tuned per
 leaf by marginal-likelihood maximisation. When a function has no low-order structure to
 exploit, the additive amplitudes are simply down-weighted and the kernel degrades
@@ -125,6 +143,29 @@ from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 
 kernel = (NewtonGirardAdditiveKernel(length_scale=[1.0] * d, order_std=[1.0, 1.0])
           + ConstantKernel() * Matern(nu=1.5, length_scale=[1.0] * d))
+```
+
+### Alternative: a Matérn + RBF leaf kernel
+
+When the target is **not** expected to have exploitable low-order (additive) structure —
+e.g. a genuinely non-additive, strongly-coupled response — a simpler two-component
+*stationary* kernel that pairs a rougher Matérn with a smoother RBF is a good alternative.
+It lets the GP split a short-scale and a long-scale component of the signal, and is cheaper
+to fit than the additive kernel; the trade-off is that it gives up the additive kernel's
+sample efficiency on low-order targets:
+
+```python
+from pygptreeo import GPTree, Default_GPR
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
+
+d = 4  # input dimensionality
+
+kernel = ConstantKernel() * (
+    Matern(nu=1.5, length_scale=[1.0] * d)   # rough, short-scale component
+    + RBF(length_scale=[1.0] * d)            # smooth, long-scale component
+)
+
+gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
 ```
 
 ## Running Examples
