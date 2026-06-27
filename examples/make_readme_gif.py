@@ -61,7 +61,8 @@ from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
 from sklearn.gaussian_process.kernels import (
     Kernel, Hyperparameter, StationaryKernelMixin, NormalizedKernelMixin)
 from target_functions import Himmelblau, Eggholder
-from physics_functions import saha_ionization, ring_potential
+from physics_functions import (saha_ionization, ring_potential, projectile_drag,
+                               pairwise_bessel)
 
 from warnings import simplefilter
 from sklearn.exceptions import ConvergenceWarning
@@ -132,7 +133,9 @@ parser.add_argument("--quick", action="store_true",
                     help="Small/fast preview render for iterating on the design.")
 parser.add_argument("--alt", action="store_true",
                     help="Alternative version: Nbar=100, saved to a separate file.")
-parser.add_argument("--target", choices=["himmelblau", "eggholder", "saha", "ring"],
+parser.add_argument("--target",
+                    choices=["himmelblau", "eggholder", "saha", "ring",
+                             "projectile", "bessel"],
                     default="himmelblau", help="Target function to learn.")
 parser.add_argument("--final-only", action="store_true",
                     help="Run the full stream but render only the final frame "
@@ -168,6 +171,42 @@ if args.target == "ring":
     DTHETA = 2.0 * np.pi                          # one full loop before the dwell
     CLUSTER_SIGMA_MAX, CLUSTER_SIGMA_MIN = 0.13, 0.05
     RETRAIN = 5
+elif args.target == "projectile":
+    # Range of a projectile with quadratic air drag (RK4 ODE solve per point),
+    # as a function of launch angle (x1) and speed (x2) at fixed drag. A smooth
+    # but non-trivial surface with a curved optimal-angle ridge; stays well above
+    # 0 so the relative-error metrics are well-conditioned. Uses the same Nbar=100
+    # sampling settings as the earlier eggholder runs.
+    def TARGET(x):
+        x = np.atleast_2d(x)
+        X3 = np.column_stack([x[:, 0], x[:, 1], np.full(len(x), 0.5)])  # fix k = mid
+        return float(projectile_drag(X3)[0])
+    TARGET_NAME = "projectile range"
+    FN_VMIN, FN_VMAX = 0.0, 20.0
+    FN_TICKS = [0, 5, 10, 15, 20]
+    START_CENTER = np.array([0.30, 0.70])
+    FINAL_CENTER = np.array([0.78, 0.25])
+    BOW_AMP = 0.20
+    CLUSTER_SIGMA_MAX, CLUSTER_SIGMA_MIN = 0.26, 0.07
+    RETRAIN = 10
+elif args.target == "bessel":
+    # Order-2 Bessel "circular waves": J0(14 |x - centre|), a smooth concentric-
+    # ring (bullseye) pattern -- a genuine wave/diffraction quantity (J0 via its
+    # integral form). Non-separable and radial, so the axis-aligned additive kernel
+    # cannot extrapolate it globally: the model only learns the rings where it has
+    # data, which is exactly the locality the animation is about. Lifted by +0.9 so
+    # it stays well above 0 (well-conditioned relative error). Same Nbar=100
+    # sampling as the eggholder runs.
+    def TARGET(x):
+        return float(pairwise_bessel(np.atleast_2d(x))[0]) + 0.9
+    TARGET_NAME = "Bessel waves"
+    FN_VMIN, FN_VMAX = 0.0, 2.5
+    FN_TICKS = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
+    START_CENTER = np.array([0.30, 0.70])
+    FINAL_CENTER = np.array([0.78, 0.25])
+    BOW_AMP = 0.20
+    CLUSTER_SIGMA_MAX, CLUSTER_SIGMA_MIN = 0.26, 0.07
+    RETRAIN = 10
 elif args.target == "saha":
     # Saha ionization fraction (x1 = temperature, x2 = log density): a curved
     # ionization front separating neutral (~0.1) from ionized (~1.1). Already
@@ -216,7 +255,7 @@ if args.quick:
     PTS_PER_FRAME = 20
     GRID = 44
     HOLD_FRAMES = 4
-elif args.target == "eggholder":
+elif args.target in ("eggholder", "projectile", "bessel"):
     N_PTS = 3000        # more samples -> the sweep moves slowly through the space
     PTS_PER_FRAME = 40
     GRID = 70
