@@ -5,11 +5,12 @@ function is learned *online* and *locally*, from a stream of input points, in
 exactly those regions of input space where data arrives.
 
 To make the "local" aspect obvious, the input points do not cover the domain
-uniformly. Instead they arrive as a moving, concentrated cluster that sweeps a
-curved diagonal band across the 2D input space. As the stream proceeds you can
-watch pyGPTreeO's prediction "fill in" the true function along the path of the
-data, while the two off-diagonal corners -- which never receive any points --
-stay unlearned and uncertain.
+uniformly. Instead they mimic an adaptive sampler: a cluster of points that
+starts out broad (exploring much of the input space) and gradually shrinks while
+its centre sweeps a curved diagonal path, finally settling in -- and densely
+exploring -- a converged region of interest. As the stream proceeds you can
+watch pyGPTreeO's prediction "fill in" the true function where the data goes,
+while regions that never receive points stay unlearned and uncertain.
 
 Three panels, sharing the same x_1, x_2 axes:
 
@@ -74,14 +75,22 @@ if args.quick:
     GRID = 44
     HOLD_FRAMES = 4
 else:
-    N_PTS = 760
-    PTS_PER_FRAME = 14
+    N_PTS = 1000
+    PTS_PER_FRAME = 18
     GRID = 70
     HOLD_FRAMES = 12
 
-NBAR = 100
-CLUSTER_SIGMA = 0.06
+NBAR = 50
 FPS = 12
+
+# Sampling schedule. The cluster centre sweeps the path and then settles in the
+# final region for the last HOLD_FRAC of the stream, while the cluster width
+# shrinks from CLUSTER_SIGMA_MAX to CLUSTER_SIGMA_MIN. This mimics an adaptive
+# sampler that explores broadly at first and converges onto a region of interest,
+# which it then explores in high detail.
+CLUSTER_SIGMA_MAX = 0.30
+CLUSTER_SIGMA_MIN = 0.08
+HOLD_FRAC = 0.20
 
 # Function-value (viridis) colour scale: 0..7 in 21 discrete levels, i.e. exactly
 # 3 colours per unit of target-function value.
@@ -110,16 +119,27 @@ np.random.seed(args.seed)
 # --------------------------------------------------------------------------
 
 def path_center(t):
-    """Cluster centre at stream fraction t in [0, 1]: a gently S-bowed diagonal."""
-    d = 0.15 + 0.70 * t
-    perp = 0.12 * np.sin(2.0 * np.pi * t)        # bow off the main diagonal
+    """Cluster centre at stream fraction t in [0, 1]: a gently S-bowed diagonal.
+
+    Progress along the path saturates at the start of the final HOLD_FRAC of the
+    stream, so the centre settles in the converged region and stays there.
+    """
+    p = min(t / (1.0 - HOLD_FRAC), 1.0)          # path progress, then held at 1
+    d = 0.15 + 0.70 * p
+    perp = 0.12 * np.sin(2.0 * np.pi * p)         # bow off the main diagonal
     cx = np.clip(d - perp / np.sqrt(2.0), 0.05, 0.95)
     cy = np.clip(d + perp / np.sqrt(2.0), 0.05, 0.95)
     return cx, cy
 
+def cluster_sigma(t):
+    """Cluster width at stream fraction t: shrinks from MAX to MIN as t -> 1."""
+    return CLUSTER_SIGMA_MIN + (CLUSTER_SIGMA_MAX - CLUSTER_SIGMA_MIN) * (1.0 - t) ** 1.5
+
 ts = (np.arange(N_PTS) + 0.5) / N_PTS
 centers = np.array([path_center(t) for t in ts])
-X_input = np.clip(centers + np.random.normal(0.0, CLUSTER_SIGMA, (N_PTS, 2)), 0.0, 1.0)
+sigmas = np.array([cluster_sigma(t) for t in ts])
+X_input = np.clip(centers + np.random.normal(0.0, 1.0, (N_PTS, 2)) * sigmas[:, None],
+                  0.0, 1.0)
 y_input = np.array([TARGET(xi) for xi in X_input]).reshape(-1, 1)
 
 
