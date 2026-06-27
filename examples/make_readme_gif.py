@@ -75,6 +75,9 @@ parser.add_argument("--alt", action="store_true",
                     help="Alternative version: Nbar=100, saved to a separate file.")
 parser.add_argument("--target", choices=["himmelblau", "eggholder"],
                     default="himmelblau", help="Target function to learn.")
+parser.add_argument("--final-only", action="store_true",
+                    help="Run the full stream but render only the final frame "
+                         "(saved as the PNG, no GIF) -- for previewing the end state.")
 parser.add_argument("--seed", type=int, default=4)
 args = parser.parse_args()
 
@@ -89,12 +92,23 @@ if args.target == "eggholder":
     TARGET_NAME = "Eggholder"
     FN_VMIN, FN_VMAX = 0.0, 2000.0
     FN_TICKS = [0, 500, 1000, 1500, 2000]
+    # A different sweep for this target: upper-left -> lower-right, more bowed,
+    # with a somewhat broader cluster.
+    START_CENTER = np.array([0.18, 0.82])
+    FINAL_CENTER = np.array([0.78, 0.25])
+    BOW_AMP = 0.20
+    CLUSTER_SIGMA_MAX, CLUSTER_SIGMA_MIN = 0.26, 0.07
 else:
     def TARGET(x):
         return 10.0 * (Himmelblau(x) + 1.0)
     TARGET_NAME = "Himmelblau"
     FN_VMIN, FN_VMAX = 10.0, 80.0
     FN_TICKS = list(range(10, 81, 10))
+    # Sweep from lower-left to the upper-right minimum, gently bowed.
+    START_CENTER = np.array([0.20, 0.20])
+    FINAL_CENTER = np.array([0.80, 0.70])
+    BOW_AMP = 0.12
+    CLUSTER_SIGMA_MAX, CLUSTER_SIGMA_MIN = 0.20, 0.04
 
 if args.quick:
     N_PTS = 260
@@ -110,19 +124,12 @@ else:
 NBAR = 100 if args.alt else 50
 FPS = 12
 
-# Sampling schedule. The cluster centre sweeps the path and then settles on the
-# upper-right minimum of the target for the last HOLD_FRAC of the stream, while
-# the cluster width shrinks from CLUSTER_SIGMA_MAX to CLUSTER_SIGMA_MIN. This
-# mimics an optimiser/adaptive sampler that explores broadly at first and then
-# converges onto a minimum, which it ends up exploring in high detail.
-CLUSTER_SIGMA_MAX = 0.20
-CLUSTER_SIGMA_MIN = 0.04
+# Sampling schedule. The cluster centre sweeps from START_CENTER to FINAL_CENTER
+# (both set per target above) and then settles there for the last HOLD_FRAC of the
+# stream, while the cluster width shrinks from CLUSTER_SIGMA_MAX to
+# CLUSTER_SIGMA_MIN. This mimics an optimiser/adaptive sampler that explores
+# broadly at first and converges onto a region, which it then samples in detail.
 HOLD_FRAC = 0.45
-
-# Start and converged target of the sweep, in [0, 1]^2 input space (for Himmelblau,
-# FINAL_CENTER is its upper-right minimum).
-START_CENTER = np.array([0.20, 0.20])
-FINAL_CENTER = np.array([0.80, 0.70])
 
 # Function-value (viridis) colour scale: FN_VMIN/FN_VMAX/FN_TICKS are set per
 # target above; discretised into 21 levels.
@@ -172,7 +179,7 @@ def path_center(t):
     direction = FINAL_CENTER - START_CENTER
     normal = np.array([-direction[1], direction[0]])
     normal = normal / np.linalg.norm(normal)
-    bow = 0.12 * np.sin(np.pi * p)               # single arc, zero at both ends
+    bow = BOW_AMP * np.sin(np.pi * p)            # single arc, zero at both ends
     c = base + bow * normal
     return float(np.clip(c[0], 0.03, 0.97)), float(np.clip(c[1], 0.03, 0.97))
 
@@ -369,21 +376,26 @@ n_seen = 0
 for i in range(N_PTS):
     update_quiet(gpt, X_input[i], y_input[i])
     n_seen += 1
-    if n_seen % PTS_PER_FRAME == 0 or n_seen == N_PTS:
+    if args.final_only:
+        if n_seen == N_PTS:
+            frames.append(render_frame(n_seen))
+    elif n_seen % PTS_PER_FRAME == 0 or n_seen == N_PTS:
         frames.append(render_frame(n_seen))
         print(f"frame {len(frames):3d}  ({n_seen}/{N_PTS} pts, "
               f"{len(gpt.root.leaves)} leaves)", flush=True)
 
-# Hold on the final frame so viewers can read the end state
-frames.extend([frames[-1]] * HOLD_FRAMES)
-
 frames[-1].save(PNG_PATH)
 
-# Save with a full per-frame palette (no shared/lossy quantization). Because the
-# colormaps are discretised into a fixed set of colours, unchanged regions render
-# as exactly the same colour from frame to frame, so the animation stays stable.
-frames[0].save(GIF_PATH, save_all=True, append_images=frames[1:],
-               duration=int(1000 / FPS), loop=0, optimize=True)
-print(f"\nWrote {GIF_PATH}  ({len(frames)} frames, "
-      f"{os.path.getsize(GIF_PATH) / 1e6:.1f} MB)")
-print(f"Wrote {PNG_PATH}")
+if args.final_only:
+    print(f"\nWrote {PNG_PATH} (final frame only; no GIF)")
+else:
+    # Hold on the final frame so viewers can read the end state
+    frames.extend([frames[-1]] * HOLD_FRAMES)
+    # Save with a full per-frame palette (no shared/lossy quantization). Because
+    # the colormaps are discretised into a fixed set of colours, unchanged regions
+    # render as the same colour frame to frame, so the animation stays stable.
+    frames[0].save(GIF_PATH, save_all=True, append_images=frames[1:],
+                   duration=int(1000 / FPS), loop=0, optimize=True)
+    print(f"\nWrote {GIF_PATH}  ({len(frames)} frames, "
+          f"{os.path.getsize(GIF_PATH) / 1e6:.1f} MB)")
+    print(f"Wrote {PNG_PATH}")
