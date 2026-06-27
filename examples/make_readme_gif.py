@@ -32,11 +32,13 @@ Four panels, sharing the same x_1, x_2 axes:
   The same cyan < 1% relative-uncertainty contour is overlaid on panels 2, 3 and 4.
 
 Usage:
-    python make_readme_gif.py                 # full-quality render
-    python make_readme_gif.py --quick         # small/fast preview
+    python make_readme_gif.py                     # full-quality render (Himmelblau)
+    python make_readme_gif.py --quick             # small/fast preview
+    python make_readme_gif.py --target eggholder  # the harder Eggholder target
+    python make_readme_gif.py --alt               # Nbar=100 variant
 
-Output: examples/example_plots/animation/pygptreeo_local_learning.gif
-        examples/example_plots/animation/pygptreeo_local_learning_final.png
+Output: examples/example_plots/animation/<basename>.gif (+ <basename>_final.png),
+where <basename> reflects the chosen --target and --alt options.
 """
 
 import argparse
@@ -55,7 +57,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
-from target_functions import Himmelblau
+from target_functions import Himmelblau, Eggholder
 
 from warnings import simplefilter
 from sklearn.exceptions import ConvergenceWarning
@@ -70,21 +72,29 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--quick", action="store_true",
                     help="Small/fast preview render for iterating on the design.")
 parser.add_argument("--alt", action="store_true",
-                    help="Alternative version: Nbar=100 and a 0..1 colour range "
-                         "for the uncertainty/error panels, saved to a separate file.")
+                    help="Alternative version: Nbar=100, saved to a separate file.")
+parser.add_argument("--target", choices=["himmelblau", "eggholder"],
+                    default="himmelblau", help="Target function to learn.")
 parser.add_argument("--seed", type=int, default=4)
 args = parser.parse_args()
 
-# Shift the raw target by +1 and scale by 10. This lifts the function well away
-# from 0 so the GP's default zero-mean prior is a poor guess everywhere -- the
-# model only does well where it has actually seen data, not by luck near minima.
-TARGET_SHIFT = 1.0
-TARGET_SCALE = 10.0
-
-def TARGET(x):
-    return TARGET_SCALE * (Himmelblau(x) + TARGET_SHIFT)
-
-TARGET_NAME = "Himmelblau"
+# Target function and the matching function-value colour range. Both targets sit
+# well away from 0 so the GP's default zero-mean prior is a poor guess everywhere
+# -- the model only does well where it has actually seen data, not by luck near a
+# minimum. Himmelblau (raw 0..7) is shifted by +1 and scaled by 10 to lift it off
+# zero; the rugged Eggholder (the harder target) already spans ~18..2009.
+if args.target == "eggholder":
+    def TARGET(x):
+        return Eggholder(x)
+    TARGET_NAME = "Eggholder"
+    FN_VMIN, FN_VMAX = 0.0, 2000.0
+    FN_TICKS = [0, 500, 1000, 1500, 2000]
+else:
+    def TARGET(x):
+        return 10.0 * (Himmelblau(x) + 1.0)
+    TARGET_NAME = "Himmelblau"
+    FN_VMIN, FN_VMAX = 10.0, 80.0
+    FN_TICKS = list(range(10, 81, 10))
 
 if args.quick:
     N_PTS = 260
@@ -109,15 +119,13 @@ CLUSTER_SIGMA_MAX = 0.20
 CLUSTER_SIGMA_MIN = 0.04
 HOLD_FRAC = 0.45
 
-# Start of the sweep and the converged target: the upper-right (high x1, high x2)
-# minimum of the Himmelblau function, at (0.80, 0.70) in [0, 1]^2 input space.
+# Start and converged target of the sweep, in [0, 1]^2 input space (for Himmelblau,
+# FINAL_CENTER is its upper-right minimum).
 START_CENTER = np.array([0.20, 0.20])
 FINAL_CENTER = np.array([0.80, 0.70])
 
-# Function-value (viridis) colour scale, matched to the shifted/scaled target
-# (raw 0..7 -> 10..80), kept at 21 discrete levels.
-FN_VMIN = TARGET_SCALE * (0.0 + TARGET_SHIFT)   # 10
-FN_VMAX = TARGET_SCALE * (7.0 + TARGET_SHIFT)   # 80
+# Function-value (viridis) colour scale: FN_VMIN/FN_VMAX/FN_TICKS are set per
+# target above; discretised into 21 levels.
 FN_LEVELS = 21
 
 # Panels 3 and 4 show the *relative* predictive uncertainty (std / |prediction|)
@@ -136,7 +144,11 @@ CONTOUR_COLOR = "cyan"
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "example_plots", "animation")
 os.makedirs(OUT_DIR, exist_ok=True)
-BASENAME = "pygptreeo_local_learning_nbar100" if args.alt else "pygptreeo_local_learning"
+BASENAME = "pygptreeo_local_learning"
+if args.target == "eggholder":
+    BASENAME += "_eggholder"
+if args.alt:
+    BASENAME += "_nbar100"
 GIF_PATH = os.path.join(OUT_DIR, BASENAME + ".gif")
 PNG_PATH = os.path.join(OUT_DIR, BASENAME + "_final.png")
 
@@ -220,7 +232,7 @@ def update_quiet(gpt, x, y):
 plt.rcParams.update({"font.size": 13, "axes.titlesize": 14})
 fig = plt.figure(figsize=(20.0, 5.2))
 
-cmap_fn = plt.get_cmap("viridis", FN_LEVELS)   # 21 colours over y in [10, 80]
+cmap_fn = plt.get_cmap("viridis", FN_LEVELS)   # 21 discrete colours over [FN_VMIN, FN_VMAX]
 cmap_unc = plt.get_cmap("magma", UNC_LEVELS)
 cmap_err = plt.get_cmap("inferno", ERR_LEVELS)
 norm_fn = colors.Normalize(vmin=vmin, vmax=vmax)
@@ -274,7 +286,7 @@ for ax in (axP, axU, axE):       # all panels share the same y-axis -> label onc
 
 # Colour bars
 cb_fn = fig.colorbar(cm.ScalarMappable(norm=norm_fn, cmap=cmap_fn), cax=cax_fn, label="y")
-cb_fn.set_ticks(list(range(int(FN_VMIN), int(FN_VMAX) + 1, 10)))
+cb_fn.set_ticks(FN_TICKS)
 cb_un = fig.colorbar(cm.ScalarMappable(norm=norm_rel, cmap=cmap_unc),
                      cax=cax_un, label="relative uncertainty")
 cb_er = fig.colorbar(cm.ScalarMappable(norm=norm_rel, cmap=cmap_err),

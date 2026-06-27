@@ -166,6 +166,7 @@ cython_debug/
 !examples/example_plots/animation/pygptreeo_local_learning.gif
 !examples/example_plots/animation/pygptreeo_local_learning_nbar100.gif
 !examples/example_plots/animation/pygptreeo_local_learning_nbar100_v2.gif
+!examples/example_plots/animation/pygptreeo_local_learning_eggholder.gif
 *.csv
 *.hdf5
 *.log
