@@ -75,22 +75,27 @@ if args.quick:
     GRID = 44
     HOLD_FRAMES = 4
 else:
-    N_PTS = 1000
-    PTS_PER_FRAME = 18
+    N_PTS = 1500
+    PTS_PER_FRAME = 27
     GRID = 70
     HOLD_FRAMES = 12
 
 NBAR = 50
 FPS = 12
 
-# Sampling schedule. The cluster centre sweeps the path and then settles in the
-# final region for the last HOLD_FRAC of the stream, while the cluster width
-# shrinks from CLUSTER_SIGMA_MAX to CLUSTER_SIGMA_MIN. This mimics an adaptive
-# sampler that explores broadly at first and converges onto a region of interest,
-# which it then explores in high detail.
-CLUSTER_SIGMA_MAX = 0.30
+# Sampling schedule. The cluster centre sweeps the path and then settles on the
+# upper-right minimum of the target for the last HOLD_FRAC of the stream, while
+# the cluster width shrinks from CLUSTER_SIGMA_MAX to CLUSTER_SIGMA_MIN. This
+# mimics an optimiser/adaptive sampler that explores broadly at first and then
+# converges onto a minimum, which it ends up exploring in high detail.
+CLUSTER_SIGMA_MAX = 0.20
 CLUSTER_SIGMA_MIN = 0.08
-HOLD_FRAC = 0.20
+HOLD_FRAC = 0.45
+
+# Start of the sweep and the converged target: the upper-right (high x1, high x2)
+# minimum of the Himmelblau function, at (0.80, 0.70) in [0, 1]^2 input space.
+START_CENTER = np.array([0.20, 0.20])
+FINAL_CENTER = np.array([0.80, 0.70])
 
 # Function-value (viridis) colour scale: 0..7 in 21 discrete levels, i.e. exactly
 # 3 colours per unit of target-function value.
@@ -119,17 +124,21 @@ np.random.seed(args.seed)
 # --------------------------------------------------------------------------
 
 def path_center(t):
-    """Cluster centre at stream fraction t in [0, 1]: a gently S-bowed diagonal.
+    """Cluster centre at stream fraction t in [0, 1].
 
-    Progress along the path saturates at the start of the final HOLD_FRAC of the
-    stream, so the centre settles in the converged region and stays there.
+    The centre sweeps from START_CENTER to FINAL_CENTER along a gently bowed arc,
+    reaching FINAL_CENTER at the start of the final HOLD_FRAC of the stream and
+    then staying there, so the converged minimum is sampled for an extended time.
     """
     p = min(t / (1.0 - HOLD_FRAC), 1.0)          # path progress, then held at 1
-    d = 0.15 + 0.70 * p
-    perp = 0.12 * np.sin(2.0 * np.pi * p)         # bow off the main diagonal
-    cx = np.clip(d - perp / np.sqrt(2.0), 0.05, 0.95)
-    cy = np.clip(d + perp / np.sqrt(2.0), 0.05, 0.95)
-    return cx, cy
+    s = p * p * (3.0 - 2.0 * p)                   # smoothstep ease in/out
+    base = START_CENTER + (FINAL_CENTER - START_CENTER) * s
+    direction = FINAL_CENTER - START_CENTER
+    normal = np.array([-direction[1], direction[0]])
+    normal = normal / np.linalg.norm(normal)
+    bow = 0.12 * np.sin(np.pi * p)               # single arc, zero at both ends
+    c = base + bow * normal
+    return float(np.clip(c[0], 0.03, 0.97)), float(np.clip(c[1], 0.03, 0.97))
 
 def cluster_sigma(t):
     """Cluster width at stream fraction t: shrinks from MAX to MIN as t -> 1."""
