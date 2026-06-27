@@ -93,11 +93,13 @@ if args.target == "eggholder":
     FN_VMIN, FN_VMAX = 0.0, 2000.0
     FN_TICKS = [0, 500, 1000, 1500, 2000]
     # A different sweep for this target: upper-left -> lower-right, more bowed,
-    # with a somewhat broader cluster.
-    START_CENTER = np.array([0.18, 0.82])
+    # with a somewhat broader cluster. The start is kept away from the corner so
+    # the broad early cluster does not pile up against the boundary.
+    START_CENTER = np.array([0.30, 0.70])
     FINAL_CENTER = np.array([0.78, 0.25])
     BOW_AMP = 0.20
     CLUSTER_SIGMA_MAX, CLUSTER_SIGMA_MIN = 0.26, 0.07
+    RETRAIN = 10
 else:
     def TARGET(x):
         return 10.0 * (Himmelblau(x) + 1.0)
@@ -109,12 +111,18 @@ else:
     FINAL_CENTER = np.array([0.80, 0.70])
     BOW_AMP = 0.12
     CLUSTER_SIGMA_MAX, CLUSTER_SIGMA_MIN = 0.20, 0.04
+    RETRAIN = 2
 
 if args.quick:
     N_PTS = 260
     PTS_PER_FRAME = 20
     GRID = 44
     HOLD_FRAMES = 4
+elif args.target == "eggholder":
+    N_PTS = 3000        # more samples -> the sweep moves slowly through the space
+    PTS_PER_FRAME = 40
+    GRID = 70
+    HOLD_FRAMES = 12
 else:
     N_PTS = 1500
     PTS_PER_FRAME = 27
@@ -190,8 +198,16 @@ def cluster_sigma(t):
 ts = (np.arange(N_PTS) + 0.5) / N_PTS
 centers = np.array([path_center(t) for t in ts])
 sigmas = np.array([cluster_sigma(t) for t in ts])
-X_input = np.clip(centers + np.random.normal(0.0, 1.0, (N_PTS, 2)) * sigmas[:, None],
-                  0.0, 1.0)
+
+# Draw each point from its cluster, resampling (not clipping) any point that
+# lands outside [0, 1]^2 so samples never pile up on the boundary.
+X_input = np.empty((N_PTS, 2))
+for i in range(N_PTS):
+    while True:
+        p = centers[i] + np.random.normal(0.0, 1.0, 2) * sigmas[i]
+        if 0.0 <= p[0] <= 1.0 and 0.0 <= p[1] <= 1.0:
+            X_input[i] = p
+            break
 y_input = np.array([TARGET(xi) for xi in X_input]).reshape(-1, 1)
 
 
@@ -369,7 +385,7 @@ def render_frame(n_seen):
 kernel = AdditiveMaternKernel(d=2, order=2, nu=1.5)
 gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=NBAR, theta=0.05,
              splitting_strategy="gradual", split_position_method="median",
-             retrain_every_n_points=2, use_calibrated_sigma=True)
+             retrain_every_n_points=RETRAIN, use_calibrated_sigma=True)
 
 frames = []
 n_seen = 0
