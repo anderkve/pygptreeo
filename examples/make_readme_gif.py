@@ -89,7 +89,7 @@ FPS = 12
 # mimics an optimiser/adaptive sampler that explores broadly at first and then
 # converges onto a minimum, which it ends up exploring in high detail.
 CLUSTER_SIGMA_MAX = 0.20
-CLUSTER_SIGMA_MIN = 0.08
+CLUSTER_SIGMA_MIN = 0.04
 HOLD_FRAC = 0.45
 
 # Start of the sweep and the converged target: the upper-right (high x1, high x2)
@@ -206,9 +206,10 @@ extent = [0, 1, 0, 1]
 # Panel 1: true function + data stream
 axT.imshow(Z_true, origin="lower", extent=extent, cmap=cmap_fn,
            norm=norm_fn, aspect="auto")
-old_scat = axT.scatter([], [], s=10, c="0.7", edgecolors="none", zorder=3)
-new_scat = axT.scatter([], [], s=26, c="red", edgecolors="white",
-                       linewidths=0.4, zorder=4)
+old_scat = axT.scatter([], [], s=3, c="white", edgecolors="none", alpha=0.85,
+                       zorder=3)
+new_scat = axT.scatter([], [], s=12, c="red", edgecolors="white",
+                       linewidths=0.3, zorder=4)
 axT.set_title("Unknown target function\n+ stream of input points")
 
 # Panel 2: confidence-masked prediction (filled in update())
@@ -292,9 +293,9 @@ def render_frame(n_seen):
 # --------------------------------------------------------------------------
 
 kernel = AdditiveMaternKernel(d=2, order=2, nu=1.5)
-gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=NBAR, theta=0.01,
-             split_position_method="median", retrain_every_n_points=2,
-             use_calibrated_sigma=True)
+gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=NBAR, theta=0.05,
+             splitting_strategy="gradual", split_position_method="median",
+             retrain_every_n_points=2, use_calibrated_sigma=True)
 
 frames = []
 n_seen = 0
