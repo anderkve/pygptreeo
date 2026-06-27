@@ -822,6 +822,147 @@ class NewtonGirardAdditiveKernel(Kernel):
                 f"order_std=[{', '.join(f'{s:.3g}' for s in sig)}])")
 
 
+class AdditivePeriodicKernel(Kernel):
+    """Order-1 additive periodic kernel: a sum of per-dimension periodic kernels.
+
+    Models the target as a sum of independent per-dimension periodic terms::
+
+        k(x, x') = sum_{i=1}^{d}  exp(-2 sin^2(pi (x_i - x'_i) / p_i) / l_i^2)
+
+    i.e. an ``ExpSineSquared`` (periodic) kernel applied *separately* to each input
+    coordinate, with its own period ``p_i`` and length scale ``l_i``. This is the
+    periodic analogue of an order-1 additive (main-effects) kernel: it captures
+    per-dimension periodicity with only ``2 d`` hyperparameters and a constant unit
+    -per-dimension diagonal (``diag = d``).
+
+    Why *per dimension*: scikit-learn's :class:`~sklearn.gaussian_process.kernels.ExpSineSquared`
+    applies the periodic correlation to the **Euclidean** distance, which is only
+    positive-definite in one dimension; on multidimensional inputs it is not a valid
+    (PSD) kernel. Building the periodic kernel as a sum of one-dimensional terms, as
+    here, keeps it positive-definite for any ``d`` and additionally lets each
+    dimension have a different period.
+
+    As ``p_i`` grows past the data span the term degrades gracefully toward an RBF
+    (``sin(pi r / p) ~ pi r / p`` for small argument), so the kernel "switches off"
+    periodicity in dimensions that show less than one cycle. To get a useful
+    *general-purpose* leaf kernel, pair it with a non-periodic catch-all (Matern or
+    RBF) that absorbs trend / coupling / residual; see
+    :func:`AdditivePeriodicMaternKernel`.
+
+    This kernel pays off only when the target has *additive* periodic structure whose
+    period is short enough to be visible inside a single GP-tree leaf. Long-period
+    (low-frequency) oscillations look like a smooth trend at leaf scale and are
+    already handled by the standard additive / stationary kernels; coupled or
+    amplitude-modulated periodicity is not additive and is better left to a
+    stationary catch-all.
+
+    Parameters
+    ----------
+    length_scale : array-like of shape (n_features,)
+        Per-dimension length scale ``l_i`` controlling the "wiggliness" within one
+        period (small ``l_i`` -> sharp periodic peaks; large ``l_i`` -> nearly
+        sinusoidal).
+    period : array-like of shape (n_features,)
+        Per-dimension period ``p_i`` of the oscillation in each input coordinate.
+    length_scale_bounds : pair of floats >= 0 or "fixed", default=(1e-1, 1e1)
+        Bounds on the length scales. With per-leaf standardisation these live in
+        (roughly) unit-variance input space.
+    period_bounds : pair of floats >= 0 or "fixed", default=(1e-1, 1e1)
+        Bounds on the periods, in the same (standardised) input space. The upper
+        bound should comfortably exceed a leaf's input span so the kernel can reach
+        the RBF-like (effectively non-periodic) regime when a dimension shows less
+        than one cycle.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from pygptreeo.kernels import AdditivePeriodicKernel
+    >>> from sklearn.gaussian_process.kernels import ConstantKernel, Matern
+    >>> d = 4
+    >>> # additive periodic main effects + a Matern catch-all, in 4-D
+    >>> k = (ConstantKernel() * AdditivePeriodicKernel(length_scale=[1.0] * d,
+    ...                                                 period=[1.0] * d)
+    ...      + ConstantKernel() * Matern(length_scale=[1.0] * d, nu=1.5))
+
+    See Also
+    --------
+    AdditivePeriodicMaternKernel : shorthand pairing this with a Matern catch-all.
+    """
+
+    def __init__(self, length_scale, period,
+                 length_scale_bounds=(1e-1, 1e1), period_bounds=(1e-1, 1e1)):
+        self.length_scale = length_scale
+        self.period = period
+        self.length_scale_bounds = length_scale_bounds
+        self.period_bounds = period_bounds
+
+    @property
+    def hyperparameter_length_scale(self):
+        return Hyperparameter("length_scale", "numeric", self.length_scale_bounds,
+                              len(np.atleast_1d(self.length_scale)))
+
+    @property
+    def hyperparameter_period(self):
+        return Hyperparameter("period", "numeric", self.period_bounds,
+                              len(np.atleast_1d(self.period)))
+
+    def __call__(self, X, Y=None, eval_gradient=False):
+        """Return the kernel ``k(X, Y)`` and optionally its gradient.
+
+        The gradient (when requested) is taken with respect to the log
+        hyperparameters in scikit-learn's canonical (alphabetical) order:
+        ``length_scale`` (``d`` entries) then ``period`` (``d`` entries).
+        """
+        X = np.atleast_2d(X)
+        if eval_gradient and Y is not None:
+            raise ValueError("Gradient can only be evaluated when Y is None.")
+        Yv = X if Y is None else np.atleast_2d(Y)
+        ls = np.atleast_1d(self.length_scale).astype(float)
+        pr = np.atleast_1d(self.period).astype(float)
+        d = X.shape[1]
+
+        K = np.zeros((X.shape[0], Yv.shape[0]))
+        Zs, Ss, Cs, Ds = [], [], [], []        # z_i, sin(a_i), cos(a_i), Delta_i
+        for i in range(d):
+            Di = X[:, i][:, None] - Yv[:, i][None, :]
+            ai = np.pi * Di / pr[i]
+            si = np.sin(ai)
+            zi = np.exp(-2.0 * si ** 2 / ls[i] ** 2)
+            K += zi
+            Zs.append(zi); Ss.append(si); Cs.append(np.cos(ai)); Ds.append(Di)
+
+        if not eval_gradient:
+            return K
+
+        grads = []
+        if not self.hyperparameter_length_scale.fixed:
+            # dz_i / dlog l_i = z_i * 4 sin^2(a_i) / l_i^2
+            for i in range(d):
+                grads.append(Zs[i] * (4.0 * Ss[i] ** 2 / ls[i] ** 2))
+        if not self.hyperparameter_period.fixed:
+            # dz_i / dlog p_i = z_i * 4 pi sin(a_i) cos(a_i) Delta_i / (l_i^2 p_i)
+            for i in range(d):
+                grads.append(Zs[i] * (4.0 * np.pi * Ss[i] * Cs[i] * Ds[i]
+                                      / (ls[i] ** 2 * pr[i])))
+        K_grad = (np.stack(grads, axis=2) if grads
+                  else np.empty((X.shape[0], Yv.shape[0], 0)))
+        return K, K_grad
+
+    def diag(self, X):
+        # z_i(x, x) = 1, so the diagonal is the constant d (one per dimension).
+        X = np.atleast_2d(X)
+        return np.full(X.shape[0], float(X.shape[1]))
+
+    def is_stationary(self):
+        return True
+
+    def __repr__(self):
+        ls = np.atleast_1d(self.length_scale)
+        pr = np.atleast_1d(self.period)
+        return (f"{self.__class__.__name__}(d={len(ls)}, "
+                f"period=[{', '.join(f'{p:.3g}' for p in pr)}])")
+
+
 def _broadcast_length(value, n, name):
     """Return ``value`` as a 1-D float array of length ``n``.
 
@@ -969,3 +1110,122 @@ def AdditiveMaternKernel(
                  length_scale_bounds=matern_length_scale_bounds)
     )
     return additive + catch_all
+
+
+def AdditivePeriodicMaternKernel(
+    d,
+    *,
+    nu=1.5,
+    catch_all="matern",
+    length_scale=1.0,
+    period=1.0,
+    periodic_constant_value=1.0,
+    constant_value=1.0,
+    catch_all_length_scale=1.0,
+    length_scale_bounds=(1e-1, 1e1),
+    period_bounds=(1e-1, 1e1),
+    periodic_constant_value_bounds=(1e-3, 1e3),
+    constant_value_bounds=(1e-5, 1e5),
+    catch_all_length_scale_bounds=(1e-5, 1e5),
+):
+    """Shorthand for an additive-periodic leaf kernel + a non-periodic catch-all.
+
+    A convenience constructor for the periodic leaf kernel: an amplitude-scaled
+    order-1 :class:`AdditivePeriodicKernel` (per-dimension periodic main effects)
+    summed with a *separate* non-periodic "catch-all" (an anisotropic Matern, or an
+    RBF) that absorbs any non-periodic trend, coupling, or residual::
+
+        k(x, x') = ConstantKernel() * AdditivePeriodicKernel(period per dim)
+                   + ConstantKernel() * catch_all(nu)
+
+    Use this when the target is expected to have **additive periodic structure**
+    (each input coordinate oscillates) whose period is short enough to be visible
+    inside a single GP-tree leaf -- i.e. high-frequency oscillation relative to how
+    densely the leaf covers the input space. For such targets the periodic term is
+    far more sample-efficient than a generic stationary kernel. It is *not* a better
+    default: long-period (low-frequency) oscillation looks like a smooth trend at
+    leaf scale -- the standard :func:`AdditiveMaternKernel` already handles that --
+    and coupled / amplitude-modulated periodicity is not additive, so a stationary
+    Matern+RBF kernel is preferable there. When the periodicity is not exploitable
+    the periods simply optimise toward the RBF-like regime and the periodic
+    amplitude is down-weighted, so the kernel degrades gracefully.
+
+    The catch-all smoothness should follow the *non-oscillatory* residual: keep the
+    default Matern (``catch_all="matern"``) for a rough residual, or use
+    ``catch_all="rbf"`` when the residual / trend is smooth.
+
+    The returned object is an ordinary scikit-learn composite kernel, so it plugs
+    directly into :func:`~pygptreeo.Default_GPR`, :class:`~pygptreeo.GPTree`, and any
+    ``GaussianProcessRegressor``.
+
+    Parameters
+    ----------
+    d : int
+        Input dimensionality (number of features). Must be a positive integer.
+    nu : float, default=1.5
+        Smoothness of the Matern catch-all (ignored when ``catch_all="rbf"``).
+    catch_all : {"matern", "rbf"}, default="matern"
+        Non-periodic catch-all component. ``"matern"`` (nu as given) for a rough
+        residual; ``"rbf"`` for a smooth residual / trend.
+    length_scale : float or array-like of shape (d,), default=1.0
+        Initial per-dimension length scales of the periodic component.
+    period : float or array-like of shape (d,), default=1.0
+        Initial per-dimension periods of the periodic component.
+    periodic_constant_value : float, default=1.0
+        Initial amplitude (variance) of the ``ConstantKernel`` multiplying the
+        periodic component.
+    constant_value : float, default=1.0
+        Initial amplitude (variance) of the ``ConstantKernel`` multiplying the
+        catch-all.
+    catch_all_length_scale : float or array-like of shape (d,), default=1.0
+        Initial per-dimension length scales of the catch-all (independent of the
+        periodic component's ``length_scale``).
+    length_scale_bounds, period_bounds : pair of floats or "fixed"
+        Bounds for the periodic component's length scales and periods, in the
+        (standardised) input space (defaults match :class:`AdditivePeriodicKernel`).
+    periodic_constant_value_bounds, constant_value_bounds : pair of floats or "fixed"
+        Bounds for the periodic and catch-all amplitudes.
+    catch_all_length_scale_bounds : pair of floats or "fixed", default=(1e-5, 1e5)
+        Bounds for the catch-all's length scales.
+
+    Returns
+    -------
+    sklearn.gaussian_process.kernels.Sum
+        The composite kernel ``constant * additive_periodic + constant * catch_all``.
+
+    Examples
+    --------
+    >>> from pygptreeo import GPTree, Default_GPR
+    >>> from pygptreeo.kernels import AdditivePeriodicMaternKernel
+    >>>
+    >>> # additive periodic main effects + a Matern catch-all, in 4-D
+    >>> kernel = AdditivePeriodicMaternKernel(d=4)
+    >>> gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
+    >>>
+    >>> # smooth non-periodic residual -> RBF catch-all
+    >>> kernel = AdditivePeriodicMaternKernel(d=4, catch_all="rbf")
+    """
+    if int(d) != d or d < 1:
+        raise ValueError(f"d must be a positive integer, got {d!r}")
+    d = int(d)
+    if catch_all not in ("matern", "rbf"):
+        raise ValueError(f"catch_all must be 'matern' or 'rbf', got {catch_all!r}")
+
+    periodic_ls = _broadcast_length(length_scale, d, "length_scale")
+    periodic_p = _broadcast_length(period, d, "period")
+    catch_ls = _broadcast_length(catch_all_length_scale, d, "catch_all_length_scale")
+
+    periodic = (
+        ConstantKernel(periodic_constant_value, periodic_constant_value_bounds)
+        * AdditivePeriodicKernel(
+            length_scale=periodic_ls, period=periodic_p,
+            length_scale_bounds=length_scale_bounds, period_bounds=period_bounds)
+    )
+    if catch_all == "matern":
+        base = Matern(length_scale=catch_ls, nu=nu,
+                      length_scale_bounds=catch_all_length_scale_bounds)
+    else:
+        base = RBF(length_scale=catch_ls,
+                   length_scale_bounds=catch_all_length_scale_bounds)
+    catch = ConstantKernel(constant_value, constant_value_bounds) * base
+    return periodic + catch

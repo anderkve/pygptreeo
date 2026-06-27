@@ -87,6 +87,9 @@ A practical guide, by what you expect of the target function:
   which fits non-smooth low-order structure better than the RBF base.
 * **little low-order structure to exploit** (genuinely non-additive / strongly coupled) →
   a `Matérn 1.5 + RBF` kernel (see [below](#alternative-a-matérn--rbf-leaf-kernel)).
+* **additive periodic structure** (each input oscillates, with a period short enough
+  that several cycles fall within a leaf) → `AdditivePeriodicMaternKernel(d)`
+  (see [below](#targets-with-periodic-structure)).
 
 For functions with low *interaction order* — i.e. well approximated by a sum of
 low-dimensional terms (main effects + pairwise interactions) rather than a fully joint
@@ -167,6 +170,40 @@ kernel = ConstantKernel() * (
 
 gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
 ```
+
+### Targets with periodic structure
+
+If the target is expected to have **additive periodic structure** — each input
+coordinate oscillates — an additive periodic leaf kernel can be substantially more
+sample-efficient. `AdditivePeriodicMaternKernel` pairs an order-1 additive periodic
+component (a per-dimension periodic kernel, with its own period and length scale per
+input) with a Matérn catch-all for the non-periodic residual:
+
+```python
+from pygptreeo import GPTree, Default_GPR, AdditivePeriodicMaternKernel
+
+d = 4  # input dimensionality
+
+kernel = AdditivePeriodicMaternKernel(d=d)          # use catch_all="rbf" if the
+                                                    # non-periodic residual is smooth
+gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
+```
+
+One caveat is specific to the tree: each leaf sees only a small sub-region of the
+input space, so a *long-period* (low-frequency) oscillation completes less than one
+cycle inside a leaf and just looks like a smooth trend — which the standard
+`AdditiveMaternKernel` already handles. The periodic kernel pays off when the period
+is short enough that **several cycles fall within a leaf** (high-frequency
+oscillation relative to the data density, or correspondingly a larger `Nbar`). It is
+therefore a targeted choice, not a default: for low-frequency oscillation, for
+*coupled* / amplitude-modulated periodicity (which is not additive), or for
+non-periodic targets, prefer the kernels above. When the periodicity is not
+exploitable the periods optimise toward an RBF-like regime, so the kernel degrades
+gracefully (at some extra fitting cost). The bare per-dimension component is
+available as `AdditivePeriodicKernel` if you want to compose it yourself. (Note: a
+periodic kernel for `d > 1` must be built per dimension like this — scikit-learn's
+`ExpSineSquared` uses the Euclidean distance and is not positive-definite in more
+than one dimension.)
 
 ## Running Examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:
