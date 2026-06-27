@@ -6,11 +6,11 @@
 pyGPTreeO is a Python tool designed for online/continual regression tasks. It implements a dynamically growing tree where each leaf node is a local Gaussian Process (GP) regressor. This structure makes it particularly well-suited for learning from data streams where data points arrive sequentially. It builds on the DLGP approach by Lederer et al (https://arxiv.org/abs/2006.09446) and the R package GPTreeO (https://arxiv.org/abs/2410.01024).
 
 ## Features
-*   **Dynamic Tree Structure**: The tree adaptively changes its structure based on the incoming data, growing by splitting nodes as more data is observed in specific regions.
-*   **Local GP Models**: Utilizes Gaussian Process regressors at the leaf nodes to perform regression, capturing local data characteristics.
-*   **Continual Learning**: Designed to learn from data points one by one, allowing the model to evolve over time.
-*   **Online Prediction**: Capable of making predictions at any point during the learning process.
-*   **Ensemble Method**: Includes `GPForest` for running an ensemble of multiple GPTrees, which can improve prediction stability and accuracy.
+*   **Dynamic tree structure**: The tree adaptively changes its structure based on the incoming data, growing by splitting nodes as more data is observed in specific regions.
+*   **Local GP models**: Utilizes Gaussian Process regressors at the leaf nodes to perform regression, capturing local data characteristics.
+*   **Continual learning**: Designed to learn from data points one by one, allowing the model to evolve over time.
+*   **Online prediction**: Capable of making predictions at any point during the learning process.
+*   **Ensemble method**: Includes `GPForest` for running an ensemble of multiple GPTrees, which can improve prediction stability and accuracy.
 *   **Customizable GPRs**: Allows users to define and use their own scikit-learn compatible Gaussian Process Regressor models within the tree nodes.
 *   **Additive leaf kernels**: `AdditiveMaternKernel` and related kernels can exploit low-order (additive / pairwise) structure in the target, which often needs fewer data points to fit. See [Selecting a leaf kernel](#selecting-a-leaf-kernel).
 
@@ -73,8 +73,8 @@ for i in range(len(X_test)):
 ## Selecting a leaf kernel
 
 By default each leaf uses a plain Matérn kernel. For many targets `AdditiveMaternKernel`
-is a better choice. It combines a low-order additive component with a separate Matérn
-catch-all:
+is a better choice — it adds a low-order additive component (a sum of main effects and
+pairwise interactions) on top of a Matérn catch-all:
 
 ```python
 from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
@@ -82,80 +82,28 @@ from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
 d = 4  # input dimensionality
 kernel = AdditiveMaternKernel(d=d, order=2, nu=1.5)
 gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
-# then feed data and predict as in the usage example above
 ```
 
-The additive part (`NewtonGirardAdditiveKernel`) models the target as a sum of main
-effects and pairwise interactions, using only `d` length scales plus one variance per
-interaction order rather than a separate term per interaction. When the target really
-does decompose this way, that needs fewer data points to fit. `order` sets the highest
-interaction order kept (`order=1` for main effects only, `order=2` to add pairwise
-terms), and `base` (`"rbf"` or `"matern"`) sets how smooth the additive component is. The
-Matérn catch-all soaks up whatever the additive part misses, so there is no harm in using
-this kernel even when the target has no additive structure — the additive amplitudes just
-shrink toward zero. All hyperparameters are tuned per leaf by marginal-likelihood
-maximisation.
+The additive component uses only `d` length scales plus one variance per interaction
+order, so it needs fewer data points to fit when the target really does decompose this
+way. `order` sets the highest interaction order (1 for main effects only, 2 to add
+pairwise terms) and `base` (`"rbf"` or `"matern"`) sets its smoothness. The catch-all
+soaks up whatever is left, so there is no harm in using this kernel when the target has no
+additive structure. Hyperparameters are tuned per leaf by marginal-likelihood maximisation.
 
-A rough guide by what you expect of the target:
+Other options:
 
-* smooth additive/pairwise structure → `AdditiveMaternKernel(d, order=2)`
-* rough additive/pairwise structure (kinks, sharp peaks) → `AdditiveMaternKernel(d, order=2, base="matern")`
-* no additive structure to exploit → a plain Matérn + RBF kernel (below)
-* additive periodic structure → `AdditivePeriodicMaternKernel(d)` (below)
+* **No additive structure** → a plain anisotropic `Matern(nu=1.5) + RBF`, wrapped in a
+  `ConstantKernel`. Simpler and cheaper than the additive kernel.
+* **Periodic inputs** → `AdditivePeriodicMaternKernel(d)`, which adds a per-dimension
+  periodic component. Worth it only when several oscillation cycles fall within a single
+  leaf; for low-frequency or coupled periodicity the additive kernel above is usually
+  enough. (For `d > 1` the periodic part has to be built per dimension — scikit-learn's
+  `ExpSineSquared` is not positive-definite in more than one dimension.)
 
-`AdditiveMaternKernel` just returns an ordinary scikit-learn kernel. If you want to build
-the same thing by hand and customise the pieces:
-
-```python
-from pygptreeo import NewtonGirardAdditiveKernel
-from sklearn.gaussian_process.kernels import ConstantKernel, Matern
-
-kernel = (NewtonGirardAdditiveKernel(length_scale=[1.0] * d, order_std=[1.0, 1.0])
-          + ConstantKernel() * Matern(nu=1.5, length_scale=[1.0] * d))
-```
-
-### Matérn + RBF
-
-When you don't expect any additive structure, a two-component stationary kernel pairing a
-rougher Matérn with a smoother RBF is a simpler and cheaper option. It lets the GP fit a
-short-scale and a long-scale part of the signal separately:
-
-```python
-from pygptreeo import GPTree, Default_GPR
-from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
-
-d = 4
-kernel = ConstantKernel() * (
-    Matern(nu=1.5, length_scale=[1.0] * d)   # rough, short-scale component
-    + RBF(length_scale=[1.0] * d)            # smooth, long-scale component
-)
-gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
-```
-
-### Periodic targets
-
-If each input coordinate oscillates, `AdditivePeriodicMaternKernel` adds a per-dimension
-periodic component (with its own period and length scale per input) alongside the Matérn
-catch-all:
-
-```python
-from pygptreeo import GPTree, Default_GPR, AdditivePeriodicMaternKernel
-
-d = 4
-kernel = AdditivePeriodicMaternKernel(d=d)   # use catch_all="rbf" for a smooth residual
-gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
-```
-
-One thing to keep in mind is specific to the tree: each leaf only covers a small part of
-the input space. A long-period oscillation completes less than one cycle inside a leaf and
-just looks like a smooth trend, which the ordinary `AdditiveMaternKernel` already handles.
-The periodic kernel is worth it when several cycles fall within a leaf — i.e. for short
-periods relative to the data density, or a larger `Nbar`. For low-frequency, coupled, or
-non-periodic targets, use one of the kernels above. The bare per-dimension component is
-available as `AdditivePeriodicKernel` if you want to compose it yourself. (Note: for
-`d > 1` a periodic kernel has to be built per dimension like this — scikit-learn's
-`ExpSineSquared` uses the Euclidean distance and is not positive-definite in more than one
-dimension.)
+`AdditiveMaternKernel` returns an ordinary scikit-learn kernel, so you can also assemble
+the combination by hand from `NewtonGirardAdditiveKernel` if you want to customise the
+pieces.
 
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:
