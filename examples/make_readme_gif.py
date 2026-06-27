@@ -61,6 +61,7 @@ from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
 from sklearn.gaussian_process.kernels import (
     Kernel, Hyperparameter, StationaryKernelMixin, NormalizedKernelMixin)
 from target_functions import Himmelblau, Eggholder
+from physics_functions import saha_ionization
 
 from warnings import simplefilter
 from sklearn.exceptions import ConvergenceWarning
@@ -131,7 +132,7 @@ parser.add_argument("--quick", action="store_true",
                     help="Small/fast preview render for iterating on the design.")
 parser.add_argument("--alt", action="store_true",
                     help="Alternative version: Nbar=100, saved to a separate file.")
-parser.add_argument("--target", choices=["himmelblau", "eggholder"],
+parser.add_argument("--target", choices=["himmelblau", "eggholder", "saha"],
                     default="himmelblau", help="Target function to learn.")
 parser.add_argument("--final-only", action="store_true",
                     help="Run the full stream but render only the final frame "
@@ -149,7 +150,23 @@ args = parser.parse_args()
 # -- the model only does well where it has actually seen data, not by luck near a
 # minimum. Himmelblau (raw 0..7) is shifted by +1 and scaled by 10 to lift it off
 # zero; the rugged Eggholder (the harder target) already spans ~18..2009.
-if args.target == "eggholder":
+if args.target == "saha":
+    # Saha ionization fraction (x1 = temperature, x2 = log density): a curved
+    # ionization front separating neutral (~0.1) from ionized (~1.1). Already
+    # bounded away from 0, so no shift is needed. The sweep follows the front
+    # (lower-left -> upper-right) so the model learns the transition segment by
+    # segment.
+    def TARGET(x):
+        return float(saha_ionization(np.atleast_2d(x))[0])
+    TARGET_NAME = "Saha ionization"
+    FN_VMIN, FN_VMAX = 0.0, 1.1
+    FN_TICKS = [0.0, 0.25, 0.5, 0.75, 1.0]
+    START_CENTER = np.array([0.12, 0.08])
+    FINAL_CENTER = np.array([0.80, 0.72])
+    BOW_AMP = 0.12
+    CLUSTER_SIGMA_MAX, CLUSTER_SIGMA_MIN = 0.18, 0.05
+    RETRAIN = 5
+elif args.target == "eggholder":
     def TARGET(x):
         return Eggholder(x)
     TARGET_NAME = "Eggholder"
@@ -186,7 +203,7 @@ elif args.target == "eggholder":
     PTS_PER_FRAME = 40
     GRID = 70
     HOLD_FRAMES = 12
-else:
+else:                   # himmelblau, saha
     N_PTS = 1500
     PTS_PER_FRAME = 27
     GRID = 70
@@ -223,8 +240,8 @@ OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "example_plots", "animation")
 os.makedirs(OUT_DIR, exist_ok=True)
 BASENAME = "pygptreeo_local_learning"
-if args.target == "eggholder":
-    BASENAME += "_eggholder"
+if args.target != "himmelblau":
+    BASENAME += "_" + args.target
 if args.alt:
     BASENAME += "_nbar100"
 if args.kernel != "additive":
