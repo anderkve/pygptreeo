@@ -61,7 +61,7 @@ from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
 from sklearn.gaussian_process.kernels import (
     Kernel, Hyperparameter, StationaryKernelMixin, NormalizedKernelMixin)
 from target_functions import Himmelblau, Eggholder
-from physics_functions import saha_ionization
+from physics_functions import saha_ionization, ring_potential
 
 from warnings import simplefilter
 from sklearn.exceptions import ConvergenceWarning
@@ -132,7 +132,7 @@ parser.add_argument("--quick", action="store_true",
                     help="Small/fast preview render for iterating on the design.")
 parser.add_argument("--alt", action="store_true",
                     help="Alternative version: Nbar=100, saved to a separate file.")
-parser.add_argument("--target", choices=["himmelblau", "eggholder", "saha"],
+parser.add_argument("--target", choices=["himmelblau", "eggholder", "saha", "ring"],
                     default="himmelblau", help="Target function to learn.")
 parser.add_argument("--final-only", action="store_true",
                     help="Run the full stream but render only the final frame "
@@ -150,7 +150,25 @@ args = parser.parse_args()
 # -- the model only does well where it has actually seen data, not by luck near a
 # minimum. Himmelblau (raw 0..7) is shifted by +1 and scaled by 10 to lift it off
 # zero; the rugged Eggholder (the harder target) already spans ~18..2009.
-if args.target == "saha":
+if args.target == "ring":
+    # Electrostatic potential of a unit charged ring (radius 1) in the plane at
+    # fixed height h: a sharp circular ridge centred at (0.5, 0.5). The sampler
+    # traces the ring so the model draws the feature in arc by arc.
+    H_NORM = (0.20 - 0.05) / 1.15                # ring height h = 0.20
+    def TARGET(x):
+        x = np.atleast_2d(x)
+        X3 = np.column_stack([x[:, 0], x[:, 1], np.full(len(x), H_NORM)])
+        return float(ring_potential(X3)[0])
+    TARGET_NAME = "ring potential"
+    FN_VMIN, FN_VMAX = 3.0, 7.5
+    FN_TICKS = [3, 4, 5, 6, 7]
+    RING_CENTER = np.array([0.5, 0.5])
+    RING_RADIUS = 1.0 / 3.0                       # ring radius in [0,1]^2 coords
+    THETA0 = -np.pi / 2.0                         # start at the bottom
+    DTHETA = 2.0 * np.pi                          # one full loop before the dwell
+    CLUSTER_SIGMA_MAX, CLUSTER_SIGMA_MIN = 0.13, 0.05
+    RETRAIN = 5
+elif args.target == "saha":
     # Saha ionization fraction (x1 = temperature, x2 = log density): a curved
     # ionization front separating neutral (~0.1) from ionized (~1.1). Already
     # bounded away from 0, so no shift is needed. The sweep follows the front
@@ -217,7 +235,7 @@ FPS = 12
 # stream, while the cluster width shrinks from CLUSTER_SIGMA_MAX to
 # CLUSTER_SIGMA_MIN. This mimics an optimiser/adaptive sampler that explores
 # broadly at first and converges onto a region, which it then samples in detail.
-HOLD_FRAC = 0.45
+HOLD_FRAC = 0.15 if args.target == "ring" else 0.45
 
 # Function-value (viridis) colour scale: FN_VMIN/FN_VMAX/FN_TICKS are set per
 # target above; discretised into 21 levels.
@@ -264,6 +282,10 @@ def path_center(t):
     then staying there, so the converged minimum is sampled for an extended time.
     """
     p = min(t / (1.0 - HOLD_FRAC), 1.0)          # path progress, then held at 1
+    if args.target == "ring":                    # trace the ring, then dwell
+        theta = THETA0 + DTHETA * p
+        c = RING_CENTER + RING_RADIUS * np.array([np.cos(theta), np.sin(theta)])
+        return float(np.clip(c[0], 0.03, 0.97)), float(np.clip(c[1], 0.03, 0.97))
     s = p * p * (3.0 - 2.0 * p)                   # smoothstep ease in/out
     base = START_CENTER + (FINAL_CENTER - START_CENTER) * s
     direction = FINAL_CENTER - START_CENTER
