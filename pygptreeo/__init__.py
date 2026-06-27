@@ -16,6 +16,8 @@ Main components:
     - AnisotropicRationalQuadratic: Custom kernel for multi-scale learning
     - NewtonGirardAdditiveKernel: Sample-efficient low-order additive kernel
     - AdditiveMaternKernel: Shorthand for the additive + Matern catch-all leaf kernel
+    - AdditivePeriodicKernel: Per-dimension additive periodic kernel
+    - AdditivePeriodicMaternKernel: Shorthand for additive-periodic + catch-all leaf kernel
 
 Typical usage:
     from pygptreeo import GPTree
@@ -50,6 +52,8 @@ from pygptreeo.kernels import (
     AdditiveKernel,
     NewtonGirardAdditiveKernel,
     AdditiveMaternKernel,
+    AdditivePeriodicKernel,
+    AdditivePeriodicMaternKernel,
 )
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.adapters import SklearnGPAdapter
