@@ -17,16 +17,19 @@ Four panels, sharing the same x_1, x_2 axes:
   1. Unknown target function (fixed reference heat map) with the incoming data
      stream drawn on top: small white dots = points seen earlier, red = the
      points that just arrived.
-  2. pyGPTreeO's current prediction. Each pixel is shown only as strongly as the
-     model is confident there (low GP std -> opaque, high GP std -> transparent),
-     so the learned function literally appears only where data has been seen. The
-     thin white rectangles are the leaves of the GP tree -- the local GP models
-     that the tree has grown, denser where more data has arrived.
-  3. pyGPTreeO's predictive uncertainty (GP standard deviation): low (dark) where
-     data has been seen, high (bright) where it has not.
-  4. Absolute prediction error, |prediction - truth|: low (dark) where data has
-     been seen, confirming that the model is actually accurate -- not just
-     confident -- exactly in the sampled regions.
+  2. pyGPTreeO's current prediction (full opacity), coloured on the same scale as
+     panel 1. A cyan contour encloses the region where the *relative* predictive
+     uncertainty (std / |prediction|) is below 1%, i.e. where the model is sharply
+     confident. The thin white rectangles are the leaves of the GP tree -- the
+     local GP models that the tree has grown, denser where more data has arrived.
+  3. pyGPTreeO's *relative* predictive uncertainty, std / |prediction|, on a
+     logarithmic colour scale from 0.1% to 100%: low (dark) where data has been
+     seen, high (bright) where it has not.
+  4. The *relative* prediction error, |prediction - truth| / |truth|, on the same
+     0.1%..100% log scale: low (dark) where data has been seen, confirming that the
+     model is actually accurate -- not just confident -- in the sampled regions.
+
+  The same cyan < 1% relative-uncertainty contour is overlaid on panels 2, 3 and 4.
 
 Usage:
     python make_readme_gif.py                 # full-quality render
@@ -72,7 +75,15 @@ parser.add_argument("--alt", action="store_true",
 parser.add_argument("--seed", type=int, default=4)
 args = parser.parse_args()
 
-TARGET = Himmelblau
+# Shift the raw target by +1 and scale by 10. This lifts the function well away
+# from 0 so the GP's default zero-mean prior is a poor guess everywhere -- the
+# model only does well where it has actually seen data, not by luck near minima.
+TARGET_SHIFT = 1.0
+TARGET_SCALE = 10.0
+
+def TARGET(x):
+    return TARGET_SCALE * (Himmelblau(x) + TARGET_SHIFT)
+
 TARGET_NAME = "Himmelblau"
 
 if args.quick:
@@ -103,23 +114,24 @@ HOLD_FRAC = 0.45
 START_CENTER = np.array([0.20, 0.20])
 FINAL_CENTER = np.array([0.80, 0.70])
 
-# Function-value (viridis) colour scale: 0..7 in 21 discrete levels, i.e. exactly
-# 3 colours per unit of target-function value.
-FN_VMIN = 0.0
-FN_VMAX = 7.0
+# Function-value (viridis) colour scale, matched to the shifted/scaled target
+# (raw 0..7 -> 10..80), kept at 21 discrete levels.
+FN_VMIN = TARGET_SCALE * (0.0 + TARGET_SHIFT)   # 10
+FN_VMAX = TARGET_SCALE * (7.0 + TARGET_SHIFT)   # 80
 FN_LEVELS = 21
-UNC_LEVELS = 20  # discrete colour levels for the uncertainty (magma) colormap
 
-# Absolute prediction-error (inferno) colour scale.
-ERR_LEVELS = 20
-ERR_VMAX = 1.0 if args.alt else 1.5
+# Panels 3 and 4 show the *relative* predictive uncertainty (std / |prediction|)
+# and the *relative* error (|prediction - truth| / |truth|) on a logarithmic
+# colour scale spanning 0.001 to 1.0, i.e. from 0.1% to 100%.
+UNC_LEVELS = 20  # discrete colour levels for the relative-uncertainty (magma) map
+ERR_LEVELS = 20  # discrete colour levels for the relative-error (inferno) map
+REL_VMIN = 1e-3
+REL_VMAX = 1.0
 
-# Predictive-std scale (calibrated for this target/setup): well-learned regions
-# sit near STD_LO, never-visited regions near/above STD_HI. STD_LO/STD_HI control
-# the prediction-panel opacity; UNC_VMAX only sets the uncertainty-panel range.
-STD_LO = 0.03
-STD_HI = 0.30
-UNC_VMAX = 1.0 if args.alt else 0.40
+# Contour (drawn on the prediction, uncertainty and error panels) bounding the
+# region where the relative predictive uncertainty (std / |prediction|) < 1%.
+REL_UNC_LEVEL = 0.01
+CONTOUR_COLOR = "cyan"
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "example_plots", "animation")
@@ -208,7 +220,7 @@ def update_quiet(gpt, x, y):
 plt.rcParams.update({"font.size": 13, "axes.titlesize": 14})
 fig = plt.figure(figsize=(20.0, 5.2))
 
-cmap_fn = plt.get_cmap("viridis", FN_LEVELS)   # 21 colours over y in [0, 7]
+cmap_fn = plt.get_cmap("viridis", FN_LEVELS)   # 21 colours over y in [10, 80]
 cmap_unc = plt.get_cmap("magma", UNC_LEVELS)
 cmap_err = plt.get_cmap("inferno", ERR_LEVELS)
 norm_fn = colors.Normalize(vmin=vmin, vmax=vmax)
@@ -236,20 +248,21 @@ new_scat = axT.scatter([], [], s=12, c="red", edgecolors="white",
                        linewidths=0.3, zorder=4)
 axT.set_title("Unknown target function\n+ stream of input points")
 
-# Panel 2: confidence-masked prediction (filled in update())
-pred_im = axP.imshow(np.zeros((GRID, GRID, 4)), origin="lower", extent=extent,
-                     aspect="auto", zorder=2)
-axP.set_title("pyGPTreeO prediction\n(opacity = model confidence)")
+# Panel 2: prediction (full opacity); a contour marks relative uncertainty < 1%
+pred_im = axP.imshow(np.zeros((GRID, GRID)), origin="lower", extent=extent,
+                     cmap=cmap_fn, norm=norm_fn, aspect="auto", zorder=2)
+axP.set_title("pyGPTreeO prediction\n(cyan contour: relative uncertainty < 1%)")
 
-# Panel 3: uncertainty
-unc_im = axU.imshow(np.zeros((GRID, GRID)), origin="lower", extent=extent,
-                    cmap=cmap_unc, aspect="auto", vmin=0.0, vmax=UNC_VMAX)
-axU.set_title("pyGPTreeO uncertainty\n(GP standard deviation)")
+# Panel 3: relative predictive uncertainty (log scale 0.1% .. 100%)
+norm_rel = colors.LogNorm(vmin=REL_VMIN, vmax=REL_VMAX)
+unc_im = axU.imshow(np.full((GRID, GRID), REL_VMIN), origin="lower", extent=extent,
+                    cmap=cmap_unc, norm=norm_rel, aspect="auto")
+axU.set_title("pyGPTreeO relative uncertainty\n(std / |prediction|)")
 
-# Panel 4: absolute prediction error vs the true function
-err_im = axE.imshow(np.zeros((GRID, GRID)), origin="lower", extent=extent,
-                    cmap=cmap_err, aspect="auto", vmin=0.0, vmax=ERR_VMAX)
-axE.set_title("pyGPTreeO error\n(|prediction $-$ truth|)")
+# Panel 4: relative prediction error (log scale 0.1% .. 100%)
+err_im = axE.imshow(np.full((GRID, GRID), REL_VMIN), origin="lower", extent=extent,
+                    cmap=cmap_err, norm=norm_rel, aspect="auto")
+axE.set_title("pyGPTreeO relative error\n(|prediction $-$ truth| / |truth|)")
 
 for ax in (axT, axP, axU, axE):
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
@@ -258,25 +271,23 @@ for ax in (axT, axP, axU, axE):
 axT.set_ylabel(r"$x_2$")
 for ax in (axP, axU, axE):       # all panels share the same y-axis -> label once
     ax.set_yticklabels([])
-axP.set_facecolor("0.85")  # neutral background showing through where unconfident
 
 # Colour bars
 cb_fn = fig.colorbar(cm.ScalarMappable(norm=norm_fn, cmap=cmap_fn), cax=cax_fn, label="y")
-cb_fn.set_ticks(list(range(int(FN_VMIN), int(FN_VMAX) + 1)))
-cb_un = fig.colorbar(cm.ScalarMappable(norm=colors.Normalize(0, UNC_VMAX), cmap=cmap_unc),
-                     cax=cax_un, label="GP std")
-cb_er = fig.colorbar(cm.ScalarMappable(norm=colors.Normalize(0, ERR_VMAX), cmap=cmap_err),
-                     cax=cax_er, label="|prediction $-$ truth|")
-if args.alt:
-    # Both panels share an absolute 0..1 scale -> show numeric ticks.
-    cb_un.set_ticks([0.0, 0.5, 1.0]); cb_un.set_ticklabels(["0.0", "0.5", "1.0"])
-    cb_er.set_ticks([0.0, 0.5, 1.0]); cb_er.set_ticklabels(["0.0", "0.5", "1.0"])
-else:
-    cb_un.set_ticks([0, UNC_VMAX]); cb_un.set_ticklabels(["0", "high"])
-    cb_er.set_ticks([0, ERR_VMAX]); cb_er.set_ticklabels(["0\n(accurate)", "high\n(wrong)"])
+cb_fn.set_ticks(list(range(int(FN_VMIN), int(FN_VMAX) + 1, 10)))
+cb_un = fig.colorbar(cm.ScalarMappable(norm=norm_rel, cmap=cmap_unc),
+                     cax=cax_un, label="relative uncertainty")
+cb_er = fig.colorbar(cm.ScalarMappable(norm=norm_rel, cmap=cmap_err),
+                     cax=cax_er, label="relative error")
+# Log decade ticks labelled as percentages (0.1% .. 100%).
+rel_ticks = [1e-3, 1e-2, 1e-1, 1e0]
+rel_labels = ["0.1%", "1%", "10%", "100%"]
+cb_un.set_ticks(rel_ticks); cb_un.set_ticklabels(rel_labels)
+cb_er.set_ticks(rel_ticks); cb_er.set_ticklabels(rel_labels)
 
 suptitle = fig.suptitle("", fontsize=18, x=0.5, y=0.955)
 leaf_patches = []
+contours = []
 
 
 # --------------------------------------------------------------------------
@@ -284,17 +295,14 @@ leaf_patches = []
 # --------------------------------------------------------------------------
 
 def render_frame(n_seen):
-    global leaf_patches
+    global leaf_patches, contours
 
     mu, std = gpt.predict(grid_pts, show_progress=False)
     mu = mu.reshape(GRID, GRID)
     std = std.reshape(GRID, GRID)
 
-    # Panel 2: colour by prediction, opacity by confidence
-    conf = np.clip((STD_HI - std) / (STD_HI - STD_LO), 0.0, 1.0)
-    rgba = cmap_fn(norm_fn(mu))
-    rgba[..., 3] = conf
-    pred_im.set_data(rgba)
+    # Panel 2: prediction at full opacity, coloured on the function scale
+    pred_im.set_data(mu)
 
     # Leaf rectangles
     for p in leaf_patches:
@@ -307,11 +315,19 @@ def render_frame(n_seen):
         axP.add_patch(r)
         leaf_patches.append(r)
 
-    # Panel 3: uncertainty
-    unc_im.set_data(std)
+    # Panels 3 & 4: relative uncertainty and relative error (clipped to the log range)
+    rel_unc = std / np.maximum(np.abs(mu), 1e-9)
+    rel_err = np.abs(mu - Z_true) / np.abs(Z_true)
+    unc_im.set_data(np.clip(rel_unc, REL_VMIN, REL_VMAX))
+    err_im.set_data(np.clip(rel_err, REL_VMIN, REL_VMAX))
 
-    # Panel 4: absolute prediction error against the true function
-    err_im.set_data(np.abs(mu - Z_true))
+    # Contour bounding relative uncertainty < 1%, on panels 2, 3 and 4
+    for c in contours:
+        c.remove()
+    contours = []
+    for ax in (axP, axU, axE):
+        contours.append(ax.contour(GX, GY, rel_unc, levels=[REL_UNC_LEVEL],
+                                   colors=CONTOUR_COLOR, linewidths=1.8, zorder=4))
 
     # Panel 1: data stream (faded older, bright newest batch)
     new_lo = max(0, n_seen - PTS_PER_FRAME)
