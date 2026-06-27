@@ -57,6 +57,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
 from target_functions import Himmelblau, Eggholder
 
 from warnings import simplefilter
@@ -78,6 +79,9 @@ parser.add_argument("--target", choices=["himmelblau", "eggholder"],
 parser.add_argument("--final-only", action="store_true",
                     help="Run the full stream but render only the final frame "
                          "(saved as the PNG, no GIF) -- for previewing the end state.")
+parser.add_argument("--kernel", choices=["additive", "matern_rbf"], default="additive",
+                    help="Leaf GP kernel: 'additive' = AdditiveMaternKernel; "
+                         "'matern_rbf' = ConstantKernel*(anisotropic Matern(1.5)+RBF).")
 parser.add_argument("--seed", type=int, default=4)
 args = parser.parse_args()
 
@@ -164,6 +168,8 @@ if args.target == "eggholder":
     BASENAME += "_eggholder"
 if args.alt:
     BASENAME += "_nbar100"
+if args.kernel != "additive":
+    BASENAME += "_" + args.kernel
 GIF_PATH = os.path.join(OUT_DIR, BASENAME + ".gif")
 PNG_PATH = os.path.join(OUT_DIR, BASENAME + "_final.png")
 
@@ -382,7 +388,13 @@ def render_frame(n_seen):
 # Run the stream, collecting frames
 # --------------------------------------------------------------------------
 
-kernel = AdditiveMaternKernel(d=2, order=2, nu=1.5)
+if args.kernel == "matern_rbf":
+    # README's "no additive structure" option: anisotropic Matern(1.5) + RBF,
+    # wrapped in a ConstantKernel (per-dimension length scales).
+    kernel = ConstantKernel() * (Matern(length_scale=[1.0, 1.0], nu=1.5)
+                                 + RBF(length_scale=[1.0, 1.0]))
+else:
+    kernel = AdditiveMaternKernel(d=2, order=2, nu=1.5)
 gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=NBAR, theta=0.05,
              splitting_strategy="gradual", split_position_method="median",
              retrain_every_n_points=RETRAIN, use_calibrated_sigma=True)
