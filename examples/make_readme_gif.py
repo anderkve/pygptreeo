@@ -47,7 +47,7 @@ from matplotlib import cm, colors
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pygptreeo import GPTree
+from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
 from target_functions import Himmelblau
 
 from warnings import simplefilter
@@ -79,10 +79,16 @@ else:
     GRID = 70
     HOLD_FRAMES = 12
 
-NBAR = 40
+NBAR = 100
 CLUSTER_SIGMA = 0.06
 FPS = 12
-N_LEVELS = 20  # number of discrete colour levels in each colormap
+
+# Function-value (viridis) colour scale: 0..7 in 21 discrete levels, i.e. exactly
+# 3 colours per unit of target-function value.
+FN_VMIN = 0.0
+FN_VMAX = 7.0
+FN_LEVELS = 21
+UNC_LEVELS = 20  # discrete colour levels for the uncertainty (magma) colormap
 
 # Predictive-std scale (calibrated for this target/setup): well-learned regions
 # sit near STD_LO, never-visited regions near/above STD_HI.
@@ -125,7 +131,7 @@ gx = np.linspace(0.0, 1.0, GRID)
 GX, GY = np.meshgrid(gx, gx)
 grid_pts = np.column_stack([GX.ravel(), GY.ravel()])
 Z_true = np.array([TARGET(p) for p in grid_pts]).reshape(GRID, GRID)
-vmin, vmax = float(Z_true.min()), float(Z_true.max())
+vmin, vmax = FN_VMIN, FN_VMAX
 
 
 # --------------------------------------------------------------------------
@@ -162,8 +168,8 @@ plt.rcParams.update({"font.size": 13, "axes.titlesize": 15})
 fig, (axT, axP, axU) = plt.subplots(1, 3, figsize=(15.0, 5.0))
 fig.subplots_adjust(left=0.035, right=0.895, bottom=0.10, top=0.80, wspace=0.30)
 
-cmap_fn = plt.get_cmap("viridis", N_LEVELS)   # discretised into N_LEVELS colours
-cmap_unc = plt.get_cmap("magma", N_LEVELS)
+cmap_fn = plt.get_cmap("viridis", FN_LEVELS)   # 21 colours over y in [0, 7]
+cmap_unc = plt.get_cmap("magma", UNC_LEVELS)
 norm_fn = colors.Normalize(vmin=vmin, vmax=vmax)
 
 extent = [0, 1, 0, 1]
@@ -195,7 +201,8 @@ axP.set_facecolor("0.85")  # neutral background showing through where unconfiden
 
 # Shared colour bars
 cax_fn = fig.add_axes([0.602, 0.10, 0.010, 0.70])
-fig.colorbar(cm.ScalarMappable(norm=norm_fn, cmap=cmap_fn), cax=cax_fn, label="y")
+cb_fn = fig.colorbar(cm.ScalarMappable(norm=norm_fn, cmap=cmap_fn), cax=cax_fn, label="y")
+cb_fn.set_ticks(list(range(int(FN_VMIN), int(FN_VMAX) + 1)))
 cax_un = fig.add_axes([0.905, 0.10, 0.010, 0.70])
 cb_un = fig.colorbar(cm.ScalarMappable(norm=colors.Normalize(0, UNC_VMAX), cmap=cmap_unc),
                      cax=cax_un, label="GP std")
@@ -255,8 +262,10 @@ def render_frame(n_seen):
 # Run the stream, collecting frames
 # --------------------------------------------------------------------------
 
-gpt = GPTree(GPR=None, Nbar=NBAR, theta=1e-4, split_position_method="median",
-             retrain_every_n_points=5, use_calibrated_sigma=True)
+kernel = AdditiveMaternKernel(d=2, order=2, nu=1.5)
+gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=NBAR, theta=0.01,
+             split_position_method="median", retrain_every_n_points=2,
+             use_calibrated_sigma=True)
 
 frames = []
 n_seen = 0
@@ -274,8 +283,8 @@ frames.extend([frames[-1]] * HOLD_FRAMES)
 frames[-1].save(PNG_PATH)
 
 # Save with a full per-frame palette (no shared/lossy quantization). Because the
-# colormaps are discretised into N_LEVELS colours, unchanged regions render as
-# exactly the same colour from frame to frame, so the animation stays stable.
+# colormaps are discretised into a fixed set of colours, unchanged regions render
+# as exactly the same colour from frame to frame, so the animation stays stable.
 frames[0].save(GIF_PATH, save_all=True, append_images=frames[1:],
                duration=int(1000 / FPS), loop=0, optimize=True)
 print(f"\nWrote {GIF_PATH}  ({len(frames)} frames, "
