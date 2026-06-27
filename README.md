@@ -95,11 +95,25 @@ Other options:
 
 * **No additive structure** → a plain anisotropic `Matern(nu=1.5) + RBF`, wrapped in a
   `ConstantKernel`. Simpler and cheaper than the additive kernel.
+
+  ```python
+  from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
+
+  kernel = ConstantKernel() * (Matern(nu=1.5, length_scale=[1.0] * d)
+                               + RBF(length_scale=[1.0] * d))
+  ```
+
 * **Periodic inputs** → `AdditivePeriodicMaternKernel(d)`, which adds a per-dimension
   periodic component. Worth it only when several oscillation cycles fall within a single
   leaf; for low-frequency or coupled periodicity the additive kernel above is usually
   enough. (For `d > 1` the periodic part has to be built per dimension — scikit-learn's
   `ExpSineSquared` is not positive-definite in more than one dimension.)
+
+  ```python
+  from pygptreeo import AdditivePeriodicMaternKernel
+
+  kernel = AdditivePeriodicMaternKernel(d=d)
+  ```
 
 `AdditiveMaternKernel` returns an ordinary scikit-learn kernel, so you can also assemble
 the combination by hand from `NewtonGirardAdditiveKernel` if you want to customise the
