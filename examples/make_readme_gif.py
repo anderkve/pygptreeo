@@ -450,18 +450,29 @@ axT.set_ylabel(r"$x_2$")
 for ax in (axP, axU, axE):       # all panels share the same y-axis -> label once
     ax.set_yticklabels([])
 
-# Colour bars
-cb_fn = fig.colorbar(cm.ScalarMappable(norm=norm_fn, cmap=cmap_fn), cax=cax_fn, label="y")
+# Colour bars (tick labels only, no axis labels)
+cb_fn = fig.colorbar(cm.ScalarMappable(norm=norm_fn, cmap=cmap_fn), cax=cax_fn)
 cb_fn.set_ticks(FN_TICKS)
-cb_un = fig.colorbar(cm.ScalarMappable(norm=norm_rel, cmap=cmap_unc),
-                     cax=cax_un, label="relative uncertainty")
-cb_er = fig.colorbar(cm.ScalarMappable(norm=norm_rel, cmap=cmap_err),
-                     cax=cax_er, label="relative error")
+cb_un = fig.colorbar(cm.ScalarMappable(norm=norm_rel, cmap=cmap_unc), cax=cax_un)
+cb_er = fig.colorbar(cm.ScalarMappable(norm=norm_rel, cmap=cmap_err), cax=cax_er)
 # Log decade ticks labelled as percentages (0.1% .. 100%).
 rel_ticks = [1e-3, 1e-2, 1e-1, 1e0]
 rel_labels = ["0.1%", "1%", "10%", "100%"]
 cb_un.set_ticks(rel_ticks); cb_un.set_ticklabels(rel_labels)
 cb_er.set_ticks(rel_ticks); cb_er.set_ticklabels(rel_labels)
+
+# Centre the whole block horizontally so the left x2 label is not clipped and the
+# white margin past the right-most colour-bar tick label matches it on both sides.
+_all_axes = [axT, axP, cax_fn, axU, cax_un, axE, cax_er]
+fig.canvas.draw()
+_rend = fig.canvas.get_renderer()
+_W = fig.bbox.width
+_left = min(a.get_tightbbox(_rend).x0 for a in _all_axes) / _W
+_right = max(a.get_tightbbox(_rend).x1 for a in _all_axes) / _W
+_shift = (1.0 - _left - _right) / 2.0
+for a in _all_axes:
+    _p = a.get_position()
+    a.set_position([_p.x0 + _shift, _p.y0, _p.width, _p.height])
 
 suptitle = fig.suptitle("", fontsize=18, x=0.5, y=0.955)
 leaf_patches = []
@@ -488,8 +499,7 @@ def render_frame(n_seen):
     leaf_patches = []
     for lo, hi in leaf_boxes(gpt.root):
         r = Rectangle((lo[0], lo[1]), hi[0] - lo[0], hi[1] - lo[1],
-                      fill=False, edgecolor="white", linewidth=0.6,
-                      alpha=0.55, zorder=3)
+                      fill=False, edgecolor="white", linewidth=0.6, zorder=3)
         axP.add_patch(r)
         leaf_patches.append(r)
 
@@ -513,8 +523,7 @@ def render_frame(n_seen):
     new_scat.set_offsets(X_input[new_lo:n_seen])
 
     suptitle.set_text(
-        f"pyGPTreeO learning the {TARGET_NAME} function online   "
-        f"|   {n_seen} input points seen   |   {len(gpt.root.leaves)} local GPs")
+        f"{n_seen} input points seen   |   {len(gpt.root.leaves)} local GPs")
 
     fig.canvas.draw()
     buf = np.asarray(fig.canvas.buffer_rgba())
