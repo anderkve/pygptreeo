@@ -162,6 +162,8 @@ cython_debug/
 # Generated output files
 *.gif
 *.png
+# ...except the animation asset displayed in the README
+!examples/example_plots/animation/pygptreeo_local_learning_nbar100.gif
 *.csv
 *.hdf5
 *.log
