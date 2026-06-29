@@ -409,7 +409,8 @@ extent = [0, 1, 0, 1]
 # slim colour bar with room for its tick labels.
 PB, PH, PW, CW = 0.10, 0.70, 0.190, 0.008      # bottom, height, panel/cbar widths
 x = 0.028
-axT = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.026   # room for both panels' x-ticks
+axT = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.006
+cax_t = fig.add_axes([x, PB, CW, PH]);  x += CW + 0.034
 axP = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.006
 cax_fn = fig.add_axes([x, PB, CW, PH]); x += CW + 0.034
 axU = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.006
@@ -450,7 +451,10 @@ axT.set_ylabel(r"$x_2$")
 for ax in (axP, axU, axE):       # all panels share the same y-axis -> label once
     ax.set_yticklabels([])
 
-# Colour bars (tick labels only, no axis labels)
+# Colour bars (tick labels only, no axis labels). Panels 1 and 2 share the same
+# function scale, each with its own bar for a symmetric four-panel layout.
+cb_t = fig.colorbar(cm.ScalarMappable(norm=norm_fn, cmap=cmap_fn), cax=cax_t)
+cb_t.set_ticks(FN_TICKS)
 cb_fn = fig.colorbar(cm.ScalarMappable(norm=norm_fn, cmap=cmap_fn), cax=cax_fn)
 cb_fn.set_ticks(FN_TICKS)
 cb_un = fig.colorbar(cm.ScalarMappable(norm=norm_rel, cmap=cmap_unc), cax=cax_un)
@@ -465,11 +469,11 @@ suptitle = fig.suptitle("0000 input points seen   |   00 local GPs",
                         fontsize=18, x=0.5, y=0.955)
 
 # Fine-tune the layout from the actual rendered label extents:
-#  - horizontally: leave equal left/right white margins, each HALF of what simply
-#    centring the block would give (content is scaled up to fill the freed space);
+#  - horizontally: leave a small fixed left/right white margin, scaling the panel
+#    block to fill the rest of the width;
 #  - vertically: raise the panel bottoms so the white margin below the x1 labels
 #    matches the white margin above the title.
-_all_axes = [axT, axP, cax_fn, axU, cax_un, axE, cax_er]
+_all_axes = [axT, cax_t, axP, cax_fn, axU, cax_un, axE, cax_er]
 _panels = [axT, axP, axU, axE]
 fig.canvas.draw()
 _rend = fig.canvas.get_renderer()
@@ -482,7 +486,7 @@ _axes_right = max(a.get_position().x1 for a in _all_axes)
 _L = _axes_left - _xs0
 _R = _xs1 - _axes_right
 _Wax = _axes_right - _axes_left
-_margin = (1.0 - (_xs1 - _xs0)) / 2.0 / 2.0          # half the centred margin
+_margin = 0.011                                      # fixed L/R white margin (fraction)
 _f = (1.0 - 2.0 * _margin - _L - _R) / _Wax          # scale to fill freed space
 _new_left = _margin + _L
 # vertical: match bottom white margin to the top (above-title) margin
