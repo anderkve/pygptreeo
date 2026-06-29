@@ -400,7 +400,7 @@ fig = plt.figure(figsize=(20.0, 5.2))
 
 cmap_fn = plt.get_cmap("viridis", FN_LEVELS)   # 21 discrete colours over [FN_VMIN, FN_VMAX]
 cmap_unc = plt.get_cmap("magma", UNC_LEVELS)
-cmap_err = plt.get_cmap("inferno", ERR_LEVELS)
+cmap_err = cmap_unc                            # error panel uses the same map as uncertainty
 norm_fn = colors.Normalize(vmin=vmin, vmax=vmax)
 
 extent = [0, 1, 0, 1]
@@ -409,7 +409,7 @@ extent = [0, 1, 0, 1]
 # slim colour bar with room for its tick labels.
 PB, PH, PW, CW = 0.10, 0.70, 0.190, 0.008      # bottom, height, panel/cbar widths
 x = 0.028
-axT = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.010
+axT = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.026   # room for both panels' x-ticks
 axP = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.006
 cax_fn = fig.add_axes([x, PB, CW, PH]); x += CW + 0.034
 axU = fig.add_axes([x, PB, PW, PH]);    x += PW + 0.006
@@ -461,20 +461,42 @@ rel_labels = ["0.1%", "1%", "10%", "100%"]
 cb_un.set_ticks(rel_ticks); cb_un.set_ticklabels(rel_labels)
 cb_er.set_ticks(rel_ticks); cb_er.set_ticklabels(rel_labels)
 
-# Centre the whole block horizontally so the left x2 label is not clipped and the
-# white margin past the right-most colour-bar tick label matches it on both sides.
+suptitle = fig.suptitle("0000 input points seen   |   00 local GPs",
+                        fontsize=18, x=0.5, y=0.955)
+
+# Fine-tune the layout from the actual rendered label extents:
+#  - horizontally: leave equal left/right white margins, each HALF of what simply
+#    centring the block would give (content is scaled up to fill the freed space);
+#  - vertically: raise the panel bottoms so the white margin below the x1 labels
+#    matches the white margin above the title.
 _all_axes = [axT, axP, cax_fn, axU, cax_un, axE, cax_er]
+_panels = [axT, axP, axU, axE]
 fig.canvas.draw()
 _rend = fig.canvas.get_renderer()
-_W = fig.bbox.width
-_left = min(a.get_tightbbox(_rend).x0 for a in _all_axes) / _W
-_right = max(a.get_tightbbox(_rend).x1 for a in _all_axes) / _W
-_shift = (1.0 - _left - _right) / 2.0
+_W, _H = fig.bbox.width, fig.bbox.height
+_tb = {a: a.get_tightbbox(_rend) for a in _all_axes}
+_xs0 = min(_tb[a].x0 for a in _all_axes) / _W
+_xs1 = max(_tb[a].x1 for a in _all_axes) / _W
+_axes_left = min(a.get_position().x0 for a in _all_axes)
+_axes_right = max(a.get_position().x1 for a in _all_axes)
+_L = _axes_left - _xs0
+_R = _xs1 - _axes_right
+_Wax = _axes_right - _axes_left
+_margin = (1.0 - (_xs1 - _xs0)) / 2.0 / 2.0          # half the centred margin
+_f = (1.0 - 2.0 * _margin - _L - _R) / _Wax          # scale to fill freed space
+_new_left = _margin + _L
+# vertical: match bottom white margin to the top (above-title) margin
+_ylo = min(_tb[a].y0 for a in _panels) / _H
+_top_margin = 1.0 - suptitle.get_window_extent(_rend).y1 / _H
+_dPB = max(0.0, _top_margin - _ylo)                  # raise panel bottoms by this
 for a in _all_axes:
     _p = a.get_position()
-    a.set_position([_p.x0 + _shift, _p.y0, _p.width, _p.height])
+    _nx0 = _new_left + (_p.x0 - _axes_left) * _f
+    a.set_position([_nx0, _p.y0 + _dPB, _p.width * _f, _p.height - _dPB])
 
-suptitle = fig.suptitle("", fontsize=18, x=0.5, y=0.955)
+print(f"layout: margin {_margin:.3f}  scale {_f:.3f}  "
+      f"top {_top_margin:.3f}  bottom {_ylo:.3f}  dPB {_dPB:.3f}", flush=True)
+
 leaf_patches = []
 contours = []
 
