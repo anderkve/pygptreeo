@@ -254,20 +254,18 @@ if args.quick:
     N_PTS = 260
     PTS_PER_FRAME = 20
     GRID = 44
-    HOLD_FRAMES = 4
 elif args.target in ("eggholder", "projectile", "bessel"):
     N_PTS = 3000        # more samples -> the sweep moves slowly through the space
     PTS_PER_FRAME = 40
     GRID = 70
-    HOLD_FRAMES = 12
 else:                   # himmelblau, saha
     N_PTS = 1500
     PTS_PER_FRAME = 27
     GRID = 70
-    HOLD_FRAMES = 12
 
 NBAR = 100 if args.alt else 50
 FPS = 12
+END_PAUSE_MS = 1800       # how long the final frame is held before the loop repeats
 
 # Sampling schedule. The cluster centre sweeps from START_CENTER to FINAL_CENTER
 # (both set per target above) and then settles there for the last HOLD_FRAC of the
@@ -592,13 +590,17 @@ frames[-1].save(PNG_PATH)
 if args.final_only:
     print(f"\nWrote {PNG_PATH} (final frame only; no GIF)")
 else:
-    # Hold on the final frame so viewers can read the end state
-    frames.extend([frames[-1]] * HOLD_FRAMES)
+    # Hold on the final frame so viewers can read the end state. We lengthen the
+    # final frame's *duration* rather than appending duplicate frames, because the
+    # GIF optimiser collapses identical trailing frames (which would drop the hold).
+    base_ms = int(1000 / FPS)
+    durations = [base_ms] * len(frames)
+    durations[-1] = END_PAUSE_MS
     # Save with a full per-frame palette (no shared/lossy quantization). Because
     # the colormaps are discretised into a fixed set of colours, unchanged regions
     # render as the same colour frame to frame, so the animation stays stable.
     frames[0].save(GIF_PATH, save_all=True, append_images=frames[1:],
-                   duration=int(1000 / FPS), loop=0, optimize=True)
+                   duration=durations, loop=0, optimize=True)
     print(f"\nWrote {GIF_PATH}  ({len(frames)} frames, "
           f"{os.path.getsize(GIF_PATH) / 1e6:.1f} MB)")
     print(f"Wrote {PNG_PATH}")
