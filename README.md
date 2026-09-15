@@ -7,20 +7,14 @@
 ## Introduction
 pyGPTreeO is a Python tool designed for online/continual regression tasks. It implements a dynamically growing tree where each leaf node is a local Gaussian Process (GP) regressor. This structure makes it particularly well-suited for learning from data streams where data points arrive sequentially. It builds on the DLGP approach by Lederer et al (https://arxiv.org/abs/2006.09446) and our R package [GPTreeO](https://cran.r-project.org/web/packages/GPTreeO/index.html) (https://arxiv.org/abs/2410.01024).
 
-## Features
-*   **Dynamic tree structure**: The tree adaptively changes its structure based on the incoming data, growing by splitting nodes as more data is observed in specific regions.
-*   **Local GP models**: Utilizes Gaussian Process regressors at the leaf nodes to perform regression, capturing local data characteristics.
-*   **Continual learning**: Designed to learn from data points one by one, allowing the model to evolve over time.
-*   **Online prediction**: Capable of making predictions at any point during the learning process.
-*   **Ensemble method**: Includes `GPForest` for running an ensemble of multiple GPTrees, which can improve prediction stability and accuracy.
-*   **Customizable GPRs**: Allows users to define and use their own scikit-learn compatible Gaussian Process Regressor models within the tree nodes.
-*   **Additive leaf kernels**: `AdditiveMaternKernel` and related kernels can exploit low-order (additive / pairwise) structure in the target, which often needs fewer data points to fit. See [Selecting a leaf kernel](#selecting-a-leaf-kernel).
-
 ## How it works (briefly)
-GPTreeO builds a binary tree where each node represents a specific region of the input space.
+- Using the sequential input stream, GPTreeO dynamically constructs a binary tree where each node represents a specific region of the input space.
 - Leaf nodes contain their own Gaussian Process (GP) model, which is trained on the data points that fall into that node's defined region.
 - When a leaf node accumulates a sufficient number of data points (determined by the `Nbar` parameter), it splits into two children. This process creates more specialized models for subregions of the data space.
-- Predictions are typically made by the GP model in the leaf node into which a new data point falls. For overlapping regions (due to the `theta` parameter) or when using `GPForest`, predictions can be a weighted average from multiple relevant GPs.
+- Predictions are typically made by the GP model in the leaf node into which a new data point falls. For overlapping regions (controlled by the `theta` parameter) or when using `GPForest`, predictions can be an aggregate prediction from multiple relevant GPs.
+
+Interfaces to several established GP packages already exist, and the code can easily be extended with more. 
+
 
 ## Installation
 Details on installing via pip will be added soon. For now, you can clone the repository and install dependencies:
