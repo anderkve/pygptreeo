@@ -47,7 +47,7 @@ class SklearnGPAdapter(GPRegressorInterface):
     >>> gpt = GPTree(GPR=adapter)
     """
 
-    def __init__(self, gpr: GaussianProcessRegressor):
+    def __init__(self, gpr: GaussianProcessRegressor, kernel_factory=None):
         """
         Initialize the adapter with a scikit-learn GaussianProcessRegressor.
 
@@ -55,12 +55,25 @@ class SklearnGPAdapter(GPRegressorInterface):
         ----------
         gpr : GaussianProcessRegressor
             The scikit-learn GP regressor to wrap.
+        kernel_factory : callable, optional
+            ``kernel_factory(n_features) -> Kernel``. If given, the wrapped GPR's
+            kernel is replaced by ``kernel_factory(X.shape[1])`` at the first
+            ``fit`` (or ``get_kernel_covariance``) call, so that kernels needing
+            the input dimension (e.g. one length scale per dimension) can be
+            built lazily. It is dropped once used, or if ``set_kernel`` is called.
         """
         if not isinstance(gpr, GaussianProcessRegressor):
             raise TypeError(
                 f"Expected GaussianProcessRegressor, got {type(gpr).__name__}"
             )
         self._gpr = gpr
+        self._kernel_factory = kernel_factory
+
+    def _ensure_kernel(self, n_features: int) -> None:
+        """Build the kernel from the factory (once) now that n_features is known."""
+        if self._kernel_factory is not None:
+            self._gpr.kernel = self._kernel_factory(int(n_features))
+            self._kernel_factory = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> 'SklearnGPAdapter':
         """
@@ -78,8 +91,13 @@ class SklearnGPAdapter(GPRegressorInterface):
         self : SklearnGPAdapter
             The fitted adapter instance.
         """
+        self._ensure_kernel(np.asarray(X).shape[1])
         self._gpr.fit(X, y)
         return self
+
+    def supports_multitarget(self) -> bool:
+        """scikit-learn's GPR fits a 2-D ``y`` with one shared kernel (multi-target)."""
+        return True
 
     def predict(
         self,
@@ -157,6 +175,7 @@ class SklearnGPAdapter(GPRegressorInterface):
         K : np.ndarray
             Covariance matrix of shape (n_samples, n_samples).
         """
+        self._ensure_kernel(np.asarray(X).shape[1])
         return self._gpr.kernel(X)
 
     def clone(self) -> 'SklearnGPAdapter':
@@ -168,7 +187,7 @@ class SklearnGPAdapter(GPRegressorInterface):
         SklearnGPAdapter
             A deep copy of this adapter instance.
         """
-        return SklearnGPAdapter(deepcopy(self._gpr))
+        return SklearnGPAdapter(deepcopy(self._gpr), kernel_factory=self._kernel_factory)
 
     def get_kernel(self):
         """
@@ -200,14 +219,18 @@ class SklearnGPAdapter(GPRegressorInterface):
             The kernel object to set (sklearn.gaussian_process.kernels.Kernel).
         """
         self._gpr.kernel = kernel
+        self._kernel_factory = None
 
     def get_length_scales(self, n_features: int):
         """Per-dimension length scales from the fitted kernel, or None.
 
-        Collects every 'length_scale' hyperparameter of the (possibly composite)
-        kernel; anisotropic vectors are used as-is, scalars are broadcast. When
-        several components contribute, the per-dimension minimum is taken (the
-        shortest length scale governs the resolution).
+        Collects every anisotropic (length ``n_features``) 'length_scale'
+        hyperparameter of the (possibly composite) kernel. When several
+        components contribute, the per-dimension minimum is taken (the shortest
+        length scale governs the resolution). Isotropic (scalar) length scales
+        carry no per-dimension information and are ignored, so a kernel with
+        only isotropic components returns None and the caller falls back to a
+        data-based criterion.
         """
         kernel = self.get_kernel()
         if kernel is None:
@@ -222,10 +245,8 @@ class SklearnGPAdapter(GPRegressorInterface):
             if not key.endswith('length_scale'):  # excludes 'length_scale_bounds'
                 continue
             arr = np.atleast_1d(np.asarray(val, dtype=float)).ravel()
-            if arr.size == n_features:
+            if arr.size == n_features and n_features > 1:
                 ls_arrays.append(arr)
-            elif arr.size == 1:
-                ls_arrays.append(np.full(n_features, arr.item()))
 
         if not ls_arrays:
             return None
@@ -249,4 +270,6 @@ class SklearnGPAdapter(GPRegressorInterface):
 
     def __repr__(self) -> str:
         """String representation of the adapter."""
+        if self._kernel_factory is not None:
+            return f"SklearnGPAdapter({self._gpr}, kernel_factory={self._kernel_factory!r})"
         return f"SklearnGPAdapter({self._gpr})"

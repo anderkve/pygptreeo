@@ -28,6 +28,7 @@ from tqdm import tqdm
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 from pygptreeo.gp_interface import GPRegressorInterface
+from pygptreeo.output_basis import OutputBasisLearner
 
 
 class GPTree:
@@ -75,11 +76,17 @@ class GPTree:
                  Nbar: Optional[int] = 100,
                  theta: Optional[float] = 0.0001,
                  use_calibrated_sigma: Optional[bool] = True,
-                 split_dimension_criteria: Optional[str] = 'max_spread',
+                 split_dimension_criteria: Optional[str] = 'min_lengthscale',
                  splitting_strategy: Optional[str] = 'standard',
                  max_n_pred_leaves: Optional[int] = None,
                  aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
+                 output_model: Optional[str] = 'independent',
+                 output_basis_components: Union[str, int, float] = 'noise',
+                 output_basis_max_components: Optional[int] = None,
+                 output_basis_min_points: int = 50,
+                 output_basis_refit_every: Optional[int] = None,
+                 output_basis_reservoir_size: int = 2000,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -95,8 +102,11 @@ class GPTree:
             use_calibrated_sigma (Optional[bool]): If True, enables sigma
                 calibration in GPNode predictions. Defaults to True.
             split_dimension_criteria (Optional[str]): Method to select split
-                dimension. Options: 'max_spread', 'max_variance', 'max_uncertainty',
-                'random'. Defaults to 'max_spread'.
+                dimension. Options: 'min_lengthscale' (the dimension with the
+                smallest fitted ARD length scale, pooled over all of a leaf's GPs;
+                falls back to 'max_spread' when the kernel has no per-dimension
+                length scales), 'max_spread', 'max_variance', 'max_uncertainty',
+                'random'. Defaults to 'min_lengthscale'.
             splitting_strategy (Optional[str]): Strategy for splitting nodes.
                 'standard' or 'gradual'. Defaults to 'standard'.
             max_n_pred_leaves (Optional[int]): Maximum number of leaves to use
@@ -104,7 +114,37 @@ class GPTree:
             aggregation (Optional[str]): Method for aggregating predictions.
                 'default'/'moe' or 'poe'. Defaults to 'default'.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
-                For multi-output GPs, independent GPs are trained for each output.
+            output_model (Optional[str]): How the outputs of a multi-output problem are
+                modelled inside each leaf (ignored when n_outputs=1):
+                'independent' (default): one GP per output with its own kernel
+                hyperparameters. 'shared': one GP with a single shared kernel for all
+                outputs, i.e. one Cholesky factorisation per leaf instead of n_outputs;
+                needs a backend whose ``supports_multitarget()`` is True (the
+                scikit-learn adapter). 'pca': a tree-global linear basis of the output
+                space is learned from a reservoir sample of the stream and each leaf
+                models the ``k`` basis scores with ``k`` GPs (k << n_outputs); predictions
+                are mapped back to output space with propagated uncertainties. Best
+                for strongly correlated outputs such as a function f(t; x) sampled on a
+                t-grid.
+            output_basis_components ('noise', int or float): For 'pca': how many
+                basis components to keep. 'noise' (default) keeps every component
+                whose variance lies above what the per-point observation noise
+                ``sigma`` alone would produce (the Marchenko-Pastur edge), so noisy
+                data get few components and clean data get more. An int fixes the
+                number; a float in (0, 1) keeps the smallest number of components
+                explaining that fraction of the output variance (the dropped
+                components then set an accuracy floor of about ``sqrt(1 - fraction)``
+                times the output scale).
+            output_basis_max_components (Optional[int]): For 'pca': hard cap on the
+                number of components (and hence GPs per leaf). Defaults to None.
+            output_basis_min_points (int): For 'pca': number of observed points
+                before the first basis is fitted (leaves cannot train before that).
+                Defaults to 50.
+            output_basis_refit_every (Optional[int]): For 'pca': refit the basis every
+                this many observed points; None (default) uses a doubling schedule.
+                Leaves pick up a refitted basis at their next retrain.
+            output_basis_reservoir_size (int): For 'pca': size of the reservoir
+                sample of outputs the basis is fitted on. Defaults to 2000.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -118,8 +158,30 @@ class GPTree:
         self.GPR = GPR
         self.splitting_strategy = splitting_strategy
         self.n_outputs = n_outputs
+
+        if output_model not in ('independent', 'shared', 'pca'):
+            raise ValueError(f"Unknown output_model '{output_model}'. Use 'independent', 'shared' or 'pca'.")
+        if n_outputs == 1:
+            output_model = 'independent'
+        if output_model == 'shared':
+            supports = getattr(GPR, 'supports_multitarget', None)
+            if supports is None or not supports():
+                raise ValueError("output_model='shared' needs a GP backend with supports_multitarget() == True "
+                                 "(e.g. the scikit-learn adapter returned by Default_GPR)")
+        self.output_model = output_model
+        # Tree-global output basis for 'pca' (shared by reference with every node)
+        self.output_basis = None
+        if output_model == 'pca':
+            self.output_basis = OutputBasisLearner(
+                n_outputs=n_outputs, n_components=output_basis_components,
+                max_components=output_basis_max_components,
+                min_points=output_basis_min_points, refit_every=output_basis_refit_every,
+                reservoir_size=output_basis_reservoir_size)
+
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
-                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs, **kwargs)  # Initialize root node of the GPTree
+                          splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
+                          output_model=output_model, output_basis=self.output_basis,
+                          **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
 
@@ -169,6 +231,10 @@ class GPTree:
             self.n_features = x.size
             self.root.init_data_set(self.n_features)
             self.first_point = False
+
+        # Let the tree-global output basis see every observation ('pca' only)
+        if self.output_basis is not None:
+            self.output_basis.observe(np.asarray(y, dtype=float).reshape(-1), sigma)
 
         # Find a leaf node for the new (x,y,sigma) point
         # - Start from the root node

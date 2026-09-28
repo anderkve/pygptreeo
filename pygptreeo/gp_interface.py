@@ -165,6 +165,14 @@ class GPRegressorInterface(ABC):
         """
         pass
 
+    def supports_multitarget(self) -> bool:
+        """Whether ``fit`` accepts a 2-D ``y`` of shape (n_samples, n_targets) and
+        ``predict`` then returns (n_samples, n_targets) means and standard
+        deviations, all targets sharing one kernel. Required by
+        ``GPTree(output_model='shared')``. Backends default to False.
+        """
+        return False
+
     def get_length_scales(self, n_features: int) -> Optional[np.ndarray]:
         """Return the fitted per-dimension ARD length scales, or None.
 

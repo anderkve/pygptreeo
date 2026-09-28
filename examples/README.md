@@ -23,6 +23,17 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
   - Generates performance plots saved as `plot.png`
   - Can process large numbers of points (default: 300,000)
 
+- **`multioutput_function_learning_bsplines.py`** / **`multioutput_function_learning_pca.py`**:
+  Multi-output learning of a function f(t; x) observed on a t-grid
+  - The B-spline script represents each curve by spline coefficients and learns
+    them with one GP per coefficient (`output_model='independent'`)
+  - The PCA script compares that with `output_model='pca'` (a global PCA basis of
+    the outputs, one GP per basis score) and with dropping the spline step
+    altogether: the raw curve values on the t-grid are the outputs
+    ```bash
+    python multioutput_function_learning_pca.py [n_train] [easy|hard] [noise_std]
+    ```
+
 - **`test_animated.py`**: Animated visualization of GPTree learning (2D only)
   - Creates animated GIFs showing how the tree learns the target function
   - Displays the tree structure, leaf boundaries, and prediction surface
@@ -129,9 +140,14 @@ Key parameters to experiment with:
   - Adjusts prediction uncertainties to achieve target coverage
 
 - `split_dimension_criteria`: how a node picks its split dimension. One of
-  `'max_spread'`, `'max_variance'`, `'max_uncertainty'`, `'random'`, or
-  `'min_lengthscale'` (split the dimension with the smallest fitted ARD length
-  scale; needs an ARD kernel and a trained GP, else falls back to `max_spread`).
+  `'min_lengthscale'` (default: split the dimension with the smallest fitted ARD
+  length scale, pooled over all of a leaf's GPs; needs a kernel with per-dimension
+  length scales and a trained GP, else falls back to `max_spread`),
+  `'max_spread'`, `'max_variance'`, `'max_uncertainty'` or `'random'`.
+
+- `output_model` (multi-output only): `'independent'` (one GP per output),
+  `'shared'` (one GP with a shared kernel for all outputs) or `'pca'` (one GP per
+  component of a learned global output basis); see the multi-output examples.
 
 ### Custom Kernel Configuration
 

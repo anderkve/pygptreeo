@@ -68,7 +68,14 @@ for i in range(len(X_test)):
 
 ## Selecting a leaf kernel
 
-By default each leaf uses a plain Matérn kernel. For many targets `AdditiveMaternKernel`
+By default each leaf uses an anisotropic Matérn kernel (`ConstantKernel() * Matern(nu=1.5)`
+with one length scale per input dimension, built once the input dimension is known).
+The per-dimension length scales are what the default split criterion
+`split_dimension_criteria='min_lengthscale'` uses: a leaf splits along the dimension
+in which its GP says the target varies fastest. With a kernel that has no
+per-dimension length scales the tree falls back to splitting the widest dimension.
+
+For many targets `AdditiveMaternKernel`
 is a better choice — it adds a low-order additive component (a sum of main effects and
 pairwise interactions) on top of a Matérn catch-all:
 
@@ -116,6 +123,34 @@ Other options:
 `AdditiveMaternKernel` returns an ordinary scikit-learn kernel, so you can also assemble
 the combination by hand from `NewtonGirardAdditiveKernel` if you want to customise the
 pieces.
+
+## Multi-output targets
+
+Pass `n_outputs=p` and feed `y` (and `sigma`) as arrays with `p` columns. How the
+outputs are modelled inside each leaf is set by `output_model`:
+
+* `'independent'` (default): one GP per output, each with its own kernel hyperparameters.
+* `'shared'`: one GP with a single shared kernel for all outputs. One Cholesky
+  factorisation per leaf instead of `p`, at essentially the same accuracy when the
+  outputs have similar length scales. Needs the scikit-learn backend.
+* `'pca'`: the tree learns a global linear basis of the output space (PCA on a
+  reservoir sample of the stream) and each leaf models only the leading basis scores
+  with one GP each; predictions are mapped back to output space together with their
+  uncertainties. This is the right choice for strongly correlated outputs, e.g. a
+  function `f(t; x)` observed on a `t`-grid, where a handful of components carry all
+  the signal. By default the number of components is chosen from the observation
+  noise you pass (`sigma`): every component whose variance rises above the noise level
+  is kept, so noisy targets get few components and clean targets get more. Use
+  `output_basis_components=<int>` or `=<fraction of variance>` to fix it instead.
+
+```python
+gpt = GPTree(Nbar=50, n_outputs=100, output_model='pca')
+gpt.fit(X_train, Y_train, sigma_train)          # Y_train: (N, 100), e.g. f(t; x) on a t-grid
+Y_pred, Y_std = gpt.predict(X_test)             # (n_test, 100) each
+```
+
+`examples/multioutput_function_learning_pca.py` compares the three modes on a
+function-learning problem, with and without an intermediate B-spline representation.
 
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:

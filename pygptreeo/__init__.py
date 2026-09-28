@@ -18,6 +18,7 @@ Main components:
     - AdditiveMaternKernel: Shorthand for the additive + Matern catch-all leaf kernel
     - AdditivePeriodicKernel: Per-dimension additive periodic kernel
     - AdditivePeriodicMaternKernel: Shorthand for additive-periodic + catch-all leaf kernel
+    - OutputBasis / OutputBasisLearner: Global PCA output basis for multi-output trees
 
 Typical usage:
     from pygptreeo import GPTree
@@ -57,6 +58,7 @@ from pygptreeo.kernels import (
 )
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.adapters import SklearnGPAdapter
+from pygptreeo.output_basis import OutputBasis, OutputBasisLearner
 
 # Conditionally import GPyTorch adapter if available
 try:
