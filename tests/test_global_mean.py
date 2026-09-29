@@ -40,6 +40,7 @@ class FakeSnapshot:
 class FakeLearner(GlobalMeanLearner):
     def __init__(self):
         self.current = None
+        self.error_scale = None
         self.n_seen = 0
 
     def observe(self, x, y, sigma):
@@ -131,10 +132,19 @@ class TestAdditiveGPGlobalMean(unittest.TestCase):
         self.assertLess(learner_strict.current.version, learner_all.current.version)
         self.assertLessEqual(learner_strict.current.version, 3)
 
+    def test_error_scale_tracks_prequential_error(self):
+        learner = AdditiveGPGlobalMean(reservoir_size=60, min_points=40, n_restarts_optimizer=0)
+        self.assertIsNone(learner.error_scale)
+        X, Y, _ = self._feed(learner, 120)
+        self.assertEqual(learner.error_scale.shape, (1,))
+        self.assertGreater(learner.error_scale[0], 0.0)
+        self.assertLess(learner.error_scale[0], 0.1)     # the additive GP fits this target well
+
     def test_multi_output(self):
         learner = AdditiveGPGlobalMean(reservoir_size=50, min_points=30, n_restarts_optimizer=0)
         X, Y, _ = self._feed(learner, 35, p=3)
         self.assertEqual(learner.current.n_outputs, 3)
+        self.assertEqual(learner.error_scale.shape, (3,))
         pred = learner.current.predict(X[:4])
         self.assertEqual(pred.shape, (4, 3))
         np.testing.assert_allclose(pred[:, 1] - pred[:, 0], 1.0, atol=0.05)
@@ -213,6 +223,17 @@ class TestNodeResidual(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             node.predict(X[:3])
         self.assertEqual(len(fits), 2)             # and not again
+
+    def test_global_error_scale_enters_sigma(self):
+        learner = FakeLearner()
+        learner.publish(1, lambda X: 5.0 + 2.0 * X[:, 0])
+        node, X, y = self._node(learner)
+        with contextlib.redirect_stdout(io.StringIO()):
+            node.fit_my_GPR(force_training=True)
+            _, sd0 = node.predict(X[:5])
+            learner.error_scale = np.array([0.3])
+            _, sd1 = node.predict(X[:5])
+        np.testing.assert_allclose(sd1, np.sqrt(sd0 ** 2 + 0.3 ** 2))
 
     def test_children_inherit_snapshot(self):
         learner = FakeLearner()

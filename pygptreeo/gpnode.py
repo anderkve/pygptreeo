@@ -1481,9 +1481,13 @@ class GPNode(Node):
         else:
             mu_pred, sigma_pred = self._predict_pca(x)
 
-        # Add back the global model the GPs were fitted against
+        # Add back the global model the GPs were fitted against, and its own error
+        # budget: the residual GP cannot know how wrong the global model is at x.
         if self._fitted_global is not None:
             mu_pred = mu_pred + self._fitted_global.predict(x)
+            err_scale = getattr(self.global_mean, 'error_scale', None)
+            if err_scale is not None:
+                sigma_pred = np.sqrt(sigma_pred ** 2 + np.asarray(err_scale, dtype=float).reshape(1, -1) ** 2)
 
         # Apply calibration if requested
         if use_calibrated_sigma:

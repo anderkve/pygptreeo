@@ -130,9 +130,18 @@ class GlobalMeanLearner:
     receives and decides when to (re)fit, and expose the latest fitted model as
     :attr:`current` (a :class:`GlobalMeanSnapshot` or ``None`` before the first
     fit). Snapshots must be immutable and carry increasing version numbers.
+
+    :attr:`error_scale` (shape ``(n_outputs,)`` or ``None``) is the learner's
+    running estimate of the global model's own prediction error (RMS prequential
+    error of the current snapshot). A leaf that models the residual of the global
+    model adds this variance to its predictive variance: the leaf GP only knows how
+    smooth the residual is on its own points, not how wrong the global model is at
+    new ones, and without this term its sigma is over-confident wherever the global
+    model's error dominates.
     """
 
     current: Optional[GlobalMeanSnapshot] = None
+    error_scale: Optional[np.ndarray] = None
 
     def observe(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray) -> bool:
         """Register one observation; return True if a new snapshot was published."""
@@ -189,11 +198,15 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
 
         self.reservoir: Optional[CoverageReservoir] = None
         self.current: Optional[GlobalMeanSnapshot] = None
+        self.error_var: Optional[np.ndarray] = None    # EMA of the current snapshot's squared prequential error
+        self.error_scale: Optional[np.ndarray] = None
+        self.error_window = 200                        # EMA memory, in observations
         self.n_seen = 0
         self.n_seen_at_fit = 0
         self.turnover_at_fit = 0
         self.n_refits = 0
         self.n_skipped = 0
+        self.n_seen_at_first_fit = 0
 
     # -- stream ------------------------------------------------------------------------
     def observe(self, x, y, sigma) -> bool:
@@ -208,6 +221,15 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
                 from pygptreeo.kernels import AdditiveMaternKernel
                 self.kernel = AdditiveMaternKernel(d=x.shape[1], order=min(2, x.shape[1]))
         self.n_seen += 1
+        if self.current is not None:
+            # Prequential error of the current snapshot at this point (before it is used)
+            err2 = (self.current.predict(x)[0] - y[0]) ** 2
+            if self.error_var is None:
+                self.error_var = err2
+            else:
+                w = 1.0 / min(self.error_window, self.n_seen - self.n_seen_at_first_fit + 1)
+                self.error_var = (1.0 - w) * self.error_var + w * err2
+            self.error_scale = np.sqrt(self.error_var)
         self.reservoir.add(x, y, sigma)
         return self._maybe_fit()
 
@@ -249,6 +271,8 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
                                       random_state=self.random_state)
         gp.fit(x_scaler.transform(res.X), Y if Y.shape[1] > 1 else Y[:, 0])
         version = 1 if self.current is None else self.current.version + 1
+        if self.current is None:
+            self.n_seen_at_first_fit = self.n_seen
         self.current = GlobalMeanSnapshot(version, x_scaler, y_mean, y_scale, gp, res.n)
         self.n_seen_at_fit = self.n_seen
         self.turnover_at_fit = res.turnover
