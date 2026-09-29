@@ -48,6 +48,13 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
   - Rastrigin: Regular grid of local minima
   - Levy: Many local minima
   - Custom: Weighted combination of multiple functions
+  - RotatedRosenbrock, GaussianPeaks: *non-additive* N-dimensional targets. All the
+    functions above are sums of terms in one or two adjacent coordinates, i.e. they
+    have an exact low-order additive decomposition that additive kernels and
+    additive global models can exploit. These two couple every input dimension
+    through a fixed random rotation (a rotated Rosenbrock valley; a negative-log
+    mixture of anisotropic, rotated Gaussian peaks), so no low-order additive model
+    represents them exactly.
 
 - **`plot_performance_metrics.py`**: Post-processing script for performance analysis
   - Reads results from CSV files
@@ -86,6 +93,21 @@ OMP_NUM_THREADS=1 python benchmark_split_direction.py [target] [n_points]
 Plots batch NRMSE vs processed points for each `split_dimension_criteria` on the
 same stream. `target` is a standard function (`eggholder`, `rosenbrock`, …) or
 the synthetic `aniso_chirp` (default); see `BENCHMARK_RESULTS_split_direction.md`.
+
+### Global model + residual tree under different input streams
+
+```bash
+cd examples
+OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target rotated_rosenbrock \
+    --streams uniform,focusing,sweeping,walker --configs tree,global,frozen --seeds 1,2,3
+python benchmark_global_mean_streams.py --summarize results/*.jsonl
+```
+
+Compares a plain GPTree with a GPTree that models the residual of a global GP
+(low-order additive + Matern kernel, fitted on a coverage reservoir of the stream and
+refit when the reservoir turns over) under uniform, DE-like focusing, sweeping and
+MCMC-walker input streams. The residual mechanism is a prototype injected into
+`GPNode` by the script; see `BENCHMARK_RESULTS_global_mean_streams.md`.
 
 ### Animated Visualization
 
