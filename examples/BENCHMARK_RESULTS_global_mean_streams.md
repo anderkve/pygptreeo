@@ -173,6 +173,39 @@ Note also that the harm is target-specific: on the sweeping stream the residual 
 worse only on the rotated Rosenbrock (0.0116 vs 0.0060), whose values span seven orders
 of magnitude along the sweep.
 
+## The actual cause: stale snapshots in leaves that never retrain
+
+`diagnose_global_mean_sweep.py` records, for every prequential prediction of the
+sweeping run, which leaf answered, how many points it held, whether it had been
+retrained since its creation, the error of the global snapshot that leaf was fitted
+against, and the error the *current* snapshot would have made. Rotated Rosenbrock,
+seed 2 (the worst seed: plain tree 0.0052, residual tree 0.0165):
+
+| predictions whose leaf snapshot is ... | share of predictions | residual tree NRMSE | error of the leaf's snapshot | error of the current snapshot |
+|---|---|---|---|---|
+| current | 0.83 | **0.0045** | 0.0177 | 0.0177 |
+| 1 version behind | 0.15 | 0.0398 | 0.0449 | 0.0135 |
+| 2 versions behind | 0.01 | 0.0121 | 0.0120 | 0.0072 |
+| 3 or more behind | 0.01 | 0.0392 | 0.0390 | 0.0091 |
+
+Where the leaf's snapshot is current, the residual tree is *better* than the plain tree
+(0.0045 vs 0.0052) even on this stream. All of the excess error comes from the 17 % of
+predictions answered by leaves holding an older snapshot, and there the total error equals
+the stale snapshot's own error: the leaf's residual GP, trained against that snapshot in a
+region the sweep has since left, cannot correct the snapshot's extrapolation when the path
+comes back through the leaf's box. The eight worst predictions of the run are all such
+leaves (never retrained, depth 3, total error 0.18 to 0.26 of the range, equal to the
+snapshot error). Every prediction in this benchmark is made by a leaf with 50 to 100 own
+points, so leaf sparsity plays no role, and 57 % of predictions are made by leaves that
+have never retrained since their creation, in both configurations.
+
+The versioning rule "a leaf keeps the snapshot it was fitted against until its next
+retrain" was chosen so that a refit of the global model never invalidates a leaf. That is
+still right for leaves that keep receiving points, but a leaf that receives no new points
+never retrains, and on a sweeping stream that is most leaves. The fix is the `_fresh`
+rule: a leaf refits against the current snapshot the first time it is asked to predict
+after a newer global version was published (`global_fresh` configuration; results below).
+
 ## Reproduce
 
 ```bash
