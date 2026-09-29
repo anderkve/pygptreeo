@@ -323,7 +323,7 @@ GPNode.generate_children = _children_with_residual
 
 
 # --------------------------------------------------------------------------- #
-def run_one(target_name, stream, config, seed, d, N, nbar):
+def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
     target = TARGETS[target_name]
     rng = np.random.RandomState(seed)
     X, X_focus = make_stream(stream, target, d, N, rng)
@@ -365,26 +365,34 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
     else:
         gpr = Default_GPR(n_restarts_optimizer=1)
     gpt = GPTree(GPR=gpr, Nbar=nbar, theta=1e-4,
-                 retrain_every_n_points=25, splitting_strategy='gradual', use_calibrated_sigma=False,
+                 retrain_every_n_points=25, splitting_strategy='gradual', use_calibrated_sigma=calibrate,
                  global_mean=package_learner)
-    t0 = time.time(); errs = np.empty(N)
+    t0 = time.time(); errs = np.empty(N); sds = np.empty(N)
     with contextlib.redirect_stdout(io.StringIO()):
         for i in range(N):
             xi = X[i:i + 1]
             if model is not None:
                 model.observe(xi, y[i])
-            mu, _ = gpt.predict(xi)
-            errs[i] = mu[0, 0] - y[i]
+            mu, sd = gpt.predict(xi)
+            errs[i] = mu[0, 0] - y[i]; sds[i] = sd[0, 0]
             gpt.update_tree(xi, np.array([[y[i]]]), np.array([[sig[i]]]))
-        P_uni, _ = gpt.predict(X_uni, mode='loop')
-        P_focus, _ = gpt.predict(X_focus, mode='loop')
+        P_uni, S_uni = gpt.predict(X_uni, mode='loop')
+        P_focus, S_focus = gpt.predict(X_focus, mode='loop')
     elapsed = time.time() - t0
+    e_uni = P_uni[:, 0] - y_uni; e_focus = P_focus[:, 0] - y_focus
     out = {
         'target': target_name, 'stream': stream, 'config': config + ('_fresh' if refresh else '') + ('_lin' if linear else ''),
-        'seed': seed, 'd': d, 'N': N,
+        'seed': seed, 'd': d, 'N': N, 'calibrated': bool(calibrate),
         'prequential_nrmse': float(np.sqrt(np.mean(errs[warmup:] ** 2)) / yrange),
-        'uniform_nrmse': float(np.sqrt(np.mean((P_uni[:, 0] - y_uni) ** 2)) / yrange),
-        'focus_nrmse': float(np.sqrt(np.mean((P_focus[:, 0] - y_focus) ** 2)) / yrange),
+        'uniform_nrmse': float(np.sqrt(np.mean(e_uni ** 2)) / yrange),
+        'focus_nrmse': float(np.sqrt(np.mean(e_focus ** 2)) / yrange),
+        # uncertainty: empirical 1-sigma coverage (target 0.68) and RMS predicted sigma over RMS error
+        'coverage_prequential': float(np.mean(np.abs(errs[warmup:]) <= sds[warmup:])),
+        'coverage_uniform': float(np.mean(np.abs(e_uni) <= S_uni[:, 0])),
+        'coverage_focus': float(np.mean(np.abs(e_focus) <= S_focus[:, 0])),
+        'sigma_over_rmse_prequential': float(np.sqrt(np.mean(sds[warmup:] ** 2)) / np.sqrt(np.mean(errs[warmup:] ** 2))),
+        'sigma_over_rmse_uniform': float(np.sqrt(np.mean(S_uni[:, 0] ** 2)) / np.sqrt(np.mean(e_uni ** 2))),
+        'sigma_over_rmse_focus': float(np.sqrt(np.mean(S_focus[:, 0] ** 2)) / np.sqrt(np.mean(e_focus ** 2))),
         'leaves': len(gpt.root.leaves), 'seconds': round(elapsed, 1),
     }
     if package_learner is not None:
@@ -414,8 +422,14 @@ def summarize(lines):
             continue
         r = json.loads(line[len('RESULT '):])
         rows.setdefault((r['target'], r['stream'], r['config']), []).append(r)
-    out = ["| target | stream | config | prequential NRMSE | uniform-test NRMSE | focus-test NRMSE | refits | time [s] |",
-           "|---|---|---|---|---|---|---|---|"]
+    with_cov = any('coverage_prequential' in r for rs in rows.values() for r in rs)
+    if with_cov:
+        out = ["| target | stream | config | prequential NRMSE | uniform-test NRMSE | focus-test NRMSE | "
+               "coverage prequential / uniform / focus (target 0.68) | sigma/RMSE prequential / uniform / focus | time [s] |",
+               "|---|---|---|---|---|---|---|---|---|"]
+    else:
+        out = ["| target | stream | config | prequential NRMSE | uniform-test NRMSE | focus-test NRMSE | refits | time [s] |",
+               "|---|---|---|---|---|---|---|---|"]
 
     def cell(vals):
         vals = list(vals)
@@ -424,6 +438,15 @@ def summarize(lines):
         return f"{st.mean(vals):.4f} ({min(vals):.4f}..{max(vals):.4f})"
 
     for (tgt, strm, cfg), rs in sorted(rows.items()):
+        if with_cov:
+            cov = " / ".join(f"{st.mean([r[k] for r in rs]):.2f}" for k in
+                             ('coverage_prequential', 'coverage_uniform', 'coverage_focus'))
+            rat = " / ".join(f"{st.mean([r[k] for r in rs]):.2f}" for k in
+                             ('sigma_over_rmse_prequential', 'sigma_over_rmse_uniform', 'sigma_over_rmse_focus'))
+            out.append(f"| {tgt} | {strm} | {cfg} | {cell(r['prequential_nrmse'] for r in rs)} | "
+                       f"{cell(r['uniform_nrmse'] for r in rs)} | {cell(r['focus_nrmse'] for r in rs)} | {cov} | {rat} | "
+                       f"{st.mean([r['seconds'] for r in rs]):.0f} |")
+            continue
         refits = f"{st.mean([r.get('refits', 0) for r in rs]):.0f}"
         out.append(f"| {tgt} | {strm} | {cfg} | {cell(r['prequential_nrmse'] for r in rs)} | "
                    f"{cell(r['uniform_nrmse'] for r in rs)} | {cell(r['focus_nrmse'] for r in rs)} | {refits} | "
@@ -443,6 +466,8 @@ def main():
     ap.add_argument('--d', type=int, default=6)
     ap.add_argument('--N', type=int, default=4000)
     ap.add_argument('--nbar', type=int, default=100)
+    ap.add_argument('--calibrate', action='store_true',
+                    help='use_calibrated_sigma=True and report 1-sigma coverage and sigma/RMSE ratios')
     ap.add_argument('--summarize', nargs='*', help='aggregate RESULT lines from these files (or stdin) into a table')
     args = ap.parse_args()
 
@@ -456,7 +481,7 @@ def main():
     for seed in [int(s) for s in args.seeds.split(',')]:
         for stream in args.streams.split(','):
             for config in args.configs.split(','):
-                r = run_one(args.target, stream, config, seed, args.d, args.N, args.nbar)
+                r = run_one(args.target, stream, config, seed, args.d, args.N, args.nbar, calibrate=args.calibrate)
                 print("RESULT " + json.dumps(r), flush=True)
 
 
