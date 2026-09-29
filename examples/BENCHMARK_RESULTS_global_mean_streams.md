@@ -286,6 +286,30 @@ end-of-sweep focus set on the rotated Rosenbrock (ratio 1.94, one seed at 3.4x, 
 two level with the plain tree); on the same stream and target the on-stream error is now
 level with the plain tree and the cube-wide error is better.
 
+## Package implementation
+
+`pygptreeo.global_mean` implements the design above (`GPTree(global_mean='additive_gp')`,
+default `None`), including the refresh rule and per-point noise in the global fit. The
+benchmark's `global_pkg` configuration runs it; it reproduces the prototype's `global_fresh`
+numbers to the fourth decimal on both targets and both streams that exercise the refresh
+rule (seeds 1 and 2), at a lower run time:
+
+| target | stream | seed | config | prequential | uniform-test | focus-test | time [s] |
+|---|---|---|---|---|---|---|---|
+| gaussian_peaks | sweeping | 2 | global_fresh (prototype) | 0.0149 | 0.0419 | 0.0084 | 321 |
+| gaussian_peaks | sweeping | 2 | global_pkg (package) | 0.0149 | 0.0419 | 0.0084 | 190 |
+| gaussian_peaks | walker | 1 | global_fresh | 0.0058 | 0.0565 | 0.0015 | 238 |
+| gaussian_peaks | walker | 1 | global_pkg | 0.0056 | 0.0567 | 0.0016 | 206 |
+| rotated_rosenbrock | sweeping | 1 | global_fresh | 0.0057 | 0.0477 | 0.0081 | 194 |
+| rotated_rosenbrock | sweeping | 1 | global_pkg | 0.0057 | 0.0477 | 0.0081 | 192 |
+| rotated_rosenbrock | sweeping | 2 | global_fresh | 0.0080 | 0.0616 | 0.0136 | 178 |
+| rotated_rosenbrock | sweeping | 2 | global_pkg | 0.0080 | 0.0616 | 0.0136 | 156 |
+| rotated_rosenbrock | walker | 1 | global_fresh | 0.0042 | 0.0722 | 0.0009 | 240 |
+| rotated_rosenbrock | walker | 1 | global_pkg | 0.0042 | 0.0722 | 0.0009 | 214 |
+
+(The remaining two cells, Gaussian peaks walker seed 2 and rotated Rosenbrock walker
+seed 2, agree in the same way; raw lines in `results/global_mean_streams/pkg_*.jsonl`.)
+
 ## Reproduce
 
 ```bash
@@ -300,4 +324,4 @@ python benchmark_global_mean_streams.py --summarize results/global_mean_streams/
 
 The raw `RESULT` lines of the runs above are in `results/global_mean_streams/`
 (`damped_*` for the damping section, `lin_*` for the linear-trend runs, `fresh_*` for the
-refresh rule).
+refresh rule, `pkg_*` for the package implementation).
