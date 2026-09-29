@@ -318,64 +318,79 @@ and the RMS predicted sigma over the RMS error, prequentially on the stream and 
 test sets. The NRMSE columns are identical to the uncalibrated runs, as they must be
 (calibration only rescales sigma).
 
-**Two defects were found and fixed on the way.** The first calibrated run
+**A defect was found and fixed on the way.** The first calibrated run
 (`calibrated_v1_*.jsonl`) had on-target prequential coverage for both configurations but
 an RMS sigma / RMSE of 350 to 110 000 for the global model: a few predictions carried
 sigmas of thousands of times the target range. Per-prediction attribution showed a leaf
-whose residual GP had recorded a predictive sigma of 4e-8 of the range, a numerically
-collapsed variance, so the per-leaf calibration scaler (a quantile of |error| / sigma)
-rose to 6e5 and inflated every later sigma from that leaf. The residual makes this likely
-(a smooth residual with long length scales and near-zero GP variance in the leaf interior)
-but nothing in the plain tree prevented it either.
+whose residual GP had recorded a predictive sigma of 4e-8 of the range, so the per-leaf
+calibration scaler (a quantile of |error| / sigma) rose to 6e5 and inflated every later
+sigma from that leaf. Two things combine to make this likely with a global model. The
+residual is smooth and well sampled inside a leaf, so the residual GP is *legitimately*
+confident about the residual (and numerically its variance can collapse to zero: sklearn
+clips negative predictive variances), while the total error at a new point is dominated by
+the global model's own error, which the residual GP cannot see. The recorded sigma is then
+far too small for the recorded error, and the scaler compensates for all later predictions.
 
-1. The predicted sigma is now the predictive uncertainty of an *observation*: the GP's
-   latent variance plus the median per-point observation-noise variance of the leaf's
-   training data, in every output mode. This bounds the calibration ratios. Alone it
-   brought the worst scaler from 6e5 to 118 and the RMS sigma / RMSE from 38 000 to 7.6
-   on the diagnostic run: the residual GP was still over-confident by two orders of
-   magnitude where the *global model's* error dominated the total error.
-2. The learner tracks the RMS prequential error of its current snapshot (`error_scale`,
-   exponential average over about 200 observations) and a leaf that models the residual
-   adds that variance to its predictive variance before calibration. The residual GP
-   knows how smooth the residual is on its own points, not how wrong the global model is
-   at new ones; this term is that missing budget. On the diagnostic run the scalers then
-   lie between 0.6 and 1.4, coverage is 0.68 and RMS sigma / RMSE 0.9, as for the plain
-   tree.
+The first guard tried, flooring every predicted sigma at the leaf's observation-noise
+level (`cce1469`, since reverted; `calibrated_v2_*.jsonl` were run with it in place), does
+bound the ratio, but it turns sigma into the predictive uncertainty of a noisy observation.
+That is not what pygptreeo's sigma means: it is the uncertainty of the estimate of the
+underlying function, and only a user-supplied kernel with a noise term changes that. It
+was also not sufficient on its own (worst scaler 118, RMS sigma / RMSE 7.6 on the
+diagnostic run), because the missing term is the global model's error, not the noise.
 
-Results with both fixes (`calibrated_v2_*.jsonl`):
+The guard that stays addresses exactly that term and is epistemic. The learner tracks the
+mean squared prequential error of its current snapshot (exponential average over about 200
+observations) together with the observation-noise variance of the same points, and
+`error_scale = sqrt(max(mse - noise_var, 0))` estimates how far the snapshot's mean is
+from the underlying function. A leaf that models the residual adds this variance to its
+predictive variance before calibration: the residual GP knows how smooth the residual is
+on its own points, this term is the budget for how wrong the global model is at new ones.
+On the diagnostic run (gaussian_peaks, uniform stream, seed 1) it alone brings the worst
+scaler from 6e5 to 1.4 (0.1 to 2.2 over the four streams), coverage to 0.68 and RMS sigma
+/ RMSE to 0.9, the same as the plain tree. In this benchmark the per-point noise handed to
+the tree is nominal (1e-3 relative, no noise is added to the targets), so subtracting it
+changes nothing measurable here; it matters when the noise is comparable to the global
+model's error, where the previous version would have double-counted it.
+
+Results with the epistemic error budget and no noise floor (`calibrated_v3_*.jsonl`; the
+times are wall-clock with six runs sharing four cores and are not comparable to the
+earlier tables):
 
 | target | stream | config | coverage prequential / uniform / focus | sigma/RMSE prequential / uniform / focus | time [s] |
 |---|---|---|---|---|---|
-| rotated_rosenbrock | uniform | tree | 0.67 / 0.67 / 0.67 | 0.67 / 0.66 / 0.66 | 28 |
-| rotated_rosenbrock | uniform | global_pkg | 0.68 / 0.64 / 0.63 | 0.62 / 0.56 / 0.58 | 222 |
-| rotated_rosenbrock | focusing | tree | 0.69 / 0.33 / 0.60 | 0.87 / 0.32 / 1.02 | 22 |
-| rotated_rosenbrock | focusing | global_pkg | 0.74 / 0.36 / 0.68 | 0.66 / 0.25 / 1.60 | 122 |
-| rotated_rosenbrock | sweeping | tree | 0.66 / 0.39 / 0.68 | 0.73 / 0.26 / 0.47 | 24 |
-| rotated_rosenbrock | sweeping | global_pkg | 0.67 / 0.41 / 0.76 | 0.83 / 0.26 / 0.56 | 243 |
-| rotated_rosenbrock | walker | tree | 0.65 / 0.28 / 0.78 | 0.81 / 0.13 / 1.00 | 23 |
-| rotated_rosenbrock | walker | global_pkg | 0.67 / 0.25 / 0.93 | 0.92 / 0.06 / 2.34 | 244 |
-| gaussian_peaks | uniform | tree | 0.68 / 0.66 / 0.67 | 0.93 / 0.87 / 0.90 | 27 |
-| gaussian_peaks | uniform | global_pkg | 0.68 / 0.67 / 0.68 | 0.87 / 0.86 / 0.86 | 198 |
-| gaussian_peaks | focusing | tree | 0.70 / 0.54 / 0.63 | 1.00 / 0.68 / 0.80 | 22 |
-| gaussian_peaks | focusing | global_pkg | 0.74 / 0.34 / 0.65 | 0.93 / 0.35 / 1.36 | 110 |
-| gaussian_peaks | sweeping | tree | 0.65 / 0.50 / 0.77 | 0.75 / 0.74 / 1.14 | 22 |
-| gaussian_peaks | sweeping | global_pkg | 0.67 / 0.42 / 0.73 | 0.78 / 0.43 / 0.94 | 263 |
-| gaussian_peaks | walker | tree | 0.68 / 0.20 / 0.78 | 0.86 / 0.26 / 0.95 | 23 |
-| gaussian_peaks | walker | global_pkg | 0.66 / 0.16 / 0.87 | 1.07 / 0.09 / 1.61 | 252 |
+| rotated_rosenbrock | uniform | tree | 0.67 / 0.67 / 0.67 | 0.67 / 0.66 / 0.66 | 44 |
+| rotated_rosenbrock | uniform | global_pkg | 0.68 / 0.64 / 0.63 | 0.62 / 0.56 / 0.58 | 348 |
+| rotated_rosenbrock | focusing | tree | 0.69 / 0.33 / 0.60 | 0.87 / 0.32 / 1.02 | 31 |
+| rotated_rosenbrock | focusing | global_pkg | 0.74 / 0.36 / 0.68 | 0.66 / 0.25 / 1.60 | 181 |
+| rotated_rosenbrock | sweeping | tree | 0.66 / 0.39 / 0.68 | 0.73 / 0.26 / 0.47 | 37 |
+| rotated_rosenbrock | sweeping | global_pkg | 0.67 / 0.41 / 0.76 | 0.83 / 0.26 / 0.56 | 355 |
+| rotated_rosenbrock | walker | tree | 0.65 / 0.28 / 0.78 | 0.81 / 0.13 / 1.00 | 39 |
+| rotated_rosenbrock | walker | global_pkg | 0.67 / 0.25 / 0.93 | 0.92 / 0.06 / 2.34 | 330 |
+| gaussian_peaks | uniform | tree | 0.68 / 0.66 / 0.67 | 0.93 / 0.87 / 0.90 | 43 |
+| gaussian_peaks | uniform | global_pkg | 0.68 / 0.67 / 0.68 | 0.87 / 0.86 / 0.86 | 300 |
+| gaussian_peaks | focusing | tree | 0.70 / 0.54 / 0.63 | 1.00 / 0.68 / 0.80 | 42 |
+| gaussian_peaks | focusing | global_pkg | 0.74 / 0.34 / 0.65 | 0.93 / 0.35 / 1.36 | 171 |
+| gaussian_peaks | sweeping | tree | 0.65 / 0.50 / 0.77 | 0.75 / 0.74 / 1.14 | 35 |
+| gaussian_peaks | sweeping | global_pkg | 0.67 / 0.42 / 0.73 | 0.78 / 0.43 / 0.94 | 386 |
+| gaussian_peaks | walker | tree | 0.68 / 0.20 / 0.78 | 0.86 / 0.26 / 0.95 | 41 |
+| gaussian_peaks | walker | global_pkg | 0.66 / 0.16 / 0.87 | 1.07 / 0.09 / 1.61 | 325 |
 
 Reading:
 
 * **On the stream, both are calibrated.** Prequential coverage is 0.65 to 0.74 for every
   configuration and every stream, with sigma / RMSE between 0.6 and 1.1. That is what the
-  per-leaf scaler is fitted on, and the global model no longer disturbs it.
+  per-leaf scaler is fitted on, and the global model no longer disturbs it. The numbers
+  are the same as with the noise floor in place (`calibrated_v2_*`) to two decimals: the
+  floor was not carrying the calibration, the error budget is.
 * **Far from the data, neither is.** On the uniform test set of the focusing, sweeping and
   walker streams (mostly unvisited territory) coverage is 0.16 to 0.54 for both, and the
   residual tree is somewhat worse there (its sigma / RMSE is 0.06 to 0.43 against 0.13 to
   0.74). Its mean is better in those regions, but its sigma does not grow accordingly:
-  the leaf GP's extrapolation variance, the noise floor and a stream-wide error budget do
-  not add up to the actual error where the global model itself is extrapolating. This is
-  the pre-existing limitation of a prequential, per-leaf scalar calibration, made more
-  visible by a model that is more accurate on the stream than off it.
+  the leaf GP's extrapolation variance and a stream-wide error budget do not add up to
+  the actual error where the global model itself is extrapolating. This is the
+  pre-existing limitation of a prequential, per-leaf scalar calibration, made more visible
+  by a model that is more accurate on the stream than off it.
 * **In the focus region the residual tree is conservative.** Coverage 0.65 to 0.93 with
   sigma / RMSE up to 2.3 on the walker stream: the error budget is a stream-wide average
   and the global model is better than average where the data are dense.
@@ -397,5 +412,6 @@ OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target rotated_rosen
 
 The raw `RESULT` lines of the runs above are in `results/global_mean_streams/`
 (`damped_*` for the damping section, `lin_*` for the linear-trend runs, `fresh_*` for the
-refresh rule, `pkg_*` for the package implementation, `calibrated_v1_*` / `calibrated_v2_*` for the
-calibrated runs before / after the two uncertainty fixes).
+refresh rule, `pkg_*` for the package implementation, `calibrated_v1_*` for the calibrated
+runs before any fix, `calibrated_v2_*` with the since-reverted noise floor plus the error
+budget, `calibrated_v3_*` with the epistemic error budget alone, the current code).
