@@ -59,16 +59,36 @@ class PolynomialFeatures:
             self._jj = np.array([t[1] for t in self.index if len(t) == 2])
         self.centre = np.zeros(self.d)
         self.scale = np.ones(self.d)
+        self.z_lo = np.full(self.d, -np.inf)   # range of the fitted points in z, for clipped extrapolation
+        self.z_hi = np.full(self.d, np.inf)
 
-    def set_frame(self, X: np.ndarray):
-        """Centre and scale from the given points (scale floored to avoid degeneracy)."""
+    def set_frame(self, X: np.ndarray, clip_margin: Optional[float] = None):
+        """Centre and scale from the given points (scale floored to avoid degeneracy).
+
+        With ``clip_margin`` the polynomial is evaluated at most that many standardised
+        units beyond the range of the fitted points (constant beyond, per dimension).
+        """
         self.centre = X.mean(axis=0)
         s = X.std(axis=0)
         floor = 1e-3 * max(float(np.max(s)), 1e-12)
         self.scale = np.where(s > floor, s, max(floor, 1e-12))
+        if clip_margin is None:
+            self.z_lo = np.full(self.d, -np.inf); self.z_hi = np.full(self.d, np.inf)
+        else:
+            Z = (X - self.centre) / self.scale
+            self.z_lo = Z.min(axis=0) - clip_margin; self.z_hi = Z.max(axis=0) + clip_margin
 
-    def transform(self, X: np.ndarray) -> np.ndarray:
+    def standardise(self, X: np.ndarray, clip: bool = False):
+        """Standardised coordinates and, with ``clip``, the squared distance clipped away per point."""
         Z = (np.atleast_2d(X) - self.centre) / self.scale
+        if not clip:
+            return Z, np.zeros(Z.shape[0])
+        Zc = np.clip(Z, self.z_lo, self.z_hi)
+        return Zc, np.sum((Z - Zc) ** 2, axis=1)
+
+    def transform(self, X: np.ndarray, clip: bool = False) -> np.ndarray:
+        """Monomial features; clipping is used at prediction time only."""
+        Z, _ = self.standardise(X, clip)
         n = Z.shape[0]
         cols = [np.ones((n, 1))]
         if self.degree >= 1:
@@ -90,7 +110,9 @@ class BayesianPolynomialLeaf:
 
     def __init__(self, d: int, n_outputs: int = 1, degree: int = 2,
                  prior_var_by_order=(1.0, 1.0, 1.0), rebuild_every: int = 10,
-                 select_prior_scale: bool = True, min_points_for_frame: int = 3):
+                 select_prior_scale: bool = True, min_points_for_frame: int = 3,
+                 clip_margin: Optional[float] = 0.5):
+        self.clip_margin = clip_margin
         self.features = PolynomialFeatures(d, degree)
         self.d, self.p, self.q = int(d), self.features.p, int(n_outputs)
         self.prior_var_by_order = np.asarray(prior_var_by_order, dtype=float)
@@ -191,7 +213,7 @@ class BayesianPolynomialLeaf:
             return
         own = self.own if self.n_own >= self.min_points_for_frame else np.ones(self.n, dtype=bool)
         if self.n >= self.min_points_for_frame:
-            self.features.set_frame(self.X[own])
+            self.features.set_frame(self.X[own], self.clip_margin)
         self.y_mean = self.y[own].mean(axis=0)
         ys = float((self.y[own] - self.y_mean).std())
         self.y_scale = ys if np.isfinite(ys) and ys > 0 else 1.0
@@ -223,10 +245,13 @@ class BayesianPolynomialLeaf:
     # -- prediction ---------------------------------------------------------------------
     def predict(self, X: np.ndarray):
         """Mean (n, q) and standard deviation (n, q) of the underlying function."""
-        Phi = self.features.transform(X)
+        Phi = self.features.transform(X, clip=True)
         mu = self.y_mean + self.y_scale * (Phi @ self.m)
         var_w = np.einsum('ij,jk,ik->i', Phi, self.S, Phi)
-        var = self.y_scale ** 2 * np.maximum(var_w, 0.0) + self.tau2
+        # Beyond the clipped range the mean is held constant and the variance grows with
+        # the squared distance clipped away (in units of the leaf's output variance).
+        _, d2_out = self.features.standardise(X, clip=True)
+        var = self.y_scale ** 2 * (np.maximum(var_w, 0.0) + d2_out) + self.tau2
         sd = np.sqrt(var)[:, None] * np.ones((1, self.q))
         return mu, sd
 
@@ -251,7 +276,8 @@ class BQNode:
         self.d, self.q, self.name, self.config = d, n_outputs, name, config
         self.model = BayesianPolynomialLeaf(
             d, n_outputs, degree=config['degree'], prior_var_by_order=config['prior_var_by_order'],
-            rebuild_every=config['rebuild_every'], select_prior_scale=config['select_prior_scale'])
+            rebuild_every=config['rebuild_every'], select_prior_scale=config['select_prior_scale'],
+            clip_margin=config['clip_margin'])
         self.parent = None
         self.children = None
         self.is_left = None
@@ -429,6 +455,10 @@ class BQTree:
         Choose the prior scale by marginal likelihood on a small grid at each rebuild.
     use_calibrated_sigma : bool
         Multiply each leaf's sigma by its residual-quantile calibration scaler.
+    clip_margin : float or None
+        Evaluate a leaf's polynomial at most this many standardised units beyond the
+        range of its fitted points (constant beyond, with a variance growing with the
+        distance); None extrapolates the polynomial freely.
     fit_margin : float
         A point also enters the fit of every other leaf whose cell box, widened by
         this fraction of its width on each side, contains it (0 disables sharing).
@@ -442,7 +472,8 @@ class BQTree:
     def __init__(self, Nbar: int = 100, theta: float = 1e-4, degree: int = 2,
                  split_criterion: str = 'rss', rebuild_every: int = 10,
                  prior_var_by_order=(1.0, 1.0, 1.0), select_prior_scale: bool = True,
-                 use_calibrated_sigma: bool = True, fit_margin: float = 0.0, share_weight: float = 1.0,
+                 use_calibrated_sigma: bool = True, clip_margin: Optional[float] = 0.5,
+                 fit_margin: float = 0.0, share_weight: float = 1.0,
                  n_outputs: int = 1, max_n_pred_leaves: Optional[int] = None):
         self.Nbar = int(Nbar)
         self.theta = float(theta)
@@ -451,7 +482,8 @@ class BQTree:
         self.max_n_pred_leaves = max_n_pred_leaves
         self.config = dict(degree=int(degree), split_criterion=split_criterion, rebuild_every=int(rebuild_every),
                            prior_var_by_order=tuple(prior_var_by_order), select_prior_scale=bool(select_prior_scale),
-                           fit_margin=float(fit_margin), share_weight=float(share_weight), root_scale=None)
+                           fit_margin=float(fit_margin), share_weight=float(share_weight),
+                           clip_margin=None if clip_margin is None else float(clip_margin), root_scale=None)
         self.root = None
         self.n_features = 0
         self._root_X_stats = None

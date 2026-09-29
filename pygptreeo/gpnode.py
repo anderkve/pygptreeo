@@ -32,6 +32,7 @@ from pygptreeo.global_mean import GlobalMeanLearner
 
 # Module-level constants
 DEFAULT_OVERLAP = 0.001  # Default initial overlap for node boundaries
+MIN_OVERLAP = 1e-300  # Floor so prob_func stays finite when the points coincide along the split dimension
 DEFAULT_N_POINTS_PRED_PERF = 25  # Number of recent predictions tracked for calibration
 DEFAULT_SIGMA_SCALER = 10.0  # Initial sigma scaling factor for uncertainty calibration
 TARGET_COVERAGE = 0.68  # Target coverage for calibrated uncertainty (1 sigma)
@@ -1219,7 +1220,7 @@ class GPNode(Node):
 
             # Compute overlap
             spread = np.max(self.my_X_data[:, split_index]) - np.min(self.my_X_data[:, split_index])
-            overlap = theta * spread
+            overlap = max(theta * spread, MIN_OVERLAP)
 
             # Evaluate this candidate
             score = self.evaluate_candidate_split(split_index, split_position, overlap)
@@ -1270,7 +1271,7 @@ class GPNode(Node):
                 self.split_position = best_position
                 # Compute overlap for the chosen dimension
                 current_dim_spread = np.max(self.my_X_data[:, self.split_index]) - np.min(self.my_X_data[:, self.split_index])
-                self.overlap = theta * current_dim_spread
+                self.overlap = max(theta * current_dim_spread, MIN_OVERLAP)
                 return  # Done - we have split_index, split_position, and overlap
             # If evaluation failed, fall through to use default criteria
 
@@ -1384,7 +1385,7 @@ class GPNode(Node):
         else:
             raise ValueError(f"Unknown split_position_method argument: '{self.split_position_method}'. The valid options are 'median', 'mean', 'random' and 'randomchoice'")
 
-        self.overlap = theta * current_dim_spread
+        self.overlap = max(theta * current_dim_spread, MIN_OVERLAP)
 
 
     def prob_func(self, x: np.array):
