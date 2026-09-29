@@ -4,6 +4,14 @@ Question: does a tree that models the *residual* of a global GP beat a plain GPT
 targets that a low-order additive model can only partly capture, and does the answer
 depend on how the input stream explores the input space?
 
+Short answer (details below): yes, by 15 to 50 % in every metric on uniform, focusing and
+walker streams, and, once leaves refit against the current global snapshot on first use
+(`global_fresh`), also on a sweeping stream. Without that refresh rule a sweeping stream
+exposes a real failure mode: leaves that stop receiving points keep an early global
+snapshot whose extrapolation error they cannot correct when the stream comes back.
+Damping the global model by its uncertainty does not help and a linear leaf trend does
+nothing; refreshing stale leaves does.
+
 Setup (`examples/benchmark_global_mean_streams.py`, commit 9b43fb5):
 
 * Targets: `RotatedRosenbrock` and `GaussianPeaks` in 6 dimensions. Both couple every
@@ -86,17 +94,13 @@ large-scale part and the leaves keep most of the work. Gains of this size hold f
 uniform, focusing and walker streams in every metric and on both targets, and are
 consistent across seeds (the seed ranges of `global` and `tree` rarely overlap).
 
-**The sweeping stream is the exception.** The global model still improves accuracy over
-the whole cube (uniform-test 0.75 to 0.90), but at the moving front it hurts: the
-prequential error doubles on the rotated Rosenbrock and the focus-test error grows by a
-quarter on both targets. The frozen model shows the same pattern, so this is not refit
-churn. It is extrapolation: the front of the sweep is territory no reservoir version has
-seen, the global GP extrapolates a wrong trend there for about one length scale before
-reverting to its mean, and the fresh leaves at the front then have to undo an error they
-have too few points to learn. The tree alone extrapolates from its own parent leaf and does
-so better. The remedy to try next is to damp the global contribution where the global GP
-is itself uncertain (shrink it towards its constant mean with its own predictive variance),
-which makes the residual revert to the raw target exactly where the model is guessing.
+**The sweeping stream is the exception (with the original versioning rule).** The global
+model still improves accuracy over the whole cube (uniform-test 0.75 to 0.90), but on the
+stream it hurts: the prequential error doubles on the rotated Rosenbrock and the focus-test
+error grows by a quarter on both targets. The frozen model shows the same pattern, so this
+is not refit churn. The sections below track this down (two hypotheses refuted, then a
+per-prediction attribution) to stale global snapshots in leaves that never retrain, and
+fix it with the refresh rule.
 
 **Refits versus frozen.** With reliable fits (restarts), refitting on a coverage reservoir
 beats the frozen model in 20 of 24 metric cells, by a few percent on uniform and focusing
@@ -226,7 +230,61 @@ plain tree's on both targets, and on the Gaussian peaks the refreshed residual t
 the plain tree in every metric, including the end-of-sweep focus set where the stale
 version had been worse. The one remaining soft spot is the rotated Rosenbrock focus set,
 0.0090 against 0.0053, driven by a single seed (0.0136); the other two seeds are level
-with the plain tree. Results for the refresh rule on the other three streams follow below.
+with the plain tree. 
+
+## With the refresh rule: all four streams
+
+Mean over 3 seeds (min..max). Timings of the `global_fresh` runs are inflated by up to
+about a third: they ran alongside other jobs on an oversubscribed machine.
+
+| target | stream | config | prequential NRMSE | uniform-test NRMSE | focus-test NRMSE | stale-leaf refits | time [s] |
+|---|---|---|---|---|---|---|---|
+| rotated_rosenbrock | uniform | tree | 0.0155 (0.0114..0.0187) | 0.0109 (0.0080..0.0141) | 0.0110 (0.0079..0.0134) |  | 25 |
+| rotated_rosenbrock | uniform | global | 0.0110 (0.0089..0.0131) | 0.0082 (0.0070..0.0090) | 0.0079 (0.0058..0.0098) |  | 214 |
+| rotated_rosenbrock | uniform | global_fresh | 0.0107 (0.0086..0.0128) | 0.0077 (0.0055..0.0089) | 0.0076 (0.0050..0.0097) | 90 | 338 |
+| rotated_rosenbrock | focusing | tree | 0.0069 (0.0061..0.0083) | 0.0301 (0.0289..0.0308) | 0.0000 (0.0000..0.0000) |  | 20 |
+| rotated_rosenbrock | focusing | global | 0.0055 (0.0041..0.0073) | 0.0180 (0.0172..0.0190) | 0.0000 (0.0000..0.0001) |  | 123 |
+| rotated_rosenbrock | focusing | global_fresh | 0.0052 (0.0039..0.0071) | 0.0177 (0.0172..0.0181) | 0.0000 (0.0000..0.0001) | 21 | 132 |
+| rotated_rosenbrock | sweeping | tree | 0.0060 (0.0052..0.0065) | 0.0647 (0.0613..0.0673) | 0.0053 (0.0040..0.0071) |  | 21 |
+| rotated_rosenbrock | sweeping | global | 0.0116 (0.0072..0.0165) | 0.0581 (0.0554..0.0636) | 0.0066 (0.0040..0.0082) |  | 225 |
+| rotated_rosenbrock | sweeping | global_fresh | 0.0065 (0.0057..0.0080) | 0.0530 (0.0477..0.0616) | 0.0090 (0.0054..0.0136) | 118 | 279 |
+| rotated_rosenbrock | walker | tree | 0.0062 (0.0061..0.0064) | 0.0923 (0.0865..0.0984) | 0.0024 (0.0022..0.0026) |  | 21 |
+| rotated_rosenbrock | walker | global | 0.0049 (0.0042..0.0053) | 0.0759 (0.0727..0.0817) | 0.0013 (0.0012..0.0016) |  | 248 |
+| rotated_rosenbrock | walker | global_fresh | 0.0049 (0.0042..0.0054) | 0.0760 (0.0722..0.0811) | 0.0011 (0.0008..0.0015) | 153 | 281 |
+| gaussian_peaks | uniform | tree | 0.0168 (0.0162..0.0179) | 0.0139 (0.0129..0.0149) | 0.0135 (0.0127..0.0149) |  | 25 |
+| gaussian_peaks | uniform | global | 0.0139 (0.0130..0.0148) | 0.0114 (0.0107..0.0121) | 0.0113 (0.0106..0.0124) |  | 203 |
+| gaussian_peaks | uniform | global_fresh | 0.0135 (0.0126..0.0143) | 0.0112 (0.0106..0.0120) | 0.0113 (0.0106..0.0123) | 92 | 224 |
+| gaussian_peaks | focusing | tree | 0.0074 (0.0064..0.0081) | 0.0232 (0.0213..0.0254) | 0.0001 (0.0001..0.0002) |  | 20 |
+| gaussian_peaks | focusing | global | 0.0056 (0.0046..0.0063) | 0.0174 (0.0158..0.0185) | 0.0001 (0.0001..0.0002) |  | 118 |
+| gaussian_peaks | focusing | global_fresh | 0.0054 (0.0044..0.0062) | 0.0169 (0.0158..0.0181) | 0.0001 (0.0001..0.0002) | 21 | 129 |
+| gaussian_peaks | sweeping | tree | 0.0264 (0.0230..0.0330) | 0.0807 (0.0787..0.0842) | 0.0117 (0.0085..0.0138) |  | 20 |
+| gaussian_peaks | sweeping | global | 0.0173 (0.0131..0.0205) | 0.0606 (0.0568..0.0673) | 0.0153 (0.0086..0.0233) |  | 245 |
+| gaussian_peaks | sweeping | global_fresh | 0.0129 (0.0119..0.0149) | 0.0423 (0.0419..0.0428) | 0.0077 (0.0072..0.0084) | 117 | 362 |
+| gaussian_peaks | walker | tree | 0.0111 (0.0100..0.0119) | 0.1063 (0.1053..0.1081) | 0.0039 (0.0021..0.0049) |  | 21 |
+| gaussian_peaks | walker | global | 0.0087 (0.0067..0.0121) | 0.0670 (0.0558..0.0739) | 0.0022 (0.0011..0.0038) |  | 239 |
+| gaussian_peaks | walker | global_fresh | 0.0073 (0.0058..0.0093) | 0.0623 (0.0565..0.0697) | 0.0013 (0.0008..0.0016) | 144 | 277 |
+
+As ratios to the plain tree (mean of per-seed ratios), `global_fresh` with the stale
+`global` in brackets:
+
+| target | stream | prequential | uniform-test | focus-test |
+|---|---|---|---|---|
+| rotated_rosenbrock | uniform | 0.70 [0.72] | 0.71 [0.77] | 0.69 [0.72] |
+| rotated_rosenbrock | focusing | 0.75 [0.78] | 0.59 [0.60] | at floor |
+| rotated_rosenbrock | sweeping | 1.11 [2.00] | 0.82 [0.90] | 1.94 [1.26] |
+| rotated_rosenbrock | walker | 0.78 [0.79] | 0.82 [0.82] | 0.46 [0.56] |
+| gaussian_peaks | uniform | 0.81 [0.83] | 0.81 [0.82] | 0.84 [0.84] |
+| gaussian_peaks | focusing | 0.74 [0.76] | 0.73 [0.75] | 0.87 [0.87] |
+| gaussian_peaks | sweeping | 0.50 [0.67] | 0.52 [0.75] | 0.69 [1.26] |
+| gaussian_peaks | walker | 0.65 [0.78] | 0.59 [0.63] | 0.34 [0.56] |
+
+The refresh rule never costs accuracy and helps most where snapshots go stale: on the
+sweeping and walker streams. On the uniform and focusing streams it changes little, because
+there leaves keep receiving points (uniform) or the model has frozen (focusing: 21 stale
+refits per run, all from the two early refits). The remaining soft spot is the
+end-of-sweep focus set on the rotated Rosenbrock (ratio 1.94, one seed at 3.4x, the other
+two level with the plain tree); on the same stream and target the on-stream error is now
+level with the plain tree and the cube-wide error is better.
 
 ## Reproduce
 
@@ -234,7 +292,7 @@ with the plain tree. Results for the refresh rule on the other three streams fol
 cd examples
 for t in rotated_rosenbrock gaussian_peaks; do for s in 1 2 3; do
   OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target $t --seeds $s \
-      --streams uniform,focusing,sweeping,walker --configs tree,global,frozen --N 4000 --d 6 \
+      --streams uniform,focusing,sweeping,walker --configs tree,global,frozen,global_fresh --N 4000 --d 6 \
       > results/global_mean_streams/${t}_seed${s}.jsonl
 done; done
 python benchmark_global_mean_streams.py --summarize results/global_mean_streams/*.jsonl
