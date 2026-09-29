@@ -17,6 +17,14 @@ and reports, per (target, stream, configuration, seed), the prequential NRMSE
 on the stream after warm-up, the NRMSE on a uniform test set (global accuracy),
 and the NRMSE on a "focus" test set drawn where the stream ended up.
 
+Configurations: ``tree`` (plain GPTree), ``global`` (refit global model),
+``frozen`` (global model frozen after the warm-up), ``global_damped`` /
+``global_damped_tight`` / ``global_damped_wide`` (refit global model whose
+contribution is damped by a coverage confidence derived from the predictive
+variance of a reference GP on the reservoir, with length scale 1x / 0.5x / 2x
+the reservoir spacing; protects the leaves from the model's extrapolation into
+territory the reservoir has not covered).
+
 Global-model policy (the recommendation from the design discussion):
     * coverage reservoir (maximin design, 500 points) rather than a
       uniform-in-time reservoir, so the model stays representative of the
@@ -60,6 +68,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import warnings
 warnings.filterwarnings("ignore")
 
+from scipy.linalg import cholesky, solve_triangular
 from scipy.optimize import minimize
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.preprocessing import StandardScaler
@@ -139,13 +148,48 @@ def make_stream(kind, target, d, N, rng):
 # Global model prototype: coverage reservoir + turnover-triggered refits + snapshots
 # --------------------------------------------------------------------------- #
 class Snapshot:
-    """An immutable fitted global model: version + scalers + fitted GP."""
+    """An immutable fitted global model: version + scalers + fitted GP (+ damping).
 
-    def __init__(self, version, xs, ys, gp):
+    Damping (``damping_scale > 0``): the model's contribution is multiplied by a
+    confidence ``w(x) in [0, 1]`` so that, in standardised units, the prediction is
+    ``w(x) * m(x)``. Where the model has data ``w ~ 1``; where it extrapolates
+    ``w -> 0`` and the prediction reverts to the (constant) prior mean, so the
+    residual a leaf models reverts to the raw target exactly where the global
+    model is guessing.
+
+    ``w`` is one minus the *relative posterior variance of a reference GP* on the
+    same reservoir points: an RBF kernel with length scale
+    ``damping_scale * (median nearest-neighbour spacing of the reservoir)`` and
+    unit amplitude, so ``var_ref(x) / 1`` is 0 on the data and 1 far from all of
+    it. The fitted global kernel's own predictive variance cannot be used for
+    this: marginal likelihood picks catch-all length scales 100x the domain
+    width, and its posterior variance is then < 1e-3 of the prior everywhere,
+    even far outside the data (see the benchmark results document).
+    ``damping_power`` sharpens the transition (w -> w ** power).
+    """
+
+    def __init__(self, version, xs, ys, gp, ref_X=None, ref_L=None, ref_ell=None, damping_power=1.0):
         self.version, self.xs, self.ys, self.gp = version, xs, ys, gp
+        self.ref_X, self.ref_L, self.ref_ell, self.damping_power = ref_X, ref_L, ref_ell, damping_power
+
+    @property
+    def damped(self):
+        return self.ref_L is not None
+
+    def confidence(self, X):
+        """w(x) in [0, 1]: 1 - relative posterior variance of the reference GP (1 = fully trusted)."""
+        Xs = self.xs.transform(X)
+        d2 = ((Xs[:, None, :] - self.ref_X[None, :, :]) ** 2).sum(-1)          # (m, n)
+        k_star = np.exp(-0.5 * d2 / self.ref_ell ** 2)                          # unit-amplitude RBF
+        v = solve_triangular(self.ref_L, k_star.T, lower=True)                  # (n, m)
+        explained = np.clip((v ** 2).sum(axis=0), 0.0, 1.0)                     # k*^T K^-1 k*  in [0, 1]
+        return explained ** self.damping_power
 
     def predict(self, X):
-        return self.ys.inverse_transform(self.gp.predict(self.xs.transform(X))[:, None]).ravel()
+        m = self.gp.predict(self.xs.transform(X))
+        if self.damped:
+            m = self.confidence(X) * m
+        return self.ys.inverse_transform(m[:, None]).ravel()
 
 
 class CoverageReservoir:
@@ -175,8 +219,9 @@ class CoverageReservoir:
 
 class GlobalMeanModel:
     def __init__(self, d, seed, reservoir_size=500, min_points=200, min_turnover=0.25,
-                 restarts=2, freeze_after=None):
+                 restarts=2, freeze_after=None, damping_scale=0.0, damping_power=1.0):
         self.d, self.seed = d, seed
+        self.damping_scale, self.damping_power = damping_scale, damping_power   # damping_scale 0 = off
         self.res = CoverageReservoir(reservoir_size, d)
         self.min_points, self.min_turnover, self.restarts = min_points, min_turnover, restarts
         self.freeze_after = freeze_after
@@ -209,7 +254,14 @@ class GlobalMeanModel:
         gp = GaussianProcessRegressor(kernel, alpha=1e-6, n_restarts_optimizer=self.restarts, random_state=self.seed)
         gp.fit(xs.transform(Xr), ys.transform(yr[:, None]).ravel())
         version = 1 if self.current is None else self.current.version + 1
-        self.current = Snapshot(version, xs, ys, gp)
+        ref = {}
+        if self.damping_scale > 0:
+            Xs = xs.transform(Xr)
+            D = np.sqrt(((Xs[:, None, :] - Xs[None, :, :]) ** 2).sum(-1)); np.fill_diagonal(D, np.inf)
+            ell = self.damping_scale * float(np.median(D.min(axis=1)))       # x reservoir spacing
+            K = np.exp(-0.5 * (np.where(np.isinf(D), 0.0, D) ** 2) / ell ** 2) + 1e-8 * np.eye(Xs.shape[0])
+            ref = dict(ref_X=Xs, ref_L=cholesky(K, lower=True), ref_ell=ell, damping_power=self.damping_power)
+        self.current = Snapshot(version, xs, ys, gp, **ref)
         self.n_at_fit = self.n_seen; self.turnover_at_fit = self.res.turnover
         self.n_refits += 1; self.t_fit += time.time() - t0
 
@@ -272,6 +324,12 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
         model = GlobalMeanModel(d, seed)
     elif config == 'frozen':
         model = GlobalMeanModel(d, seed, freeze_after=warmup)
+    elif config == 'global_damped':          # reference length scale = 1 x reservoir spacing
+        model = GlobalMeanModel(d, seed, damping_scale=1.0)
+    elif config == 'global_damped_tight':    # 0.5 x spacing: trusts the model only right on its data
+        model = GlobalMeanModel(d, seed, damping_scale=0.5)
+    elif config == 'global_damped_wide':     # 2 x spacing: mild damping
+        model = GlobalMeanModel(d, seed, damping_scale=2.0)
     elif config != 'tree':
         raise ValueError(config)
     _ACTIVE['model'] = model
@@ -302,6 +360,11 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
         out.update(refits=model.n_refits, refits_skipped=model.n_skipped, fit_seconds=round(model.t_fit, 1),
                    snapshots_alive=len({l._fitted_mean.version for l in gpt.root.leaves
                                         if getattr(l, '_fitted_mean', None) is not None}))
+        if model.current is not None and model.current.damped:
+            # mean damping weight of the final snapshot on the two test sets (1 = undamped)
+            out.update(confidence_uniform=round(float(model.current.confidence(X_uni).mean()), 3),
+                       confidence_focus=round(float(model.current.confidence(X_focus).mean()), 3),
+                       damping_ell=round(float(model.current.ref_ell), 3))
     _ACTIVE['model'] = None
     return out
 
@@ -336,7 +399,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--target', default='rotated_rosenbrock', choices=sorted(TARGETS))
     ap.add_argument('--streams', default='uniform,focusing,sweeping,walker')
-    ap.add_argument('--configs', default='tree,global')
+    ap.add_argument('--configs', default='tree,global',
+                    help="comma-separated subset of tree,global,frozen,global_damped,global_damped_tight,global_damped_wide")
     ap.add_argument('--seeds', default='1')
     ap.add_argument('--d', type=int, default=6)
     ap.add_argument('--N', type=int, default=4000)
