@@ -73,3 +73,4 @@ try:
     _GPYTORCH_AVAILABLE = True
 except ImportError:
     _GPYTORCH_AVAILABLE = False
+from pygptreeo.bqtree import BQTree

@@ -182,6 +182,26 @@ several times the run time. `examples/BENCHMARK_RESULTS_global_mean_streams.md` 
 measurements under uniform, focusing, sweeping and random-walk input streams. Leave
 `global_mean=None` (the default) to run the tree exactly as before.
 
+## Non-GP alternative: Bayesian quadratic leaves (experimental)
+
+`BQTree` keeps the same partition, routing, mixture-of-experts prediction and per-leaf
+calibration as `GPTree`, but each leaf is a Bayesian quadratic regression in leaf-local
+coordinates instead of a GP: every point enters the leaf posterior by an exact rank-one
+update, there is no kernel hyperparameter optimisation, and the predicted sigma is the
+posterior uncertainty of the polynomial plus the leaf's estimated misfit. It exists to
+benchmark a cheap parametric leaf against the GP leaves:
+
+```python
+from pygptreeo import BQTree
+
+bqt = BQTree(Nbar=100)                      # same update_tree / predict interface as GPTree
+bqt.update_tree(x, y, sigma)
+y_pred, y_std = bqt.predict(X_test)
+```
+
+`examples/BENCHMARK_RESULTS_bqtree.md` compares it with `GPTree`, with and without the
+global model, under the four input streams (`examples/benchmark_bqtree.py`).
+
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:
 
