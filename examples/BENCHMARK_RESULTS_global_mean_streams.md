@@ -153,7 +153,25 @@ The remaining explanation is extrapolation *by the leaves*: a fresh leaf at the 
 predicts with the GP it inherited from its parent, extrapolated by a few points. The raw
 target's local slope is accurate and a Matern GP with long length scales follows it; the
 residual's local slope is the global model's slope error and its GP reverts to a
-constant sooner. The leaf-kernel linear-trend configurations (`*_lin`) test this.
+constant sooner. The leaf-kernel linear-trend configurations (`*_lin`, an added
+`ConstantKernel * DotProduct` term) test this, and refute it too: on the sweeping stream
+the linear term changes nothing for either configuration.
+
+| target | config | prequential NRMSE | uniform-test NRMSE | focus-test NRMSE |
+|---|---|---|---|---|
+| rotated_rosenbrock | tree | 0.0060 (0.0052..0.0065) | 0.0647 (0.0613..0.0673) | 0.0053 (0.0040..0.0071) |
+| rotated_rosenbrock | tree_lin | 0.0063 (0.0053..0.0072) | 0.0657 (0.0642..0.0673) | 0.0090 (0.0040..0.0160) |
+| rotated_rosenbrock | global | 0.0116 (0.0072..0.0165) | 0.0581 (0.0554..0.0636) | 0.0066 (0.0040..0.0082) |
+| rotated_rosenbrock | global_lin | 0.0125 (0.0072..0.0191) | 0.0581 (0.0554..0.0636) | 0.0094 (0.0076..0.0124) |
+| gaussian_peaks | tree | 0.0264 (0.0230..0.0330) | 0.0807 (0.0787..0.0842) | 0.0117 (0.0085..0.0138) |
+| gaussian_peaks | tree_lin | 0.0266 (0.0230..0.0336) | 0.0828 (0.0802..0.0874) | 0.0117 (0.0084..0.0137) |
+| gaussian_peaks | global | 0.0173 (0.0131..0.0205) | 0.0606 (0.0568..0.0673) | 0.0153 (0.0086..0.0233) |
+| gaussian_peaks | global_lin | 0.0169 (0.0131..0.0195) | 0.0587 (0.0512..0.0676) | 0.0149 (0.0082..0.0233) |
+
+Note also that the harm is target-specific: on the sweeping stream the residual tree is
+*better* than the plain tree on the Gaussian peaks (prequential 0.0173 vs 0.0264) and
+worse only on the rotated Rosenbrock (0.0116 vs 0.0060), whose values span seven orders
+of magnitude along the sweep.
 
 ## Reproduce
 
@@ -168,4 +186,4 @@ python benchmark_global_mean_streams.py --summarize results/global_mean_streams/
 ```
 
 The raw `RESULT` lines of the runs above are in `results/global_mean_streams/`
-(`damped_*` for the damping section).
+(`damped_*` for the damping section, `lin_*` for the linear-trend runs).
