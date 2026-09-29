@@ -1,0 +1,1 @@
+RESULT {"target": "gaussian_peaks", "stream": "sweeping", "config": "global_fresh", "seed": 1, "d": 6, "N": 4000, "prequential_nrmse": 0.01208501066789036, "uniform_nrmse": 0.04221555663430067, "focus_nrmse": 0.007543381109158267, "leaves": 62, "seconds": 337.9, "refits": 7, "refits_skipped": 2, "fit_seconds": 215.9, "stale_leaf_refits": 109, "snapshots_alive": 3}

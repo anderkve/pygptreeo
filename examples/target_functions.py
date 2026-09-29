@@ -222,3 +222,101 @@ def Custom(x):
     func += Eggholder(x) / 6.
     func += Levy(x)
     return func
+
+# --------------------------------------------------------------------------- #
+# Non-additive targets
+#
+# Every N-dimensional function above is a sum of terms that each involve only
+# one or two adjacent coordinates, so all of them have an exact low-order
+# additive decomposition in the given coordinates. The two targets below do
+# not: a fixed random rotation couples every input dimension to every other,
+# so no low-order additive model (additive kernels, additive global trends)
+# can represent them exactly. Both are deterministic for a given (d, seed).
+# --------------------------------------------------------------------------- #
+_ROTATION_CACHE = {}
+
+
+def _random_rotation(dim, seed):
+    """A fixed random orthogonal matrix for (dim, seed), cached."""
+    key = (int(dim), int(seed))
+    if key not in _ROTATION_CACHE:
+        rng = np.random.RandomState(seed)
+        Q, _ = np.linalg.qr(rng.randn(dim, dim))
+        _ROTATION_CACHE[key] = Q
+    return _ROTATION_CACHE[key]
+
+
+def RotatedRosenbrock(x, seed=13):
+    """Computes the Rosenbrock function in randomly rotated coordinates.
+
+    The unit-cube coordinates are rotated about the cube centre by a fixed
+    random orthogonal matrix before the standard :func:`Rosenbrock` mapping
+    and evaluation. In the given coordinates the quartic valley terms then
+    involve products of up to four different inputs, so the function has no
+    exact order-1 or order-2 additive decomposition (unlike the unrotated
+    Rosenbrock, which is a sum of terms in adjacent coordinate pairs). It
+    stays smooth and polynomial, so it is learnable, and it keeps a large-scale
+    quadratic trend that a low-order model can partly capture.
+
+    Args:
+        x (np.ndarray): Array of shape (d,) or (d, N) with values in `[0,1]`.
+        seed (int): Seed of the fixed rotation (one rotation per (d, seed)).
+
+    Returns:
+        float or np.ndarray: Function value(s).
+    """
+    x = np.asarray(x, dtype=float)
+    R = _random_rotation(x.shape[0], seed)
+    z = 0.5 + R @ (x - 0.5)
+    return Rosenbrock(z)
+
+
+def GaussianPeaks(x, n_peaks=3, seed=7):
+    """Negative log of a mixture of anisotropic, mutually rotated Gaussian peaks.
+
+    A smooth, multi-modal, likelihood-like landscape in `[0,1]^d`::
+
+        f(x) = -log( sum_k w_k exp(-0.5 (x - mu_k)^T Sigma_k^-1 (x - mu_k)) )
+
+    with peak centres `mu_k` in `[0.2, 0.8]^d`, full covariance matrices
+    `Sigma_k = Q_k diag(s_k^2) Q_k^T` built from random rotations `Q_k` and
+    principal widths `s_k` in `[0.05, 0.25]`, and weights `w_k` in `[0.3, 1]`.
+    The rotated covariances couple all input dimensions, and the log-sum-exp
+    between peaks adds higher-order structure in the transition regions; near
+    a single peak the function is an (order-2) quadratic form. The minimum is
+    close to the centre of the heaviest, narrowest peak.
+
+    Args:
+        x (np.ndarray): Array of shape (d,) or (d, N) with values in `[0,1]`.
+        n_peaks (int): Number of peaks.
+        seed (int): Seed of the fixed peak parameters (per (d, n_peaks, seed)).
+
+    Returns:
+        float or np.ndarray: Function value(s), non-negative up to a constant.
+    """
+    x = np.asarray(x, dtype=float)
+    dim = x.shape[0]
+    key = ('peaks', int(dim), int(n_peaks), int(seed))
+    if key not in _ROTATION_CACHE:
+        rng = np.random.RandomState(seed)
+        peaks = []
+        for _ in range(n_peaks):
+            mu = rng.uniform(0.2, 0.8, dim)
+            Q, _ = np.linalg.qr(rng.randn(dim, dim))
+            s = rng.uniform(0.05, 0.25, dim)
+            prec = Q @ np.diag(1.0 / s ** 2) @ Q.T           # Sigma^-1
+            w = rng.uniform(0.3, 1.0)
+            peaks.append((mu, prec, w))
+        _ROTATION_CACHE[key] = peaks
+    peaks = _ROTATION_CACHE[key]
+
+    X = x.reshape(dim, -1)                                   # (d, N)
+    log_terms = []
+    for mu, prec, w in peaks:
+        dxv = X - mu[:, None]
+        m = np.einsum('in,ij,jn->n', dxv, prec, dxv)          # Mahalanobis^2 per point
+        log_terms.append(np.log(w) - 0.5 * m)
+    log_terms = np.array(log_terms)                           # (K, N)
+    mx = log_terms.max(axis=0)
+    f = -(mx + np.log(np.exp(log_terms - mx).sum(axis=0)))    # -log-sum-exp, stable
+    return f[0] if x.ndim == 1 else f

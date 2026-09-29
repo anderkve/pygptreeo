@@ -13,6 +13,10 @@ Approach:
 3. We fit B-splines to get coefficients c(x) for each x
 4. We train a multi-output GP to learn the mapping: x → c(x)
 5. At test points x_test, we predict c(x_test) and reconstruct f(t; x_test)
+
+See ``multioutput_function_learning_pca.py`` for the same problem solved with
+GPTree's ``output_model='pca'``, including a variant that skips the B-spline
+step entirely and learns the curve values on the t-grid directly.
 """
 
 import numpy as np

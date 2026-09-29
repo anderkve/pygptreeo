@@ -27,6 +27,8 @@ from sklearn.preprocessing import StandardScaler
 # Local imports
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gp_interface import GPRegressorInterface
+from pygptreeo.output_basis import OutputBasisLearner
+from pygptreeo.global_mean import GlobalMeanLearner
 
 # Module-level constants
 DEFAULT_OVERLAP = 0.001  # Default initial overlap for node boundaries
@@ -71,7 +73,7 @@ class GPNode(Node):
                  split_position_method='median',
                  retrain_every_n_points=100,
                  name="0",
-                 split_dimension_criteria='max_uncertainty',
+                 split_dimension_criteria='min_lengthscale',
                  splitting_strategy: Optional[str] = 'gradual',
                  use_standard_scaling: Optional[bool] = True,
                  use_hyperparameter_inheritance: Optional[bool] = False,
@@ -85,7 +87,11 @@ class GPNode(Node):
                  n_split_candidates: Optional[int] = 3,
                  split_eval_train_fraction: Optional[float] = 0.6,
                  split_eval_min_points: Optional[int] = 20,
-                 n_outputs: Optional[int] = 1):
+                 n_outputs: Optional[int] = 1,
+                 output_model: Optional[str] = 'independent',
+                 output_basis: Optional[OutputBasisLearner] = None,
+                 global_mean: Optional[GlobalMeanLearner] = None,
+                 my_GPRs: Optional[list] = None):
         """Initializes a GPNode.
 
         Args:
@@ -109,8 +115,10 @@ class GPNode(Node):
                 largest range), 'max_variance' (split on dimension with highest variance),
                 'max_uncertainty' (split on dimension where GP is most uncertain),
                 'min_lengthscale' (split on dimension with the smallest fitted ARD
-                length scale, i.e. where the GP says the function varies fastest),
-                'random' (random dimension). Defaults to 'max_spread'.
+                length scale, i.e. where the GP says the function varies fastest;
+                pooled over all of the node's GPs for multi-output; falls back to
+                'max_spread' when no per-dimension length scales are available),
+                'random' (random dimension). Defaults to 'min_lengthscale'.
             use_standard_scaling (Optional[bool]): If True, standardizes both X and y
                 data before fitting the GP and inverse transforms predictions.
                 Defaults to False. Cannot be used together with use_hyperparameter_inheritance.
@@ -140,7 +148,26 @@ class GPNode(Node):
             split_eval_min_points (Optional[int]): Minimum points required in a region
                 to evaluate that split. Defaults to 20.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
-                For multi-output GPs, independent GPs are trained for each output.
+            output_model (Optional[str]): How several outputs are modelled (ignored for
+                n_outputs=1). 'independent': one GP per output, each with its own kernel
+                hyperparameters and per-output standardisation. 'shared': one GP with a
+                single shared kernel for all outputs (2-D target) and a common output
+                scale; needs a backend with ``supports_multitarget()``. 'pca': the
+                outputs are projected on a tree-global linear basis (``output_basis``)
+                and one GP is trained per basis score; predictions are mapped back to
+                output space with propagated variances. Defaults to 'independent'.
+            output_basis (Optional[OutputBasisLearner]): The tree-global output basis
+                learner, shared by reference between all nodes. Required for 'pca'.
+            global_mean (Optional[GlobalMeanLearner]): The tree-wide global model
+                learner, shared by reference between all nodes, or None (default).
+                When present, the node's GPs model the residual of the learner's
+                current snapshot: the snapshot is subtracted from the raw targets at
+                fit time, added back at predict time, and remembered per node. A
+                node that is asked to predict while a newer snapshot exists refits
+                against it first (see ``predict``).
+            my_GPRs (Optional[list]): Explicit list of GP regressors for this node
+                (used when creating children: one clone per parent GP). If None, the
+                list is built from ``my_GPR`` according to ``output_model``.
         """
 
         super().__init__(*args)
@@ -156,14 +183,35 @@ class GPNode(Node):
         self.Nbar = Nbar
         self.n_outputs = n_outputs
 
-        # For multi-output support: create a list of independent GPs
-        # For backward compatibility, single output (n_outputs=1) still works
+        if output_model not in ('independent', 'shared', 'pca'):
+            raise ValueError(f"Unknown output_model '{output_model}'. Use 'independent', 'shared' or 'pca'.")
         if n_outputs == 1:
-            self.my_GPR = my_GPR
-            self.my_GPRs = [my_GPR]  # Also store as list for unified handling
+            output_model = 'independent'  # the modes only differ for several outputs
+        if output_model == 'pca' and output_basis is None:
+            raise ValueError("output_model='pca' requires an OutputBasisLearner passed as output_basis")
+        self.output_model = output_model
+        self.output_basis = output_basis   # tree-global, shared by reference across all nodes
+        self._fitted_basis = None          # the OutputBasis this node's GPs were fitted with ('pca')
+        self.z_scaler = None               # (shift, scale) per basis score, fitted per leaf ('pca')
+        self.y_common_scaler = None        # (mu, scale) of the common output scaling ('shared')
+
+        # Tree-wide global model (shared by reference; None when the tree has none) and
+        # the snapshot of it that this node's GPs were fitted against.
+        self.global_mean = global_mean
+        self._fitted_global = None
+
+        # GP regressors: one per output ('independent'), one for all outputs
+        # ('shared'), or one per basis score ('pca'; the list is sized at the
+        # first fit, once the basis rank is known). Children receive their own
+        # list via my_GPRs: one clone per parent GP.
+        if my_GPRs is not None:
+            self.my_GPRs = list(my_GPRs)
+        elif n_outputs == 1 or output_model in ('shared', 'pca'):
+            self.my_GPRs = [my_GPR]
         else:
-            self.my_GPR = None  # Not used for multi-output
             self.my_GPRs = [deepcopy(my_GPR) for _ in range(n_outputs)]
+        # Single-output shorthand, kept for backward compatibility
+        self.my_GPR = self.my_GPRs[0] if n_outputs == 1 else None
 
         self.parent = None
         self.children = None
@@ -322,12 +370,17 @@ class GPNode(Node):
             'split_eval_train_fraction': self.split_eval_train_fraction,
             'split_eval_min_points': self.split_eval_min_points,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
+            'output_model': self.output_model,
+            'output_basis': self.output_basis,
+            'global_mean': self.global_mean,
         }
 
-        # Create child nodes with a copy of the parent GP (use first GP from list for template)
-        # Use the clone() method from GP interface for proper copying
-        self.left = GPNode(0, my_GPR=self.my_GPRs[0].clone(), name=self.name + "0", **node_config_kwargs)
-        self.right = GPNode(0, my_GPR=self.my_GPRs[0].clone(), name=self.name + "1", **node_config_kwargs)
+        # Each child gets its own clone of every parent GP (one per output / score)
+        # and predicts with them until its first retrain.
+        left_gprs = [gpr.clone() for gpr in self.my_GPRs]
+        right_gprs = [gpr.clone() for gpr in self.my_GPRs]
+        self.left = GPNode(0, my_GPR=left_gprs[0], my_GPRs=left_gprs, name=self.name + "0", **node_config_kwargs)
+        self.right = GPNode(0, my_GPR=right_gprs[0], my_GPRs=right_gprs, name=self.name + "1", **node_config_kwargs)
         
         self.left.is_left = True
         self.right.is_left = False
@@ -364,12 +417,12 @@ class GPNode(Node):
         # Inherit parent's optimized kernel hyperparameters if enabled
         # This gives children a warm-start for their GP optimization
         if self.use_hyperparameter_inheritance:
-            # For each output, copy the trained kernel to children using the GP interface
-            for i in range(self.n_outputs):
-                if self.my_GPRs[i].is_trained():
+            # For each GP (output or score), copy the trained kernel to the children
+            for i, gpr in enumerate(self.my_GPRs):
+                if gpr.is_trained():
                     # Copy the parent's optimized kernel to the children
                     # This preserves learned length scales, amplitudes, etc.
-                    trained_kernel = self.my_GPRs[i].get_kernel()
+                    trained_kernel = gpr.get_kernel()
                     self.left.my_GPRs[i].set_kernel(deepcopy(trained_kernel))
                     self.right.my_GPRs[i].set_kernel(deepcopy(trained_kernel))
             if self.n_outputs == 1:
@@ -391,6 +444,18 @@ class GPNode(Node):
             if self.n_outputs == 1:
                 self.left.y_scaler = self.left.y_scalers[0]
                 self.right.y_scaler = self.right.y_scalers[0]
+            self.left.y_common_scaler = deepcopy(self.y_common_scaler)
+            self.right.y_common_scaler = deepcopy(self.y_common_scaler)
+
+        # Until their first retrain the children predict with the parent's GPs, so
+        # they also need the basis, per-score standardisation and global-model
+        # snapshot those GPs were fitted with.
+        self.left._fitted_basis = self._fitted_basis
+        self.right._fitted_basis = self._fitted_basis
+        self.left.z_scaler = deepcopy(self.z_scaler)
+        self.right.z_scaler = deepcopy(self.z_scaler)
+        self.left._fitted_global = self._fitted_global
+        self.right._fitted_global = self._fitted_global
 
 
     def delete_point(self, index=-1, shared_point=True):
@@ -649,8 +714,8 @@ class GPNode(Node):
         if self.n_points < self.min_points_before_merging:
             return False
 
-        # GP not trained yet (check first GP in list using interface method)
-        if not self.my_GPRs[0].is_trained():
+        # GP not trained yet
+        if not self._is_fitted():
             return False
 
         # Find nearest neighbor
@@ -691,8 +756,8 @@ class GPNode(Node):
         if self.n_points < self.min_points_before_rejection:
             return False
 
-        # GP not trained yet (check first GP in list using interface method)
-        if not self.my_GPRs[0].is_trained():
+        # GP not trained yet
+        if not self._is_fitted():
             return False
 
         # Ensure y is array
@@ -720,6 +785,51 @@ class GPNode(Node):
             print(f"Node {self.name}: Rejected point (avg_rel_err={float(avg_relative_error):.2e} < {self.rejection_threshold:.2e})")
 
         return is_rejected
+
+    def _is_fitted(self) -> bool:
+        """True once this node can predict from data (its GPs have been fitted, or it
+        inherited fitted GPs from its parent)."""
+        if self.output_model == 'pca':
+            return self._fitted_basis is not None
+        return self.my_GPRs[0].is_trained()
+
+    @staticmethod
+    def _set_noise(gpr, alpha):
+        """Hand per-point observation-noise *variances* ``alpha`` (shape (N,)) to a GP."""
+        alpha = np.asarray(alpha, dtype=float).ravel()
+        if hasattr(gpr, 'set_observation_noise'):
+            gpr.set_observation_noise(alpha)
+        else:  # a bare scikit-learn GaussianProcessRegressor
+            gpr.alpha = alpha
+
+    def _pooled_length_scales(self):
+        """Per-dimension length scales pooled over all of this node's fitted GPs
+        (elementwise minimum: the shortest scale in any output/score governs the
+        resolution needed along that dimension), or None if none are available."""
+        collected = []
+        for gpr in self.my_GPRs:
+            if not gpr.is_trained() or not hasattr(gpr, 'get_length_scales'):
+                continue
+            ls = gpr.get_length_scales(self.n_features)
+            if ls is not None:
+                collected.append(np.asarray(ls, dtype=float))
+        if not collected:
+            return None
+        return np.min(np.vstack(collected), axis=0)
+
+    def _fit_common_y_scaler(self, y: np.ndarray):
+        """Centre each output and divide all of them by one common scale.
+
+        Used by output_model='shared': with one common scale the per-point
+        observation noise stays identical across outputs in the scaled space,
+        as the backend's single per-point noise level requires.
+        """
+        mu = y.mean(axis=0)
+        scale = float((y - mu).std())
+        if not np.isfinite(scale) or scale <= 0.0:
+            scale = 1.0
+        self.y_common_scaler = (mu, scale)
+        return mu, scale
 
     def _fit_scalers(self, X: np.ndarray, y: np.ndarray):
         """Fits StandardScalers on the combined training data.
@@ -776,57 +886,100 @@ class GPNode(Node):
         Returns:
             bool: True if the GPR was trained in this call, False otherwise.
         """
-        did_train = False
         # Only train the GP if the buffer is full, the node is full, or if force_training=True
-        if (self.n_points_since_retrain >= self.retrain_every_n_points) or (self.n_points >= self.Nbar) or force_training:
-            self.n_points_since_retrain = 0
+        if not ((self.n_points_since_retrain >= self.retrain_every_n_points)
+                or (self.n_points >= self.Nbar) or force_training):
+            return False
 
-            # Combine own points and shared points
-            X_train = np.vstack((self.my_X_data, self.shared_X_data))
-            y_train = np.vstack((self.my_y_data, self.shared_y_data))  # Shape: (N, n_outputs)
-            sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))  # Shape: (N, n_outputs)
+        # Combine own points and shared points
+        X_train = np.vstack((self.my_X_data, self.shared_X_data))
+        y_train = np.vstack((self.my_y_data, self.shared_y_data))  # Shape: (N, n_outputs)
+        sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))  # Shape: (N, n_outputs)
+        if X_train.shape[0] == 0:
+            return False
 
-            if self.use_standard_scaling and X_train.shape[0] > 0:
-                # Fit scalers on the combined training data
+        basis = None
+        if self.output_model == 'pca':
+            basis = self.output_basis.current
+            if basis is None:
+                # No output basis yet (too few points observed). The retrain buffer
+                # is left as is, so the next call trains once the basis exists.
+                return False
+
+        # With a global model the GPs are fitted on the residual of its current
+        # snapshot. The stored targets stay raw.
+        snapshot = None
+        if self.global_mean is not None:
+            snapshot = self.global_mean.current
+            if snapshot is not None:
+                y_train = y_train - snapshot.predict(X_train)
+
+        self.n_points_since_retrain = 0
+
+        if self.output_model == 'independent':
+            # One GP per output, per-output standardisation of y
+            if self.use_standard_scaling:
                 self._fit_scalers(X_train, y_train)
-
-                # Transform X to standardized space (same for all outputs)
-                X_train_scaled = self.X_scaler.transform(X_train)
-
-                # Train each output GP independently
+                X_fit = self.X_scaler.transform(X_train)
                 for i in range(self.n_outputs):
-                    # Get data for this output
-                    y_train_i = y_train[:, i:i+1]  # Shape: (N, 1)
-                    sigma_train_i = sigma_train[:, i:i+1]  # Shape: (N, 1)
-
-                    # Transform y to standardized space
-                    y_train_scaled_i = self.y_scalers[i].transform(y_train_i)
-
-                    # Transform uncertainties (std dev → variance → scaled variance)
-                    # σ_scaled = σ_original / y_scale
-                    # α_scaled = σ_scaled² = σ_original² / y_scale²
                     y_scale_i = self.y_scalers[i].scale_[0]
-                    sigma_train_scaled_i = sigma_train_i / y_scale_i
-                    alpha_train_scaled_i = sigma_train_scaled_i ** 2  # Convert to variance
-
-                    # Set GP alpha and train
-                    self.my_GPRs[i].alpha = alpha_train_scaled_i.flatten()
-                    self.my_GPRs[i].fit(X_train_scaled, y_train_scaled_i)
-
+                    y_fit_i = self.y_scalers[i].transform(y_train[:, i:i+1])
+                    # Noise std in scaled units is sigma / y_scale; the GP takes variances
+                    self._set_noise(self.my_GPRs[i], (sigma_train[:, i] / y_scale_i) ** 2)
+                    self.my_GPRs[i].fit(X_fit, y_fit_i)
             else:
-                # No scaling - train each output GP independently
                 for i in range(self.n_outputs):
-                    # Get data for this output
-                    y_train_i = y_train[:, i:i+1]  # Shape: (N, 1)
-                    sigma_train_i = sigma_train[:, i:i+1]  # Shape: (N, 1)
+                    self._set_noise(self.my_GPRs[i], sigma_train[:, i] ** 2)
+                    self.my_GPRs[i].fit(X_train, y_train[:, i:i+1])
 
-                    # Convert std dev to variance
-                    alpha_train_i = sigma_train_i ** 2  # Convert to variance
-                    self.my_GPRs[i].alpha = alpha_train_i.flatten()
-                    self.my_GPRs[i].fit(X_train, y_train_i)
+        elif self.output_model == 'shared':
+            # One GP with one shared kernel for all outputs (2-D target). The backend
+            # takes one noise variance per point, so the per-output noise variances
+            # are averaged over the outputs (exact when sigma is the same for all
+            # outputs, given the common output scale).
+            if self.use_standard_scaling:
+                self.X_scaler = StandardScaler().fit(X_train)
+                X_fit = self.X_scaler.transform(X_train)
+                mu, scale = self._fit_common_y_scaler(y_train)
+                y_fit = (y_train - mu) / scale
+                alpha = np.mean((sigma_train / scale) ** 2, axis=1)
+            else:
+                X_fit, y_fit = X_train, y_train
+                alpha = np.mean(sigma_train ** 2, axis=1)
+            self._set_noise(self.my_GPRs[0], alpha)
+            self.my_GPRs[0].fit(X_fit, y_fit)
 
-            did_train = True
-        return did_train
+        else:  # 'pca'
+            if self.use_standard_scaling:
+                self.X_scaler = StandardScaler().fit(X_train)
+                X_fit = self.X_scaler.transform(X_train)
+            else:
+                X_fit = X_train
+            Z = basis.project(y_train)                  # (N, k) basis scores
+            noise_z = basis.project_noise(sigma_train)  # (N, k) per-score noise variances
+            k = basis.n_components
+            # Standardise every score within the leaf (as the per-output scalers do
+            # for 'independent'): the scores carry the raw output variance and a
+            # leaf-local offset, while the kernel's initial amplitude and zero prior
+            # mean assume centred, unit-variance targets.
+            z_shift = Z.mean(axis=0)
+            z_scale = Z.std(axis=0)
+            z_scale = np.where(np.isfinite(z_scale) & (z_scale > 0.0), z_scale, 1.0)
+            self.z_scaler = (z_shift, z_scale)
+            # One GP per score: (re)size the list if the basis rank changed
+            template = self.my_GPRs[0]
+            while len(self.my_GPRs) < k:
+                self.my_GPRs.append(template.clone())
+            del self.my_GPRs[k:]
+            for j in range(k):
+                self._set_noise(self.my_GPRs[j], noise_z[:, j] / z_scale[j] ** 2)
+                self.my_GPRs[j].fit(X_fit, (Z[:, j:j+1] - z_shift[j]) / z_scale[j])
+            self._fitted_basis = basis
+
+        self._fitted_global = snapshot
+        if self.n_outputs == 1:
+            self.my_GPR = self.my_GPRs[0]
+        return True
 
 
     def _compute_dimensional_uncertainty(self):
@@ -946,93 +1099,12 @@ class GPNode(Node):
             if len(left_indices) < self.split_eval_min_points or len(right_indices) < self.split_eval_min_points:
                 return np.inf
 
-            # Evaluate left region
-            X_left = self.my_X_data[left_indices]
-            y_left = self.my_y_data[left_indices]
-
-            n_train_left = max(int(len(left_indices) * self.split_eval_train_fraction), 10)
-            n_train_left = min(n_train_left, len(left_indices) - 5)  # Leave at least 5 for testing
-
-            # Randomly split into train/test
-            indices_left = np.random.permutation(len(left_indices))
-            train_idx_left = indices_left[:n_train_left]
-            test_idx_left = indices_left[n_train_left:]
-
-            if len(test_idx_left) == 0:
+            rmse_left, n_test_left = self._region_holdout_rmse(left_indices)
+            rmse_right, n_test_right = self._region_holdout_rmse(right_indices)
+            if not (np.isfinite(rmse_left) and np.isfinite(rmse_right)):
                 return np.inf
-
-            # Train small GP on left train subset
-            gp_left = self.my_GPR.clone()
-            # Subset alpha to match training data if it's an array
-            # For now, we'll let the GP use its default noise handling
-            # Note: This section may need adaptation for non-sklearn backends
-            # that handle observation noise differently
-            X_train_left = X_left[train_idx_left]
-            y_train_left = y_left[train_idx_left]
-
-            # Apply scaling if enabled
-            if self.use_standard_scaling:
-                from sklearn.preprocessing import StandardScaler
-                scaler_X_left = StandardScaler()
-                scaler_y_left = StandardScaler()
-                X_train_left_scaled = scaler_X_left.fit_transform(X_train_left)
-                y_train_left_scaled = scaler_y_left.fit_transform(y_train_left)
-                gp_left.fit(X_train_left_scaled, y_train_left_scaled)
-
-                # Predict on test set
-                X_test_left_scaled = scaler_X_left.transform(X_left[test_idx_left])
-                y_pred_left_scaled = gp_left.predict(X_test_left_scaled, return_std=False)
-                y_pred_left = scaler_y_left.inverse_transform(y_pred_left_scaled.reshape(-1, 1)).flatten()
-            else:
-                gp_left.fit(X_train_left, y_train_left)
-                y_pred_left = gp_left.predict(X_left[test_idx_left], return_std=False)
-
-            y_true_left = y_left[test_idx_left].flatten()
-            rmse_left = np.sqrt(np.mean((y_true_left - y_pred_left)**2))
-
-            # Evaluate right region
-            X_right = self.my_X_data[right_indices]
-            y_right = self.my_y_data[right_indices]
-
-            n_train_right = max(int(len(right_indices) * self.split_eval_train_fraction), 10)
-            n_train_right = min(n_train_right, len(right_indices) - 5)
-
-            indices_right = np.random.permutation(len(right_indices))
-            train_idx_right = indices_right[:n_train_right]
-            test_idx_right = indices_right[n_train_right:]
-
-            if len(test_idx_right) == 0:
-                return np.inf
-
-            gp_right = self.my_GPR.clone()
-            # Subset alpha to match training data if it's an array
-            # For now, we'll let the GP use its default noise handling
-            # Note: This section may need adaptation for non-sklearn backends
-            # that handle observation noise differently
-            X_train_right = X_right[train_idx_right]
-            y_train_right = y_right[train_idx_right]
-
-            if self.use_standard_scaling:
-                from sklearn.preprocessing import StandardScaler
-                scaler_X_right = StandardScaler()
-                scaler_y_right = StandardScaler()
-                X_train_right_scaled = scaler_X_right.fit_transform(X_train_right)
-                y_train_right_scaled = scaler_y_right.fit_transform(y_train_right)
-                gp_right.fit(X_train_right_scaled, y_train_right_scaled)
-
-                X_test_right_scaled = scaler_X_right.transform(X_right[test_idx_right])
-                y_pred_right_scaled = gp_right.predict(X_test_right_scaled, return_std=False)
-                y_pred_right = scaler_y_right.inverse_transform(y_pred_right_scaled.reshape(-1, 1)).flatten()
-            else:
-                gp_right.fit(X_train_right, y_train_right)
-                y_pred_right = gp_right.predict(X_right[test_idx_right], return_std=False)
-
-            y_true_right = y_right[test_idx_right].flatten()
-            rmse_right = np.sqrt(np.mean((y_true_right - y_pred_right)**2))
 
             # Combined score: weighted average by number of test points
-            n_test_left = len(test_idx_left)
-            n_test_right = len(test_idx_right)
             combined_rmse = (n_test_left * rmse_left + n_test_right * rmse_right) / (n_test_left + n_test_right)
 
             return combined_rmse
@@ -1047,6 +1119,39 @@ class GPNode(Node):
             self.split_index = old_split_index
             self.split_position = old_split_position
             self.overlap = old_overlap
+
+
+    def _region_holdout_rmse(self, indices: np.ndarray):
+        """Train a fresh GP on a random subset of the node's points at ``indices``
+        and return ``(RMSE on the held-out rest, number of held-out points)``.
+        A multi-output region is fitted as one shared-kernel GP, a cheap proxy
+        for the leaf's own model."""
+        X_r = self.my_X_data[indices]
+        y_r = self.my_y_data[indices]
+        s_r = self.my_sigma_data[indices]
+        if self.global_mean is not None and self.global_mean.current is not None:
+            y_r = y_r - self.global_mean.current.predict(X_r)   # score splits on what the leaves model
+        n_train = max(int(len(indices) * self.split_eval_train_fraction), 10)
+        n_train = min(n_train, len(indices) - 5)  # leave at least 5 for testing
+        if n_train < 1 or n_train >= len(indices):
+            return np.inf, 0
+        perm = np.random.permutation(len(indices))
+        tr, te = perm[:n_train], perm[n_train:]
+        gp = self.my_GPRs[0].clone()
+        X_tr, y_tr, s_tr = X_r[tr], y_r[tr], s_r[tr]
+        if self.use_standard_scaling:
+            sx = StandardScaler().fit(X_tr)
+            sy = StandardScaler().fit(y_tr)
+            self._set_noise(gp, np.mean((s_tr / sy.scale_) ** 2, axis=1))
+            gp.fit(sx.transform(X_tr), sy.transform(y_tr))
+            pred = np.asarray(gp.predict(sx.transform(X_r[te]), return_std=False)).reshape(len(te), -1)
+            pred = sy.inverse_transform(pred)
+        else:
+            self._set_noise(gp, np.mean(s_tr ** 2, axis=1))
+            gp.fit(X_tr, y_tr)
+            pred = np.asarray(gp.predict(X_r[te], return_std=False)).reshape(len(te), -1)
+        rmse = float(np.sqrt(np.mean((y_r[te] - pred) ** 2)))
+        return rmse, len(te)
 
 
     def find_best_split_dimension(self, theta: float):
@@ -1082,7 +1187,7 @@ class GPNode(Node):
             candidates.append(('max_spread', dim_max_spread))
 
         # Candidate 3: Max uncertainty (if GP is trained)
-        if self.my_GPR.is_trained() and self.my_X_data.shape[0] > 1:
+        if self._is_fitted() and self.my_X_data.shape[0] > 1:
             uncertainty_scores = self._compute_dimensional_uncertainty()
             dim_max_unc = np.argmax(uncertainty_scores)
             candidates.append(('max_uncertainty', dim_max_unc))
@@ -1193,7 +1298,7 @@ class GPNode(Node):
         elif self.split_dimension_criteria == 'max_uncertainty':
             # Split on the dimension where the GP is most uncertain
             # Strategy: compute marginal predictive uncertainty for each dimension
-            if self.my_X_data.shape[0] > 1 and self.my_GPR.is_trained():
+            if self.my_X_data.shape[0] > 1 and self._is_fitted():
                 # Compute per-dimension uncertainty scores
                 # We'll use the GP's predictions on the training data to assess uncertainty
                 uncertainty_scores = self._compute_dimensional_uncertainty()
@@ -1212,12 +1317,13 @@ class GPNode(Node):
                     self.split_index = 0 # Default to 0 if no data
         elif self.split_dimension_criteria == 'min_lengthscale':
             # Split where the GP's smallest fitted ARD length scale is, i.e. where
-            # the function varies fastest relative to its spread. Falls back to
-            # max_spread if length scales are unavailable (GP untrained or kernel
-            # has none).
+            # the function varies fastest relative to its spread. For several GPs
+            # (multi-output / basis scores) the per-dimension minimum over all of
+            # them is used. Falls back to max_spread if no per-dimension length
+            # scales are available (GP untrained or kernel isotropic).
             length_scales = None
-            if self.my_X_data.shape[0] > 1 and self.my_GPRs[0].is_trained():
-                length_scales = self.my_GPRs[0].get_length_scales(self.n_features)
+            if self.my_X_data.shape[0] > 1:
+                length_scales = self._pooled_length_scales()
             if length_scales is not None:
                 # Compare length scales in units of each dimension's std so the
                 # choice is scale-invariant. With standard scaling the GP frame
@@ -1334,8 +1440,50 @@ class GPNode(Node):
                   Shape: (n_samples, n_outputs)
                 - sigma_pred (np.ndarray): The standard deviation of the
                   prediction(s) in original space. Shape: (n_samples, n_outputs)
-                  Only returned if `return_std` is True.
+                  Only returned if `return_std` is True. This is the uncertainty
+                  of the estimate of the underlying function (the GP's latent
+                  posterior standard deviation), not of a noisy observation. With
+                  a global model it also includes the global model's own
+                  estimated (epistemic) error, see ``global_mean``.
         """
+        # Never predict with a global snapshot older than the current one: a leaf
+        # that stops receiving points would otherwise keep an outdated snapshot whose
+        # error its residual GP cannot correct.
+        if self.global_mean is not None and self.is_leaf and self.n_points > 0:
+            current = self.global_mean.current
+            if current is not None and (self._fitted_global is None
+                                        or self._fitted_global.version < current.version):
+                self.fit_my_GPR(force_training=True)
+
+        if self.output_model == 'independent':
+            mu_pred, sigma_pred = self._predict_independent(x, return_std)
+        elif self.output_model == 'shared':
+            mu_pred, sigma_pred = self._predict_shared(x)
+        else:
+            mu_pred, sigma_pred = self._predict_pca(x)
+
+        # Add back the snapshot the GPs were fitted against, and its estimated error:
+        # the residual GP cannot know how wrong the global model is at x.
+        if self._fitted_global is not None:
+            mu_pred = mu_pred + self._fitted_global.predict(x)
+            err_scale = getattr(self.global_mean, 'error_scale', None)
+            if err_scale is not None:
+                sigma_pred = np.sqrt(sigma_pred ** 2 + np.asarray(err_scale, dtype=float).reshape(1, -1) ** 2)
+
+        # Apply calibration if requested
+        if use_calibrated_sigma:
+            if self.n_outputs == 1:
+                sigma_pred = sigma_pred * self.sigma_scaler
+            else:
+                # Multiply each output by its calibration factor
+                for i in range(self.n_outputs):
+                    sigma_pred[:, i] = sigma_pred[:, i] * self.sigma_scalers[i]
+
+        return mu_pred, sigma_pred
+
+
+    def _predict_independent(self, x: np.ndarray, return_std: bool = True):
+        """Per-output GPs (output_model='independent'); see ``predict``."""
         n_samples = x.shape[0]
 
         # Initialize output arrays
@@ -1365,16 +1513,55 @@ class GPNode(Node):
                 mu_pred[:, i] = mu_i.flatten()
                 sigma_pred[:, i] = sigma_i
 
-        # Apply calibration if requested
-        if use_calibrated_sigma:
-            if self.n_outputs == 1:
-                sigma_pred = sigma_pred * self.sigma_scaler
-            else:
-                # Multiply each output by its calibration factor
-                for i in range(self.n_outputs):
-                    sigma_pred[:, i] = sigma_pred[:, i] * self.sigma_scalers[i]
-
         return mu_pred, sigma_pred
+
+    def _scaled_inputs(self, x: np.ndarray) -> np.ndarray:
+        if self.use_standard_scaling and self.X_scaler is not None:
+            return self.X_scaler.transform(x)
+        return x
+
+    def _prior_prediction(self, x: np.ndarray):
+        """Prediction of a node that has not been fitted yet: the prior of its first
+        GP, broadcast to all outputs (what the per-output GPs would each return)."""
+        n = x.shape[0]
+        mu0, sd0 = self.my_GPRs[0].predict(x, return_std=True)
+        mu0 = np.asarray(mu0, dtype=float).reshape(n, -1)[:, :1]
+        sd0 = np.asarray(sd0, dtype=float).reshape(n, -1)[:, :1]
+        return np.tile(mu0, (1, self.n_outputs)), np.tile(sd0, (1, self.n_outputs))
+
+    def _predict_shared(self, x: np.ndarray):
+        """One shared-kernel GP over all outputs (output_model='shared')."""
+        gpr = self.my_GPRs[0]
+        if not gpr.is_trained():
+            return self._prior_prediction(x)
+        n = x.shape[0]
+        m, sd = gpr.predict(self._scaled_inputs(x), return_std=True)
+        m = np.asarray(m, dtype=float).reshape(n, -1)
+        sd = np.asarray(sd, dtype=float).reshape(n, -1)
+        if sd.shape[1] == 1 and self.n_outputs > 1:
+            sd = np.tile(sd, (1, self.n_outputs))
+        if self.use_standard_scaling and self.y_common_scaler is not None:
+            mu, scale = self.y_common_scaler
+            m = m * scale + mu
+            sd = sd * scale
+        return m, sd
+
+    def _predict_pca(self, x: np.ndarray):
+        """Score GPs + basis reconstruction (output_model='pca')."""
+        basis = self._fitted_basis
+        if basis is None:
+            return self._prior_prediction(x)
+        n, k = x.shape[0], basis.n_components
+        xs = self._scaled_inputs(x)
+        z_shift, z_scale = self.z_scaler
+        z_mean = np.zeros((n, k))
+        z_var = np.zeros((n, k))
+        for j in range(k):
+            m, sd = self.my_GPRs[j].predict(xs, return_std=True)
+            z_mean[:, j] = np.asarray(m, dtype=float).ravel() * z_scale[j] + z_shift[j]
+            z_var[:, j] = (np.asarray(sd, dtype=float).ravel() * z_scale[j]) ** 2
+        mu_pred, var_pred = basis.reconstruct(z_mean, z_var)
+        return mu_pred, np.sqrt(var_pred)
 
 
     def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray]):

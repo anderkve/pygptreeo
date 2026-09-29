@@ -1,0 +1,1 @@
+RESULT {"target": "rotated_rosenbrock", "stream": "sweeping", "config": "global_fresh", "seed": 3, "d": 6, "N": 4000, "prequential_nrmse": 0.005783357645792518, "uniform_nrmse": 0.04977860755093517, "focus_nrmse": 0.005379963981913366, "leaves": 63, "seconds": 464.1, "refits": 8, "refits_skipped": 1, "fit_seconds": 347.2, "stale_leaf_refits": 135, "snapshots_alive": 1}

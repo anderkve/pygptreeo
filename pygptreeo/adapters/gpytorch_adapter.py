@@ -235,20 +235,18 @@ class GPyTorchAdapter(GPRegressorInterface):
         # Set observation noise on the fresh likelihood if specified
         # Note: Noise must be scaled if y is normalized
         if self._observation_noise is not None:
+            # The default GaussianLikelihood is homoskedastic (one noise variance for
+            # all points), so per-point noise variances (as handed over by GPTree)
+            # are reduced to their mean.
             if isinstance(self._observation_noise, np.ndarray):
-                noise_array = self._observation_noise.flatten()
-                # Scale the noise if y is normalized
-                if self._normalize_y and self._y_std is not None:
-                    noise_array = noise_array / self._y_std
-                noise = torch.from_numpy(noise_array).to(self._device)
-                # Ensure noise doesn't get too small (match likelihood constraint)
-                noise = torch.clamp(noise, min=1e-4)
+                obs_noise = float(np.mean(self._observation_noise))
             else:
-                # Scale scalar noise if y is normalized
-                if self._normalize_y and self._y_std is not None:
-                    noise = max(float(self._observation_noise) / self._y_std, 1e-4)
-                else:
-                    noise = max(float(self._observation_noise), 1e-4)
+                obs_noise = float(self._observation_noise)
+            # Scale the noise *variance* if y is normalized
+            if self._normalize_y and self._y_std is not None:
+                obs_noise = obs_noise / (self._y_std ** 2)
+            # Ensure noise doesn't get too small (match likelihood constraint)
+            noise = max(obs_noise, 1e-4)
             # Set the noise value
             with torch.no_grad():
                 fresh_likelihood.noise = noise

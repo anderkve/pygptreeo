@@ -23,6 +23,17 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
   - Generates performance plots saved as `plot.png`
   - Can process large numbers of points (default: 300,000)
 
+- **`multioutput_function_learning_bsplines.py`** / **`multioutput_function_learning_pca.py`**:
+  Multi-output learning of a function f(t; x) observed on a t-grid
+  - The B-spline script represents each curve by spline coefficients and learns
+    them with one GP per coefficient (`output_model='independent'`)
+  - The PCA script compares that with `output_model='pca'` (a global PCA basis of
+    the outputs, one GP per basis score) and with dropping the spline step
+    altogether: the raw curve values on the t-grid are the outputs
+    ```bash
+    python multioutput_function_learning_pca.py [n_train] [easy|hard] [noise_std]
+    ```
+
 - **`test_animated.py`**: Animated visualization of GPTree learning (2D only)
   - Creates animated GIFs showing how the tree learns the target function
   - Displays the tree structure, leaf boundaries, and prediction surface
@@ -37,6 +48,13 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
   - Rastrigin: Regular grid of local minima
   - Levy: Many local minima
   - Custom: Weighted combination of multiple functions
+  - RotatedRosenbrock, GaussianPeaks: *non-additive* N-dimensional targets. All the
+    functions above are sums of terms in one or two adjacent coordinates, i.e. they
+    have an exact low-order additive decomposition that additive kernels and
+    additive global models can exploit. These two couple every input dimension
+    through a fixed random rotation (a rotated Rosenbrock valley; a negative-log
+    mixture of anisotropic, rotated Gaussian peaks), so no low-order additive model
+    represents them exactly.
 
 - **`plot_performance_metrics.py`**: Post-processing script for performance analysis
   - Reads results from CSV files
@@ -75,6 +93,21 @@ OMP_NUM_THREADS=1 python benchmark_split_direction.py [target] [n_points]
 Plots batch NRMSE vs processed points for each `split_dimension_criteria` on the
 same stream. `target` is a standard function (`eggholder`, `rosenbrock`, …) or
 the synthetic `aniso_chirp` (default); see `BENCHMARK_RESULTS_split_direction.md`.
+
+### Global model + residual tree under different input streams
+
+```bash
+cd examples
+OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target rotated_rosenbrock \
+    --streams uniform,focusing,sweeping,walker --configs tree,global,frozen --seeds 1,2,3
+python benchmark_global_mean_streams.py --summarize results/global_mean_streams/*.jsonl
+```
+
+Compares a plain GPTree with a GPTree that models the residual of a global GP
+(low-order additive + Matern kernel, fitted on a coverage reservoir of the stream and
+refit when the reservoir turns over) under uniform, DE-like focusing, sweeping and
+MCMC-walker input streams. The residual mechanism is a prototype injected into
+`GPNode` by the script; see `BENCHMARK_RESULTS_global_mean_streams.md`.
 
 ### Animated Visualization
 
@@ -129,9 +162,18 @@ Key parameters to experiment with:
   - Adjusts prediction uncertainties to achieve target coverage
 
 - `split_dimension_criteria`: how a node picks its split dimension. One of
-  `'max_spread'`, `'max_variance'`, `'max_uncertainty'`, `'random'`, or
-  `'min_lengthscale'` (split the dimension with the smallest fitted ARD length
-  scale; needs an ARD kernel and a trained GP, else falls back to `max_spread`).
+  `'min_lengthscale'` (default: split the dimension with the smallest fitted ARD
+  length scale, pooled over all of a leaf's GPs; needs a kernel with per-dimension
+  length scales and a trained GP, else falls back to `max_spread`),
+  `'max_spread'`, `'max_variance'`, `'max_uncertainty'` or `'random'`.
+
+- `output_model` (multi-output only): `'independent'` (one GP per output),
+  `'shared'` (one GP with a shared kernel for all outputs) or `'pca'` (one GP per
+  component of a learned global output basis); see the multi-output examples.
+
+- `global_mean`: `None` (default) or `'additive_gp'` to let the leaves model the
+  residual of a tree-wide global GP (see the README and
+  `BENCHMARK_RESULTS_global_mean_streams.md`); `global_mean_kwargs` tunes it.
 
 ### Custom Kernel Configuration
 

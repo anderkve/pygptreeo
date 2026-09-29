@@ -68,7 +68,14 @@ for i in range(len(X_test)):
 
 ## Selecting a leaf kernel
 
-By default each leaf uses a plain Matérn kernel. For many targets `AdditiveMaternKernel`
+By default each leaf uses an anisotropic Matérn kernel (`ConstantKernel() * Matern(nu=1.5)`
+with one length scale per input dimension, built once the input dimension is known).
+The per-dimension length scales are what the default split criterion
+`split_dimension_criteria='min_lengthscale'` uses: a leaf splits along the dimension
+in which its GP says the target varies fastest. With a kernel that has no
+per-dimension length scales the tree falls back to splitting the widest dimension.
+
+For many targets `AdditiveMaternKernel`
 is a better choice — it adds a low-order additive component (a sum of main effects and
 pairwise interactions) on top of a Matérn catch-all:
 
@@ -116,6 +123,64 @@ Other options:
 `AdditiveMaternKernel` returns an ordinary scikit-learn kernel, so you can also assemble
 the combination by hand from `NewtonGirardAdditiveKernel` if you want to customise the
 pieces.
+
+## Multi-output targets
+
+Pass `n_outputs=p` and feed `y` (and `sigma`) as arrays with `p` columns. How the
+outputs are modelled inside each leaf is set by `output_model`:
+
+* `'independent'` (default): one GP per output, each with its own kernel hyperparameters.
+* `'shared'`: one GP with a single shared kernel for all outputs. One Cholesky
+  factorisation per leaf instead of `p`, at essentially the same accuracy when the
+  outputs have similar length scales. Needs the scikit-learn backend.
+* `'pca'`: the tree learns a global linear basis of the output space (PCA on a
+  reservoir sample of the stream) and each leaf models only the leading basis scores
+  with one GP each; predictions are mapped back to output space together with their
+  uncertainties. This is the right choice for strongly correlated outputs, e.g. a
+  function `f(t; x)` observed on a `t`-grid, where a handful of components carry all
+  the signal. By default the number of components is chosen from the observation
+  noise you pass (`sigma`): every component whose variance rises above the noise level
+  is kept, so noisy targets get few components and clean targets get more. Use
+  `output_basis_components=<int>` or `=<fraction of variance>` to fix it instead.
+
+```python
+gpt = GPTree(Nbar=50, n_outputs=100, output_model='pca')
+gpt.fit(X_train, Y_train, sigma_train)          # Y_train: (N, 100), e.g. f(t; x) on a t-grid
+Y_pred, Y_std = gpt.predict(X_test)             # (n_test, 100) each
+```
+
+`examples/multioutput_function_learning_pca.py` compares the three modes on a
+function-learning problem, with and without an intermediate B-spline representation.
+
+## Global model + residual tree (opt-in)
+
+By default the leaf GPs model the target directly. With `global_mean='additive_gp'` the tree
+also maintains one tree-wide global model, a GP with a low-order additive + Matérn kernel
+fitted on a coverage sample of the stream, and the leaf GPs model its *residual*:
+
+```python
+gpt = GPTree(Nbar=100, global_mean='additive_gp')
+# tune the built-in learner, e.g. a smaller reservoir and a single optimizer restart:
+gpt = GPTree(Nbar=100, global_mean='additive_gp',
+             global_mean_kwargs=dict(reservoir_size=300, n_restarts_optimizer=1))
+```
+
+The global model pools all the data the tree has seen and captures smooth, low-order,
+large-scale structure that no single leaf can see from its own points; the leaves capture
+the rest and, at their edges, revert to the global model instead of to a leaf constant. It
+is refit only when the coverage sample has changed materially, so it freezes itself when
+the stream stops exploring (e.g. an optimiser narrowing in) and resumes when the stream
+enters new territory. Leaves remember the snapshot they were fitted against and refit on
+first use after a newer one exists, so a refit never leaves a stale combination behind.
+The predicted sigma of a leaf combines its residual GP's uncertainty with the learner's
+running estimate of the global model's own (epistemic) error, so it stays an uncertainty
+about the underlying function, as without a global model.
+
+On targets with low-order additive structure the gain is large (orders of magnitude on the
+standard N-dimensional benchmarks); on targets without it, expect a 15-50 % lower error at
+several times the run time. `examples/BENCHMARK_RESULTS_global_mean_streams.md` has the
+measurements under uniform, focusing, sweeping and random-walk input streams. Leave
+`global_mean=None` (the default) to run the tree exactly as before.
 
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:
