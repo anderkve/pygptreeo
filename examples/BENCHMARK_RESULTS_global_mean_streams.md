@@ -204,7 +204,29 @@ retrain" was chosen so that a refit of the global model never invalidates a leaf
 still right for leaves that keep receiving points, but a leaf that receives no new points
 never retrains, and on a sweeping stream that is most leaves. The fix is the `_fresh`
 rule: a leaf refits against the current snapshot the first time it is asked to predict
-after a newer global version was published (`global_fresh` configuration; results below).
+after a newer global version was published (`global_fresh` configuration).
+
+## With the refresh rule: sweeping stream
+
+Same settings, 3 seeds. `global_fresh` made 117 to 118 stale-leaf refits per run (about
+two per leaf), which is where its extra time goes.
+
+| target | config | prequential NRMSE | uniform-test NRMSE | focus-test NRMSE | time [s] |
+|---|---|---|---|---|---|
+| rotated_rosenbrock | tree | 0.0060 (0.0052..0.0065) | 0.0647 (0.0613..0.0673) | 0.0053 (0.0040..0.0071) | 21 |
+| rotated_rosenbrock | global (stale snapshots) | 0.0116 (0.0072..0.0165) | 0.0581 (0.0554..0.0636) | 0.0066 (0.0040..0.0082) | 225 |
+| rotated_rosenbrock | global_fresh | **0.0065** (0.0057..0.0080) | **0.0530** (0.0477..0.0616) | 0.0090 (0.0054..0.0136) | 279 |
+| gaussian_peaks | tree | 0.0264 (0.0230..0.0330) | 0.0807 (0.0787..0.0842) | 0.0117 (0.0085..0.0138) | 20 |
+| gaussian_peaks | global (stale snapshots) | 0.0173 (0.0131..0.0205) | 0.0606 (0.0568..0.0673) | 0.0153 (0.0086..0.0233) | 245 |
+| gaussian_peaks | global_fresh | **0.0129** (0.0119..0.0149) | **0.0423** (0.0419..0.0428) | **0.0077** (0.0072..0.0084) | 362 |
+
+The doubling of the on-stream error on the rotated Rosenbrock is gone (0.0065 vs the
+plain tree's 0.0060, within the seed spread), the cube-wide error is now better than the
+plain tree's on both targets, and on the Gaussian peaks the refreshed residual tree beats
+the plain tree in every metric, including the end-of-sweep focus set where the stale
+version had been worse. The one remaining soft spot is the rotated Rosenbrock focus set,
+0.0090 against 0.0053, driven by a single seed (0.0136); the other two seeds are level
+with the plain tree. Results for the refresh rule on the other three streams follow below.
 
 ## Reproduce
 
@@ -219,4 +241,5 @@ python benchmark_global_mean_streams.py --summarize results/global_mean_streams/
 ```
 
 The raw `RESULT` lines of the runs above are in `results/global_mean_streams/`
-(`damped_*` for the damping section, `lin_*` for the linear-trend runs).
+(`damped_*` for the damping section, `lin_*` for the linear-trend runs, `fresh_*` for the
+refresh rule).
