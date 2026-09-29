@@ -17,7 +17,9 @@ and reports, per (target, stream, configuration, seed), the prequential NRMSE
 on the stream after warm-up, the NRMSE on a uniform test set (global accuracy),
 and the NRMSE on a "focus" test set drawn where the stream ended up.
 
-Configurations: ``tree`` (plain GPTree), ``global`` (refit global model),
+Configurations: ``tree`` (plain GPTree), ``global`` (refit global model, prototype),
+``global_pkg`` (the package implementation: ``GPTree(global_mean=AdditiveGPGlobalMean(...))``,
+which includes the refresh rule and per-point noise; should match ``global_fresh``),
 ``frozen`` (global model frozen after the warm-up), ``global_damped`` /
 ``global_damped_tight`` / ``global_damped_wide`` (refit global model whose
 contribution is damped by a coverage confidence derived from the predictive
@@ -75,7 +77,7 @@ from sklearn.preprocessing import StandardScaler
 
 from sklearn.gaussian_process.kernels import ConstantKernel, DotProduct, Matern
 
-from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
+from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel, AdditiveGPGlobalMean
 from pygptreeo.gpnode import GPNode
 import target_functions as tf
 
@@ -336,7 +338,11 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
     refresh = config.endswith('_fresh')       # refit a leaf on first use after a newer global version
     config = config[:-6] if refresh else config
     _ACTIVE['refresh_stale'] = refresh; _ACTIVE['n_stale_refits'] = 0
-    if config == 'global':
+    package_learner = None                    # 'global_pkg': the package implementation (pygptreeo.global_mean)
+    if config == 'global_pkg':
+        package_learner = AdditiveGPGlobalMean(reservoir_size=500, min_points=200, min_turnover=0.25,
+                                               n_restarts_optimizer=2, random_state=seed)
+    elif config == 'global':
         model = GlobalMeanModel(d, seed)
     elif config == 'frozen':
         model = GlobalMeanModel(d, seed, freeze_after=warmup)
@@ -346,7 +352,7 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
         model = GlobalMeanModel(d, seed, damping_scale=0.5)
     elif config == 'global_damped_wide':     # 2 x spacing: mild damping
         model = GlobalMeanModel(d, seed, damping_scale=2.0)
-    elif config != 'tree':
+    elif config not in ('tree', 'global_pkg'):
         raise ValueError(config)
     _ACTIVE['model'] = model
 
@@ -359,7 +365,8 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
     else:
         gpr = Default_GPR(n_restarts_optimizer=1)
     gpt = GPTree(GPR=gpr, Nbar=nbar, theta=1e-4,
-                 retrain_every_n_points=25, splitting_strategy='gradual', use_calibrated_sigma=False)
+                 retrain_every_n_points=25, splitting_strategy='gradual', use_calibrated_sigma=False,
+                 global_mean=package_learner)
     t0 = time.time(); errs = np.empty(N)
     with contextlib.redirect_stdout(io.StringIO()):
         for i in range(N):
@@ -380,6 +387,10 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
         'focus_nrmse': float(np.sqrt(np.mean((P_focus[:, 0] - y_focus) ** 2)) / yrange),
         'leaves': len(gpt.root.leaves), 'seconds': round(elapsed, 1),
     }
+    if package_learner is not None:
+        out.update(refits=package_learner.n_refits, refits_skipped=package_learner.n_skipped,
+                   snapshots_alive=len({l._fitted_global.version for l in gpt.root.leaves
+                                        if getattr(l, '_fitted_global', None) is not None}))
     if model is not None:
         out.update(refits=model.n_refits, refits_skipped=model.n_skipped, fit_seconds=round(model.t_fit, 1),
                    stale_leaf_refits=_ACTIVE['n_stale_refits'],
@@ -425,7 +436,7 @@ def main():
     ap.add_argument('--target', default='rotated_rosenbrock', choices=sorted(TARGETS))
     ap.add_argument('--streams', default='uniform,focusing,sweeping,walker')
     ap.add_argument('--configs', default='tree,global',
-                    help="comma-separated subset of tree,global,frozen,global_damped,global_damped_tight,"
+                    help="comma-separated subset of tree,global,global_pkg,frozen,global_damped,global_damped_tight,"
                          "global_damped_wide; append _fresh (e.g. global_fresh) to refit a leaf on first use after a newer "
                          "global version, and/or _lin (e.g. tree_lin) for a leaf kernel with a linear-trend term")
     ap.add_argument('--seeds', default='1')

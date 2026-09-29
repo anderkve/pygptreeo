@@ -28,6 +28,7 @@ from sklearn.preprocessing import StandardScaler
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_basis import OutputBasisLearner
+from pygptreeo.global_mean import GlobalMeanLearner
 
 # Module-level constants
 DEFAULT_OVERLAP = 0.001  # Default initial overlap for node boundaries
@@ -89,6 +90,7 @@ class GPNode(Node):
                  n_outputs: Optional[int] = 1,
                  output_model: Optional[str] = 'independent',
                  output_basis: Optional[OutputBasisLearner] = None,
+                 global_mean: Optional[GlobalMeanLearner] = None,
                  my_GPRs: Optional[list] = None):
         """Initializes a GPNode.
 
@@ -156,6 +158,13 @@ class GPNode(Node):
                 output space with propagated variances. Defaults to 'independent'.
             output_basis (Optional[OutputBasisLearner]): The tree-global output basis
                 learner, shared by reference between all nodes. Required for 'pca'.
+            global_mean (Optional[GlobalMeanLearner]): The tree-wide global model
+                learner, shared by reference between all nodes, or None (default).
+                When present, the node's GPs model the residual of the learner's
+                current snapshot: the snapshot is subtracted from the raw targets at
+                fit time, added back at predict time, and remembered per node. A
+                node that is asked to predict while a newer snapshot exists refits
+                against it first (see ``predict``).
             my_GPRs (Optional[list]): Explicit list of GP regressors for this node
                 (used when creating children: one clone per parent GP). If None, the
                 list is built from ``my_GPR`` according to ``output_model``.
@@ -185,6 +194,11 @@ class GPNode(Node):
         self._fitted_basis = None          # the OutputBasis this node's GPs were fitted with ('pca')
         self.z_scaler = None               # (shift, scale) per basis score, fitted per leaf ('pca')
         self.y_common_scaler = None        # (mu, scale) of the common output scaling ('shared')
+
+        # Tree-wide global model (shared by reference; None when the tree has none) and
+        # the snapshot of it that this node's GPs were fitted against.
+        self.global_mean = global_mean
+        self._fitted_global = None
 
         # GP regressors: one per output ('independent'), one for all outputs
         # ('shared'), or one per basis score ('pca'; the list is sized at the
@@ -358,6 +372,7 @@ class GPNode(Node):
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
             'output_model': self.output_model,
             'output_basis': self.output_basis,
+            'global_mean': self.global_mean,
         }
 
         # Create child nodes, each with its own clone of *every* parent GP (one per
@@ -440,6 +455,9 @@ class GPNode(Node):
         self.right._fitted_basis = self._fitted_basis
         self.left.z_scaler = deepcopy(self.z_scaler)
         self.right.z_scaler = deepcopy(self.z_scaler)
+        # ... and with the global-model snapshot those GPs were fitted against.
+        self.left._fitted_global = self._fitted_global
+        self.right._fitted_global = self._fitted_global
 
 
     def delete_point(self, index=-1, shared_point=True):
@@ -892,6 +910,14 @@ class GPNode(Node):
                 # as soon as the basis is available.
                 return False
 
+        # Global model: the GPs model the residual of the current snapshot (the raw
+        # targets stay stored, so a refit of the global model never invalidates data).
+        snapshot = None
+        if self.global_mean is not None:
+            snapshot = self.global_mean.current
+            if snapshot is not None:
+                y_train = y_train - snapshot.predict(X_train)
+
         self.n_points_since_retrain = 0
 
         if self.output_model == 'independent':
@@ -954,6 +980,7 @@ class GPNode(Node):
                 self.my_GPRs[j].fit(X_fit, (Z[:, j:j+1] - z_shift[j]) / z_scale[j])
             self._fitted_basis = basis
 
+        self._fitted_global = snapshot
         if self.n_outputs == 1:
             self.my_GPR = self.my_GPRs[0]
         return True
@@ -1106,6 +1133,8 @@ class GPNode(Node):
         X_r = self.my_X_data[indices]
         y_r = self.my_y_data[indices]
         s_r = self.my_sigma_data[indices]
+        if self.global_mean is not None and self.global_mean.current is not None:
+            y_r = y_r - self.global_mean.current.predict(X_r)   # score splits on what the leaves model
         n_train = max(int(len(indices) * self.split_eval_train_fraction), 10)
         n_train = min(n_train, len(indices) - 5)  # leave at least 5 for testing
         if n_train < 1 or n_train >= len(indices):
@@ -1417,12 +1446,25 @@ class GPNode(Node):
                   prediction(s) in original space. Shape: (n_samples, n_outputs)
                   Only returned if `return_std` is True.
         """
+        # Refresh rule: never predict with a global snapshot older than the current one.
+        # A leaf that stopped receiving points would otherwise keep an early snapshot
+        # whose extrapolation error its residual GP cannot correct.
+        if self.global_mean is not None and self.is_leaf and self.n_points > 0:
+            current = self.global_mean.current
+            if current is not None and (self._fitted_global is None
+                                        or self._fitted_global.version < current.version):
+                self.fit_my_GPR(force_training=True)
+
         if self.output_model == 'independent':
             mu_pred, sigma_pred = self._predict_independent(x, return_std)
         elif self.output_model == 'shared':
             mu_pred, sigma_pred = self._predict_shared(x)
         else:
             mu_pred, sigma_pred = self._predict_pca(x)
+
+        # Add back the global model the GPs were fitted against
+        if self._fitted_global is not None:
+            mu_pred = mu_pred + self._fitted_global.predict(x)
 
         # Apply calibration if requested
         if use_calibrated_sigma:

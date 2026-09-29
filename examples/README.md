@@ -171,6 +171,10 @@ Key parameters to experiment with:
   `'shared'` (one GP with a shared kernel for all outputs) or `'pca'` (one GP per
   component of a learned global output basis); see the multi-output examples.
 
+- `global_mean`: `None` (default) or `'additive_gp'` to let the leaves model the
+  residual of a tree-wide global GP (see the README and
+  `BENCHMARK_RESULTS_global_mean_streams.md`); `global_mean_kwargs` tunes it.
+
 ### Custom Kernel Configuration
 
 The examples define a custom `my_GPR_class` that you can modify:

@@ -29,6 +29,7 @@ from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_basis import OutputBasisLearner
+from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
 
 
 class GPTree:
@@ -87,6 +88,8 @@ class GPTree:
                  output_basis_min_points: int = 50,
                  output_basis_refit_every: Optional[int] = None,
                  output_basis_reservoir_size: int = 2000,
+                 global_mean: Union[None, str, GlobalMeanLearner] = None,
+                 global_mean_kwargs: Optional[dict] = None,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -145,6 +148,21 @@ class GPTree:
                 Leaves pick up a refitted basis at their next retrain.
             output_basis_reservoir_size (int): For 'pca': size of the reservoir
                 sample of outputs the basis is fitted on. Defaults to 2000.
+            global_mean (None, str or GlobalMeanLearner): Optional tree-wide global
+                model whose *residual* the leaf GPs then model. None (default): no
+                global model, the tree behaves exactly as without this feature.
+                'additive_gp': an ``AdditiveGPGlobalMean`` (a GP with a low-order
+                additive + Matern kernel fitted on a coverage reservoir of the
+                stream, refit when the reservoir turns over, with optimizer
+                restarts). Or any ``GlobalMeanLearner`` instance. The global model
+                captures smooth, low-order, large-scale structure from all the data
+                the tree has seen; the leaves capture the rest and revert to the
+                global model rather than to a leaf constant at their edges. Leaves
+                remember the snapshot they were fitted against and refit on first
+                use after a newer snapshot appears. See ``pygptreeo.global_mean``.
+            global_mean_kwargs (Optional[dict]): Keyword arguments for the built-in
+                learner when ``global_mean`` is given as a string (e.g.
+                ``dict(reservoir_size=300, n_restarts_optimizer=1)``).
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -178,9 +196,13 @@ class GPTree:
                 min_points=output_basis_min_points, refit_every=output_basis_refit_every,
                 reservoir_size=output_basis_reservoir_size)
 
+        # Tree-wide global model (None by default; shared by reference with every node)
+        self.global_mean = make_global_mean(global_mean, **(global_mean_kwargs or {}))
+
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
                           output_model=output_model, output_basis=self.output_basis,
+                          global_mean=self.global_mean,
                           **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
@@ -235,6 +257,10 @@ class GPTree:
         # Let the tree-global output basis see every observation ('pca' only)
         if self.output_basis is not None:
             self.output_basis.observe(np.asarray(y, dtype=float).reshape(-1), sigma)
+
+        # ... and the tree-wide global model, if any
+        if self.global_mean is not None:
+            self.global_mean.observe(x, y, sigma)
 
         # Find a leaf node for the new (x,y,sigma) point
         # - Start from the root node

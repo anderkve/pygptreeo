@@ -152,6 +152,33 @@ Y_pred, Y_std = gpt.predict(X_test)             # (n_test, 100) each
 `examples/multioutput_function_learning_pca.py` compares the three modes on a
 function-learning problem, with and without an intermediate B-spline representation.
 
+## Global model + residual tree (opt-in)
+
+By default the leaf GPs model the target directly. With `global_mean='additive_gp'` the tree
+also maintains one tree-wide global model, a GP with a low-order additive + Matérn kernel
+fitted on a coverage sample of the stream, and the leaf GPs model its *residual*:
+
+```python
+gpt = GPTree(Nbar=100, global_mean='additive_gp')
+# tune the built-in learner, e.g. a smaller reservoir and a single optimizer restart:
+gpt = GPTree(Nbar=100, global_mean='additive_gp',
+             global_mean_kwargs=dict(reservoir_size=300, n_restarts_optimizer=1))
+```
+
+The global model pools all the data the tree has seen and captures smooth, low-order,
+large-scale structure that no single leaf can see from its own points; the leaves capture
+the rest and, at their edges, revert to the global model instead of to a leaf constant. It
+is refit only when the coverage sample has changed materially, so it freezes itself when
+the stream stops exploring (e.g. an optimiser narrowing in) and resumes when the stream
+enters new territory. Leaves remember the snapshot they were fitted against and refit on
+first use after a newer one exists, so a refit never leaves a stale combination behind.
+
+On targets with low-order additive structure the gain is large (orders of magnitude on the
+standard N-dimensional benchmarks); on targets without it, expect a 15-50 % lower error at
+several times the run time. `examples/BENCHMARK_RESULTS_global_mean_streams.md` has the
+measurements under uniform, focusing, sweeping and random-walk input streams. Leave
+`global_mean=None` (the default) to run the tree exactly as before.
+
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:
 
