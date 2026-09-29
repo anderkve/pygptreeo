@@ -270,7 +270,7 @@ class GlobalMeanModel:
 
 # Inject the residual mechanism into GPNode (prototype; see module docstring).
 _orig_fit, _orig_predict, _orig_children = GPNode.fit_my_GPR, GPNode.predict, GPNode.generate_children
-_ACTIVE = {'model': None}
+_ACTIVE = {'model': None, 'refresh_stale': False, 'n_stale_refits': 0}
 
 
 def _fit_with_residual(self, force_training=False):
@@ -293,8 +293,17 @@ def _fit_with_residual(self, force_training=False):
 
 
 def _predict_with_residual(self, x, return_std=True, use_calibrated_sigma=False):
-    mu, sd = _orig_predict(self, x, return_std, use_calibrated_sigma)
+    model = _ACTIVE['model']
     snap = getattr(self, '_fitted_mean', None)
+    if (_ACTIVE['refresh_stale'] and model is not None and model.current is not None and self.is_leaf
+            and self.n_points > 0 and (snap is None or snap.version < model.current.version)):
+        # A newer global version exists: refit this leaf against it before predicting, so no
+        # prediction ever combines a stale global snapshot with a residual GP that cannot
+        # correct that snapshot's extrapolation error.
+        _fit_with_residual(self, force_training=True)
+        _ACTIVE['n_stale_refits'] += 1
+        snap = getattr(self, '_fitted_mean', None)
+    mu, sd = _orig_predict(self, x, return_std, use_calibrated_sigma)
     if snap is not None:
         mu = mu + snap.predict(x)[:, None]
     return mu, sd
@@ -324,6 +333,9 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
     model = None
     linear = config.endswith('_lin')          # leaf kernel with an explicit linear-trend term
     config = config[:-4] if linear else config
+    refresh = config.endswith('_fresh')       # refit a leaf on first use after a newer global version
+    config = config[:-6] if refresh else config
+    _ACTIVE['refresh_stale'] = refresh; _ACTIVE['n_stale_refits'] = 0
     if config == 'global':
         model = GlobalMeanModel(d, seed)
     elif config == 'frozen':
@@ -361,7 +373,8 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
         P_focus, _ = gpt.predict(X_focus, mode='loop')
     elapsed = time.time() - t0
     out = {
-        'target': target_name, 'stream': stream, 'config': config + ('_lin' if linear else ''), 'seed': seed, 'd': d, 'N': N,
+        'target': target_name, 'stream': stream, 'config': config + ('_fresh' if refresh else '') + ('_lin' if linear else ''),
+        'seed': seed, 'd': d, 'N': N,
         'prequential_nrmse': float(np.sqrt(np.mean(errs[warmup:] ** 2)) / yrange),
         'uniform_nrmse': float(np.sqrt(np.mean((P_uni[:, 0] - y_uni) ** 2)) / yrange),
         'focus_nrmse': float(np.sqrt(np.mean((P_focus[:, 0] - y_focus) ** 2)) / yrange),
@@ -369,6 +382,7 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
     }
     if model is not None:
         out.update(refits=model.n_refits, refits_skipped=model.n_skipped, fit_seconds=round(model.t_fit, 1),
+                   stale_leaf_refits=_ACTIVE['n_stale_refits'],
                    snapshots_alive=len({l._fitted_mean.version for l in gpt.root.leaves
                                         if getattr(l, '_fitted_mean', None) is not None}))
         if model.current is not None and model.current.damped:
@@ -376,7 +390,7 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
             out.update(confidence_uniform=round(float(model.current.confidence(X_uni).mean()), 3),
                        confidence_focus=round(float(model.current.confidence(X_focus).mean()), 3),
                        damping_ell=round(float(model.current.ref_ell), 3))
-    _ACTIVE['model'] = None
+    _ACTIVE['model'] = None; _ACTIVE['refresh_stale'] = False
     return out
 
 
@@ -412,7 +426,8 @@ def main():
     ap.add_argument('--streams', default='uniform,focusing,sweeping,walker')
     ap.add_argument('--configs', default='tree,global',
                     help="comma-separated subset of tree,global,frozen,global_damped,global_damped_tight,"
-                         "global_damped_wide; append _lin (e.g. tree_lin, global_lin) for a leaf kernel with a linear-trend term")
+                         "global_damped_wide; append _fresh (e.g. global_fresh) to refit a leaf on first use after a newer "
+                         "global version, and/or _lin (e.g. tree_lin) for a leaf kernel with a linear-trend term")
     ap.add_argument('--seeds', default='1')
     ap.add_argument('--d', type=int, default=6)
     ap.add_argument('--N', type=int, default=4000)
