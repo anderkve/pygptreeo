@@ -16,6 +16,10 @@ coordinates.
 * The predictive standard deviation is the posterior standard deviation of the
   polynomial plus the misfit variance, i.e. an uncertainty about the underlying
   function, as for GPTree.
+* Beyond ``clip_margin`` standardised units outside the range of its fitted
+  points a leaf holds its polynomial constant (per dimension) and lets the
+  variance grow with the clipped distance, instead of extrapolating the
+  quadratic.
 
 Intended as a non-GP competitor for benchmarking; single- and multi-output
 targets are supported (multi-output shares one posterior covariance).
