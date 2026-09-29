@@ -121,14 +121,13 @@ class GPTree:
                 modelled inside each leaf (ignored when n_outputs=1):
                 'independent' (default): one GP per output with its own kernel
                 hyperparameters. 'shared': one GP with a single shared kernel for all
-                outputs, i.e. one Cholesky factorisation per leaf instead of n_outputs;
-                needs a backend whose ``supports_multitarget()`` is True (the
-                scikit-learn adapter). 'pca': a tree-global linear basis of the output
-                space is learned from a reservoir sample of the stream and each leaf
-                models the ``k`` basis scores with ``k`` GPs (k << n_outputs); predictions
-                are mapped back to output space with propagated uncertainties. Best
-                for strongly correlated outputs such as a function f(t; x) sampled on a
-                t-grid.
+                outputs (one kernel matrix per leaf instead of n_outputs); needs a
+                backend whose ``supports_multitarget()`` is True (the scikit-learn
+                adapter). 'pca': a tree-global linear basis of the output space is
+                learned from a reservoir sample of the stream and each leaf models
+                the ``k`` basis scores with ``k`` GPs; predictions are mapped back to
+                output space with propagated uncertainties. Suited to strongly
+                correlated outputs such as a function f(t; x) sampled on a t-grid.
             output_basis_components ('noise', int or float): For 'pca': how many
                 basis components to keep. 'noise' (default) keeps every component
                 whose variance lies above what the per-point observation noise
@@ -149,22 +148,19 @@ class GPTree:
             output_basis_reservoir_size (int): For 'pca': size of the reservoir
                 sample of outputs the basis is fitted on. Defaults to 2000.
             global_mean (None, str or GlobalMeanLearner): Optional tree-wide global
-                model whose *residual* the leaf GPs then model. None (default): no
-                global model, the tree behaves exactly as without this feature.
-                'additive_gp': an ``AdditiveGPGlobalMean`` (a GP with a low-order
-                additive + Matern kernel fitted on a coverage reservoir of the
-                stream, refit when the reservoir turns over, with optimizer
-                restarts). Or any ``GlobalMeanLearner`` instance. The global model
-                captures smooth, low-order, large-scale structure from all the data
-                the tree has seen; the leaves capture the rest and revert to the
-                global model rather than to a leaf constant at their edges. Leaves
-                remember the snapshot they were fitted against and refit on first
-                use after a newer snapshot appears. The predicted sigma of such a
-                leaf is its residual GP's latent uncertainty combined with the
-                learner's estimate of the global model's own epistemic error
-                (``error_scale``); it remains the uncertainty of the estimate of
-                the underlying function, not of a noisy observation. See
-                ``pygptreeo.global_mean``.
+                model whose *residual* the leaf GPs model. None (default): no
+                global model. 'additive_gp': an ``AdditiveGPGlobalMean`` (a GP with
+                a low-order additive + Matern kernel, fitted on a coverage reservoir
+                of the stream and refit when the reservoir turns over). Or any
+                ``GlobalMeanLearner`` instance. The global model captures smooth,
+                large-scale structure from all the data the tree has seen; the
+                leaves capture the rest and, at their edges, revert to it rather
+                than to a leaf constant. Each leaf remembers the snapshot it was
+                fitted against and refits before predicting if a newer one exists.
+                The predicted sigma combines the residual GP's uncertainty with the
+                learner's estimate of the global model's own error
+                (``error_scale``) and remains the uncertainty of the estimate of
+                the underlying function. See ``pygptreeo.global_mean``.
             global_mean_kwargs (Optional[dict]): Keyword arguments for the built-in
                 learner when ``global_mean`` is given as a string (e.g.
                 ``dict(reservoir_size=300, n_restarts_optimizer=1)``).
@@ -259,11 +255,9 @@ class GPTree:
             self.root.init_data_set(self.n_features)
             self.first_point = False
 
-        # Let the tree-global output basis see every observation ('pca' only)
+        # The tree-global output basis ('pca') and the global model see every observation
         if self.output_basis is not None:
             self.output_basis.observe(np.asarray(y, dtype=float).reshape(-1), sigma)
-
-        # ... and the tree-wide global model, if any
         if self.global_mean is not None:
             self.global_mean.observe(x, y, sigma)
 

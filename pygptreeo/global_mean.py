@@ -1,35 +1,25 @@
-"""Global model + residual tree: a tree-wide mean model the leaves correct.
+"""Global model + residual tree: a tree-wide mean model that the leaves correct.
 
-With ``GPTree(global_mean=...)`` every leaf GP models the *residual* of a single
-tree-wide global model instead of the raw target. The global model pools all
-the data the tree has seen (through a fixed-size coverage sample of the stream)
-and captures smooth, low-order, large-scale structure that no leaf can see from
-its own points; the leaves capture the rest, and at their edges they revert to
-the global model instead of to a leaf constant. The default is no global model
-(``global_mean=None``), which leaves the tree exactly as it is without this
-module.
+With ``GPTree(global_mean=...)`` every leaf GP models the *residual* of one
+tree-wide global model instead of the raw target. The global model is fitted on
+a coverage sample of everything the tree has seen and captures smooth,
+large-scale structure; the leaves capture the rest and, at their edges, revert
+to the global model instead of to a leaf constant. ``global_mean=None`` (the
+default) disables all of this.
 
-Design (validated in ``examples/benchmark_global_mean_streams.py`` and
-``examples/BENCHMARK_RESULTS_global_mean_streams.md``):
-
-* :class:`CoverageReservoir`: a maximin design of the stream in standardised
-  input space (a newcomer replaces one point of the closest pair if that
-  increases the minimum pairwise separation). It is representative of the
-  *explored region*, not of time, so the same rule serves uniform, focusing,
-  sweeping and random-walk streams.
-* :class:`AdditiveGPGlobalMean`: a GP with ``AdditiveMaternKernel(order=2)``
-  (one shared kernel for all outputs) fitted on the reservoir; first fit after
-  ``min_points`` observations, then refit when the point count has doubled or
-  ``refit_cap`` points have passed *and* at least ``min_turnover`` of the
-  reservoir has been replaced since the last fit. Every fit runs the optimizer
-  from the previous solution plus ``n_restarts_optimizer`` random restarts
-  (without restarts a poor early optimum locks in across all later versions).
+* :class:`CoverageReservoir`: a fixed-size maximin design of the stream inputs
+  (a newcomer replaces one point of the closest pair if that increases the
+  minimum pairwise separation), so the sample covers the explored region
+  regardless of how the stream moves through it.
+* :class:`AdditiveGPGlobalMean`: a GP with an ``AdditiveMaternKernel(order=2)``
+  shared by all outputs, fitted on the reservoir. First fit after ``min_points``
+  observations; afterwards refit when the observation count has doubled (or
+  ``refit_cap`` points have passed) and at least ``min_turnover`` of the
+  reservoir has been replaced since the last fit. Every fit warm-starts from
+  the previous hyperparameters and adds ``n_restarts_optimizer`` random restarts.
 * :class:`GlobalMeanSnapshot`: an immutable fitted model with a version number.
-  A leaf subtracts the current snapshot at fit time, adds the *same* snapshot
-  back at predict time and remembers its version, so a refit never invalidates
-  a trained leaf. A leaf asked to predict after a newer version exists refits
-  first (the "refresh rule"); without it, leaves that stop receiving points keep
-  stale snapshots whose extrapolation error they cannot correct.
+  A leaf subtracts the current snapshot at fit time, adds the same snapshot back
+  at predict time, and refits before predicting if a newer version exists.
 """
 
 from typing import Optional, Union
@@ -128,20 +118,16 @@ class GlobalMeanLearner:
 
     Subclasses implement :meth:`observe`, which sees every (x, y, sigma) the tree
     receives and decides when to (re)fit, and expose the latest fitted model as
-    :attr:`current` (a :class:`GlobalMeanSnapshot` or ``None`` before the first
+    :attr:`current` (a :class:`GlobalMeanSnapshot`, or ``None`` before the first
     fit). Snapshots must be immutable and carry increasing version numbers.
 
-    :attr:`error_scale` (shape ``(n_outputs,)`` or ``None``) is the learner's
-    running estimate of the global model's own *epistemic* error: the RMS
-    prequential error of the current snapshot with the observation-noise variance
-    subtracted, i.e. an estimate of how far the snapshot's mean is from the
-    underlying function. A leaf that models the residual of the global model adds
-    this variance to its predictive variance: the leaf GP only knows how smooth the
-    residual is on its own points, not how wrong the global model is at new ones,
-    and without this term its sigma is over-confident wherever the global model's
-    error dominates (which also lets the per-leaf calibration scaler run away).
-    The returned sigma stays an uncertainty about the underlying function, not
-    about noisy observations.
+    :attr:`error_scale` (shape ``(n_outputs,)``, or ``None``) estimates the
+    current snapshot's own error: its RMS prequential error with the
+    observation-noise variance subtracted, i.e. how far the snapshot's mean is
+    from the underlying function. A leaf adds this variance to its residual GP's
+    predictive variance, since the residual GP cannot know how wrong the global
+    model is at a new point. The reported sigma thus remains an uncertainty
+    about the underlying function, not about noisy observations.
     """
 
     current: Optional[GlobalMeanSnapshot] = None
@@ -166,9 +152,8 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
         Observations before the first fit. Until then leaves model the raw target.
     min_turnover : float, default=0.25
         A due refit is carried out only if at least this fraction of the reservoir
-        has been replaced since the last fit. This is what freezes the model when
-        the stream stops exploring (e.g. the narrowing phase of an optimiser) and
-        lets it resume when the stream enters new territory.
+        has been replaced since the last fit, so the model stays fixed while the
+        stream revisits known territory and is refit when it explores new territory.
     refit_cap : int or None, default=None
         A refit is due when the number of observations has doubled since the last
         fit, or at the latest after this many observations (default: the reservoir
@@ -202,10 +187,10 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
 
         self.reservoir: Optional[CoverageReservoir] = None
         self.current: Optional[GlobalMeanSnapshot] = None
-        self.error_var: Optional[np.ndarray] = None    # EMA of the current snapshot's squared prequential error
-        self.noise_var: Optional[np.ndarray] = None    # EMA of the observation-noise variance of the same points
-        self.error_scale: Optional[np.ndarray] = None  # sqrt(max(error_var - noise_var, 0)): epistemic part
-        self.error_window = 200                        # EMA memory, in observations
+        self.error_var: Optional[np.ndarray] = None    # running mean of the snapshot's squared prequential error
+        self.noise_var: Optional[np.ndarray] = None    # running mean of the observation-noise variance
+        self.error_scale: Optional[np.ndarray] = None  # sqrt(max(error_var - noise_var, 0))
+        self.error_window = 200                        # memory of the running means, in observations
         self.n_seen = 0
         self.n_seen_at_fit = 0
         self.turnover_at_fit = 0
@@ -227,9 +212,9 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
                 self.kernel = AdditiveMaternKernel(d=x.shape[1], order=min(2, x.shape[1]))
         self.n_seen += 1
         if self.current is not None:
-            # Prequential error of the current snapshot at this point (before it is
-            # used). E[err^2] = (mean - f)^2 + noise^2, so the noise variance is
-            # tracked alongside and subtracted to keep the epistemic part.
+            # Prequential error of the current snapshot at this point. Its expectation
+            # is (mean - f)^2 + noise^2, so the noise variance is tracked alongside
+            # and subtracted in error_scale.
             err2 = (self.current.predict(x)[0] - y[0]) ** 2
             nz2 = sigma[0] ** 2
             if self.error_var is None:
@@ -252,7 +237,7 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
         if not due:
             return False
         if self.reservoir.turnover - self.turnover_at_fit < self.min_turnover * self.reservoir.size:
-            # Nothing new at the model's scale: postpone (and re-arm the schedule).
+            # Too little new coverage: postpone and restart the schedule.
             self.n_skipped += 1
             self.n_seen_at_fit = self.n_seen
             return False
@@ -271,8 +256,8 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
         if not np.isfinite(y_scale) or y_scale <= 0.0:
             y_scale = 1.0
         Y = (res.y - y_mean) / y_scale
-        # One noise level per point (the backend has no per-output noise): the mean
-        # over outputs of the standardised noise variances.
+        # The GP takes one noise variance per point, so per-output noise variances
+        # (standardised) are averaged over the outputs.
         alpha = np.maximum(np.mean((res.sigma / y_scale) ** 2, axis=1), self.alpha_floor)
         kernel = self.current.gp.kernel_ if self.current is not None else self.kernel   # warm start
         gp = GaussianProcessRegressor(kernel=kernel, alpha=alpha,

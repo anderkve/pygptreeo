@@ -17,33 +17,34 @@ and reports, per (target, stream, configuration, seed), the prequential NRMSE
 on the stream after warm-up, the NRMSE on a uniform test set (global accuracy),
 and the NRMSE on a "focus" test set drawn where the stream ended up.
 
-Configurations: ``tree`` (plain GPTree), ``global`` (refit global model, prototype),
-``global_pkg`` (the package implementation: ``GPTree(global_mean=AdditiveGPGlobalMean(...))``,
-which includes the refresh rule and per-point noise; should match ``global_fresh``),
-``frozen`` (global model frozen after the warm-up), ``global_damped`` /
-``global_damped_tight`` / ``global_damped_wide`` (refit global model whose
-contribution is damped by a coverage confidence derived from the predictive
-variance of a reference GP on the reservoir, with length scale 1x / 0.5x / 2x
-the reservoir spacing; protects the leaves from the model's extrapolation into
-territory the reservoir has not covered).
+Configurations:
+    tree          plain GPTree
+    global_pkg    the package implementation,
+                  ``GPTree(global_mean=AdditiveGPGlobalMean(...))``
+    global        prototype of the same design (see below); ``global_fresh``
+                  adds the package's refresh rule and should match ``global_pkg``
+    frozen        prototype with the global model frozen after the warm-up
+    global_damped, global_damped_tight, global_damped_wide
+                  prototype whose global contribution is damped by a coverage
+                  confidence (1 - relative predictive variance of a reference GP
+                  on the reservoir, length scale 1x / 0.5x / 2x the reservoir
+                  spacing)
+    *_lin         leaf kernel with an added linear-trend term
 
-Global-model policy (the recommendation from the design discussion):
-    * coverage reservoir (maximin design, 500 points) rather than a
-      uniform-in-time reservoir, so the model stays representative of the
-      explored region whatever the stream does;
+Global-model design shared by the prototype and the package:
+    * a coverage reservoir (maximin design, 500 points) rather than a
+      uniform-in-time sample, so the model represents the explored region
+      whatever the stream does;
     * refit only when >= 25 % of the reservoir has turned over since the last
-      fit (and at most once per reservoir-size points), so the model freezes
-      itself when the stream stops exploring and resumes when it does;
-    * every refit runs the hyperparameter optimiser with restarts (a warm start
-      alone locks in poor early optima);
+      fit (and at most once per reservoir-size points);
+    * every refit runs the hyperparameter optimiser with random restarts on
+      top of the warm start;
     * versioned snapshots: a leaf subtracts the current snapshot at fit time
-      and adds back the *same* snapshot at predict time, so a refit never
-      invalidates a trained leaf.
+      and adds back the same snapshot at predict time.
 
-PROTOTYPE: the residual mechanism is injected into GPNode by wrapping
-``fit_my_GPR``, ``predict`` and ``generate_children`` at import time. This is
-for benchmarking the idea before it is implemented in the package; do not
-import this module from library code.
+The prototype configurations inject the residual mechanism into GPNode by
+wrapping ``fit_my_GPR``, ``predict`` and ``generate_children`` at import time;
+do not import this module from library code.
 
 Usage:
     python examples/benchmark_global_mean_streams.py --target rotated_rosenbrock \\

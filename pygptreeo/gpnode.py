@@ -375,9 +375,8 @@ class GPNode(Node):
             'global_mean': self.global_mean,
         }
 
-        # Create child nodes, each with its own clone of *every* parent GP (one per
-        # output / score), so that until its first retrain a child predicts each
-        # output with the GP that was actually trained on that output.
+        # Each child gets its own clone of every parent GP (one per output / score)
+        # and predicts with them until its first retrain.
         left_gprs = [gpr.clone() for gpr in self.my_GPRs]
         right_gprs = [gpr.clone() for gpr in self.my_GPRs]
         self.left = GPNode(0, my_GPR=left_gprs[0], my_GPRs=left_gprs, name=self.name + "0", **node_config_kwargs)
@@ -448,14 +447,13 @@ class GPNode(Node):
             self.left.y_common_scaler = deepcopy(self.y_common_scaler)
             self.right.y_common_scaler = deepcopy(self.y_common_scaler)
 
-        # The children reuse the parent's GPs (clones) until their first retrain, so
-        # they must also reconstruct predictions with the basis (and per-score
-        # standardisation) those GPs were fit in.
+        # Until their first retrain the children predict with the parent's GPs, so
+        # they also need the basis, per-score standardisation and global-model
+        # snapshot those GPs were fitted with.
         self.left._fitted_basis = self._fitted_basis
         self.right._fitted_basis = self._fitted_basis
         self.left.z_scaler = deepcopy(self.z_scaler)
         self.right.z_scaler = deepcopy(self.z_scaler)
-        # ... and with the global-model snapshot those GPs were fitted against.
         self.left._fitted_global = self._fitted_global
         self.right._fitted_global = self._fitted_global
 
@@ -820,12 +818,11 @@ class GPNode(Node):
         return np.min(np.vstack(collected), axis=0)
 
     def _fit_common_y_scaler(self, y: np.ndarray):
-        """Centre each output and divide all of them by ONE common scale.
+        """Centre each output and divide all of them by one common scale.
 
-        Used by output_model='shared': a common scale keeps the per-point
-        observation noise identical across outputs in the scaled space, which the
-        backend's single per-point noise level requires (per-output scaling would
-        silently turn noise-dominated outputs into unit-variance signal).
+        Used by output_model='shared': with one common scale the per-point
+        observation noise stays identical across outputs in the scaled space,
+        as the backend's single per-point noise level requires.
         """
         mu = y.mean(axis=0)
         scale = float((y - mu).std())
@@ -905,13 +902,12 @@ class GPNode(Node):
         if self.output_model == 'pca':
             basis = self.output_basis.current
             if basis is None:
-                # The tree-global output basis does not exist yet (too few points
-                # observed). Keep the retrain buffer as is, so the next call trains
-                # as soon as the basis is available.
+                # No output basis yet (too few points observed). The retrain buffer
+                # is left as is, so the next call trains once the basis exists.
                 return False
 
-        # Global model: the GPs model the residual of the current snapshot (the raw
-        # targets stay stored, so a refit of the global model never invalidates data).
+        # With a global model the GPs are fitted on the residual of its current
+        # snapshot. The stored targets stay raw.
         snapshot = None
         if self.global_mean is not None:
             snapshot = self.global_mean.current
@@ -937,10 +933,10 @@ class GPNode(Node):
                     self.my_GPRs[i].fit(X_train, y_train[:, i:i+1])
 
         elif self.output_model == 'shared':
-            # One GP with one shared kernel for all outputs (2-D target). The
-            # backend's noise is per point, not per point and output, so per-output
-            # noise variances are averaged over the outputs; with the common output
-            # scale this is exact whenever sigma is the same for all outputs.
+            # One GP with one shared kernel for all outputs (2-D target). The backend
+            # takes one noise variance per point, so the per-output noise variances
+            # are averaged over the outputs (exact when sigma is the same for all
+            # outputs, given the common output scale).
             if self.use_standard_scaling:
                 self.X_scaler = StandardScaler().fit(X_train)
                 X_fit = self.X_scaler.transform(X_train)
@@ -962,10 +958,10 @@ class GPNode(Node):
             Z = basis.project(y_train)                  # (N, k) basis scores
             noise_z = basis.project_noise(sigma_train)  # (N, k) per-score noise variances
             k = basis.n_components
-            # Standardise every score within the leaf (like the per-output scalers of
-            # 'independent'): the scores carry the raw output variance (large for many
-            # outputs) and a leaf-local offset, and the kernel's initial amplitude and
-            # zero prior mean assume unit-variance, centred targets.
+            # Standardise every score within the leaf (as the per-output scalers do
+            # for 'independent'): the scores carry the raw output variance and a
+            # leaf-local offset, while the kernel's initial amplitude and zero prior
+            # mean assume centred, unit-variance targets.
             z_shift = Z.mean(axis=0)
             z_scale = Z.std(axis=0)
             z_scale = np.where(np.isfinite(z_scale) & (z_scale > 0.0), z_scale, 1.0)
@@ -1128,8 +1124,8 @@ class GPNode(Node):
     def _region_holdout_rmse(self, indices: np.ndarray):
         """Train a fresh GP on a random subset of the node's points at ``indices``
         and return ``(RMSE on the held-out rest, number of held-out points)``.
-        Works for any number of outputs (a multi-output region is fitted as one
-        shared-kernel GP, as a cheap proxy for the leaf's own model)."""
+        A multi-output region is fitted as one shared-kernel GP, a cheap proxy
+        for the leaf's own model."""
         X_r = self.my_X_data[indices]
         y_r = self.my_y_data[indices]
         s_r = self.my_sigma_data[indices]
@@ -1450,9 +1446,9 @@ class GPNode(Node):
                   a global model it also includes the global model's own
                   estimated (epistemic) error, see ``global_mean``.
         """
-        # Refresh rule: never predict with a global snapshot older than the current one.
-        # A leaf that stopped receiving points would otherwise keep an early snapshot
-        # whose extrapolation error its residual GP cannot correct.
+        # Never predict with a global snapshot older than the current one: a leaf
+        # that stops receiving points would otherwise keep an outdated snapshot whose
+        # error its residual GP cannot correct.
         if self.global_mean is not None and self.is_leaf and self.n_points > 0:
             current = self.global_mean.current
             if current is not None and (self._fitted_global is None
@@ -1466,9 +1462,8 @@ class GPNode(Node):
         else:
             mu_pred, sigma_pred = self._predict_pca(x)
 
-        # Add back the global model the GPs were fitted against, and its own
-        # (epistemic) error budget: the residual GP only knows how smooth the residual
-        # is on its own points, not how wrong the global model is at x.
+        # Add back the snapshot the GPs were fitted against, and its estimated error:
+        # the residual GP cannot know how wrong the global model is at x.
         if self._fitted_global is not None:
             mu_pred = mu_pred + self._fitted_global.predict(x)
             err_scale = getattr(self.global_mean, 'error_scale', None)

@@ -60,10 +60,9 @@ def Default_GPR(
         The kernel specifying the covariance function of the GP.
         If None is passed, an anisotropic (ARD) ``ConstantKernel() * Matern(nu)``
         with one length scale per input dimension is built lazily at the first
-        ``fit`` call, when the input dimensionality becomes known. Per-dimension
-        length scales are what make the ``'min_lengthscale'`` split criterion and
-        the GP-aware split evaluation work; an isotropic kernel gives them nothing
-        to work with. Note that the kernel's hyperparameters are optimized during fitting.
+        ``fit`` call, when the input dimensionality becomes known. The
+        per-dimension length scales are what the ``'min_lengthscale'`` split
+        criterion uses. The kernel's hyperparameters are optimized during fitting.
     alpha : float or ndarray of shape (n_samples,), default=1e-10
         Value added to the diagonal of the kernel matrix during fitting.
         This can represent the expected amount of noise in the observations.
@@ -114,8 +113,8 @@ def Default_GPR(
     """
     kernel_factory = None
     if kernel is None:
-        # Placeholder until the input dimension is known at the first fit; the
-        # factory then replaces it with the per-dimension (ARD) version.
+        # Placeholder kernel; the factory replaces it with the per-dimension (ARD)
+        # version at the first fit, when the input dimension is known.
         kernel_factory = DefaultKernelFactory(nu=nu)
         kernel = ConstantKernel() * Matern(nu=nu)
 

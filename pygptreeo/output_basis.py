@@ -37,9 +37,9 @@ class OutputBasis:
     mu : np.ndarray, shape (n_outputs,)
         Per-output centring.
     scale : float
-        One common scale for all outputs. A *common* scale (rather than one per
-        output) keeps per-point observation noise identical across outputs in the
-        scaled space, which is what makes noise propagate cleanly to the scores.
+        One common scale for all outputs, so that per-point observation noise
+        stays identical across outputs in the scaled space and maps exactly onto
+        the scores.
     W : np.ndarray, shape (n_outputs, k)
         Orthonormal basis vectors (principal directions) as columns.
     resid_var : np.ndarray, shape (n_outputs,)
@@ -109,13 +109,11 @@ class OutputBasisLearner:
     n_components : {'noise', int, float}, default='noise'
         How many components to keep.
 
-        * ``'noise'``: keep every component whose variance lies above the noise
-          bulk, i.e. above ``v_n * (1 + sqrt(n_outputs / n))**2`` where ``v_n`` is
-          the mean per-point observation-noise variance (in the basis' scaled
-          units) and ``n`` the number of reservoir rows. This is the
-          Marchenko-Pastur edge of the eigenvalues that pure noise would produce,
-          so it keeps exactly the components that carry signal: fewer for noisy
-          data, more for clean data. Requires ``sigma`` to be passed to
+        * ``'noise'``: keep every component whose variance lies above the
+          Marchenko-Pastur edge ``v_n * (1 + sqrt(n_outputs / n))**2``, the
+          largest eigenvalue pure noise would produce, where ``v_n`` is the mean
+          per-point observation-noise variance (in the basis' scaled units) and
+          ``n`` the number of reservoir rows. Requires ``sigma`` to be passed to
           :meth:`observe`; without it, all components above ``1e-12`` of the
           total variance are kept.
         * ``int``: a fixed number of components (capped by what the data supports).
@@ -131,7 +129,7 @@ class OutputBasisLearner:
     refit_every : int or None, default=None
         Refit the basis every this many observed points. ``None`` uses a doubling
         schedule (refit when the number of points seen has doubled since the last
-        fit), which is cheap and converges quickly.
+        fit).
     reservoir_size : int, default=2000
         Maximum number of output rows kept (uniform reservoir sampling).
     random_state : int or None

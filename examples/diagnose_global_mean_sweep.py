@@ -6,8 +6,7 @@ every prequential prediction, records the leaf's number of own points, how often
 it has been retrained, its depth, the error of the global snapshot the leaf was
 fitted against, the error the *current* global snapshot would have made, and how
 many versions the leaf's snapshot is behind. The summary bins the error by these
-quantities, which is how the stale-snapshot failure mode was identified (see
-BENCHMARK_RESULTS_global_mean_streams.md).
+quantities, which shows whether leaves with outdated snapshots drive the error.
 
 Usage:
     OMP_NUM_THREADS=1 python examples/diagnose_global_mean_sweep.py [target] [seed]
