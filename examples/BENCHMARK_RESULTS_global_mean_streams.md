@@ -111,6 +111,50 @@ global fits (20 to 40 s each) and by the per-point global prediction. The frozen
 costs 3 to 4 times the tree. A 300-point reservoir, one restart, or a cheaper global model
 family would bring this down; none of that was tuned here.
 
+## Damping the global contribution where the model has no data (negative result)
+
+The reading above suggested damping the global model's contribution by its own
+predictive variance, so that the residual reverts to the raw target where the model
+extrapolates. Two findings, both on the sweeping stream (3 seeds, same settings):
+
+**The fitted global GP's variance is uninformative.** Marginal likelihood picks catch-all
+Matern length scales of 70 to 260 standardised units on a domain a few units wide, with
+an amplitude of 36^2 (rotated Rosenbrock, mid-sweep reservoir of 500 points). The
+posterior variance is then below 1e-3 of the prior everywhere, including three reservoir
+spacings beyond the data, so the damping weight is 1.000 on every test point. The
+`global_damped*` configurations therefore use the explained-variance fraction of a
+*reference* GP on the reservoir points (unit RBF, length scale 0.5x / 1x / 2x the
+reservoir's nearest-neighbour spacing), which is 1 on the data and 0 far from it.
+
+**Damping hurts, and the more the worse.** Mean confidence of the final snapshot on the
+uniform / focus test sets is given for the damped runs.
+
+| target | config | prequential NRMSE | uniform-test NRMSE | focus-test NRMSE | confidence |
+|---|---|---|---|---|---|
+| rotated_rosenbrock | tree | 0.0060 (0.0052..0.0065) | 0.0647 (0.0613..0.0673) | 0.0053 (0.0040..0.0071) | |
+| rotated_rosenbrock | global | 0.0116 (0.0072..0.0165) | 0.0581 (0.0554..0.0636) | 0.0066 (0.0040..0.0082) | |
+| rotated_rosenbrock | global_damped_wide (2x) | 0.0141 (0.0115..0.0164) | 0.0677 (0.0665..0.0694) | 0.0074 (0.0042..0.0091) | 0.90 / 0.98 |
+| rotated_rosenbrock | global_damped (1x) | 0.0215 (0.0188..0.0230) | 0.0881 (0.0845..0.0933) | 0.0121 (0.0072..0.0149) | 0.26 / 0.62 |
+| rotated_rosenbrock | global_damped_tight (0.5x) | 0.0345 (0.0315..0.0372) | 0.0928 (0.0895..0.0987) | 0.0170 (0.0127..0.0212) | 0.02 / 0.10 |
+| gaussian_peaks | tree | 0.0264 (0.0230..0.0330) | 0.0807 (0.0787..0.0842) | 0.0117 (0.0085..0.0138) | |
+| gaussian_peaks | global | 0.0173 (0.0131..0.0205) | 0.0606 (0.0568..0.0673) | 0.0153 (0.0086..0.0233) | |
+| gaussian_peaks | global_damped_wide (2x) | 0.0264 (0.0175..0.0345) | 0.0891 (0.0831..0.0931) | 0.0131 (0.0094..0.0188) | 0.90 / 0.98 |
+| gaussian_peaks | global_damped (1x) | 0.0360 (0.0344..0.0376) | 0.1304 (0.1236..0.1393) | 0.0349 (0.0312..0.0394) | 0.26 / 0.62 |
+| gaussian_peaks | global_damped_tight (0.5x) | 0.0543 (0.0499..0.0618) | 0.1370 (0.1338..0.1387) | 0.0365 (0.0271..0.0428) | 0.02 / 0.10 |
+
+This refutes the extrapolation explanation. A direct check confirms it: mid-sweep, the
+global mean on the next 300 stream points (one reservoir spacing ahead of its data) has
+an RMSE 13x (rotated Rosenbrock) and 30x (Gaussian peaks) smaller than the reservoir's
+constant mean. The global trend at the front is good, damping it towards a constant
+throws it away, and the damping transition additionally writes a large artificial seam
+(the size of `m - mean`) into the residual exactly where the fresh leaves are learning.
+
+The remaining explanation is extrapolation *by the leaves*: a fresh leaf at the front
+predicts with the GP it inherited from its parent, extrapolated by a few points. The raw
+target's local slope is accurate and a Matern GP with long length scales follows it; the
+residual's local slope is the global model's slope error and its GP reverts to a
+constant sooner. The leaf-kernel linear-trend configurations (`*_lin`) test this.
+
 ## Reproduce
 
 ```bash
@@ -123,4 +167,5 @@ done; done
 python benchmark_global_mean_streams.py --summarize results/global_mean_streams/*.jsonl
 ```
 
-The raw `RESULT` lines of the runs above are in `results/global_mean_streams/`.
+The raw `RESULT` lines of the runs above are in `results/global_mean_streams/`
+(`damped_*` for the damping section).

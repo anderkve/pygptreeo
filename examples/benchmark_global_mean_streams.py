@@ -73,6 +73,8 @@ from scipy.optimize import minimize
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.preprocessing import StandardScaler
 
+from sklearn.gaussian_process.kernels import ConstantKernel, DotProduct, Matern
+
 from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
 from pygptreeo.gpnode import GPNode
 import target_functions as tf
@@ -320,6 +322,8 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
     warmup = max(500, N // 6)
 
     model = None
+    linear = config.endswith('_lin')          # leaf kernel with an explicit linear-trend term
+    config = config[:-4] if linear else config
     if config == 'global':
         model = GlobalMeanModel(d, seed)
     elif config == 'frozen':
@@ -335,7 +339,14 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
     _ACTIVE['model'] = model
 
     np.random.seed(seed)
-    gpt = GPTree(GPR=Default_GPR(n_restarts_optimizer=1), Nbar=nbar, theta=1e-4,
+    if linear:
+        # ARD Matern + Bayesian linear trend: the leaf GP then extrapolates with its own local slope
+        leaf_kernel = (ConstantKernel() * Matern(nu=1.5, length_scale=np.ones(d))
+                       + ConstantKernel(1.0, (1e-5, 1e5)) * DotProduct(sigma_0=1.0, sigma_0_bounds=(1e-3, 1e3)))
+        gpr = Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1)
+    else:
+        gpr = Default_GPR(n_restarts_optimizer=1)
+    gpt = GPTree(GPR=gpr, Nbar=nbar, theta=1e-4,
                  retrain_every_n_points=25, splitting_strategy='gradual', use_calibrated_sigma=False)
     t0 = time.time(); errs = np.empty(N)
     with contextlib.redirect_stdout(io.StringIO()):
@@ -350,7 +361,7 @@ def run_one(target_name, stream, config, seed, d, N, nbar):
         P_focus, _ = gpt.predict(X_focus, mode='loop')
     elapsed = time.time() - t0
     out = {
-        'target': target_name, 'stream': stream, 'config': config, 'seed': seed, 'd': d, 'N': N,
+        'target': target_name, 'stream': stream, 'config': config + ('_lin' if linear else ''), 'seed': seed, 'd': d, 'N': N,
         'prequential_nrmse': float(np.sqrt(np.mean(errs[warmup:] ** 2)) / yrange),
         'uniform_nrmse': float(np.sqrt(np.mean((P_uni[:, 0] - y_uni) ** 2)) / yrange),
         'focus_nrmse': float(np.sqrt(np.mean((P_focus[:, 0] - y_focus) ** 2)) / yrange),
@@ -400,7 +411,8 @@ def main():
     ap.add_argument('--target', default='rotated_rosenbrock', choices=sorted(TARGETS))
     ap.add_argument('--streams', default='uniform,focusing,sweeping,walker')
     ap.add_argument('--configs', default='tree,global',
-                    help="comma-separated subset of tree,global,frozen,global_damped,global_damped_tight,global_damped_wide")
+                    help="comma-separated subset of tree,global,frozen,global_damped,global_damped_tight,"
+                         "global_damped_wide; append _lin (e.g. tree_lin, global_lin) for a leaf kernel with a linear-trend term")
     ap.add_argument('--seeds', default='1')
     ap.add_argument('--d', type=int, default=6)
     ap.add_argument('--N', type=int, default=4000)
