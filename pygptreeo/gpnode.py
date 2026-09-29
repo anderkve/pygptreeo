@@ -200,11 +200,6 @@ class GPNode(Node):
         self.global_mean = global_mean
         self._fitted_global = None
 
-        # Typical observation-noise variance (per GP, in the GP's own target space) of
-        # the data the GPs were fitted on; added to the predicted variance so that the
-        # returned sigma is the predictive uncertainty of a new *observation*.
-        self._noise_floor = None
-
         # GP regressors: one per output ('independent'), one for all outputs
         # ('shared'), or one per basis score ('pca'; the list is sized at the
         # first fit, once the basis rank is known). Children receive their own
@@ -463,8 +458,6 @@ class GPNode(Node):
         # ... and with the global-model snapshot those GPs were fitted against.
         self.left._fitted_global = self._fitted_global
         self.right._fitted_global = self._fitted_global
-        self.left._noise_floor = deepcopy(self._noise_floor)
-        self.right._noise_floor = deepcopy(self._noise_floor)
 
 
     def delete_point(self, index=-1, shared_point=True):
@@ -927,7 +920,6 @@ class GPNode(Node):
 
         self.n_points_since_retrain = 0
 
-        noise_floor = []
         if self.output_model == 'independent':
             # One GP per output, per-output standardisation of y
             if self.use_standard_scaling:
@@ -937,16 +929,12 @@ class GPNode(Node):
                     y_scale_i = self.y_scalers[i].scale_[0]
                     y_fit_i = self.y_scalers[i].transform(y_train[:, i:i+1])
                     # Noise std in scaled units is sigma / y_scale; the GP takes variances
-                    alpha_i = (sigma_train[:, i] / y_scale_i) ** 2
-                    self._set_noise(self.my_GPRs[i], alpha_i)
+                    self._set_noise(self.my_GPRs[i], (sigma_train[:, i] / y_scale_i) ** 2)
                     self.my_GPRs[i].fit(X_fit, y_fit_i)
-                    noise_floor.append(float(np.median(alpha_i)))
             else:
                 for i in range(self.n_outputs):
-                    alpha_i = sigma_train[:, i] ** 2
-                    self._set_noise(self.my_GPRs[i], alpha_i)
+                    self._set_noise(self.my_GPRs[i], sigma_train[:, i] ** 2)
                     self.my_GPRs[i].fit(X_train, y_train[:, i:i+1])
-                    noise_floor.append(float(np.median(alpha_i)))
 
         elif self.output_model == 'shared':
             # One GP with one shared kernel for all outputs (2-D target). The
@@ -964,7 +952,6 @@ class GPNode(Node):
                 alpha = np.mean(sigma_train ** 2, axis=1)
             self._set_noise(self.my_GPRs[0], alpha)
             self.my_GPRs[0].fit(X_fit, y_fit)
-            noise_floor.append(float(np.median(alpha)))
 
         else:  # 'pca'
             if self.use_standard_scaling:
@@ -989,14 +976,11 @@ class GPNode(Node):
                 self.my_GPRs.append(template.clone())
             del self.my_GPRs[k:]
             for j in range(k):
-                alpha_j = noise_z[:, j] / z_scale[j] ** 2
-                self._set_noise(self.my_GPRs[j], alpha_j)
+                self._set_noise(self.my_GPRs[j], noise_z[:, j] / z_scale[j] ** 2)
                 self.my_GPRs[j].fit(X_fit, (Z[:, j:j+1] - z_shift[j]) / z_scale[j])
-                noise_floor.append(float(np.median(alpha_j)))
             self._fitted_basis = basis
 
         self._fitted_global = snapshot
-        self._noise_floor = noise_floor
         if self.n_outputs == 1:
             self.my_GPR = self.my_GPRs[0]
         return True
@@ -1460,10 +1444,11 @@ class GPNode(Node):
                   Shape: (n_samples, n_outputs)
                 - sigma_pred (np.ndarray): The standard deviation of the
                   prediction(s) in original space. Shape: (n_samples, n_outputs)
-                  Only returned if `return_std` is True. This is the predictive
-                  uncertainty of a new observation: the GP's latent uncertainty
-                  combined with the typical observation noise (median per-point
-                  noise variance) of the node's training data.
+                  Only returned if `return_std` is True. This is the uncertainty
+                  of the estimate of the underlying function (the GP's latent
+                  posterior standard deviation), not of a noisy observation. With
+                  a global model it also includes the global model's own
+                  estimated (epistemic) error, see ``global_mean``.
         """
         # Refresh rule: never predict with a global snapshot older than the current one.
         # A leaf that stopped receiving points would otherwise keep an early snapshot
@@ -1481,8 +1466,9 @@ class GPNode(Node):
         else:
             mu_pred, sigma_pred = self._predict_pca(x)
 
-        # Add back the global model the GPs were fitted against, and its own error
-        # budget: the residual GP cannot know how wrong the global model is at x.
+        # Add back the global model the GPs were fitted against, and its own
+        # (epistemic) error budget: the residual GP only knows how smooth the residual
+        # is on its own points, not how wrong the global model is at x.
         if self._fitted_global is not None:
             mu_pred = mu_pred + self._fitted_global.predict(x)
             err_scale = getattr(self.global_mean, 'error_scale', None)
@@ -1517,7 +1503,6 @@ class GPNode(Node):
             for i in range(self.n_outputs):
                 # Get prediction in scaled space
                 mu_scaled_i, sigma_scaled_i = self.my_GPRs[i].predict(x_scaled, return_std=return_std)
-                sigma_scaled_i = self._with_noise_floor(sigma_scaled_i, i)
 
                 # Inverse transform mean: mu_original = mu_scaled * scale_y + mean_y
                 mu_pred[:, i] = self.y_scalers[i].inverse_transform(mu_scaled_i.reshape(-1, 1)).flatten()
@@ -1531,20 +1516,9 @@ class GPNode(Node):
             for i in range(self.n_outputs):
                 mu_i, sigma_i = self.my_GPRs[i].predict(x, return_std=return_std)
                 mu_pred[:, i] = mu_i.flatten()
-                sigma_pred[:, i] = self._with_noise_floor(sigma_i, i)
+                sigma_pred[:, i] = sigma_i
 
         return mu_pred, sigma_pred
-
-    def _with_noise_floor(self, sd, j: int):
-        """Predictive std of a new observation: sqrt(GP latent variance + typical noise variance).
-
-        The GP's own predictive variance can collapse to (numerically) zero inside a
-        leaf, e.g. for a very smooth target; without the floor such values enter the
-        calibration window and inflate the sigma scaler without bound.
-        """
-        if self._noise_floor is None or j >= len(self._noise_floor):
-            return sd
-        return np.sqrt(np.asarray(sd, dtype=float) ** 2 + self._noise_floor[j])
 
     def _scaled_inputs(self, x: np.ndarray) -> np.ndarray:
         if self.use_standard_scaling and self.X_scaler is not None:
@@ -1571,7 +1545,6 @@ class GPNode(Node):
         sd = np.asarray(sd, dtype=float).reshape(n, -1)
         if sd.shape[1] == 1 and self.n_outputs > 1:
             sd = np.tile(sd, (1, self.n_outputs))
-        sd = self._with_noise_floor(sd, 0)
         if self.use_standard_scaling and self.y_common_scaler is not None:
             mu, scale = self.y_common_scaler
             m = m * scale + mu
@@ -1591,7 +1564,7 @@ class GPNode(Node):
         for j in range(k):
             m, sd = self.my_GPRs[j].predict(xs, return_std=True)
             z_mean[:, j] = np.asarray(m, dtype=float).ravel() * z_scale[j] + z_shift[j]
-            z_var[:, j] = (self._with_noise_floor(np.asarray(sd, dtype=float).ravel(), j) * z_scale[j]) ** 2
+            z_var[:, j] = (np.asarray(sd, dtype=float).ravel() * z_scale[j]) ** 2
         mu_pred, var_pred = basis.reconstruct(z_mean, z_var)
         return mu_pred, np.sqrt(var_pred)
 

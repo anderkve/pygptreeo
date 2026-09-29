@@ -137,8 +137,23 @@ class TestAdditiveGPGlobalMean(unittest.TestCase):
         self.assertIsNone(learner.error_scale)
         X, Y, _ = self._feed(learner, 120)
         self.assertEqual(learner.error_scale.shape, (1,))
-        self.assertGreater(learner.error_scale[0], 0.0)
-        self.assertLess(learner.error_scale[0], 0.1)     # the additive GP fits this target well
+        self.assertGreater(learner.error_var[0], 0.0)
+        self.assertGreaterEqual(learner.error_scale[0], 0.0)   # may clamp to 0: the noise is subtracted
+        self.assertLess(learner.error_scale[0], 0.1)           # the additive GP fits this target well
+
+    def test_error_scale_is_epistemic(self):
+        # A target the global model fits (almost) exactly, observed with noise 0.1: the
+        # prequential error is essentially the noise, and after subtracting the noise
+        # variance the epistemic error scale is far below the noise level.
+        rng = np.random.RandomState(0)
+        learner = AdditiveGPGlobalMean(reservoir_size=80, min_points=60, n_restarts_optimizer=0)
+        X = rng.rand(300, 2)
+        f = 0.3 * X[:, 0] + 0.2 * X[:, 1]
+        y = f + 0.1 * rng.randn(300)
+        for i in range(300):
+            learner.observe(X[i], y[i], 0.1)
+        self.assertGreater(np.sqrt(learner.error_var[0]), 0.07)   # raw error ~ noise
+        self.assertLess(learner.error_scale[0], 0.05)              # epistemic part small
 
     def test_multi_output(self):
         learner = AdditiveGPGlobalMean(reservoir_size=50, min_points=30, n_restarts_optimizer=0)

@@ -172,6 +172,9 @@ is refit only when the coverage sample has changed materially, so it freezes its
 the stream stops exploring (e.g. an optimiser narrowing in) and resumes when the stream
 enters new territory. Leaves remember the snapshot they were fitted against and refit on
 first use after a newer one exists, so a refit never leaves a stale combination behind.
+The predicted sigma of a leaf combines its residual GP's uncertainty with the learner's
+running estimate of the global model's own (epistemic) error, so it stays an uncertainty
+about the underlying function, as without a global model.
 
 On targets with low-order additive structure the gain is large (orders of magnitude on the
 standard N-dimensional benchmarks); on targets without it, expect a 15-50 % lower error at

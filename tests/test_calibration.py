@@ -57,31 +57,6 @@ class TestCalibrationUnit(unittest.TestCase):
         self.assertTrue(np.isfinite(scaler) and scaler > 0)
 
 
-class TestNoiseFloor(unittest.TestCase):
-    """The predicted sigma never falls below the observation-noise level, so the
-    calibration scaler cannot explode when the GP's own variance collapses."""
-
-    def test_sigma_floored_at_noise_and_scaler_bounded(self):
-        rng = np.random.RandomState(0)
-        X = rng.rand(80, 1)
-        noise = 0.05
-        y = 1.0 + 0.1 * X[:, 0] + noise * rng.randn(80)          # nearly constant target: over-confident GP
-        node = GPNode(0, my_GPR=Default_GPR(), Nbar=1000, retrain_every_n_points=1000)
-        node.init_data_set(1)
-        for i in range(80):
-            node.store_point(X[i:i+1], float(y[i]), noise, increment_buffer=False)
-        _silent(node.fit_my_GPR, force_training=True)
-        self.assertEqual(len(node._noise_floor), 1)
-        mu, sd = _silent(node.predict, X[:20], True, False)
-        # at training points the latent GP variance is tiny; the reported sigma is >= the noise
-        self.assertTrue(np.all(sd[:, 0] >= 0.9 * noise))
-        for i in range(40):
-            _silent(node.register_pred_perf, X[i:i+1], float(y[i]))
-            _silent(node.update_sigma_scaler)
-        self.assertLess(node.sigma_scaler, 20.0)
-        self.assertGreater(node.sigma_scaler, 0.05)
-
-
 class TestCalibrationIntegration(unittest.TestCase):
     """Short streaming check that calibrated coverage tracks the target."""
 

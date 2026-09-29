@@ -159,7 +159,12 @@ class GPTree:
                 the tree has seen; the leaves capture the rest and revert to the
                 global model rather than to a leaf constant at their edges. Leaves
                 remember the snapshot they were fitted against and refit on first
-                use after a newer snapshot appears. See ``pygptreeo.global_mean``.
+                use after a newer snapshot appears. The predicted sigma of such a
+                leaf is its residual GP's latent uncertainty combined with the
+                learner's estimate of the global model's own epistemic error
+                (``error_scale``); it remains the uncertainty of the estimate of
+                the underlying function, not of a noisy observation. See
+                ``pygptreeo.global_mean``.
             global_mean_kwargs (Optional[dict]): Keyword arguments for the built-in
                 learner when ``global_mean`` is given as a string (e.g.
                 ``dict(reservoir_size=300, n_restarts_optimizer=1)``).

@@ -132,12 +132,16 @@ class GlobalMeanLearner:
     fit). Snapshots must be immutable and carry increasing version numbers.
 
     :attr:`error_scale` (shape ``(n_outputs,)`` or ``None``) is the learner's
-    running estimate of the global model's own prediction error (RMS prequential
-    error of the current snapshot). A leaf that models the residual of the global
-    model adds this variance to its predictive variance: the leaf GP only knows how
-    smooth the residual is on its own points, not how wrong the global model is at
-    new ones, and without this term its sigma is over-confident wherever the global
-    model's error dominates.
+    running estimate of the global model's own *epistemic* error: the RMS
+    prequential error of the current snapshot with the observation-noise variance
+    subtracted, i.e. an estimate of how far the snapshot's mean is from the
+    underlying function. A leaf that models the residual of the global model adds
+    this variance to its predictive variance: the leaf GP only knows how smooth the
+    residual is on its own points, not how wrong the global model is at new ones,
+    and without this term its sigma is over-confident wherever the global model's
+    error dominates (which also lets the per-leaf calibration scaler run away).
+    The returned sigma stays an uncertainty about the underlying function, not
+    about noisy observations.
     """
 
     current: Optional[GlobalMeanSnapshot] = None
@@ -199,7 +203,8 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
         self.reservoir: Optional[CoverageReservoir] = None
         self.current: Optional[GlobalMeanSnapshot] = None
         self.error_var: Optional[np.ndarray] = None    # EMA of the current snapshot's squared prequential error
-        self.error_scale: Optional[np.ndarray] = None
+        self.noise_var: Optional[np.ndarray] = None    # EMA of the observation-noise variance of the same points
+        self.error_scale: Optional[np.ndarray] = None  # sqrt(max(error_var - noise_var, 0)): epistemic part
         self.error_window = 200                        # EMA memory, in observations
         self.n_seen = 0
         self.n_seen_at_fit = 0
@@ -222,14 +227,18 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
                 self.kernel = AdditiveMaternKernel(d=x.shape[1], order=min(2, x.shape[1]))
         self.n_seen += 1
         if self.current is not None:
-            # Prequential error of the current snapshot at this point (before it is used)
+            # Prequential error of the current snapshot at this point (before it is
+            # used). E[err^2] = (mean - f)^2 + noise^2, so the noise variance is
+            # tracked alongside and subtracted to keep the epistemic part.
             err2 = (self.current.predict(x)[0] - y[0]) ** 2
+            nz2 = sigma[0] ** 2
             if self.error_var is None:
-                self.error_var = err2
+                self.error_var, self.noise_var = err2, nz2
             else:
                 w = 1.0 / min(self.error_window, self.n_seen - self.n_seen_at_first_fit + 1)
                 self.error_var = (1.0 - w) * self.error_var + w * err2
-            self.error_scale = np.sqrt(self.error_var)
+                self.noise_var = (1.0 - w) * self.noise_var + w * nz2
+            self.error_scale = np.sqrt(np.maximum(self.error_var - self.noise_var, 0.0))
         self.reservoir.add(x, y, sigma)
         return self._maybe_fit()
 
