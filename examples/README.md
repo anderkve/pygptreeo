@@ -100,7 +100,7 @@ the synthetic `aniso_chirp` (default); see `BENCHMARK_RESULTS_split_direction.md
 cd examples
 OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target rotated_rosenbrock \
     --streams uniform,focusing,sweeping,walker --configs tree,global,frozen --seeds 1,2,3
-python benchmark_global_mean_streams.py --summarize results/*.jsonl
+python benchmark_global_mean_streams.py --summarize results/global_mean_streams/*.jsonl
 ```
 
 Compares a plain GPTree with a GPTree that models the residual of a global GP
