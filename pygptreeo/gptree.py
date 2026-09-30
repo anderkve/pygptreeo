@@ -220,6 +220,9 @@ class GPTree:
 
         self.first_point = True
 
+        # Number of points passed to update_tree so far
+        self.n_points_seen = 0
+
 
     def update_tree(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray], allow_training=True):
         """Updates the tree structure and node GPRs with a new data point (x, y, sigma).
@@ -250,6 +253,8 @@ class GPTree:
                 during the initial `fit` method where tree construction is the
                 priority before a final training pass on all leaves.
         """
+
+        self.n_points_seen = getattr(self, 'n_points_seen', 0) + 1
 
         # The first input point is used to determine self.n_features
         if self.first_point:
