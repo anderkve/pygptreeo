@@ -20,6 +20,8 @@ from typing import Callable, Optional, Type, Union
 
 # Third-party imports
 import joblib
+import os
+import tempfile
 import numpy as np
 from sklearn.utils import resample
 from tqdm import tqdm
@@ -658,3 +660,25 @@ class GPTree:
             path (str): The file path where the GPTree object will be saved.
         """
         joblib.dump(self, path)
+
+
+    def atomic_save(self, path: str):
+        """Saves the GPTree to `path` without ever exposing a partially written file.
+
+        The object is dumped to a temporary file in the same directory and then
+        moved into place with an atomic rename, so a concurrent reader (e.g. a
+        prediction process polling the file) sees either the old or the new tree.
+
+        Args:
+            path (str): The file path where the GPTree object will be saved.
+        """
+        dir_name = os.path.dirname(os.path.abspath(path))
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".joblib.tmp")
+        os.close(fd)
+        try:
+            joblib.dump(self, tmp_path)
+            os.replace(tmp_path, path)
+        except BaseException:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
