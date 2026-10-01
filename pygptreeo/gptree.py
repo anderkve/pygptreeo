@@ -536,15 +536,22 @@ class GPTree:
             # The default: mixture of experts, following the DLGP paper
             if self.aggregation == "default" or self.aggregation == "moe":
 
-                for leaf, ptilde in zip(leaves, pred_leaf_probs):
-
+                mus = []
+                vars_ = []
+                for leaf in leaves:
                     mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
                     # mu_leaf and sigma_leaf have shape (1, n_outputs)
+                    mus.append(mu_leaf[0, :])
+                    vars_.append(sigma_leaf[0, :]**2)
+                mus = np.array(mus)      # (n_leaves, n_outputs)
+                vars_ = np.array(vars_)  # (n_leaves, n_outputs)
+                probs = np.array(pred_leaf_probs)[:, None]
 
-                    mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
-                    var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + mu_leaf[0, :]**2)
-
-                var_DLGP[i, :] += -mean_DLGP[i, :]**2
+                mean_DLGP[i, :] = np.sum(probs * mus, axis=0)
+                # Mixture variance as within-leaf plus between-leaf terms; the
+                # E[mu^2] - E[mu]^2 form loses tiny leaf variances to rounding.
+                var_DLGP[i, :] = (np.sum(probs * vars_, axis=0)
+                                  + np.sum(probs * (mus - mean_DLGP[i, :])**2, axis=0))
 
             # Generalized product of experts
             elif self.aggregation == "poe":
@@ -610,6 +617,7 @@ class GPTree:
         """
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
         var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
+        contributions = []
 
         for leaf in tqdm(self.root.leaves, disable=not show_progress, desc="Predicting"):
 
@@ -624,9 +632,12 @@ class GPTree:
 
             # Broadcast ptilde to match shape (n_test, n_outputs)
             mean_DLGP += ptilde * mu_leaf
-            var_DLGP += ptilde * (sigma_leaf**2 + mu_leaf**2)
+            var_DLGP += ptilde * sigma_leaf**2
+            contributions.append((ptilde, mu_leaf))
 
-        var_DLGP += -mean_DLGP**2
+        # Between-leaf term of the mixture variance (see predict)
+        for ptilde, mu_leaf in contributions:
+            var_DLGP += ptilde * (mu_leaf - mean_DLGP)**2
 
         return mean_DLGP, np.sqrt(var_DLGP)
 

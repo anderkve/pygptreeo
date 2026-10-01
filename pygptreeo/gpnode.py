@@ -35,6 +35,8 @@ DEFAULT_OVERLAP = 0.001  # Default initial overlap for node boundaries
 DEFAULT_N_POINTS_PRED_PERF = 25  # Number of recent predictions tracked for calibration
 DEFAULT_SIGMA_SCALER = 10.0  # Initial sigma scaling factor for uncertainty calibration
 TARGET_COVERAGE = 0.68  # Target coverage for calibrated uncertainty (1 sigma)
+# Floor of the latent sigma scaler as a fraction of the noise-inclusive one
+SIGMA_SCALER_MIN_FRACTION = 0.5
 
 np.set_printoptions(suppress=True)
 
@@ -1638,8 +1640,13 @@ class GPNode(Node):
         ``TARGET_COVERAGE`` quantile of these per-point values, so that the
         calibrated latent sigma, combined with the observation noise, covers
         that fraction of the residuals. With exact observations this reduces
-        to the quantile of ``|r| / sigma_pred``. For multi-output, each output
-        is calibrated independently.
+        to the quantile of ``|r| / sigma_pred``. When most residuals are within
+        the observation noise, the excess quantile vanishes although the
+        latent error is only known to be below the residual scatter (the
+        labelled noise may be a loose upper bound), so the scaler is floored
+        at ``SIGMA_SCALER_MIN_FRACTION`` times the quantile of
+        ``|r| / sigma_pred``. For multi-output, each output is calibrated
+        independently.
         """
         target_coverage = TARGET_COVERAGE
         sigma_obs_list = self._sigma_obs_buffers()
@@ -1655,16 +1662,20 @@ class GPNode(Node):
             # noise is accounted for
             excess = np.sqrt(np.maximum(residuals_i ** 2 - sigma_obs_i ** 2, 0.0))
             ratios = excess / (sigma_preds_i + 1e-10)
+            ratios_full = np.abs(residuals_i) / (sigma_preds_i + 1e-10)
 
             # Until the window is full, cover all residuals seen so far.
             if residuals_i.shape[0] < self.n_points_pred_perf:
                 if len(sigma_preds_i) > 0 and np.max(sigma_preds_i) > 0:
-                    self.sigma_scalers[i] = max(float(np.max(ratios)), 1e-9)
+                    self.sigma_scalers[i] = max(float(np.max(ratios)),
+                                                SIGMA_SCALER_MIN_FRACTION * float(np.max(ratios_full)), 1e-9)
                 else:
                     self.sigma_scalers[i] = DEFAULT_SIGMA_SCALER
                 continue
 
-            self.sigma_scalers[i] = max(float(np.quantile(ratios, target_coverage)), 1e-9)
+            self.sigma_scalers[i] = max(float(np.quantile(ratios, target_coverage)),
+                                        SIGMA_SCALER_MIN_FRACTION * float(np.quantile(ratios_full, target_coverage)),
+                                        1e-9)
 
         # Also update single sigma_scaler for backward compatibility (single output case)
         if self.n_outputs == 1:

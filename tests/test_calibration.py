@@ -12,7 +12,7 @@ import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from pygptreeo.gptree import GPTree
-from pygptreeo.gpnode import GPNode, DEFAULT_SIGMA_SCALER, TARGET_COVERAGE
+from pygptreeo.gpnode import GPNode, DEFAULT_SIGMA_SCALER, TARGET_COVERAGE, SIGMA_SCALER_MIN_FRACTION
 from pygptreeo.default_gpr import Default_GPR
 
 warnings.filterwarnings("ignore")
@@ -91,10 +91,13 @@ class TestCalibrationWithObservationNoise(unittest.TestCase):
         coverage = np.mean(np.abs(res) < np.sqrt((scaler * sp) ** 2 + so ** 2))
         self.assertLessEqual(abs(coverage - TARGET_COVERAGE), 0.08)
 
-    def test_residuals_within_noise_need_no_latent_width(self):
+    def test_residuals_within_noise_floor_at_fraction_of_scatter(self):
+        # All residuals within the labelled noise: the excess quantile is zero,
+        # so the scaler falls back to a fraction of the noise-inclusive one.
         res = np.full(25, 0.3)
         scaler = self._scaler(res, np.ones(25), np.full(25, 0.5))
-        self.assertTrue(np.isfinite(scaler) and 0 < scaler < 1e-6)
+        self.assertAlmostEqual(scaler, SIGMA_SCALER_MIN_FRACTION * 0.3, places=9)
+        self.assertLess(scaler, self._scaler(res, np.ones(25), np.zeros(25)))
 
     def test_latent_sigma_can_drop_below_noise_on_a_stream(self):
         # Exact function, noisy observations: the calibrated latent sigma of a
