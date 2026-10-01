@@ -279,7 +279,7 @@ class GPTree:
         if node.should_merge_point(x, y, sigma):
             # Point was merged with existing point, don't add as new point
             # Still register prediction performance and update sigma scaler
-            node.register_pred_perf(x, y)
+            node.register_pred_perf(x, y, sigma)
             if self.use_calibrated_sigma:
                 node.update_sigma_scaler()
             return
@@ -291,7 +291,7 @@ class GPTree:
 
         # Add new point and register prediction performance
         node.store_point(x, y, sigma, remove_shared=True)
-        node.register_pred_perf(x, y)
+        node.register_pred_perf(x, y, sigma)
 
         # Update the uncertainty scaler for this node?
         if self.use_calibrated_sigma:

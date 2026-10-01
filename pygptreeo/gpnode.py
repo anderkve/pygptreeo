@@ -286,6 +286,7 @@ class GPNode(Node):
             self.residuals_list = [np.array([])]
             self.mu_preds_list = [np.array([])]
             self.sigma_preds_list = [np.array([])]
+            self.sigma_obs_list = [np.array([])]
             self.sigma_scalers = [DEFAULT_SIGMA_SCALER]
         else:
             self.residuals = None  # Not used for multi-output
@@ -296,6 +297,7 @@ class GPNode(Node):
             self.residuals_list = [np.array([]) for _ in range(n_outputs)]
             self.mu_preds_list = [np.array([]) for _ in range(n_outputs)]
             self.sigma_preds_list = [np.array([]) for _ in range(n_outputs)]
+            self.sigma_obs_list = [np.array([]) for _ in range(n_outputs)]
             self.sigma_scalers = [DEFAULT_SIGMA_SCALER for _ in range(n_outputs)]
 
         print(f"Created node {self.name}")
@@ -411,6 +413,8 @@ class GPNode(Node):
         self.right.mu_preds_list = [arr.copy() for arr in self.mu_preds_list]
         self.left.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
         self.right.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
+        self.left.sigma_obs_list = [arr.copy() for arr in self._sigma_obs_buffers()]
+        self.right.sigma_obs_list = [arr.copy() for arr in self._sigma_obs_buffers()]
         self.left.sigma_scalers = self.sigma_scalers.copy()
         self.right.sigma_scalers = self.sigma_scalers.copy()
 
@@ -1564,8 +1568,24 @@ class GPNode(Node):
         return mu_pred, np.sqrt(var_pred)
 
 
-    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray]):
-        """ Register the residual between prediction and true value for this data point.
+    def _sigma_obs_buffers(self):
+        """Observation-noise buffers, created on demand for nodes saved before they existed."""
+        buf = getattr(self, 'sigma_obs_list', None)
+        if buf is None:
+            buf = [np.zeros_like(r) for r in self.residuals_list]
+            self.sigma_obs_list = buf
+        return buf
+
+    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray],
+                           sigma: Union[None, float, np.ndarray] = None):
+        """ Register the residual between prediction and observed value for this data point.
+
+        Args:
+            x, y: the new point.
+            sigma: the observation-noise std of y (scalar or per output). It is
+                kept with the residual so that the calibration can separate
+                the scatter of the observations from the error of the latent
+                prediction. None means an exact observation.
 
         For multi-output: tracks performance per output dimension.
         """
@@ -1576,8 +1596,15 @@ class GPNode(Node):
             y = np.array([y])
         else:
             y = np.atleast_1d(y).flatten()
+        if sigma is None:
+            sigma_obs = np.zeros(self.n_outputs)
+        else:
+            sigma_obs = np.abs(np.atleast_1d(np.asarray(sigma, dtype=float)).flatten())
+            if sigma_obs.size == 1 and self.n_outputs > 1:
+                sigma_obs = np.full(self.n_outputs, sigma_obs[0])
 
         keep_n_points = self.n_points_pred_perf - 1
+        sigma_obs_list = self._sigma_obs_buffers()
 
         # Update for each output
         for i in range(self.n_outputs):
@@ -1590,6 +1617,9 @@ class GPNode(Node):
             self.sigma_preds_list[i] = self.sigma_preds_list[i][:keep_n_points]
             self.sigma_preds_list[i] = np.insert(self.sigma_preds_list[i], 0, sigma_pred[0, i])
 
+            sigma_obs_list[i] = sigma_obs_list[i][:keep_n_points]
+            sigma_obs_list[i] = np.insert(sigma_obs_list[i], 0, sigma_obs[i])
+
         # Also update single arrays for backward compatibility (single output case)
         if self.n_outputs == 1:
             self.residuals = self.residuals_list[0]
@@ -1600,27 +1630,40 @@ class GPNode(Node):
     def update_sigma_scaler(self):
         """ Update the scaling factor for the prediction uncertainty.
 
-        The scaler is the ``TARGET_COVERAGE`` quantile of the normalized
-        residuals ``|residual| / sigma_pred``, i.e. the value for which a
-        fraction ``TARGET_COVERAGE`` of points satisfy
-        ``|residual| < scaler * sigma_pred``. For multi-output, each output is
-        calibrated independently.
+        The scaler multiplies the latent sigma only. A residual
+        ``r = y - mu`` of an observation with noise ``sigma_obs`` is covered
+        when ``|r| < sqrt((scaler * sigma_pred)^2 + sigma_obs^2)``, so the
+        smallest scaler covering a point is
+        ``sqrt(max(r^2 - sigma_obs^2, 0)) / sigma_pred``. The scaler is the
+        ``TARGET_COVERAGE`` quantile of these per-point values, so that the
+        calibrated latent sigma, combined with the observation noise, covers
+        that fraction of the residuals. With exact observations this reduces
+        to the quantile of ``|r| / sigma_pred``. For multi-output, each output
+        is calibrated independently.
         """
         target_coverage = TARGET_COVERAGE
+        sigma_obs_list = self._sigma_obs_buffers()
 
         for i in range(self.n_outputs):
             residuals_i = self.residuals_list[i]
             sigma_preds_i = self.sigma_preds_list[i]
+            sigma_obs_i = sigma_obs_list[i]
+            if sigma_obs_i.shape[0] != residuals_i.shape[0]:
+                sigma_obs_i = np.zeros_like(residuals_i)
+
+            # Smallest latent scaler that covers each residual once the observation
+            # noise is accounted for
+            excess = np.sqrt(np.maximum(residuals_i ** 2 - sigma_obs_i ** 2, 0.0))
+            ratios = excess / (sigma_preds_i + 1e-10)
 
             # Until the window is full, cover all residuals seen so far.
             if residuals_i.shape[0] < self.n_points_pred_perf:
                 if len(sigma_preds_i) > 0 and np.max(sigma_preds_i) > 0:
-                    self.sigma_scalers[i] = np.max(np.abs(residuals_i) / (sigma_preds_i + 1e-10))
+                    self.sigma_scalers[i] = max(float(np.max(ratios)), 1e-9)
                 else:
                     self.sigma_scalers[i] = DEFAULT_SIGMA_SCALER
                 continue
 
-            ratios = np.abs(residuals_i) / (sigma_preds_i + 1e-10)
             self.sigma_scalers[i] = max(float(np.quantile(ratios, target_coverage)), 1e-9)
 
         # Also update single sigma_scaler for backward compatibility (single output case)
