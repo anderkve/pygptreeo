@@ -22,6 +22,12 @@ leaves on the residual of that network, ``global_mean=NetGlobalMean(...)``) and 
 ``Nbar = 100``, ``theta = 1e-4``, a retrain every 25 points, gradual splitting
 and calibrated sigma. Streams: ``uniform`` (the default), ``focusing``,
 ``sweeping`` and ``walker`` from ``benchmark_global_mean_streams.py``.
+
+``--kernel`` picks the leaf kernel of the ``tree`` and ``hybrid`` configurations
+(see ``KERNELS``); the default ``matern15`` is what ``Default_GPR`` builds. A
+non-default kernel is recorded as ``<config>_<kernel>``, and ``--plot --kernels``
+draws the hybrid's kernel variants against each other instead of the four
+configurations.
 """
 
 import argparse
@@ -44,6 +50,29 @@ BATCH = 2000
 TOLERANCES = (16, 8, 4, 2, 1)   # percent
 
 
+KERNELS = ('matern05', 'matern15', 'matern25', 'rbf', 'rq', 'additive')
+
+
+def make_kernel(name, d):
+    """The leaf kernel ``name`` for ``d`` input dimensions (ARD everywhere)."""
+    from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
+    from pygptreeo import AnisotropicRationalQuadratic, AdditiveMaternKernel
+    ones = np.ones(d)
+    if name.startswith('matern'):
+        return ConstantKernel() * Matern(nu=float(name[6:]) / 10.0, length_scale=ones)
+    if name == 'rbf':
+        return ConstantKernel() * RBF(length_scale=ones)
+    if name == 'rq':
+        return ConstantKernel() * AnisotropicRationalQuadratic(length_scale=ones, alpha=1.0)
+    if name == 'additive':
+        return AdditiveMaternKernel(d=d, order=min(2, d), nu=1.5)
+    raise ValueError(name)
+
+
+def config_name(a):
+    return a.config if a.kernel == 'matern15' else f"{a.config}_{a.kernel}"
+
+
 def tag(a):
     return f"{a.target}_d{a.d}_{a.stream}_N{a.N}_seed{a.seed}"
 
@@ -62,13 +91,14 @@ def run(a):
     np.random.seed(a.seed)
     common = dict(Nbar=100, theta=1e-4, retrain_every_n_points=25, splitting_strategy='gradual',
                   use_calibrated_sigma=True)
+    leaf_kernel = None if a.kernel == 'matern15' else make_kernel(a.kernel, a.d)
     if a.config == 'tree':
-        gpt = GPTree(GPR=Default_GPR(n_restarts_optimizer=1), **common)
+        gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1), **common)
     elif a.config == 'neural':
         gpt = GPTree(GPR=NeuralLinearGPR(FeatureNetLearner(steps_per_update=8, random_state=a.seed)), **common)
     elif a.config == 'hybrid':
         from pygptreeo import NetGlobalMean
-        gpt = GPTree(GPR=Default_GPR(n_restarts_optimizer=1),
+        gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1),
                      global_mean=NetGlobalMean(steps_per_update=8, random_state=a.seed), **common)
     elif a.config == 'global_gp':
         # the additive-GP global model of BENCHMARK_RESULTS_global_mean_streams.md, GP leaves on its residual
@@ -79,7 +109,7 @@ def run(a):
     else:
         raise ValueError(a.config)
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    path = os.path.join(RESULTS_DIR, f"{tag(a)}_{a.config}.csv")
+    path = os.path.join(RESULTS_DIR, f"{tag(a)}_{config_name(a)}.csv")
     t_start = time.time()
     with open(path, 'w') as f, contextlib.redirect_stdout(io.StringIO()):
         f.write("true_y,predicted_y,prediction_uncertainty,predict_time_s,update_tree_time_s,n_leaves\n")
@@ -89,7 +119,7 @@ def run(a):
             gpt.update_tree(xi, np.array([[y[i]]]), np.array([[sig[i]]])); t2 = time.perf_counter()
             f.write(f"{y[i]:.10e},{mu[0, 0]:.10e},{sd[0, 0]:.6e},{t1 - t0:.3e},{t2 - t1:.3e},{len(gpt.root.leaves)}\n")
             if (i + 1) % BATCH == 0:
-                print(f"{a.config}: {i + 1} points, {time.time() - t_start:.0f} s", file=sys.__stdout__, flush=True)
+                print(f"{config_name(a)}: {i + 1} points, {time.time() - t_start:.0f} s", file=sys.__stdout__, flush=True)
     print(f"wrote {path} in {time.time() - t_start:.0f} s")
 
 
@@ -119,19 +149,31 @@ def plot(a):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    if a.kernels:
+        cfgs = ['hybrid'] + [f"hybrid_{k}" for k in KERNELS if k != 'matern15']
+        colors = dict(zip(cfgs, ('tab:green', 'tab:blue', 'tab:red', 'tab:orange', 'tab:purple', 'tab:brown')))
+        style = {c: dict(color=colors[c], ls='-') for c in cfgs}
+        name = {'hybrid': 'hybrid, Matern 3/2 leaves (default)'}
+        name.update({f"hybrid_{k}": f"hybrid, {lab} leaves" for k, lab in
+                     (('matern05', 'Matern 1/2'), ('matern25', 'Matern 5/2'), ('rbf', 'RBF'),
+                      ('rq', 'rational quadratic'), ('additive', 'additive + Matern 3/2'))})
+        title = "hybrid tree, leaf kernels"; suffix = "kernels"
+    else:
+        cfgs = ['tree', 'global_gp', 'neural', 'hybrid']
+        style = {'tree': dict(color='tab:blue', ls='-'), 'neural': dict(color='tab:red', ls='-'),
+                 'hybrid': dict(color='tab:green', ls='-'), 'global_gp': dict(color='tab:orange', ls='-')}
+        name = {'tree': 'GP tree', 'neural': 'neural-linear tree', 'hybrid': 'hybrid (GP leaves on network residual)',
+                'global_gp': 'GP tree + additive global GP'}
+        title = "GP tree vs neural-linear tree"; suffix = "compare"
     runs = {}
-    for cfg in ('tree', 'global_gp', 'neural', 'hybrid'):
+    for cfg in cfgs:
         path = os.path.join(RESULTS_DIR, f"{tag(a)}_{cfg}.csv")
         if os.path.exists(path):
             runs[cfg] = batch_metrics(path)
     if not runs:
         sys.exit(f"no CSV files for {tag(a)} in {RESULTS_DIR}")
-    style = {'tree': dict(color='tab:blue', ls='-'), 'neural': dict(color='tab:red', ls='-'),
-             'hybrid': dict(color='tab:green', ls='-'), 'global_gp': dict(color='tab:orange', ls='-')}
-    name = {'tree': 'GP tree', 'neural': 'neural-linear tree', 'hybrid': 'hybrid (GP leaves on network residual)',
-            'global_gp': 'GP tree + additive global GP'}
     fig, axs = plt.subplots(6, 1, figsize=(15, 19), sharex=True)
-    fig.suptitle(f"PyGPTreeo performance metrics: GP tree vs neural-linear tree\n"
+    fig.suptitle(f"PyGPTreeo performance metrics: {title}\n"
                  f"{a.target}, d = {a.d}, {a.stream} stream, {a.N} points, metrics per batch of {BATCH}", fontsize=16)
     for cfg, m in runs.items():
         s = style[cfg]; lab = name[cfg]
@@ -154,7 +196,7 @@ def plot(a):
     for ax in axs:
         ax.set_xlim([0, a.N]); ax.grid(True); ax.legend(loc='upper left', ncol=4, fontsize=7)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    out = os.path.join(RESULTS_DIR, f"{tag(a)}_compare.png")
+    out = os.path.join(RESULTS_DIR, f"{tag(a)}_{suffix}.png")
     plt.savefig(out, dpi=150)
     print(f"figure saved to {out}")
     # the per-batch metrics of both configurations, the record kept in the repository
@@ -162,10 +204,11 @@ def plot(a):
     frames = []
     for cfg, m in runs.items():
         df = pd.DataFrame({k: v for k, v in m.items()}); df.insert(0, 'config', cfg); frames.append(df)
-    pd.concat(frames).to_csv(os.path.join(RESULTS_DIR, f"{tag(a)}_batches.csv"), index=False, float_format='%.6g')
+    pd.concat(frames).to_csv(os.path.join(RESULTS_DIR, f"{tag(a)}_{'kernel_' if a.kernels else ''}batches.csv"),
+                             index=False, float_format='%.6g')
     # a compact summary of the last batch
     for cfg, m in runs.items():
-        print(f"{cfg:7s} last batch: predict {1e3 * m['predict_time'][-1]:.2f} ms, update {1e3 * m['update_time'][-1]:.2f} ms "
+        print(f"{cfg:16s} last batch: predict {1e3 * m['predict_time'][-1]:.2f} ms, update {1e3 * m['update_time'][-1]:.2f} ms "
               f"(max {1e3 * m['update_time_max'][-1]:.0f} ms), NRMSE {m['nrmse'][-1]:.4f}, within 1% {m['within_1'][-1]:.2f}, "
               f"coverage {m['coverage'][-1]:.2f}, leaves {m['leaves'][-1]}")
 
@@ -175,8 +218,10 @@ def main():
     ap.add_argument('--target', default='eggholder'); ap.add_argument('--d', type=int, default=3)
     ap.add_argument('--stream', default='uniform'); ap.add_argument('--N', type=int, default=40000)
     ap.add_argument('--seed', type=int, default=1)
-    ap.add_argument('--config', default='tree', help='tree or neural')
+    ap.add_argument('--config', default='tree', help='tree, neural, hybrid or global_gp')
+    ap.add_argument('--kernel', default='matern15', choices=KERNELS, help='leaf kernel of tree and hybrid')
     ap.add_argument('--plot', action='store_true', help='draw the figure from the CSV files of both configurations')
+    ap.add_argument('--kernels', action='store_true', help="with --plot: the hybrid's kernel variants")
     a = ap.parse_args()
     if a.plot:
         plot(a)
