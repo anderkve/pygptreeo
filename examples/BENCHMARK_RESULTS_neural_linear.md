@@ -271,6 +271,87 @@ Reading:
 * **It is the slowest of the three** (73 to 78 s against 35 to 48 and 59 to
   68): it pays the GP leaf's fits and the network's refits.
 
+### 1.3 Against the GP tree with the additive global GP
+
+The package's other global model, `GPTree(global_mean='additive_gp')`
+(`AdditiveGPGlobalMean`: a GP with an order-2 additive + Matern kernel on a
+500-point coverage reservoir, refit on turnover, two optimiser restarts; the
+`global_pkg` configuration of `BENCHMARK_RESULTS_global_mean_streams.md`), was
+run on this same benchmark with the same seeds and settings, calibrated
+(`results/global_mean_streams/calibrated_v3_*.jsonl`). Its rows beside the
+three configurations above, mean over 3 seeds:
+
+| target | stream | config | prequential | uniform-test | focus-test | coverage prequential / uniform / focus | sigma/RMSE prequential / uniform / focus | time [s] |
+|---|---|---|---|---|---|---|---|---|
+| rotated_rosenbrock | uniform | GP tree | 0.0155 | 0.0109 | 0.01098 | 0.67 / 0.67 / 0.67 | 0.67 / 0.66 / 0.66 | 44 |
+| rotated_rosenbrock | uniform | GP tree + global GP | 0.0107 | 0.0077 | 0.00762 | 0.68 / 0.64 / 0.63 | 0.62 / 0.56 / 0.58 | 348 |
+| rotated_rosenbrock | uniform | neural-linear | **0.0034** | **0.0018** | **0.00188** | 0.74 / 0.75 / 0.74 | 1.62 / 1.13 / 1.11 | 66 |
+| rotated_rosenbrock | uniform | hybrid | 0.0053 | 0.0030 | 0.00316 | 0.67 / 0.62 / 0.62 | 0.63 / 0.45 / 0.45 | 78 |
+| rotated_rosenbrock | focusing | GP tree | 0.0069 | 0.0301 | 0.00004 | 0.69 / 0.33 / 0.60 | 0.87 / 0.32 / 1.02 | 31 |
+| rotated_rosenbrock | focusing | GP tree + global GP | 0.0053 | 0.0177 | 0.00004 | 0.74 / 0.36 / 0.68 | 0.66 / 0.25 / 1.60 | 181 |
+| rotated_rosenbrock | focusing | neural-linear | **0.0032** | 0.0080 | 0.00002 | 0.77 / 0.48 / 0.72 | 1.68 / 1.15 / 17.76 | 65 |
+| rotated_rosenbrock | focusing | hybrid | 0.0044 | **0.0075** | **0.00001** | 0.72 / 0.11 / 0.62 | 0.79 / 0.07 / 0.70 | 74 |
+| rotated_rosenbrock | sweeping | GP tree | 0.0060 | 0.0647 | 0.00530 | 0.66 / 0.39 / 0.68 | 0.73 / 0.26 / 0.47 | 37 |
+| rotated_rosenbrock | sweeping | GP tree + global GP | 0.0065 | 0.0530 | 0.00899 | 0.67 / 0.41 / 0.76 | 0.83 / 0.26 / 0.56 | 355 |
+| rotated_rosenbrock | sweeping | neural-linear | **0.0031** | **0.0327** | **0.00368** | 0.74 / 0.89 / 0.75 | 7.35 / 2.54 / 2.25 | 65 |
+| rotated_rosenbrock | sweeping | hybrid | 0.0046 | 0.0381 | 0.00513 | 0.67 / 0.48 / 0.78 | 0.66 / 0.23 / 0.63 | 75 |
+| rotated_rosenbrock | walker | GP tree | 0.0062 | 0.0923 | 0.00241 | 0.65 / 0.28 / 0.78 | 0.81 / 0.13 / 1.00 | 39 |
+| rotated_rosenbrock | walker | GP tree + global GP | 0.0049 | 0.0760 | 0.00109 | 0.67 / 0.25 / 0.93 | 0.92 / 0.06 / 2.34 | 330 |
+| rotated_rosenbrock | walker | neural-linear | **0.0034** | **0.0474** | **0.00035** | 0.85 / 0.62 / 0.82 | 7.62 / 0.35 / 7.27 | 59 |
+| rotated_rosenbrock | walker | hybrid | 0.0049 | 0.0576 | 0.00113 | 0.67 / 0.27 / 0.89 | 0.91 / 0.05 / 1.79 | 73 |
+| gaussian_peaks | uniform | GP tree | 0.0168 | 0.0139 | 0.01346 | 0.68 / 0.66 / 0.67 | 0.93 / 0.87 / 0.90 | 43 |
+| gaussian_peaks | uniform | GP tree + global GP | 0.0135 | 0.0112 | 0.01126 | 0.68 / 0.67 / 0.68 | 0.87 / 0.86 / 0.86 | 300 |
+| gaussian_peaks | uniform | neural-linear | **0.0074** | **0.0035** | **0.00344** | 0.72 / 0.69 / 0.70 | 1.36 / 0.95 / 0.98 | 68 |
+| gaussian_peaks | uniform | hybrid | 0.0120 | 0.0072 | 0.00726 | 0.66 / 0.68 / 0.68 | 0.84 / 0.90 / 0.90 | 77 |
+| gaussian_peaks | focusing | GP tree | 0.0074 | 0.0232 | 0.00012 | 0.70 / 0.54 / 0.63 | 1.00 / 0.68 / 0.80 | 42 |
+| gaussian_peaks | focusing | GP tree + global GP | 0.0054 | 0.0169 | 0.00011 | 0.74 / 0.34 / 0.65 | 0.93 / 0.35 / 1.36 | 171 |
+| gaussian_peaks | focusing | neural-linear | **0.0040** | **0.0079** | **0.00006** | 0.76 / 0.41 / 0.68 | 1.43 / 1.62 / 14.34 | 67 |
+| gaussian_peaks | focusing | hybrid | 0.0059 | 0.0101 | **0.00006** | 0.70 / 0.21 / 0.60 | 1.01 / 0.20 / 0.62 | 75 |
+| gaussian_peaks | sweeping | GP tree | 0.0264 | 0.0807 | 0.01174 | 0.65 / 0.50 / 0.77 | 0.75 / 0.74 / 1.14 | 35 |
+| gaussian_peaks | sweeping | GP tree + global GP | **0.0130** | **0.0423** | **0.00773** | 0.67 / 0.42 / 0.73 | 0.78 / 0.43 / 0.94 | 386 |
+| gaussian_peaks | sweeping | neural-linear | 0.0151 | 0.0707 | 0.01662 | 0.74 / 0.84 / 0.79 | 2.41 / 4.14 / 1.66 | 63 |
+| gaussian_peaks | sweeping | hybrid | 0.0192 | 0.0551 | 0.00968 | 0.67 / 0.54 / 0.74 | 0.89 / 0.70 / 1.54 | 74 |
+| gaussian_peaks | walker | GP tree | 0.0111 | 0.1063 | 0.00391 | 0.68 / 0.20 / 0.78 | 0.86 / 0.26 / 0.95 | 41 |
+| gaussian_peaks | walker | GP tree + global GP | 0.0073 | 0.0624 | 0.00135 | 0.66 / 0.16 / 0.87 | 1.07 / 0.09 / 1.61 | 325 |
+| gaussian_peaks | walker | neural-linear | **0.0071** | **0.0328** | **0.00091** | 0.79 / 0.77 / 0.80 | 6.51 / 1.71 / 4.48 | 61 |
+| gaussian_peaks | walker | hybrid | 0.0079 | 0.0378 | 0.00180 | 0.66 / 0.20 / 0.87 | 1.12 / 0.11 / 1.45 | 73 |
+
+As ratios to the GP tree (mean of per-seed ratios), prequential / uniform /
+focus:
+
+| target | stream | GP tree + global GP | neural-linear | hybrid |
+|---|---|---|---|---|
+| rotated_rosenbrock | uniform | 0.70 / 0.71 / 0.69 | 0.22 / 0.17 / 0.17 | 0.34 / 0.28 / 0.28 |
+| rotated_rosenbrock | focusing | 0.75 / 0.59 / 1.12 | 0.46 / 0.27 / 0.50 | 0.63 / 0.25 / 0.33 |
+| rotated_rosenbrock | sweeping | 1.11 / 0.82 / 1.94 | 0.52 / 0.50 / 0.68 | 0.78 / 0.59 / 1.00 |
+| rotated_rosenbrock | walker | 0.78 / 0.82 / 0.47 | 0.55 / 0.51 / 0.15 | 0.78 / 0.62 / 0.47 |
+| gaussian_peaks | uniform | 0.81 / 0.81 / 0.84 | 0.44 / 0.25 / 0.26 | 0.71 / 0.52 / 0.54 |
+| gaussian_peaks | focusing | 0.74 / 0.73 / 0.87 | 0.54 / 0.34 / 0.44 | 0.79 / 0.43 / 0.46 |
+| gaussian_peaks | sweeping | 0.50 / 0.52 / 0.69 | 0.59 / 0.87 / 1.46 | 0.72 / 0.69 / 0.83 |
+| gaussian_peaks | walker | 0.65 / 0.59 / 0.36 | 0.63 / 0.31 / 0.24 | 0.71 / 0.36 / 0.45 |
+
+Reading:
+
+* **The network beats the additive global GP on 21 of 24 accuracy cells,
+  usually by a factor of two to four**, at a fifth of its run time (59 to 68 s
+  against 171 to 386 s). The additive GP's gain of 15 to 50% on these
+  non-additive targets is what its own record measured; the network, which
+  is not limited to low-order additive structure, gets 50 to 85%.
+* **The one cell the global GP wins is the end of the sweep on the Gaussian
+  peaks** (focus 0.0077 against the network's 0.0166 and the hybrid's
+  0.0097): its turnover rule refits it seven times along the sweep, so it
+  follows the front, where the network refits only at each doubling of the
+  count and lags. A refit cap on the network learner (`refit_cap`) is the
+  corresponding knob, not measured here.
+* **The hybrid and the global GP are the closest pair in design** (both GP
+  leaves on a global model's residual) and the hybrid is better on 20 of 24
+  cells at a quarter of the run time, since a network fit costs seconds
+  where an additive GP fit on 500 points costs tens of seconds and scales
+  cubically.
+* **Sigma off the stream**: the global GP's is the GP tree's (coverage 0.16
+  to 0.42 cube-wide on the moving streams, as its record notes), the hybrid's
+  likewise; only the neural-linear tree's floor lifts it (0.41 to 0.89).
+
 ## 2. Cost scaling on a 100 000-point stream
 
 `examples/benchmark_neural_linear_scaling.py`: `GaussianPeaks` in six
