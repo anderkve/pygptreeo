@@ -357,6 +357,62 @@ refit and feature-pass constants but not the scaling. The burst run's last
 window shows a maximum of 69 ms because no refit fell in it (the next would
 have been at 128 000 points).
 
+## 3. Point-by-point comparison figures
+
+`examples/compare_tree_vs_neural.py` streams the same 40 000 points through
+both trees, predicting every point before giving it to the tree, and draws
+the package's usual performance figure with both overlaid, per batch of 2000
+points: prediction time, update time (mean and maximum in the batch), NRMSE,
+the fraction of predictions within 1 to 16% of the true value, the empirical
+1-sigma coverage, and the number of leaves. Same settings as section 1
+(`Nbar = 100`, retrain every 25 points, gradual splitting, calibrated sigma;
+the neural-linear tree with refits spread over the stream at 8 steps per
+update and the floor of §1.1). One process per configuration, one seed. The
+figures are `results/compare_tree_vs_neural/*_compare.png`, the per-batch
+numbers behind them `*_batches.csv`.
+
+Mean over the last five batches (the last 10 000 points), with the largest
+single update time after the first batch:
+
+| run | config | predict ms | update ms (max) | NRMSE | within 1% | within 4% | coverage |
+|---|---|---|---|---|---|---|---|
+| eggholder, d = 3, uniform | GP tree | 0.94 | 4.09 (284) | **0.040** | **0.41** | **0.73** | 0.68 |
+| | neural-linear | 0.84 | 1.88 (76) | 0.067 | 0.17 | 0.47 | 0.78 |
+| rotated_rosenbrock, d = 6, uniform | GP tree | 0.89 | 4.40 (679) | 0.0045 | 0.30 | 0.69 | 0.67 |
+| | neural-linear | 0.81 | 1.85 (110) | **0.0006** | **0.85** | **0.98** | 0.75 |
+| gaussian_peaks, d = 10, uniform | GP tree | 0.91 | 5.44 (659) | 0.038 | 0.09 | 0.35 | 0.67 |
+| | neural-linear | 0.77 | 1.70 (85) | **0.0037** | **0.79** | **0.99** | 0.75 |
+| gaussian_peaks, d = 6, walker | GP tree | 0.92 | 4.74 (522) | 0.015 | 0.53 | 0.89 | 0.68 |
+| | neural-linear | 0.77 | 1.77 (85) | **0.0034** | **0.92** | **1.00** | 0.74 |
+
+Reading:
+
+* **The dimension decides the winner.** On the 3D Eggholder, a rough and
+  strongly oscillatory target, the GP tree is better throughout: a local
+  Matern kernel is the right prior for it, and a 3 x 128 network learns its
+  ripples more slowly than the leaves do. From six dimensions on the
+  neural-linear tree is 4.5 to 10 times more accurate, and the fraction of
+  predictions within 1% goes from 0.09 to 0.79 on the 10D peaks and from
+  0.30 to 0.85 on the 6D rotated Rosenbrock. On the walker stream, the one
+  closest to an optimiser's, the gap is a factor 4.5 with 92% of predictions
+  within 1%.
+* **Time per point is lower for the neural-linear tree on every run**, both
+  for prediction (0.8 against 0.9 ms) and for the update (1.7 to 1.9 against
+  4.1 to 5.4 ms on average, with a batch maximum of 76 to 110 ms against
+  284 to 679 ms for the GP tree's hyperparameter fits). The one cost it has
+  that the GP tree lacks is visible in the prediction-time panel: in the
+  batch where a network refit is published (at each doubling of the count),
+  every leaf re-solves its regression on first use, and the batch mean
+  rises to 2 to 4 times its usual value, then returns. The refits' training
+  itself is in the update time, spread at 8 steps per update.
+* **Coverage.** The GP tree sits on 0.68 throughout. The neural-linear tree
+  sits at 0.74 to 0.78: conservative, which is the floor of §1.1 at work
+  (its leave-one-out error exceeds the calibrated sigma on part of the
+  stream); on the Eggholder, where leave-one-out residuals of a rough target
+  are large, it is most conservative.
+* **Leaf counts are the same** (570 to 590 at 40 000 points), as they must
+  be: the tree grows by `Nbar`, not by the leaf model.
+
 ## Reproduce
 
 ```bash
