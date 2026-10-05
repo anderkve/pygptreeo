@@ -27,7 +27,9 @@ and calibrated sigma. Streams: ``uniform`` (the default), ``focusing``,
 (see ``KERNELS``); the default ``matern15`` is what ``Default_GPR`` builds. A
 non-default kernel is recorded as ``<config>_<kernel>``, and ``--plot --kernels``
 draws the hybrid's kernel variants against each other instead of the four
-configurations.
+configurations. ``--Nbar``, ``--retrain`` and ``--splitting`` set the tree
+structure (defaults 100, 25, gradual; a non-default value is appended to the
+record name), and ``--plot --settings --config <c>`` overlays those variants.
 """
 
 import argparse
@@ -69,8 +71,21 @@ def make_kernel(name, d):
     raise ValueError(name)
 
 
+SETTINGS_DEFAULT = dict(Nbar=100, retrain=25, splitting='gradual')
+
+
 def config_name(a):
-    return a.config if a.kernel == 'matern15' else f"{a.config}_{a.kernel}"
+    """The configuration's record name: the config, then every non-default setting."""
+    parts = [a.config]
+    if a.kernel != 'matern15':
+        parts.append(a.kernel)
+    if a.Nbar != SETTINGS_DEFAULT['Nbar']:
+        parts.append(f"Nbar{a.Nbar}")
+    if a.retrain != SETTINGS_DEFAULT['retrain']:
+        parts.append(f"retrain{a.retrain}")
+    if a.splitting != SETTINGS_DEFAULT['splitting']:
+        parts.append(a.splitting)
+    return '_'.join(parts)
 
 
 def tag(a):
@@ -89,7 +104,7 @@ def run(a):
     X, _ = make_stream(a.stream, target, a.d, a.N, rng)
     y = target(X.T); sig = np.maximum(1e-3 * np.abs(y), 1e-6)
     np.random.seed(a.seed)
-    common = dict(Nbar=100, theta=1e-4, retrain_every_n_points=25, splitting_strategy='gradual',
+    common = dict(Nbar=a.Nbar, theta=1e-4, retrain_every_n_points=a.retrain, splitting_strategy=a.splitting,
                   use_calibrated_sigma=True)
     leaf_kernel = None if a.kernel == 'matern15' else make_kernel(a.kernel, a.d)
     if a.config == 'tree':
@@ -149,7 +164,17 @@ def plot(a):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    if a.kernels:
+    if a.settings:
+        # the tree-structure settings, one base configuration (--config)
+        variants = [('', 'Nbar 100, retrain 25, gradual (default)'), ('_Nbar50', 'Nbar 50'), ('_Nbar200', 'Nbar 200'),
+                    ('_Nbar400', 'Nbar 400'), ('_retrain5', 'retrain every 5'), ('_retrain100', 'retrain every 100'),
+                    ('_standard', 'standard splitting')]
+        cfgs = [a.config + v for v, _ in variants]
+        palette = ('black', 'tab:blue', 'tab:cyan', 'tab:purple', 'tab:red', 'tab:orange', 'tab:green')
+        style = {c: dict(color=col, ls='-') for c, col in zip(cfgs, palette)}
+        name = {c: f"{a.config}, {lab}" for c, (_, lab) in zip(cfgs, variants)}
+        title = f"{a.config}: Nbar, retrain frequency, splitting"; suffix = f"{a.config}_settings"
+    elif a.kernels:
         cfgs = ['hybrid'] + [f"hybrid_{k}" for k in KERNELS if k != 'matern15']
         colors = dict(zip(cfgs, ('tab:green', 'tab:blue', 'tab:red', 'tab:orange', 'tab:purple', 'tab:brown')))
         style = {c: dict(color=colors[c], ls='-') for c in cfgs}
@@ -204,7 +229,8 @@ def plot(a):
     frames = []
     for cfg, m in runs.items():
         df = pd.DataFrame({k: v for k, v in m.items()}); df.insert(0, 'config', cfg); frames.append(df)
-    pd.concat(frames).to_csv(os.path.join(RESULTS_DIR, f"{tag(a)}_{'kernel_' if a.kernels else ''}batches.csv"),
+    prefix = f"{a.config}_settings_" if a.settings else ('kernel_' if a.kernels else '')
+    pd.concat(frames).to_csv(os.path.join(RESULTS_DIR, f"{tag(a)}_{prefix}batches.csv"),
                              index=False, float_format='%.6g')
     # a compact summary of the last batch
     for cfg, m in runs.items():
@@ -222,6 +248,10 @@ def main():
     ap.add_argument('--kernel', default='matern15', choices=KERNELS, help='leaf kernel of tree and hybrid')
     ap.add_argument('--plot', action='store_true', help='draw the figure from the CSV files of both configurations')
     ap.add_argument('--kernels', action='store_true', help="with --plot: the hybrid's kernel variants")
+    ap.add_argument('--Nbar', type=int, default=SETTINGS_DEFAULT['Nbar'])
+    ap.add_argument('--retrain', type=int, default=SETTINGS_DEFAULT['retrain'], help='retrain_every_n_points')
+    ap.add_argument('--splitting', default=SETTINGS_DEFAULT['splitting'], choices=('gradual', 'standard'))
+    ap.add_argument('--settings', action='store_true', help="with --plot: the Nbar/retrain/splitting variants of --config")
     a = ap.parse_args()
     if a.plot:
         plot(a)
