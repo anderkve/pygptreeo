@@ -623,6 +623,81 @@ eight times the refit time and gave an unstable tree whose cause was not
 established. Fourier input features, the usual remedy for an MLP's slowness
 on high frequencies, did not help at these settings.
 
+### 3.2 The hybrid's leaf kernel
+
+The same four 40 000-point runs, the hybrid with six leaf kernels on the
+network's residual (`--config hybrid --kernel ...`): ARD Matern 1/2, 3/2 (the
+`Default_GPR` kernel, the `hybrid` rows of the table above), 5/2 and RBF, the
+anisotropic rational quadratic (`AnisotropicRationalQuadratic`) and the
+additive + Matern 3/2 leaf kernel the README recommends for the plain tree
+(`AdditiveMaternKernel(d, order=2)`). Last 10 000 points; the figures are
+`results/compare_tree_vs_neural/*_kernels.png`, the per-batch values
+`*_kernel_batches.csv`.
+
+| run | leaf kernel | update ms (max) | NRMSE | within 1% | within 4% | coverage |
+|---|---|---|---|---|---|---|
+| eggholder, d = 3, uniform | Matern 1/2 | 4.89 (223) | 0.042 | 0.24 | 0.65 | 0.71 |
+| | **Matern 3/2** | 4.78 (270) | 0.039 | 0.38 | 0.73 | 0.71 |
+| | Matern 5/2 | 4.61 (278) | 0.042 | **0.41** | 0.73 | 0.71 |
+| | RBF | 4.05 (308) | 0.076 | 0.10 | 0.31 | 0.68 |
+| | rational quadratic | 13.45 (2115) | 0.043 | 0.38 | 0.70 | 0.71 |
+| | additive + Matern 3/2 | 16.31 (828) | **0.031** | **0.52** | **0.83** | 0.72 |
+| rotated_rosenbrock, d = 6, uniform | Matern 1/2 | 6.17 (384) | 0.0008 | 0.82 | 0.96 | 0.68 |
+| | **Matern 3/2** | 5.16 (358) | 0.0006 | 0.87 | 0.98 | 0.68 |
+| | Matern 5/2 | 5.34 (394) | **0.0005** | **0.89** | **0.98** | 0.69 |
+| | RBF | 4.44 (322) | 0.0006 | **0.89** | **0.98** | 0.68 |
+| | rational quadratic | 15.75 (2366) | 0.0006 | **0.89** | **0.98** | 0.68 |
+| | additive + Matern 3/2 | 34.29 (1831) | 0.0007 | 0.85 | 0.97 | 0.68 |
+| gaussian_peaks, d = 10, uniform | Matern 1/2 | 9.03 (528) | 0.0039 | 0.76 | 0.99 | 0.67 |
+| | **Matern 3/2** | 9.11 (465) | 0.0039 | 0.75 | 0.99 | 0.66 |
+| | Matern 5/2 | 9.39 (623) | 0.0040 | 0.74 | 0.99 | 0.66 |
+| | RBF | 7.31 (404) | 0.0039 | 0.74 | 0.99 | 0.66 |
+| | rational quadratic | 24.01 (8588) | **0.0038** | **0.77** | 0.99 | 0.67 |
+| | additive + Matern 3/2 | 34.97 (1966) | 0.0039 | 0.75 | 0.99 | 0.67 |
+| gaussian_peaks, d = 6, walker | Matern 1/2 | 6.25 (372) | 0.0032 | 0.92 | 1.00 | 0.69 |
+| | **Matern 3/2** | 5.46 (554) | 0.0030 | 0.93 | 1.00 | 0.70 |
+| | Matern 5/2 | 5.31 (603) | **0.0029** | 0.94 | 1.00 | 0.70 |
+| | RBF | 4.18 (338) | **0.0029** | 0.94 | 1.00 | 0.70 |
+| | rational quadratic | 14.80 (2447) | **0.0029** | **0.95** | 1.00 | 0.70 |
+| | additive + Matern 3/2 | 31.07 (1800) | 0.0031 | 0.93 | 1.00 | 0.70 |
+
+The prediction time is 1.1 ms for every kernel but the additive (1.2 to
+1.4 ms), the leaf counts are within 3% of each other, and the first 10 000
+points rank the same way as the last.
+
+* **On the smooth 6D and 10D targets the leaf kernel does not matter.** Matern
+  3/2, 5/2, RBF and the rational quadratic are within one batch's scatter of
+  each other on every metric; the network carries the fit and the residual the
+  leaves see is small and smooth. Matern 1/2 is 10 to 30% worse in NRMSE
+  there, the one consistent ranking.
+* **The rough Eggholder residual separates them.** RBF is twice as bad as
+  Matern 3/2 (within 1%: 0.10 against 0.38): the network leaves the target's
+  high-frequency structure in the residual, and an infinitely smooth prior with
+  one length scale per axis fits that poorly. Matern 1/2 is also behind 3/2,
+  and 5/2 is level with it (slightly higher NRMSE, slightly higher within-1%).
+  The additive kernel wins here by 20% in NRMSE and 14 points of within 1%
+  (0.031 and 0.52), the only kernel that beats the default anywhere: the 3D
+  Eggholder is a sum of terms in pairs of adjacent coordinates, which is the
+  structure the order-2 additive component represents exactly, and the plain
+  GP tree's own benchmarks show the same gain on such targets.
+* **The rational quadratic and the additive kernel cost 3 to 7 times the
+  update time** (13 to 35 ms per point against 4 to 9) and their refit spikes
+  are 2 to 9 s (rational quadratic, its alpha hyperparameter making the
+  per-leaf marginal-likelihood optimisation much harder) and 0.8 to 2 s
+  (additive, 55 interaction terms at 10D). Neither gains anything on the
+  targets without low-order structure, which is where the hybrid is meant to
+  be used.
+* **Coverage is 0.66 to 0.72 for every kernel**: the per-leaf calibration
+  absorbs the kernel's sigma scale.
+
+So Matern 3/2 stays the hybrid's default leaf kernel: it is the best or
+level-best on every run, at the lowest cost together with RBF, which fails on
+the rough residual. Matern 5/2 is an equally good default by these numbers.
+The additive kernel is the one to reach for when the target is known to have
+low-order additive structure, as for the plain tree, at three to seven times
+the update cost; the network does not remove that structure from the residual
+well enough to make the additive component redundant.
+
 ## Reproduce
 
 ```bash
@@ -633,6 +708,11 @@ for t in rotated_rosenbrock gaussian_peaks; do for s in 1 2 3; do
       > results/neural_linear_streams/${t}_seed${s}.jsonl
 done; done
 python benchmark_global_mean_streams.py --summarize results/neural_linear_streams/*.jsonl
+# the hybrid's leaf kernels (section 3.2), one process per run:
+for k in matern05 matern25 rbf rq additive; do
+  OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config hybrid --kernel $k
+done
+python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --kernels
 # the scaling study (one process per configuration, nothing else on the machine):
 for c in tree neural neural_amort8 neural_cov4000_amort8; do
   OMP_NUM_THREADS=1 python benchmark_neural_linear_scaling.py --target gaussian_peaks --stream walker \

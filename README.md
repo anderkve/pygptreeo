@@ -218,7 +218,11 @@ modelling the residual of its prediction (`GPTree(global_mean='net')`, or
 `global_mean=NetGlobalMean(...)` with the learner's keyword arguments). On
 40 000-point streams this hybrid matched the GP tree on a rough 3D target and
 the neural-linear tree on the 6D and 10D targets, at the GP leaf's update cost
-and with the GP's sigma (no floor away from the data).
+and with the GP's sigma (no floor away from the data). Its leaves keep the
+default Matérn 3/2 kernel: on those runs Matérn 5/2 was level with it, RBF
+failed on the rough residual of the 3D target, and the additive kernel gained
+only where the target has low-order additive structure, at three to seven
+times the update cost (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.2).
 
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:
