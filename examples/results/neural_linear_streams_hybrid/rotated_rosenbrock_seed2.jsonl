@@ -1,3 +1,5 @@
 Created node 0
 RESULT {"target": "rotated_rosenbrock", "stream": "uniform", "config": "hybrid", "seed": 2, "d": 6, "N": 4000, "calibrated": true, "prequential_nrmse": 0.0038654822041212515, "uniform_nrmse": 0.002272078224203476, "focus_nrmse": 0.0019219501526629489, "coverage_prequential": 0.6754649070185963, "coverage_uniform": 0.647, "coverage_focus": 0.638, "sigma_over_rmse_prequential": 0.602095739490942, "sigma_over_rmse_uniform": 0.4611274504449124, "sigma_over_rmse_focus": 0.5483995784840935, "leaves": 62, "seconds": 79.5, "refits": 3, "fit_seconds": 31.6}
 Created node 0
+RESULT {"target": "rotated_rosenbrock", "stream": "focusing", "config": "hybrid", "seed": 2, "d": 6, "N": 4000, "calibrated": true, "prequential_nrmse": 0.005779295264623333, "uniform_nrmse": 0.007797750920191726, "focus_nrmse": 1.0278511217672526e-05, "coverage_prequential": 0.73125374925015, "coverage_uniform": 0.11666666666666667, "coverage_focus": 0.684, "sigma_over_rmse_prequential": 0.7701863715893652, "sigma_over_rmse_uniform": 0.08813201759739547, "sigma_over_rmse_focus": 1.293308583612003, "leaves": 61, "seconds": 71.6, "refits": 3, "fit_seconds": 27.0}
+Created node 0
