@@ -1,1 +1,3 @@
 Created node 0
+RESULT {"target": "gaussian_peaks", "stream": "uniform", "config": "neural", "seed": 1, "d": 6, "N": 4000, "calibrated": true, "prequential_nrmse": 0.007162624594961185, "uniform_nrmse": 0.0029815801469169688, "focus_nrmse": 0.0030163451279246025, "coverage_prequential": 0.4943011397720456, "coverage_uniform": 0.5356666666666666, "coverage_focus": 0.5223333333333333, "sigma_over_rmse_prequential": 0.596478627102014, "sigma_over_rmse_uniform": 0.6287515422487322, "sigma_over_rmse_focus": 0.6081434572988712, "leaves": 58, "seconds": 64.8, "refits": 5, "fit_seconds": 48.4}
+Created node 0
