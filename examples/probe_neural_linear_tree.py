@@ -1,4 +1,6 @@
-"""Probe: a GPTree whose leaves are Bayesian linear regressions on the features
+"""Probe (superseded by pygptreeo.neural_linear, kept as the record behind the
+results in docs/neural_gptree_ideas.md section 5): a GPTree whose leaves are
+Bayesian linear regressions on the features
 of one shared network (a "neural-linear tree"), against the plain GP tree, on
 10D targets under uniform and focusing streams.
 

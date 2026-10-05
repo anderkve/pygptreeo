@@ -73,3 +73,7 @@ try:
     _GPYTORCH_AVAILABLE = True
 except ImportError:
     _GPYTORCH_AVAILABLE = False
+
+# Neural-linear leaves (one shared feature network + Bayesian linear regression per
+# leaf); the module imports without torch, the classes need it.
+from pygptreeo.neural_linear import FeatureNetLearner, NeuralLinearGPR, TORCH_AVAILABLE as _TORCH_AVAILABLE

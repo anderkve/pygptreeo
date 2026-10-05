@@ -200,6 +200,15 @@ class GPTree:
         # Tree-wide global model (None by default; shared by reference with every node)
         self.global_mean = make_global_mean(global_mean, **(global_mean_kwargs or {}))
 
+        # A backend with a tree-wide model (NeuralLinearGPR) sees the stream through
+        # observe_stream and needs raw inputs, so per-leaf standard scaling is off.
+        self._stream_observer = getattr(GPR, 'observe_stream', None)
+        requires_raw = getattr(GPR, 'requires_raw_inputs', None)
+        if requires_raw is not None and requires_raw():
+            if kwargs.get('use_standard_scaling', False):
+                raise ValueError(f"{type(GPR).__name__} needs raw inputs: use_standard_scaling must be False")
+            kwargs['use_standard_scaling'] = False
+
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
                           output_model=output_model, output_basis=self.output_basis,
@@ -260,6 +269,8 @@ class GPTree:
             self.output_basis.observe(np.asarray(y, dtype=float).reshape(-1), sigma)
         if self.global_mean is not None:
             self.global_mean.observe(x, y, sigma)
+        if self._stream_observer is not None:
+            self._stream_observer(x, y, sigma)
 
         # Find a leaf node for the new (x,y,sigma) point
         # - Start from the root node
@@ -608,16 +619,18 @@ class GPTree:
 
             ptilde = leaf.marg_prob(X_test)  # Shape: (n_test, 1)
 
-            # We can skip this leaf if its prediction contribute zero for all points in X_test
-            if np.all(ptilde == 0.0):
+            # A leaf predicts only at the points it can own, so the work per leaf is
+            # its share of X_test and the total does not grow with the number of leaves.
+            mask = ptilde[:, 0] > 0.0
+            if not np.any(mask):
                 continue
 
-            mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
-            # mu_leaf and sigma_leaf have shape (n_test, n_outputs)
+            mu_leaf, sigma_leaf = leaf.predict(X_test[mask], return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+            # mu_leaf and sigma_leaf have shape (n_masked, n_outputs)
 
-            # Broadcast ptilde to match shape (n_test, n_outputs)
-            mean_DLGP += ptilde * mu_leaf
-            var_DLGP += ptilde * (sigma_leaf**2 + mu_leaf**2)
+            # Broadcast ptilde to match shape (n_masked, n_outputs)
+            mean_DLGP[mask] += ptilde[mask] * mu_leaf
+            var_DLGP[mask] += ptilde[mask] * (sigma_leaf**2 + mu_leaf**2)
 
         var_DLGP += -mean_DLGP**2
 

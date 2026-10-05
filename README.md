@@ -182,6 +182,33 @@ several times the run time. `examples/BENCHMARK_RESULTS_global_mean_streams.md` 
 measurements under uniform, focusing, sweeping and random-walk input streams. Leave
 `global_mean=None` (the default) to run the tree exactly as before.
 
+## Neural-linear leaves (opt-in, needs PyTorch)
+
+For targets of many inputs the leaf GPs run out of points: a hundred-point leaf
+cannot fit a function of ten inputs and eleven kernel hyperparameters. The
+neural-linear backend shares what is global across the whole tree and keeps what
+is local in the leaves: one tree-wide feature network is trained on the stream
+(at a fixed cost per refit, refit when the point count has doubled), and every
+leaf is a Bayesian linear regression on the network's features of the residual
+of the network's own prediction. The leaf fit is a closed form on at most `Nbar`
+points, the sigma is the posterior sigma of that regression, and the rest of the
+tree (splitting, overlap, per-leaf calibration) is unchanged:
+
+```python
+from pygptreeo import GPTree, NeuralLinearGPR, FeatureNetLearner
+
+learner = FeatureNetLearner(steps_per_update=8)       # refits spread over the stream, no latency spikes
+gpt = GPTree(GPR=NeuralLinearGPR(learner), Nbar=100)  # per-leaf standard scaling is switched off for it
+```
+
+`FeatureNetLearner(reservoir_size=4000)` bounds the training sample (and memory)
+for very long streams; `steps_per_update=None` runs each refit in one go
+instead. On the 6D stream benchmark it has a quarter to a half of the plain
+tree's error with calibrated sigma on the stream, but its sigma *away* from the
+stream is overconfident (worse than the plain tree's): see
+`examples/BENCHMARK_RESULTS_neural_linear.md` before relying on it there.
+`docs/neural_gptree_ideas.md` has the design and the alternatives considered.
+
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:
 

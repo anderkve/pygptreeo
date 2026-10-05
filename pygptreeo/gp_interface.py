@@ -173,6 +173,21 @@ class GPRegressorInterface(ABC):
         """
         return False
 
+    def observe_stream(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray) -> None:
+        """Optional: see every observation the tree receives, before it is routed to
+        a leaf. ``GPTree.update_tree`` calls this on its template backend, so a
+        backend that keeps a tree-wide model (e.g. ``NeuralLinearGPR``'s feature
+        network) can train it on the whole stream. Backends default to a no-op.
+        """
+        return None
+
+    def requires_raw_inputs(self) -> bool:
+        """Whether the backend must see inputs in their original units (True for a
+        backend with a tree-wide model, which standardises inputs itself). ``GPTree``
+        then switches per-leaf standard scaling off. Backends default to False.
+        """
+        return False
+
     def get_length_scales(self, n_features: int) -> Optional[np.ndarray]:
         """Return the fitted per-dimension ARD length scales, or None.
 
