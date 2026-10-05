@@ -210,6 +210,67 @@ Reading:
   time; the leaf work itself is less than the GP leaves'. Section 2 measures
   how this behaves on a stream 25 times longer.
 
+### 1.2 The hybrid: GP leaves on the network's residual
+
+`GPTree(global_mean='net')` (`NetGlobalMean` in `pygptreeo/neural_linear.py`):
+the same feature network as the tree-wide global model, the leaves keep their
+ARD Matern GPs and model the residual of the network's head, with the global
+model's refresh rule (a leaf refits against the newest network version on
+first use) and its stream-wide error budget added to the sigma. No distance
+floor: the leaf sigma is the GP's. Same benchmark, 3 seeds; the `hybrid`
+configuration of `benchmark_global_mean_streams.py`, network refits spread
+over the stream as for the neural-linear tree.
+
+| target | stream | config | prequential NRMSE | uniform-test NRMSE | focus-test NRMSE | coverage prequential / uniform / focus (target 0.68) | sigma/RMSE prequential / uniform / focus | time [s] |
+|---|---|---|---|---|---|---|---|---|
+| rotated_rosenbrock | uniform | GP tree | 0.0155 | 0.0109 | 0.01098 | 0.67 / 0.67 / 0.67 | 0.67 / 0.66 / 0.66 | 48 |
+| rotated_rosenbrock | uniform | neural-linear | **0.0034** | **0.0018** | **0.00188** | 0.74 / 0.75 / 0.74 | 1.62 / 1.13 / 1.11 | 66 |
+| rotated_rosenbrock | uniform | hybrid | 0.0053 | 0.0030 | 0.00316 | 0.67 / 0.62 / 0.62 | 0.63 / 0.45 / 0.45 | 78 |
+| rotated_rosenbrock | focusing | GP tree | 0.0069 | 0.0301 | 0.00004 | 0.69 / 0.33 / 0.60 | 0.87 / 0.32 / 1.02 | 38 |
+| rotated_rosenbrock | focusing | neural-linear | **0.0032** | 0.0080 | 0.00002 | 0.77 / 0.48 / 0.72 | 1.68 / 1.15 / 17.76 | 65 |
+| rotated_rosenbrock | focusing | hybrid | 0.0044 | **0.0075** | **0.00001** | 0.72 / 0.11 / 0.62 | 0.79 / 0.07 / 0.70 | 74 |
+| rotated_rosenbrock | sweeping | GP tree | 0.0060 | 0.0647 | 0.00530 | 0.66 / 0.39 / 0.68 | 0.73 / 0.26 / 0.47 | 42 |
+| rotated_rosenbrock | sweeping | neural-linear | **0.0031** | **0.0327** | **0.00368** | 0.74 / 0.89 / 0.75 | 7.35 / 2.54 / 2.25 | 65 |
+| rotated_rosenbrock | sweeping | hybrid | 0.0046 | 0.0381 | 0.00513 | 0.67 / 0.48 / 0.78 | 0.66 / 0.23 / 0.63 | 75 |
+| rotated_rosenbrock | walker | GP tree | 0.0062 | 0.0923 | 0.00241 | 0.65 / 0.28 / 0.78 | 0.81 / 0.13 / 1.00 | 35 |
+| rotated_rosenbrock | walker | neural-linear | **0.0034** | **0.0474** | **0.00035** | 0.85 / 0.62 / 0.82 | 7.62 / 0.35 / 7.27 | 59 |
+| rotated_rosenbrock | walker | hybrid | 0.0049 | 0.0576 | 0.00113 | 0.67 / 0.27 / 0.89 | 0.91 / 0.05 / 1.79 | 73 |
+| gaussian_peaks | uniform | GP tree | 0.0168 | 0.0139 | 0.01346 | 0.68 / 0.66 / 0.67 | 0.93 / 0.87 / 0.90 | 48 |
+| gaussian_peaks | uniform | neural-linear | **0.0074** | **0.0035** | **0.00344** | 0.72 / 0.69 / 0.70 | 1.36 / 0.95 / 0.98 | 68 |
+| gaussian_peaks | uniform | hybrid | 0.0120 | 0.0072 | 0.00726 | 0.66 / 0.68 / 0.68 | 0.84 / 0.90 / 0.90 | 77 |
+| gaussian_peaks | focusing | GP tree | 0.0074 | 0.0232 | 0.00012 | 0.70 / 0.54 / 0.63 | 1.00 / 0.68 / 0.80 | 37 |
+| gaussian_peaks | focusing | neural-linear | **0.0040** | **0.0079** | **0.00006** | 0.76 / 0.41 / 0.68 | 1.43 / 1.62 / 14.34 | 67 |
+| gaussian_peaks | focusing | hybrid | 0.0059 | 0.0101 | **0.00006** | 0.70 / 0.21 / 0.60 | 1.01 / 0.20 / 0.62 | 75 |
+| gaussian_peaks | sweeping | GP tree | 0.0264 | 0.0807 | 0.01174 | 0.65 / 0.50 / 0.77 | 0.75 / 0.74 / 1.14 | 41 |
+| gaussian_peaks | sweeping | neural-linear | **0.0151** | 0.0707 | 0.01662 | 0.74 / 0.84 / 0.79 | 2.41 / 4.14 / 1.66 | 63 |
+| gaussian_peaks | sweeping | hybrid | 0.0192 | **0.0551** | **0.00968** | 0.67 / 0.54 / 0.74 | 0.89 / 0.70 / 1.54 | 74 |
+| gaussian_peaks | walker | GP tree | 0.0111 | 0.1063 | 0.00391 | 0.68 / 0.20 / 0.78 | 0.86 / 0.26 / 0.95 | 35 |
+| gaussian_peaks | walker | neural-linear | **0.0071** | **0.0328** | **0.00091** | 0.79 / 0.77 / 0.80 | 6.51 / 1.71 / 4.48 | 61 |
+| gaussian_peaks | walker | hybrid | 0.0079 | 0.0378 | 0.00180 | 0.66 / 0.20 / 0.87 | 1.12 / 0.11 / 1.45 | 73 |
+
+Reading:
+
+* **On these smooth 6D targets the hybrid sits between the two**: 1.3 to 3
+  times better than the GP tree and 1.1 to 2 times behind the neural-linear
+  tree on 19 of 24 accuracy cells. The GP leaves on the residual recover less
+  than the linear leaves on the features: a hundred-point Matern GP in six
+  dimensions is still a weak local model, residual or not, where a linear
+  re-weighting of good features is strong.
+* **Where the hybrid wins is where the network lags**: the end of the sweep on
+  the Gaussian peaks (focus 0.0097 against the neural-linear tree's 0.0166
+  and the GP tree's 0.0117, cube-wide 0.055 against 0.071 and 0.081), and the
+  focus region of the focusing streams (level or better). There the network's
+  snapshot is stale relative to the front of the stream, and a kernel leaf
+  corrects it where a linear leaf on its features does not.
+* **Its sigma behaves like the GP tree's**: on-stream coverage 0.66 to 0.72
+  (the per-leaf calibration of the GP sigma plus the stream-wide budget),
+  off-stream 0.11 to 0.54, as poor as the GP tree's or worse, since it has
+  neither the network's floor nor anything else that grows away from the
+  data. The floor of §1.1 is a property of the neural-linear leaf and does
+  not transfer.
+* **It is the slowest of the three** (73 to 78 s against 35 to 48 and 59 to
+  68): it pays the GP leaf's fits and the network's refits.
+
 ## 2. Cost scaling on a 100 000-point stream
 
 `examples/benchmark_neural_linear_scaling.py`: `GaussianPeaks` in six
