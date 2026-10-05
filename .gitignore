@@ -177,3 +177,6 @@ plot.png
 
 # Run outputs
 runs/
+
+# stderr logs of benchmark runs
+examples/results/**/*.err
