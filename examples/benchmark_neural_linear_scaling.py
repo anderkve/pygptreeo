@@ -118,14 +118,44 @@ def run_one(target_name, stream, config, seed, d, N, nbar, checkpoints):
     return out
 
 
+def summarize(paths):
+    """Markdown tables, one per (target, stream, config), from RESULT lines in the files."""
+    rows = []
+    for path in paths:
+        for line in open(path):
+            if line.startswith('RESULT '):
+                rows.append(json.loads(line[len('RESULT '):]))
+    keys = sorted({(r['target'], r['stream'], r['config']) for r in rows})
+    out = []
+    for key in keys:
+        rs = sorted([r for r in rows if (r['target'], r['stream'], r['config']) == key], key=lambda r: r['n_points'])
+        out.append(f"**{key[2]}** ({key[0]}, {key[1]} stream, d = {rs[0]['d']})\n")
+        neural = 'refits' in rs[0]
+        out.append("| points | update ms: mean / p99 / max | predict ms per point: single / batch | window prequential NRMSE | test NRMSE | leaves |"
+                   + (" refits | fit s | sample | leaf solves |" if neural else "") + " elapsed s |")
+        out.append("|---|---|---|---|---|---|" + ("---|---|---|---|" if neural else "") + "---|")
+        for r in rs:
+            line = (f"| {r['n_points']} | {r['update_ms_mean']:.2f} / {r['update_ms_p99']:.1f} / {r['update_ms_max']:.0f} | "
+                    f"{r['predict_point_ms_mean']:.2f} / {r['predict_batch_ms_per_point']:.2f} | {r['window_prequential_nrmse']:.4f} | "
+                    f"{r['test_nrmse']:.4f} | {r['leaves']} |")
+            if neural:
+                line += f" {r['refits']} | {r['fit_seconds']} | {r['sample_size']} | {r['leaf_solves']} |"
+            out.append(line + f" {r['elapsed_s']} |")
+        out.append("")
+    print("\n".join(out))
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('--summarize', nargs='*', metavar='FILE', help='aggregate RESULT lines from files into tables')
     ap.add_argument('--target', default='gaussian_peaks'); ap.add_argument('--stream', default='walker')
     ap.add_argument('--configs', default='tree,neural,neural_cov4000'); ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--d', type=int, default=6); ap.add_argument('--N', type=int, default=100000)
     ap.add_argument('--nbar', type=int, default=100)
     ap.add_argument('--checkpoints', default=None, help='comma-separated; default 1000,2000,4000,... up to N')
     a = ap.parse_args()
+    if a.summarize is not None:
+        summarize(a.summarize); return
     if a.checkpoints:
         cps = [int(c) for c in a.checkpoints.split(',')]
     else:
