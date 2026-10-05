@@ -142,6 +142,12 @@ def plot(a):
     out = os.path.join(RESULTS_DIR, f"{tag(a)}_compare.png")
     plt.savefig(out, dpi=150)
     print(f"figure saved to {out}")
+    # the per-batch metrics of both configurations, the record kept in the repository
+    import pandas as pd
+    frames = []
+    for cfg, m in runs.items():
+        df = pd.DataFrame({k: v for k, v in m.items()}); df.insert(0, 'config', cfg); frames.append(df)
+    pd.concat(frames).to_csv(os.path.join(RESULTS_DIR, f"{tag(a)}_batches.csv"), index=False, float_format='%.6g')
     # a compact summary of the last batch
     for cfg, m in runs.items():
         print(f"{cfg:7s} last batch: predict {1e3 * m['predict_time'][-1]:.2f} ms, update {1e3 * m['update_time'][-1]:.2f} ms "

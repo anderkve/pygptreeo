@@ -182,3 +182,7 @@ runs/
 examples/results/**/*.err
 examples/results/compare_tree_vs_neural/log_*.txt
 examples/results/compare_tree_vs_neural/*_N4000_*
+examples/results/compare_tree_vs_neural/*_tree.csv
+examples/results/compare_tree_vs_neural/*_neural.csv
+!examples/results/compare_tree_vs_neural/*_compare.png
+!examples/results/compare_tree_vs_neural/*_batches.csv
