@@ -519,20 +519,30 @@ single update time after the first batch:
 | run | config | predict ms | update ms (max) | NRMSE | within 1% | within 4% | coverage |
 |---|---|---|---|---|---|---|---|
 | eggholder, d = 3, uniform | GP tree | 0.94 | 4.09 (284) | 0.040 | **0.41** | **0.73** | 0.68 |
+| | GP tree + additive global GP | 1.27 | 5.38 (26 820) | **0.039** | 0.36 | 0.72 | 0.71 |
 | | neural-linear | 0.84 | 1.88 (76) | 0.067 | 0.17 | 0.47 | 0.78 |
 | | hybrid | 1.13 | 4.78 (295) | **0.039** | 0.38 | **0.73** | 0.71 |
 | rotated_rosenbrock, d = 6, uniform | GP tree | 0.89 | 4.40 (679) | 0.0045 | 0.30 | 0.69 | 0.67 |
+| | GP tree + additive global GP | 1.33 | 6.53 (24 750) | 0.0029 | 0.40 | 0.80 | 0.69 |
 | | neural-linear | 0.81 | 1.85 (110) | **0.0006** | 0.85 | **0.98** | 0.75 |
 | | hybrid | 1.12 | 5.16 (442) | **0.0006** | **0.87** | **0.98** | 0.68 |
 | gaussian_peaks, d = 10, uniform | GP tree | 0.91 | 5.44 (659) | 0.038 | 0.09 | 0.35 | 0.67 |
+| | GP tree + additive global GP | 8.71 | 12.25 (76 340) | 0.031 | 0.12 | 0.42 | 0.68 |
 | | neural-linear | 0.77 | 1.70 (85) | **0.0037** | **0.79** | **0.99** | 0.75 |
 | | hybrid | 1.14 | 9.11 (562) | 0.0039 | 0.75 | **0.99** | 0.66 |
 | gaussian_peaks, d = 6, walker | GP tree | 0.92 | 4.74 (522) | 0.015 | 0.53 | 0.89 | 0.68 |
+| | GP tree + additive global GP | 6.98 | 6.40 (33 970) | 0.0090 | 0.66 | 0.95 | 0.71 |
 | | neural-linear | 0.77 | 1.77 (85) | 0.0034 | 0.92 | **1.00** | 0.74 |
 | | hybrid | 1.13 | 5.46 (554) | **0.0030** | **0.93** | **1.00** | 0.70 |
 
-The `hybrid` rows (GP leaves on the residual of the same network, §1.2) were
-added in a second pass; the figures overlay all three.
+The `hybrid` rows (GP leaves on the residual of the same network, §1.2) and
+the `GP tree + additive global GP` rows (`global_mean='additive_gp'` with the
+settings of §1.3) were added in later passes; the figures overlay all four.
+The global GP's maximum update time is one additive-GP refit on its 500-point
+reservoir inside one `update_tree` call: 25 to 34 s at 3 and 6 dimensions, 76 s
+at 10, where its order-2 kernel has 55 terms; its per-point prediction time
+also grows with the dimension (1.3 ms at 3 and 6, 7 to 9 ms at 10 and on the
+walker), since every prediction evaluates the global GP.
 
 Reading:
 
@@ -552,6 +562,15 @@ Reading:
 * **Its sigma is the GP's, calibrated on the stream and without the floor**:
   nominal here, where every point has neighbours, and as poor off-stream as
   the GP tree's (§1.2).
+* **The additive global GP gains 10 to 40% over the plain tree on these
+  streams** (level on the Eggholder, 0.0029 against 0.0045 on the rotated
+  Rosenbrock, 0.031 against 0.038 at 10D, 0.0090 against 0.015 on the walker)
+  where the network variants gain a factor of 4.5 to 10, and it is the only
+  configuration whose per-point cost grows with the dimension: 8.7 ms per
+  prediction at 10D against 0.8 to 1.1 for the others, and refit stalls of
+  25 to 76 s against the network's 76 to 110 ms maxima in the amortised mode.
+  Its structural limit is the same as in its own record: an order-2 additive
+  kernel can capture only the low-order part of a rotated target.
 
 * **The dimension decides the winner.** On the 3D Eggholder, a rough and
   strongly oscillatory target, the GP tree is better throughout: a local
