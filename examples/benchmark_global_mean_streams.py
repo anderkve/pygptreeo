@@ -353,6 +353,10 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
         model = GlobalMeanModel(d, seed, damping_scale=0.5)
     elif config == 'global_damped_wide':     # 2 x spacing: mild damping
         model = GlobalMeanModel(d, seed, damping_scale=2.0)
+    elif config == 'hybrid':
+        # GP leaves on the residual of the feature network's head (the network as global model)
+        from pygptreeo import NetGlobalMean
+        package_learner = NetGlobalMean(steps_per_update=8, random_state=seed)
     elif config not in ('tree', 'global_pkg', 'neural'):
         raise ValueError(config)
     _ACTIVE['model'] = model
@@ -405,7 +409,9 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
     }
     if neural_learner is not None:
         out.update(refits=neural_learner.n_refits, fit_seconds=round(neural_learner.fit_seconds, 1))
-    if package_learner is not None:
+    if config == 'hybrid':
+        out.update(refits=package_learner.learner.n_refits, fit_seconds=round(package_learner.learner.fit_seconds, 1))
+    elif package_learner is not None:
         out.update(refits=package_learner.n_refits, refits_skipped=package_learner.n_skipped,
                    snapshots_alive=len({l._fitted_global.version for l in gpt.root.leaves
                                         if getattr(l, '_fitted_global', None) is not None}))

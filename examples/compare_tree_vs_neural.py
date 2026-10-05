@@ -14,8 +14,9 @@ value, the empirical 1-sigma coverage, and the number of leaves.
     python examples/compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot
 
 Configurations: ``tree`` (``Default_GPR(n_restarts_optimizer=1)``, ARD Matern
-leaves) and ``neural`` (``NeuralLinearGPR`` on a ``FeatureNetLearner`` with
-refits spread over the stream, 8 Adam steps per update); both with
+leaves), ``neural`` (``NeuralLinearGPR`` on a ``FeatureNetLearner`` with
+refits spread over the stream, 8 Adam steps per update) and ``hybrid`` (the GP
+leaves on the residual of that network, ``global_mean=NetGlobalMean(...)``); all with
 ``Nbar = 100``, ``theta = 1e-4``, a retrain every 25 points, gradual splitting
 and calibrated sigma. Streams: ``uniform`` (the default), ``focusing``,
 ``sweeping`` and ``walker`` from ``benchmark_global_mean_streams.py``.
@@ -63,6 +64,10 @@ def run(a):
         gpt = GPTree(GPR=Default_GPR(n_restarts_optimizer=1), **common)
     elif a.config == 'neural':
         gpt = GPTree(GPR=NeuralLinearGPR(FeatureNetLearner(steps_per_update=8, random_state=a.seed)), **common)
+    elif a.config == 'hybrid':
+        from pygptreeo import NetGlobalMean
+        gpt = GPTree(GPR=Default_GPR(n_restarts_optimizer=1),
+                     global_mean=NetGlobalMean(steps_per_update=8, random_state=a.seed), **common)
     else:
         raise ValueError(a.config)
     os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -107,14 +112,15 @@ def plot(a):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     runs = {}
-    for cfg in ('tree', 'neural'):
+    for cfg in ('tree', 'neural', 'hybrid'):
         path = os.path.join(RESULTS_DIR, f"{tag(a)}_{cfg}.csv")
         if os.path.exists(path):
             runs[cfg] = batch_metrics(path)
     if not runs:
         sys.exit(f"no CSV files for {tag(a)} in {RESULTS_DIR}")
-    style = {'tree': dict(color='tab:blue', ls='-'), 'neural': dict(color='tab:red', ls='-')}
-    name = {'tree': 'GP tree', 'neural': 'neural-linear tree'}
+    style = {'tree': dict(color='tab:blue', ls='-'), 'neural': dict(color='tab:red', ls='-'),
+             'hybrid': dict(color='tab:green', ls='-')}
+    name = {'tree': 'GP tree', 'neural': 'neural-linear tree', 'hybrid': 'hybrid (GP leaves on network residual)'}
     fig, axs = plt.subplots(6, 1, figsize=(15, 19), sharex=True)
     fig.suptitle(f"PyGPTreeo performance metrics: GP tree vs neural-linear tree\n"
                  f"{a.target}, d = {a.d}, {a.stream} stream, {a.N} points, metrics per batch of {BATCH}", fontsize=16)
@@ -137,7 +143,7 @@ def plot(a):
     axs[4].axhline(0.68, ls='--', color='black', linewidth=2.0)
     axs[5].set_ylabel('Leaves'); axs[5].set_title('Number of leaves'); axs[5].set_xlabel('Total points processed')
     for ax in axs:
-        ax.set_xlim([0, a.N]); ax.grid(True); ax.legend(loc='upper left', ncol=2, fontsize=9)
+        ax.set_xlim([0, a.N]); ax.grid(True); ax.legend(loc='upper left', ncol=3, fontsize=8)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     out = os.path.join(RESULTS_DIR, f"{tag(a)}_compare.png")
     plt.savefig(out, dpi=150)

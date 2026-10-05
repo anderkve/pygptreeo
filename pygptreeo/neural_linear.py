@@ -18,6 +18,11 @@ the network rather than to a constant. The tree itself is unchanged.
   feature map, the output layer the *head* ``h(x)``. The learner also tracks the
   head's prequential error with the observation noise subtracted
   (``error_scale``), the budget a residual leaf adds to its sigma.
+* :class:`NetGlobalMean`: the same network as a tree-wide *global model*
+  (``GPTree(global_mean='net')`` or ``GPTree(global_mean=NetGlobalMean(...))``):
+  the leaves keep their GPs and model the residual of the network's head, with
+  the global model's refresh rule and error budget. The hybrid for targets whose
+  local structure a kernel describes better than the network's features.
 * :class:`NeuralLinearGPR`: a :class:`GPRegressorInterface` backend. ``fit``
   regresses ``y - h(X)`` (``residual=True``) or ``y`` on ``[phi(X), 1]`` with a
   Gaussian prior on the weights and per-point noise ``alpha + s2``; the prior
@@ -47,7 +52,7 @@ except ImportError:  # pragma: no cover
     TORCH_AVAILABLE = False
 
 from pygptreeo.gp_interface import GPRegressorInterface
-from pygptreeo.global_mean import CoverageReservoir
+from pygptreeo.global_mean import CoverageReservoir, GlobalMeanLearner, GlobalMeanSnapshot
 
 
 def _require_torch():
@@ -361,6 +366,53 @@ class FeatureNetLearner:
         return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, steps={self.steps}, "
                 f"reservoir_size={self.reservoir_size}, n_seen={self.n_seen}, n_refits={self.n_refits}, "
                 f"version={self.version})")
+
+
+class _NetSnapshot(GlobalMeanSnapshot):
+    """An immutable view of one published version of a feature network's head."""
+
+    def __init__(self, learner: FeatureNetLearner, version: int):
+        self.learner = learner; self.version = int(version); self.n_fit = learner.n_seen_at_fit
+        self.n_out = learner.n_outputs
+
+    @property
+    def n_outputs(self) -> int:
+        return self.n_out
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return self.learner.head(X)
+
+    def __repr__(self) -> str:
+        return f"_NetSnapshot(version={self.version}, n_fit={self.n_fit})"
+
+
+class NetGlobalMean(GlobalMeanLearner):
+    """A feature network as the tree's global model: GP leaves on the residual of its head.
+
+    Wraps a :class:`FeatureNetLearner` (constructed from the keyword arguments) as
+    a :class:`GlobalMeanLearner`. Each published network version is a new
+    snapshot, so leaves refit against it on first use, as with the additive GP;
+    ``error_scale`` is the learner's prequential error budget. The network's own
+    weights keep changing only inside a refit, which is published atomically, so
+    a snapshot's predictions are fixed until the next version.
+    """
+
+    def __init__(self, **learner_kwargs):
+        _require_torch()
+        self.learner = FeatureNetLearner(**learner_kwargs)
+        self.current = None
+        self.error_scale = None
+
+    def observe(self, x, y, sigma) -> bool:
+        self.learner.observe(x, y, sigma)
+        self.error_scale = self.learner.error_scale
+        if self.learner.fitted and (self.current is None or self.current.version != self.learner.version):
+            self.current = _NetSnapshot(self.learner, self.learner.version)
+            return True
+        return False
+
+    def __repr__(self) -> str:
+        return f"NetGlobalMean({self.learner!r})"
 
 
 LOO_K = 5            # fit points nearest the query whose leave-one-out residuals set the local floor

@@ -12,7 +12,7 @@ import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from pygptreeo.gptree import GPTree
-from pygptreeo.neural_linear import TORCH_AVAILABLE, FeatureNetLearner, NeuralLinearGPR, UniformReservoir
+from pygptreeo.neural_linear import TORCH_AVAILABLE, FeatureNetLearner, NeuralLinearGPR, NetGlobalMean, UniformReservoir
 
 warnings.filterwarnings("ignore")
 
@@ -230,6 +230,27 @@ class TestNeuralLinearGPR(unittest.TestCase):
         self.assertGreater(s_far[0, 0], 0.9 * learner.y_sd)   # far from every leaf's data: the function's scale
         _, s_near = gpt.predict(X[:20])
         self.assertTrue(np.all(s_near[:, 0] < learner.y_sd))
+
+    def test_hybrid_gp_leaves_on_the_network_residual(self):
+        from pygptreeo.default_gpr import Default_GPR
+        rng = np.random.RandomState(13)
+        N = 500
+        X = rng.rand(N, 3); Y = _target(X)[:, None]; S = np.full((N, 1), 1e-3)
+        gpt = GPTree(GPR=Default_GPR(), Nbar=60, retrain_every_n_points=20, use_calibrated_sigma=True,
+                     global_mean='net', global_mean_kwargs=dict(steps=300, min_points=60, random_state=0))
+        self.assertIsInstance(gpt.global_mean, NetGlobalMean)
+        self.assertTrue(gpt.root.use_standard_scaling)        # the leaves are ordinary GPs
+        _stream(gpt, X, Y, S)
+        gm = gpt.global_mean
+        self.assertGreaterEqual(gm.learner.n_refits, 2)
+        self.assertEqual(gm.current.version, gm.learner.version)
+        self.assertIsNotNone(gm.error_scale)
+        Xt = rng.rand(200, 3); yt = _target(Xt)
+        P, Sd = gpt.predict(Xt)
+        self.assertLess(np.sqrt(np.mean((P[:, 0] - yt) ** 2)) / (yt.max() - yt.min()), 0.05)
+        self.assertTrue(np.all(Sd > 0))
+        for leaf in gpt.root.leaves:                          # every leaf fitted against the current snapshot
+            self.assertEqual(leaf._fitted_global.version, gm.current.version)
 
 
 if __name__ == '__main__':

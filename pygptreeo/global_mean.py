@@ -302,5 +302,8 @@ def make_global_mean(spec: Union[None, str, GlobalMeanLearner], **kwargs) -> Opt
     if isinstance(spec, str):
         if spec == 'additive_gp':
             return AdditiveGPGlobalMean(**kwargs)
-        raise ValueError(f"Unknown global_mean '{spec}'. Use None, 'additive_gp' or a GlobalMeanLearner instance.")
+        if spec == 'net':
+            from pygptreeo.neural_linear import NetGlobalMean
+            return NetGlobalMean(**kwargs)
+        raise ValueError(f"Unknown global_mean '{spec}'. Use None, 'additive_gp', 'net' or a GlobalMeanLearner instance.")
     raise TypeError("global_mean must be None, a string or a GlobalMeanLearner instance")
