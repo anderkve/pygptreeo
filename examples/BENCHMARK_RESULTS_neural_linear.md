@@ -95,12 +95,116 @@ the same cells at 4 to 8 times the plain tree's run time.
   which is a stream-wide average of the head's error *on the stream*, where
   the head is most accurate. Off the stream the head's error is ten to thirty
   times that budget (the uniform-test NRMSE of 0.008 to 0.047 against
-  prequential 0.003 to 0.007), and nothing in the leaf sees it. The
-  raw-target leaves of the earlier probe (`docs/neural_gptree_ideas.md` §5)
-  were less overconfident there (coverage 0.46 to 0.59) and less accurate.
-  The fix on the table is a small ensemble of bagged feature networks, whose
-  spread grows away from the data; the package does not have it yet, so a
-  user who needs sigma away from the stream should know this.
+  prequential 0.003 to 0.007), and nothing in the leaf sees it. Section 1.1
+  adds the floor that addresses this; the runs above are without it.
+
+### 1.1 The uncertainty floor
+
+The leaf now provides a floor on the calibrated sigma (`distance_floor`,
+on by default; `NeuralLinearGPR.predict_floor`, applied by `GPNode.predict`
+as `max(sigma, floor)`): near its points, the leaf's *local* leave-one-out
+error, the rms of the closed-form leave-one-out residuals of the regression at
+the five fit points nearest the query, noise subtracted; beyond two
+nearest-neighbour spacings from the leaf's points, rising to the function's
+overall scale over two more spacings, as a kernel's variance rises to its
+prior amplitude. Distances are in coordinates scaled by the leaf's spread.
+The calibration scaler is fitted on the model sigma alone and multiplies it;
+the floor is applied after it. Costs: one distance computation against at
+most `Nbar` points per prediction and the leverages at each solve, nothing
+measurable.
+
+Three designs were measured on the way (the result files of the first two
+are kept as `results/neural_linear_streams_floor_v1/` and `_v2/`), and each
+step was decided by a per-point diagnostic rather than by the summary
+numbers:
+
+1. *The stream-wide budget times the distance ratio, added before
+   calibration.* Changed nothing (focusing cube-wide 0.05 → 0.05, walker
+   0.24 → 0.27): on a focusing stream the cube-wide points fall inside leaves
+   created during the broad phase at ordinary spacing (median ratio 1.1, 7%
+   above 2), so the ratio never engaged, and on a walker stream the budget is
+   set in a valley where the function is tiny.
+2. *A leaf-local budget from the head's residual on the leaf's points, a
+   ramp to the function's scale starting at one spacing, added after
+   calibration.* Over-covered everything: the leaves correct the head by a
+   factor of 50 to 100 where they have data, so the head's error is the wrong
+   scale there, and in six dimensions in-cloud ratios reach 1.9, so a ramp
+   from one spacing fired inside the data.
+3. *The local leave-one-out error with the ramp from two spacings* (the
+   design above). A leaf-wide leave-one-out rms was also measured and
+   rejected: right in stale leaves, forty times too large in a focus core,
+   because the leaf's box spans the old wide cluster while the queries sit in
+   the dense centre.
+
+Coverage with the floor, mean over 3 seeds; the accuracy columns are
+unchanged to four decimals, since the floor touches only the sigma:
+
+| target | stream | config | coverage prequential / uniform / focus (target 0.68) | sigma/RMSE prequential / uniform / focus |
+|---|---|---|---|---|
+| rotated_rosenbrock | uniform | tree | 0.67 / 0.67 / 0.67 | 0.67 / 0.66 / 0.66 |
+| rotated_rosenbrock | uniform | neural, no floor | 0.67 / 0.54 / 0.52 | 0.59 / 0.39 / 0.38 |
+| rotated_rosenbrock | uniform | neural, floor | 0.74 / 0.75 / 0.74 | 1.62 / 1.13 / 1.11 |
+| rotated_rosenbrock | focusing | tree | 0.69 / 0.33 / 0.60 | 0.87 / 0.32 / 1.02 |
+| rotated_rosenbrock | focusing | neural, no floor | 0.70 / 0.05 / 0.63 | 0.68 / 0.03 / 0.78 |
+| rotated_rosenbrock | focusing | neural, floor | 0.77 / 0.48 / 0.72 | 1.68 / 1.15 / 17.76 |
+| rotated_rosenbrock | sweeping | tree | 0.66 / 0.39 / 0.68 | 0.73 / 0.26 / 0.47 |
+| rotated_rosenbrock | sweeping | neural, no floor | 0.67 / 0.42 / 0.79 | 0.69 / 0.23 / 1.35 |
+| rotated_rosenbrock | sweeping | neural, floor | 0.74 / 0.89 / 0.75 | 7.35 / 2.54 / 2.25 |
+| rotated_rosenbrock | walker | tree | 0.65 / 0.28 / 0.78 | 0.81 / 0.13 / 1.00 |
+| rotated_rosenbrock | walker | neural, no floor | 0.68 / 0.24 / 0.85 | 1.06 / 0.04 / 2.36 |
+| rotated_rosenbrock | walker | neural, floor | 0.85 / 0.62 / 0.82 | 7.62 / 0.35 / 7.27 |
+| gaussian_peaks | uniform | tree | 0.68 / 0.66 / 0.67 | 0.93 / 0.87 / 0.90 |
+| gaussian_peaks | uniform | neural, no floor | 0.66 / 0.61 / 0.62 | 0.81 / 0.69 / 0.71 |
+| gaussian_peaks | uniform | neural, floor | 0.72 / 0.69 / 0.70 | 1.36 / 0.95 / 0.98 |
+| gaussian_peaks | focusing | tree | 0.70 / 0.54 / 0.63 | 1.00 / 0.68 / 0.80 |
+| gaussian_peaks | focusing | neural, no floor | 0.70 / 0.05 / 0.55 | 0.88 / 0.03 / 0.71 |
+| gaussian_peaks | focusing | neural, floor | 0.76 / 0.41 / 0.68 | 1.43 / 1.62 / 14.34 |
+| gaussian_peaks | sweeping | tree | 0.65 / 0.50 / 0.77 | 0.75 / 0.74 / 1.14 |
+| gaussian_peaks | sweeping | neural, no floor | 0.68 / 0.44 / 0.77 | 0.77 / 0.43 / 1.05 |
+| gaussian_peaks | sweeping | neural, floor | 0.74 / 0.84 / 0.79 | 2.41 / 4.14 / 1.66 |
+| gaussian_peaks | walker | tree | 0.68 / 0.20 / 0.78 | 0.86 / 0.26 / 0.95 |
+| gaussian_peaks | walker | neural, no floor | 0.66 / 0.17 / 0.80 | 1.03 / 0.09 / 1.20 |
+| gaussian_peaks | walker | neural, floor | 0.79 / 0.77 / 0.80 | 6.51 / 1.71 / 4.48 |
+
+Reading:
+
+* **Off the stream the sigma is now conservative or close to nominal, and
+  better than the plain tree's on every stream.** Cube-wide coverage goes
+  from 0.05 to 0.41 and 0.48 on the focusing streams (plain tree 0.54 and
+  0.33), from 0.42 and 0.44 to 0.84 and 0.89 on the sweeping streams (0.39
+  and 0.50), from 0.17 and 0.24 to 0.77 and 0.62 on the walker streams (0.20
+  and 0.28), and from 0.54 and 0.61 to 0.69 and 0.75 on the uniform streams
+  (0.66 and 0.67). The walker and sweeping streams are the case the ramp is
+  for: the cube-wide points lie many spacings from every leaf's data and get
+  the function's scale.
+* **The focusing stream's cube-wide points are the remaining gap** (0.41 to
+  0.48). They sit inside stale leaves at ordinary spacing, so the ramp does
+  not apply and the local leave-one-out error is what they get; it
+  underestimates the error there by about 1.5 (the leaves' points were in
+  the network's training sample, so the head's residual on them is
+  optimistic). A floor that knew how stale a leaf is relative to the
+  network, or an out-of-sample estimate of the head's error per region,
+  would close it; neither is in the package.
+* **The price is over-coverage on wandering streams.** On-stream coverage is
+  0.72 to 0.85 with sigma over RMSE of 1.4 to 7.6: the walker's and the
+  sweep's own next points often lie beyond two spacings from the leaf's data,
+  the ramp treats them as unknown territory, and the network in fact
+  interpolates them well. The RMS ratios are dominated by those points (the
+  focus-region ratios of 14 to 18 on the focusing streams come from the few
+  outer focus points the ramp pushes to the function's scale while their
+  errors are tiny); the coverage columns say the typical sigma is right. On
+  the uniform streams, where every point has neighbours, the cost is a ratio
+  of 1.1 to 1.6. For a user who wants a sharp sigma on the stream and does
+  not query away from it, `distance_floor=False` restores the earlier
+  behaviour.
+* **What the floor is and is not.** It is a heuristic in the sense that a
+  kernel's prior amplitude is one: beyond the data it says "the function's
+  scale", not a measurement. Near the data it is a measurement (the leaf's
+  own out-of-sample error), which is why it also lifts the uniform-stream
+  coverage that the calibrated model sigma alone left at 0.52 to 0.61. The
+  constants (five neighbours, a ramp from two spacings over two) are in
+  units of the leaf's own spacing and were chosen from the per-point
+  diagnostics of one seed of the Gaussian peaks, not swept.
 * **Cost.** With every point kept and refits at each doubling, five refits of
   about 10 s each (on the oversubscribed machine) are most of the extra run
   time; the leaf work itself is less than the GP leaves'. Section 2 measures

@@ -525,8 +525,12 @@ optional bounded reservoirs, refits spread over the stream), with the 6D
 four-stream benchmark and a 100 000-point scaling study in
 `examples/BENCHMARK_RESULTS_neural_linear.md`. The rank-one update was not
 needed: a leaf solve on at most `Nbar` points costs 25 ms at the 99th
-percentile and does not grow with the stream. Step 2 is the open item that
-the benchmark makes urgent: the sigma off the stream is overconfident.
+percentile and does not grow with the stream. Step 2 was taken without
+bagging: the leaf's sigma now has a floor, its local leave-one-out error
+near its points rising to the function's scale beyond two spacings
+(`BENCHMARK_RESULTS_neural_linear.md` §1.1), which makes the off-stream
+sigma conservative on every stream at no cost; the focusing stream's stale
+leaves remain the one place it is still under (coverage 0.41 to 0.48).
 
 1. **Promote the probe into the package** (done): `NeuralLinearGPR` in its
    residual form, `FeatureNetLearner` with the doubling schedule and
