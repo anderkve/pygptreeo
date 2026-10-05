@@ -166,11 +166,12 @@ def plot(a):
     import matplotlib.pyplot as plt
     if a.settings:
         # the tree-structure settings, one base configuration (--config)
-        variants = [('', 'Nbar 100, retrain 25, gradual (default)'), ('_Nbar50', 'Nbar 50'), ('_Nbar200', 'Nbar 200'),
-                    ('_Nbar400', 'Nbar 400'), ('_retrain5', 'retrain every 5'), ('_retrain100', 'retrain every 100'),
-                    ('_standard', 'standard splitting')]
+        # Nbar and the retrain interval paired for about equal retrain cost per point
+        variants = [('', 'Nbar 100, retrain 25, gradual (default)'), ('_Nbar50_retrain6', 'Nbar 50, retrain 6'),
+                    ('_Nbar200_retrain75', 'Nbar 200, retrain 75'), ('_Nbar400_retrain200', 'Nbar 400, retrain 200'),
+                    ('_standard', 'Nbar 100, retrain 25, standard splitting')]
         cfgs = [a.config + v for v, _ in variants]
-        palette = ('black', 'tab:blue', 'tab:cyan', 'tab:purple', 'tab:red', 'tab:orange', 'tab:green')
+        palette = ('black', 'tab:blue', 'tab:red', 'tab:orange', 'tab:green')
         style = {c: dict(color=col, ls='-') for c, col in zip(cfgs, palette)}
         name = {c: f"{a.config}, {lab}" for c, (_, lab) in zip(cfgs, variants)}
         title = f"{a.config}: Nbar, retrain frequency, splitting"; suffix = f"{a.config}_settings"
