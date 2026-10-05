@@ -698,6 +698,84 @@ low-order additive structure, as for the plain tree, at three to seven times
 the update cost; the network does not remove that structure from the residual
 well enough to make the additive component redundant.
 
+### 3.3 Nbar, the retrain interval and the splitting strategy
+
+Does the hybrid change what `Nbar`, `retrain_every_n_points` and
+`splitting_strategy` should be? Three of the 40 000-point runs, the plain tree
+and the hybrid, with `Nbar` and the retrain interval paired so that the
+average retrain cost per point is about equal (a leaf fit grows between
+quadratically and cubically with its size: medians of 27 ms at 50 points,
+100 ms at 100, 290 ms at 200, 0.7 s in 3D and 3.4 s in 6D at 400): small,
+frequently refitted leaves against large, rarely refitted ones. At Nbar 400
+a child receives only about 200 points of its own between its split and its
+next one, so retrain 200 fits it essentially at those two moments only. The
+fifth variant is standard splitting at the default pair. The realised update
+cost is in the table; the pairing came out equal within a factor of two in
+the mean, while the maxima differ by 10 to 40 times. Last 10 000 points;
+figures `*_tree_settings.png` and `*_hybrid_settings.png`, per-batch values
+`*_settings_batches.csv`.
+
+| run | Nbar / retrain / splitting | tree: update ms (max) | tree: NRMSE | tree: within 1% | hybrid: update ms (max) | hybrid: NRMSE | hybrid: within 1% |
+|---|---|---|---|---|---|---|---|
+| eggholder, d = 3, uniform | 50 / 6 / gradual | 6.86 (110) | 0.043 | 0.38 | 7.01 (114) | **0.039** | 0.36 |
+| | **100 / 25 / gradual** | 4.09 (239) | **0.040** | 0.41 | 4.78 (270) | **0.039** | **0.38** |
+| | 200 / 75 / gradual | 4.78 (1207) | 0.042 | **0.42** | 4.53 (595) | 0.040 | 0.37 |
+| | 400 / 200 / gradual | 1.81 (2371) | 0.059 | 0.32 | 1.71 (1445) | 0.046 | 0.34 |
+| | 100 / 25 / standard | 3.14 (219) | 0.041 | 0.40 | 3.94 (228) | **0.039** | 0.37 |
+| gaussian_peaks, d = 6, walker | 50 / 6 / gradual | 8.71 (232) | 0.020 | 0.33 | 9.31 (181) | 0.0031 | 0.92 |
+| | **100 / 25 / gradual** | 4.74 (401) | 0.015 | 0.53 | 5.46 (554) | 0.0030 | 0.93 |
+| | 200 / 75 / gradual | 9.18 (1985) | 0.011 | 0.67 | 8.64 (1530) | 0.0028 | **0.95** |
+| | 400 / 200 / gradual | 13.52 (8972) | **0.010** | **0.75** | 10.48 (8511) | **0.0027** | **0.95** |
+| | 100 / 25 / standard | 3.58 (417) | 0.016 | 0.49 | 4.81 (326) | 0.0030 | 0.93 |
+| rotated_rosenbrock, d = 6, uniform | 50 / 6 / gradual | 7.82 (161) | 0.0065 | 0.19 | 8.59 (197) | 0.0007 | 0.83 |
+| | **100 / 25 / gradual** | 4.40 (383) | 0.0045 | 0.30 | 5.16 (358) | 0.0006 | 0.87 |
+| | 200 / 75 / gradual | 6.58 (1544) | 0.0034 | 0.38 | 6.05 (1374) | 0.0006 | 0.89 |
+| | 400 / 200 / gradual | 3.78 (5736) | **0.0028** | **0.48** | 2.46 (4179) | **0.0005** | **0.91** |
+| | 100 / 25 / standard | 3.36 (285) | 0.0049 | 0.28 | 4.37 (326) | 0.0006 | 0.86 |
+
+Prediction time is 0.8 to 0.9 ms for the tree and 1.1 to 1.3 ms for the hybrid
+at every setting (the leaf count halves or doubles with Nbar, 130 to 1180
+leaves, which the recursive prediction does not feel); coverage is 0.67 to
+0.74 everywhere.
+
+* **For the plain tree the answer depends on the target.** On the smooth 6D
+  targets large, rarely refitted leaves win clearly: Nbar 400 / retrain 200
+  is 30% (walker) and 38% (rotated Rosenbrock) better than the default and
+  Nbar 50 / retrain 6 is 35 to 45% worse, a monotone series. A 6D leaf with
+  50 or 100 points cannot pin down a coupled quadratic valley, and 400 points
+  fitted twice beat 100 points fitted every 25. On the rough 3D Eggholder the
+  series turns: 400 / 200 is 45% worse than the default and 50 / 6 is 6%
+  worse, so the default pair is the best there.
+* **For the hybrid the choice barely matters.** On the 6D targets the whole
+  Nbar series spans 0.0027 to 0.0031 (walker) and 0.0005 to 0.0007
+  (rotated Rosenbrock), within 15% of the default, against the tree's factor
+  of two: the network supplies the large-scale shape that the plain tree's
+  large leaves were needed for, and the leaves only have to fit a small,
+  smooth residual, which 50 points do as well as 400. On the Eggholder the
+  hybrid shows the same preference for small leaves as the tree, but half as
+  strongly (400 / 200 is 18% worse, not 45%). The hybrid also starts the
+  stream flatter: its first 10 000 points are within 25% across the series.
+* **So the setting is chosen on cost, and the default pair is the right
+  one.** Nbar 400 / retrain 200 has the cheapest mean update on two runs but
+  fit spikes of 1.4 to 8.5 s, and 13.5 ms mean on the walker where its 6D
+  fits are slowest; Nbar 50 / retrain 6 has the smallest maxima (110 to
+  200 ms) but a 50 to 80% higher mean and twice the leaves. Nbar 100 /
+  retrain 25 sits between them with 4 to 5 ms mean and 0.3 to 0.6 s maxima.
+* **Gradual splitting buys the plain tree 2 to 8% and the hybrid nothing.**
+  Tree: 0.040 against 0.041, 0.015 against 0.016, 0.0045 against 0.0049.
+  Hybrid: 0.0388 against 0.0393 and identical on the 6D runs, also over the
+  first 10 000 points. A fresh child in the hybrid reverts to the network at
+  its edges instead of to a leaf constant, which is what the sibling's shared
+  points protect the plain tree against. Standard splitting is 15 to 25%
+  cheaper per update (no shared points in the fits), so for the hybrid it is
+  a free saving; the plain tree keeps its small gain from gradual splitting.
+
+The recommendation for the hybrid is therefore unchanged for Nbar and the
+retrain interval (100 and 25, the package defaults of the benchmarks), and
+standard splitting, the `GPTree` default, is as accurate as gradual and
+cheaper. For the plain tree on a smooth target in six or more dimensions the
+same runs say that larger, rarely refitted leaves are worth their spikes.
+
 ## Reproduce
 
 ```bash
@@ -713,6 +791,13 @@ for k in matern05 matern25 rbf rq additive; do
   OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config hybrid --kernel $k
 done
 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --kernels
+# Nbar / retrain pairs and the splitting strategy (section 3.3), tree and hybrid:
+for c in tree hybrid; do
+  for v in "--Nbar 50 --retrain 6" "--Nbar 200 --retrain 75" "--Nbar 400 --retrain 200" "--splitting standard"; do
+    OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config $c $v
+  done
+  python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --settings --config $c
+done
 # the scaling study (one process per configuration, nothing else on the machine):
 for c in tree neural neural_amort8 neural_cov4000_amort8; do
   OMP_NUM_THREADS=1 python benchmark_neural_linear_scaling.py --target gaussian_peaks --stream walker \
