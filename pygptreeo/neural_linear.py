@@ -189,6 +189,7 @@ class FeatureNetLearner:
         self.n_seen = 0; self.n_seen_at_fit = 0; self.turnover_at_fit = 0
         self.n_refits = 0; self.n_skipped = 0; self.fit_seconds = 0.0; self.n_seen_at_first_fit = 0
         self.error_var = None; self.noise_var = None; self.error_scale = None
+        self.insample_scale = None
 
     # -- stream -------------------------------------------------------------------------
     @property
@@ -285,6 +286,11 @@ class FeatureNetLearner:
     def _publish(self, net, scal, t_spent):
         self.net = net; self.body = net[0]; self.head_layer = net[1]
         self.x_mu, self.x_sd, self.y_mu, self.y_sd = scal
+        # The head's rms residual on its own training sample (noise subtracted): the
+        # in-sample counterpart of the prequential error_scale, for oos_factor.
+        X = self.sample.X; Y = self.sample.y; S = self.sample.sigma
+        res2 = float(np.mean((self.head(X) - Y) ** 2)) - float(np.mean(S ** 2))
+        self.insample_scale = float(np.sqrt(max(res2, 0.0)))
         if self.n_refits == 0:
             self.n_seen_at_first_fit = self.n_seen
         self.version += 1; self.n_refits += 1
@@ -356,6 +362,15 @@ class FeatureNetLearner:
         g, = torch.autograd.grad(f.sum(), Xt)
         return g.double().numpy() / self.x_sd
 
+    @property
+    def oos_factor(self) -> float:
+        """How much larger the head's error is at new points than on its training
+        sample (prequential over in-sample rms, at least 1): the factor a leaf applies
+        to the head's residual on its own points to budget for unseen points."""
+        if self.error_scale is None or not self.insample_scale:
+            return 1.0
+        return max(1.0, float(self.error_scale.mean()) / self.insample_scale)
+
     def __repr__(self) -> str:
         return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, steps={self.steps}, "
                 f"reservoir_size={self.reservoir_size}, n_seen={self.n_seen}, n_refits={self.n_refits}, "
@@ -373,13 +388,16 @@ class NeuralLinearGPR(GPRegressorInterface):
     residual : bool, default=True
         Regress ``y - h(x)`` (the residual of the network's head) rather than ``y``.
     distance_floor : bool, default=True
-        For residual leaves: grow the sigma with the distance from the leaf's own
-        points. The head's error budget ``e`` is multiplied by ``max(1, r)``, where
+        For residual leaves: an uncertainty floor for the head's error, returned by
+        :meth:`predict_floor` and added by the tree *after* the leaf's calibration
+        (so the prequential scaler cannot shrink it). On the leaf's data the floor is
+        the leaf's budget ``e``: the head's rms residual on the leaf's own points
+        times the learner's measured out-of-sample factor, or the learner's
+        stream-wide budget if larger. Away from the data it rises to the function's
+        overall scale ``y_sd`` as a kernel's variance rises to its prior amplitude:
+        ``floor^2 = e^2 + (y_sd^2 - e^2) (1 - exp(-(r - 1)^2))`` for ``r > 1``, where
         ``r`` is the distance from ``x`` to the leaf's nearest point over the leaf's
-        typical nearest-neighbour spacing (both in coordinates scaled by the leaf's
-        per-dimension spread), and the result is capped at the function's overall
-        scale. On the data ``r`` is about 1 and the sigma is unchanged; away from it
-        the sigma grows linearly with the distance, as a kernel's would.
+        nearest-neighbour spacing (coordinates scaled by the leaf's spread).
     log_s2 : array-like
         Grid of log10 extra-noise variances, relative to the leaf's target variance.
     log_tau2 : array-like
@@ -391,6 +409,7 @@ class NeuralLinearGPR(GPRegressorInterface):
         _require_torch()
         self.learner = learner; self.residual = bool(residual); self.distance_floor = bool(distance_floor)
         self.x_scale = None; self.h = None       # per-dimension spread and nearest-neighbour spacing of the fit points
+        self.e_leaf = 0.0                        # the head's rms residual on the fit points (noise subtracted)
         self.log_s2 = np.asarray(log_s2, float); self.log_tau2 = np.asarray(log_tau2, float)
         self.alpha = 1e-10
         self.mu = None; self.Sigma = None; self.version = -1
@@ -463,6 +482,7 @@ class NeuralLinearGPR(GPRegressorInterface):
                 best = (evidence[j], (10.0 ** self.log_tau2[j], 10.0 ** log_s2, V, c, den[j]))
         _, (t2, s2, V, c, d) = best
         if self.distance_floor:
+            self.e_leaf = float(np.sqrt(max(float(np.mean(y ** 2)) - float(np.mean(alpha)), 0.0))) if self.residual else 0.0
             sd_x = X.std(0); self.x_scale = np.where(sd_x > 0, sd_x, 1.0)
             if n >= 2:
                 from scipy.spatial.distance import cdist
@@ -493,15 +513,29 @@ class NeuralLinearGPR(GPRegressorInterface):
         if not return_std:
             return mean
         var = np.einsum('ij,jk,ik->i', Phi, self.Sigma, Phi) * self.y_scale ** 2
-        if self.residual and self.learner.error_scale is not None:
-            e = float(self.learner.error_scale[0])
-            if self.distance_floor and self.h is not None:
-                # the error budget, grown with the distance from the leaf's points
-                e = max(e, float(np.sqrt(self.learner.error_var[0])) if e == 0.0 else e)
-                d1 = np.sqrt((((X[:, None, :] - self.X_fit[None, :, :]) / self.x_scale) ** 2).sum(-1)).min(axis=1)
-                e = np.minimum(e * np.maximum(1.0, d1 / self.h), self.learner.y_sd)
-            var = var + e ** 2
+        if self.residual and not self.distance_floor and self.learner.error_scale is not None:
+            var = var + float(self.learner.error_scale[0]) ** 2
         return mean, np.sqrt(np.maximum(var, 0.0))
+
+    def predict_floor(self, X: np.ndarray) -> np.ndarray:
+        """The uncertainty floor at X (see ``distance_floor``), shape (n,); zeros when
+        the floor is off or the leaf has no fit. The tree adds it in quadrature to the
+        calibrated sigma."""
+        X = np.atleast_2d(np.asarray(X, float))
+        if not (self.distance_floor and self.residual) or self.mu is None or self.X_fit is None:
+            return np.zeros(X.shape[0])
+        if self.version != self.learner.version:
+            self._solve()
+        e = self.e_leaf * self.learner.oos_factor
+        if self.learner.error_scale is not None:
+            e = max(e, float(self.learner.error_scale[0]))
+        y_sd = float(self.learner.y_sd) if self.learner.fitted else float(self.y_scale)
+        e = min(e, y_sd)
+        if self.h is None:
+            return np.full(X.shape[0], e)
+        d1 = np.sqrt((((X[:, None, :] - self.X_fit[None, :, :]) / self.x_scale) ** 2).sum(-1)).min(axis=1)
+        w = 1.0 - np.exp(-np.maximum(d1 / self.h - 1.0, 0.0) ** 2)
+        return np.sqrt(e ** 2 + (y_sd ** 2 - e ** 2) * w)
 
     def is_trained(self) -> bool:
         return self.mu is not None
@@ -515,7 +549,7 @@ class NeuralLinearGPR(GPRegressorInterface):
     def clone(self) -> 'NeuralLinearGPR':
         c = NeuralLinearGPR(self.learner, self.residual, self.distance_floor, self.log_s2, self.log_tau2)
         for k in ('alpha', 'mu', 'Sigma', 'version', 'X_fit', 'y_fit', 'alpha_fit', 'tau2', 's2',
-                  'y_shift', 'y_scale', 'f_mu', 'f_sd', 'x_scale', 'h'):
+                  'y_shift', 'y_scale', 'f_mu', 'f_sd', 'x_scale', 'h', 'e_leaf'):
             v = getattr(self, k); setattr(c, k, v.copy() if isinstance(v, np.ndarray) else v)
         return c
 

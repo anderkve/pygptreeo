@@ -134,7 +134,7 @@ class TestNeuralLinearGPR(unittest.TestCase):
         m, s = gpr.predict(far, return_std=True)
         h = learner.head(far)[0, 0]
         self.assertLess(abs(m[0] - h), 5 * (abs(h) + 0.1))    # a bounded correction of the head
-        self.assertGreaterEqual(s[0], float(learner.error_scale[0]))
+        self.assertGreaterEqual(gpr.predict_floor(far)[0], float(learner.error_scale[0]))   # the budget is in the floor
 
     def test_bounded_reservoirs(self):
         rng = np.random.RandomState(7)
@@ -198,28 +198,37 @@ class TestNeuralLinearGPR(unittest.TestCase):
         P, _ = gpt.predict(Xt)
         self.assertLess(np.sqrt(np.mean((P[:, 0] - yt) ** 2)) / (yt.max() - yt.min()), 0.05)
 
-    def test_distance_floor_grows_away_from_the_leaf_points(self):
+    def test_distance_floor_rises_to_the_function_scale_away_from_the_leaf_points(self):
         rng = np.random.RandomState(11)
         X = rng.rand(300, 3); y = _target(X)
         learner = self._learner(min_points=100)
         for i in range(300):
             learner.observe(X[i], y[i], 1e-3)
+        self.assertGreaterEqual(learner.oos_factor, 1.0)
         Xl = 0.5 * rng.rand(60, 3); yl = _target(Xl)          # a leaf whose points fill [0, 0.5]^3
         gpr = NeuralLinearGPR(learner); gpr.set_observation_noise(1e-6); gpr.fit(Xl, yl)
-        off = NeuralLinearGPR(learner, distance_floor=False); off.set_observation_noise(1e-6); off.fit(Xl, yl)
         near = Xl[:5]; far = np.array([[0.95, 0.95, 0.95], [0.9, 0.1, 0.95]])
-        _, s_near = gpr.predict(near, return_std=True); _, s_near_off = off.predict(near, return_std=True)
-        _, s_far = gpr.predict(far, return_std=True); _, s_far_off = off.predict(far, return_std=True)
-        np.testing.assert_allclose(s_near, s_near_off)        # on the data the floor changes nothing
-        e = float(learner.error_scale[0])
-        d1 = np.sqrt((((far[:, None, :] - Xl[None]) / gpr.x_scale) ** 2).sum(-1)).min(axis=1)
-        r = d1 / gpr.h
-        self.assertTrue(np.all(r > 2.0))                      # the points are far in units of the spacing
-        floor = np.minimum(e * r, learner.y_sd)               # grown with r, capped at the function's scale
-        np.testing.assert_allclose(s_far ** 2 - s_far_off ** 2, floor ** 2 - e ** 2, rtol=1e-6)
-        self.assertTrue(np.all(s_far > s_far_off))
-        c = gpr.clone()
-        np.testing.assert_allclose(c.predict(far, return_std=True)[1], s_far)
+        f_near = gpr.predict_floor(near); f_far = gpr.predict_floor(far)
+        e = min(max(gpr.e_leaf * learner.oos_factor, float(learner.error_scale[0])), learner.y_sd)
+        np.testing.assert_allclose(f_near, e)                  # on the data: the leaf's budget
+        self.assertTrue(np.all(f_far > 0.9 * learner.y_sd))   # far away: the function's scale
+        self.assertTrue(np.all(f_far <= learner.y_sd + 1e-9))
+        off = NeuralLinearGPR(learner, distance_floor=False); off.set_observation_noise(1e-6); off.fit(Xl, yl)
+        self.assertTrue(np.all(off.predict_floor(far) == 0.0))
+        np.testing.assert_allclose(gpr.clone().predict_floor(far), f_far)
+
+    def test_tree_adds_the_floor_after_calibration(self):
+        rng = np.random.RandomState(12)
+        N = 500
+        X = 0.5 * rng.rand(N, 3); Y = _target(X)[:, None]; S = np.full((N, 1), 1e-3)   # the stream fills [0, 0.5]^3
+        learner = self._learner()
+        gpt = GPTree(GPR=NeuralLinearGPR(learner), Nbar=60, retrain_every_n_points=20, use_calibrated_sigma=True)
+        _stream(gpt, X, Y, S)
+        far = np.array([[0.95, 0.95, 0.95]])
+        _, s_far = gpt.predict(far)
+        self.assertGreater(s_far[0, 0], 0.9 * learner.y_sd)   # far from every leaf's data: the function's scale
+        _, s_near = gpt.predict(X[:20])
+        self.assertTrue(np.all(s_near[:, 0] < learner.y_sd))
 
 
 if __name__ == '__main__':
