@@ -413,6 +413,31 @@ Reading:
 * **Leaf counts are the same** (570 to 590 at 40 000 points), as they must
   be: the tree grows by `Nbar`, not by the leaf model.
 
+### 3.1 Why the network is slower on the Eggholder (measured)
+
+Head of the feature network alone, trained on the 40 000 uniform Eggholder
+points and scored on a held-out uniform set (one seed), against the two trees'
+last 10 000 stream points:
+
+| model | NRMSE | cost |
+|---|---|---|
+| network head, 3 x 128, 4000 steps (the package default) | 0.143 | 6 s per refit |
+| network head, 3 x 128, 16 000 steps | 0.104 | 24 s |
+| network head, 4 x 256, 16 000 steps | 0.058 | 57 s |
+| network head, 3 x 128, 4000 or 16 000 steps, Fourier input features (64 frequencies, scale 2 or 4) | 0.108 to 0.161 | 7 to 28 s |
+| neural-linear tree (default network) | 0.067 | |
+| GP tree | 0.040 | |
+| hybrid: GP leaves on the residual of the default network (`global_mean`) | 0.036 (within 1%: 0.38, coverage 0.71) | GP leaf cost |
+| neural-linear tree with the 4 x 256 network, 16 000 steps per refit | 0.12, 0.22, 0.06, 0.17 per 10 000-point window | 8 times the default |
+
+So on this target the network at the fixed refit budget is the limit (its own
+error is 3.5 times the GP tree's), the linear leaves halve that error but
+cannot add structure the features lack, a kernel leaf on the same network's
+residual recovers the GP tree's accuracy, and buying a better network costs
+eight times the refit time and gave an unstable tree whose cause was not
+established. Fourier input features, the usual remedy for an MLP's slowness
+on high frequencies, did not help at these settings.
+
 ## Reproduce
 
 ```bash
