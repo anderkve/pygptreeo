@@ -1479,15 +1479,16 @@ class GPNode(Node):
                 for i in range(self.n_outputs):
                     sigma_pred[:, i] = sigma_pred[:, i] * self.sigma_scalers[i]
 
-        # A backend's uncertainty floor (NeuralLinearGPR.predict_floor) is a budget for
-        # the model's error away from the data; it is added after the calibration so
-        # the prequential scaler, fitted on the stream, cannot shrink it.
+        # A backend's uncertainty floor (NeuralLinearGPR.predict_floor): the leaf's
+        # local out-of-sample error, rising to the function's scale away from its
+        # points. Applied after the calibration, so the prequential scaler, fitted
+        # on the stream, cannot push the sigma below it.
         if self.output_model == 'independent':
             for i, gpr in enumerate(self.my_GPRs):
                 floor_fn = getattr(gpr, 'predict_floor', None)
                 if floor_fn is not None:
                     f = np.asarray(floor_fn(x), dtype=float).reshape(-1)
-                    sigma_pred[:, i] = np.sqrt(sigma_pred[:, i] ** 2 + f ** 2)
+                    sigma_pred[:, i] = np.maximum(sigma_pred[:, i], f)
 
         return mu_pred, sigma_pred
 

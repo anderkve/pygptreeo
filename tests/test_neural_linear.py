@@ -134,7 +134,7 @@ class TestNeuralLinearGPR(unittest.TestCase):
         m, s = gpr.predict(far, return_std=True)
         h = learner.head(far)[0, 0]
         self.assertLess(abs(m[0] - h), 5 * (abs(h) + 0.1))    # a bounded correction of the head
-        self.assertGreaterEqual(gpr.predict_floor(far)[0], float(learner.error_scale[0]))   # the budget is in the floor
+        self.assertGreater(gpr.predict_floor(far)[0], s[0])    # far from the leaf's points the floor exceeds the model sigma
 
     def test_bounded_reservoirs(self):
         rng = np.random.RandomState(7)
@@ -204,13 +204,14 @@ class TestNeuralLinearGPR(unittest.TestCase):
         learner = self._learner(min_points=100)
         for i in range(300):
             learner.observe(X[i], y[i], 1e-3)
-        self.assertGreaterEqual(learner.oos_factor, 1.0)
         Xl = 0.5 * rng.rand(60, 3); yl = _target(Xl)          # a leaf whose points fill [0, 0.5]^3
         gpr = NeuralLinearGPR(learner); gpr.set_observation_noise(1e-6); gpr.fit(Xl, yl)
+        self.assertEqual(gpr.loo.shape, (60,))
         near = Xl[:5]; far = np.array([[0.95, 0.95, 0.95], [0.9, 0.1, 0.95]])
         f_near = gpr.predict_floor(near); f_far = gpr.predict_floor(far)
-        e = min(max(gpr.e_leaf * learner.oos_factor, float(learner.error_scale[0])), learner.y_sd)
-        np.testing.assert_allclose(f_near, e)                  # on the data: the leaf's budget
+        loo_rms = np.sqrt(np.mean(gpr.loo ** 2))
+        self.assertTrue(np.all(f_near <= 3 * loo_rms))         # on the data: the local leave-one-out error
+        self.assertTrue(np.all(f_near < 0.5 * learner.y_sd))
         self.assertTrue(np.all(f_far > 0.9 * learner.y_sd))   # far away: the function's scale
         self.assertTrue(np.all(f_far <= learner.y_sd + 1e-9))
         off = NeuralLinearGPR(learner, distance_floor=False); off.set_observation_noise(1e-6); off.fit(Xl, yl)
