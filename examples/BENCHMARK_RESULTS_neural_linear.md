@@ -437,16 +437,40 @@ single update time after the first batch:
 
 | run | config | predict ms | update ms (max) | NRMSE | within 1% | within 4% | coverage |
 |---|---|---|---|---|---|---|---|
-| eggholder, d = 3, uniform | GP tree | 0.94 | 4.09 (284) | **0.040** | **0.41** | **0.73** | 0.68 |
+| eggholder, d = 3, uniform | GP tree | 0.94 | 4.09 (284) | 0.040 | **0.41** | **0.73** | 0.68 |
 | | neural-linear | 0.84 | 1.88 (76) | 0.067 | 0.17 | 0.47 | 0.78 |
+| | hybrid | 1.13 | 4.78 (295) | **0.039** | 0.38 | **0.73** | 0.71 |
 | rotated_rosenbrock, d = 6, uniform | GP tree | 0.89 | 4.40 (679) | 0.0045 | 0.30 | 0.69 | 0.67 |
-| | neural-linear | 0.81 | 1.85 (110) | **0.0006** | **0.85** | **0.98** | 0.75 |
+| | neural-linear | 0.81 | 1.85 (110) | **0.0006** | 0.85 | **0.98** | 0.75 |
+| | hybrid | 1.12 | 5.16 (442) | **0.0006** | **0.87** | **0.98** | 0.68 |
 | gaussian_peaks, d = 10, uniform | GP tree | 0.91 | 5.44 (659) | 0.038 | 0.09 | 0.35 | 0.67 |
 | | neural-linear | 0.77 | 1.70 (85) | **0.0037** | **0.79** | **0.99** | 0.75 |
+| | hybrid | 1.14 | 9.11 (562) | 0.0039 | 0.75 | **0.99** | 0.66 |
 | gaussian_peaks, d = 6, walker | GP tree | 0.92 | 4.74 (522) | 0.015 | 0.53 | 0.89 | 0.68 |
-| | neural-linear | 0.77 | 1.77 (85) | **0.0034** | **0.92** | **1.00** | 0.74 |
+| | neural-linear | 0.77 | 1.77 (85) | 0.0034 | 0.92 | **1.00** | 0.74 |
+| | hybrid | 1.13 | 5.46 (554) | **0.0030** | **0.93** | **1.00** | 0.70 |
+
+The `hybrid` rows (GP leaves on the residual of the same network, §1.2) were
+added in a second pass; the figures overlay all three.
 
 Reading:
+
+* **On these 40 000-point streams the hybrid is the best of both.** It
+  matches the GP tree on the Eggholder (0.039 against 0.040) and the
+  neural-linear tree on the three high-dimensional runs (0.0006, 0.0039 and
+  0.0030 against 0.0006, 0.0037 and 0.0034), with coverage at 0.66 to 0.71.
+  On the 4000-point benchmark of §1.2 it sat between the two; by 40 000
+  points the GP leaves on the residual have the points to finish the job the
+  network starts, on smooth and rough targets alike. One seed per run.
+* **It pays the GP leaf's cost.** Update time 4.8 to 9.1 ms on average with
+  batch maxima of 295 to 562 ms (the hyperparameter fits), against 1.7 to
+  1.9 ms and 76 to 110 ms for the neural-linear tree; prediction 1.1 ms
+  against 0.8. On the 10D run its update time is nearly twice the GP tree's,
+  since the network's refits and the leaves' refits against each new
+  snapshot come on top of the GP fits.
+* **Its sigma is the GP's, calibrated on the stream and without the floor**:
+  nominal here, where every point has neighbours, and as poor off-stream as
+  the GP tree's (§1.2).
 
 * **The dimension decides the winner.** On the 3D Eggholder, a rough and
   strongly oscillatory target, the GP tree is better throughout: a local

@@ -213,6 +213,13 @@ wandering stream's own next points; `examples/BENCHMARK_RESULTS_neural_linear.md
 has the coverage numbers per stream. `docs/neural_gptree_ideas.md` has the
 design and the alternatives considered.
 
+The same network can instead serve as the tree's global model, with the leaf GPs
+modelling the residual of its prediction (`GPTree(global_mean='net')`, or
+`global_mean=NetGlobalMean(...)` with the learner's keyword arguments). On
+40 000-point streams this hybrid matched the GP tree on a rough 3D target and
+the neural-linear tree on the 6D and 10D targets, at the GP leaf's update cost
+and with the GP's sigma (no floor away from the data).
+
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:
 
