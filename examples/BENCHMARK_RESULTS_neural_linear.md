@@ -106,7 +106,152 @@ the same cells at 4 to 8 times the plain tree's run time.
   time; the leaf work itself is less than the GP leaves'. Section 2 measures
   how this behaves on a stream 25 times longer.
 
-SCALING_PLACEHOLDER
+## 2. Cost scaling on a 100 000-point stream
+
+`examples/benchmark_neural_linear_scaling.py`: `GaussianPeaks` in six
+dimensions, the walker stream (every proposal of a Metropolis random walk,
+the stream closest to an optimiser's or sampler's), 100 000 points, one seed,
+`Nbar = 100`, each configuration in its own process with nothing else on the
+machine. Every `update_tree` call and every per-point `predict` call (the
+default recursive mode) is timed; at each checkpoint a 1000-point uniform test
+set is predicted in `loop` mode (batch). Times are per window since the
+previous checkpoint: the mean, the 99th percentile and the maximum of the
+update time, the mean per-point prediction time, and the batch prediction time
+per point; the prequential NRMSE of the window and the test NRMSE at the
+checkpoint. "leaf solves" is the number of regression solves held by the leaves
+alive at the checkpoint (leaves that split hand nothing on), "sample" the size
+of the network's training sample.
+
+Configurations: `tree` (the plain GP tree); `neural` (every point kept, each
+refit run in one go inside the `update_tree` call that triggers it);
+`neural_amort8` (every point kept, refits spread over the following updates at
+8 Adam steps each and published when complete); `neural_cov4000_amort8` (the
+same, with the network trained on a 4000-point maximin coverage reservoir and a
+refit skipped unless a quarter of the reservoir has turned over).
+
+**tree**
+
+| points | update ms: mean / p99 / max | predict ms per point: single / batch | window prequential NRMSE | test NRMSE | leaves | elapsed s |
+|---|---|---|---|---|---|---|
+| 1000 | 5.17 / 131.7 / 301 | 0.67 / 0.02 | 0.0253 | 0.1235 | 17 | 5.9 |
+| 2000 | 4.41 / 92.5 / 275 | 0.66 / 0.02 | 0.0133 | 0.1276 | 26 | 11.0 |
+| 4000 | 4.34 / 106.8 / 279 | 0.68 / 0.06 | 0.0110 | 0.1235 | 60 | 21.1 |
+| 8000 | 4.78 / 112.5 / 411 | 0.72 / 0.11 | 0.0103 | 0.0995 | 121 | 43.2 |
+| 16000 | 4.39 / 101.6 / 399 | 0.71 / 0.22 | 0.0068 | 0.0960 | 237 | 84.2 |
+| 32000 | 4.54 / 107.3 / 408 | 0.74 / 0.49 | 0.0050 | 0.0929 | 459 | 169.2 |
+| 64000 | 4.71 / 110.1 / 474 | 0.78 / 1.63 | 0.0036 | 0.0873 | 935 | 346.5 |
+| 100000 | 4.63 / 106.7 / 494 | 0.78 / 3.57 | 0.0032 | 0.0863 | 1460 | 545.0 |
+
+**neural** (every point kept, refits in one go)
+
+| points | update ms: mean / p99 / max | predict ms per point: single / batch | window prequential NRMSE | test NRMSE | leaves | refits | fit s | sample | leaf solves | elapsed s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1000 | 19.92 / 23.1 / 7045 | 0.72 / 0.10 | 0.0259 | 0.0445 | 16 | 3 | 18.7 | 1000 | 14 | 20.7 |
+| 2000 | 7.90 / 22.8 / 6556 | 0.81 / 0.14 | 0.0069 | 0.0354 | 28 | 4 | 25.2 | 2000 | 34 | 29.6 |
+| 4000 | 5.21 / 25.9 / 7221 | 0.93 / 0.21 | 0.0035 | 0.0322 | 58 | 5 | 32.4 | 4000 | 59 | 42.1 |
+| 8000 | 3.18 / 24.1 / 6611 | 0.88 / 0.47 | 0.0022 | 0.0230 | 117 | 6 | 39.0 | 8000 | 110 | 58.8 |
+| 16000 | 2.43 / 25.9 / 6661 | 1.03 / 0.34 | 0.0013 | 0.0179 | 239 | 7 | 45.7 | 16000 | 225 | 86.9 |
+| 32000 | 1.89 / 23.8 / 6744 | 1.00 / 0.38 | 0.0009 | 0.0171 | 461 | 8 | 52.4 | 32000 | 476 | 133.6 |
+| 64000 | 1.82 / 24.7 / 8038 | 1.06 / 1.37 | 0.0008 | 0.0162 | 937 | 9 | 60.4 | 64000 | 889 | 227.3 |
+| 100000 | 1.54 / 24.3 / 69 | 0.55 / 3.01 | 0.0006 | 0.0173 | 1447 | 9 | 60.4 | 100000 | 651 | 305.9 |
+
+**neural_amort8** (every point kept, refits spread over the stream)
+
+| points | update ms: mean / p99 / max | predict ms per point: single / batch | window prequential NRMSE | test NRMSE | leaves | refits | fit s | sample | leaf solves | elapsed s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1000 | 14.12 / 33.9 / 6870 | 0.69 / 0.17 | 0.0271 | 0.0858 | 16 | 2 | 12.6 | 1000 | 16 | 15.0 |
+| 2000 | 3.86 / 26.0 / 38 | 0.51 / 0.04 | 0.0141 | 0.0769 | 28 | 2 | 12.6 | 2000 | 14 | 19.4 |
+| 4000 | 3.33 / 28.0 / 47 | 0.82 / 0.08 | 0.0078 | 0.0432 | 58 | 3 | 18.5 | 4000 | 39 | 27.8 |
+| 8000 | 3.26 / 27.6 / 52 | 0.93 / 0.10 | 0.0029 | 0.0276 | 119 | 4 | 25.3 | 8000 | 72 | 44.7 |
+| 16000 | 2.28 / 24.4 / 72 | 0.88 / 0.20 | 0.0015 | 0.0214 | 239 | 5 | 31.4 | 16000 | 154 | 70.2 |
+| 32000 | 2.01 / 25.5 / 108 | 0.96 / 0.50 | 0.0010 | 0.0174 | 462 | 6 | 38.2 | 32000 | 355 | 118.2 |
+| 64000 | 1.79 / 24.7 / 98 | 0.97 / 1.23 | 0.0008 | 0.0170 | 945 | 7 | 45.4 | 64000 | 654 | 207.9 |
+| 100000 | 1.77 / 24.6 / 251 | 1.27 / 3.15 | 0.0006 | 0.0178 | 1441 | 8 | 52.9 | 100000 | 1692 | 320.7 |
+
+**neural_cov4000_amort8** (4000-point coverage reservoir, refits spread)
+
+| points | update ms: mean / p99 / max | predict ms per point: single / batch | window prequential NRMSE | test NRMSE | leaves | refits | fit s | sample | leaf solves | elapsed s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1000 | 10.45 / 25.5 / 8992 | 0.46 / 0.04 | 0.0271 | 0.1199 | 16 | 1 | 9.0 | 1000 | 2 | 10.9 |
+| 2000 | 6.98 / 31.7 / 44 | 0.58 / 0.04 | 0.0206 | 0.1170 | 28 | 1 | 9.0 | 2000 | 9 | 18.6 |
+| 4000 | 2.64 / 27.5 / 721 | 0.81 / 0.07 | 0.0070 | 0.0443 | 59 | 2 | 15.6 | 4000 | 27 | 25.5 |
+| 8000 | 3.73 / 26.2 / 52 | 0.88 / 0.15 | 0.0031 | 0.0318 | 119 | 3 | 22.3 | 4000 | 64 | 44.2 |
+| 16000 | 2.83 / 25.7 / 100 | 0.95 / 0.16 | 0.0016 | 0.0246 | 238 | 4 | 29.1 | 4000 | 144 | 74.6 |
+| 32000 | 2.24 / 24.7 / 92 | 0.92 / 0.43 | 0.0010 | 0.0203 | 465 | 5 | 35.4 | 4000 | 299 | 125.7 |
+| 64000 | 2.07 / 25.2 / 86 | 0.94 / 1.25 | 0.0009 | 0.0184 | 943 | 6 | 41.8 | 4000 | 580 | 223.4 |
+| 100000 | 2.04 / 24.5 / 54 | 1.24 / 3.18 | 0.0007 | 0.0151 | 1450 | 7 | 48.6 | 4000 | 1500 | 344.8 |
+
+### Reading
+
+* **The per-point update cost is bounded, and lower than the GP tree's.** The
+  neural-linear tree's mean update time *falls* along the stream, from 20 ms
+  in the first thousand points to 1.5 to 2.0 ms at 100 000, because the
+  network refits (the only cost that is not per leaf) happen at each doubling
+  of the count and so become rarer; the plain tree sits at 4.3 to 4.8 ms
+  throughout. The 99th percentile is flat for both: 24 to 28 ms for the
+  neural-linear tree (one leaf solve: features of at most `Nbar` points
+  through the network, 13 eigendecompositions of a 129 x 129 matrix) against
+  93 to 132 ms for the plain tree (one leaf GP fit with its hyperparameter
+  optimisation). A leaf solve costs the same at 1447 leaves as at 16, which
+  is the property the design has to keep.
+* **A refit is a fixed cost: 6.5 to 8 s whatever the sample size.** With
+  every point kept, the nine refits of the `neural` run total 60 s on a
+  sample growing from 200 to 64 000 points, 6.7 s each, because a refit is a
+  fixed 4000 Adam steps on 128-point minibatches; the schedule makes their
+  number logarithmic in the stream length. In the burst mode that cost lands
+  inside one `update_tree` call (the maximum column: 6.5 to 8 s), which is
+  what a stream consumer would notice. **The amortised mode removes the
+  spike**: with 8 steps per update the maximum update time is 38 to 251 ms
+  (a leaf solve plus 8 steps, about 12 ms, and the occasional publication of
+  the new network), the total cost is the same, and the accuracy at every
+  checkpoint from 8000 points on is the same as the burst mode's to within
+  the window noise (test 0.0178 against 0.0173 at 100 000). The amortised
+  mode is the one to use on a live stream.
+* **Bounding the training sample costs nothing here.** The 4000-point
+  coverage reservoir gives the best test error of the four at 100 000
+  points (0.0151 against 0.0173 and 0.0178) and the same prequential error,
+  with seven refits instead of eight or nine (one skipped for too little
+  turnover), bounded memory, and 0.27 ms per offer after the reservoir fills
+  (the one 721 ms maximum at the 4000 checkpoint is the reservoir building
+  its distance matrix when it fills, once). The walker revisits the same
+  region, so a coverage sample of it represents it; a stream that keeps
+  exploring new territory would test the reservoir harder, and the sweeping
+  stream of section 1 is the case to measure next.
+* **Per-point prediction is bounded for both**: 0.5 to 1.3 ms for the
+  neural-linear tree (a feature pass through the network and the leaf
+  regression), 0.66 to 0.78 ms for the plain tree, flat from 16 to 1460
+  leaves, since the recursive mode visits only the leaves a point can belong
+  to.
+* **Batch prediction in `loop` mode grows with the number of leaves, for both
+  backends**: from 0.02 to 3.6 ms per point for the plain tree and from 0.1
+  to 3.2 ms for the neural-linear trees between 17 and 1460 leaves. The loop
+  mode calls every leaf once (now only on the points it can own, after this
+  change; before it, on all of them), so with 1000 test points and 1400
+  leaves it makes about 1400 small calls, and the per-call overhead (a
+  kernel evaluation or a network forward pass on a handful of points) is the
+  cost. For a long stream, predict with the default recursive mode, whose
+  cost per point is bounded; a loop mode that routes the batch down the tree
+  once and evaluates the network once per batch would make the neural
+  batch bounded too, and is the obvious next improvement.
+* **Accuracy at 100 000 points: five times the plain tree's on both
+  metrics.** Prequential 0.0006 to 0.0007 against 0.0032; cube-wide 0.015
+  to 0.018 against 0.086 (the walker never covers the cube, so the cube-wide
+  number is mostly extrapolation, where the network's shape helps most).
+  The plain tree keeps improving slowly with more leaves (0.124 to 0.086);
+  the neural-linear trees reach their cube-wide floor by 16 000 points and
+  keep improving on the stream.
+* **Memory.** The plain tree and all neural-linear trees hold the stream in
+  their leaves (`Nbar` points per leaf, so linear in the stream, as the
+  package always has). The learner with every point kept adds one more
+  linear copy; the reservoir bounds that copy at `reservoir_size` points.
+* **Total wall time for 100 000 points**: 306 to 345 s for the neural-linear
+  trees against 545 s for the plain tree, on one core each.
+
+**Caveats.** One seed, one target, one stream, `d = 6`. The cost figures are
+for a 3 x 128 network on one CPU core; a wider network or a GPU moves the
+refit and feature-pass constants but not the scaling. The burst run's last
+window shows a maximum of 69 ms because no refit fell in it (the next would
+have been at 128 000 points).
 
 ## Reproduce
 

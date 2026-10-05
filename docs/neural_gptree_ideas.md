@@ -519,12 +519,20 @@ the leaves' local correction harder and the network's features less well.
 
 ## 6. A plan
 
-1. **Promote the probe into the package** (a day): `NeuralLinearGPR` in its
-   residual form, `FeatureNetLearner` on the coverage reservoir with the
-   doubling schedule, the rank-one update, `get_length_scales` from the
-   Jacobian; torch as an optional dependency like GPyTorch. Run the
-   four-stream benchmark at `d = 6, 10, 20`, three seeds, with and without
-   real noise, against `tree` and `global_pkg`.
+*Status.* Step 1 is done: `pygptreeo/neural_linear.py` is the package
+version (residual leaves, evidence by eigendecomposition, the error budget,
+optional bounded reservoirs, refits spread over the stream), with the 6D
+four-stream benchmark and a 100 000-point scaling study in
+`examples/BENCHMARK_RESULTS_neural_linear.md`. The rank-one update was not
+needed: a leaf solve on at most `Nbar` points costs 25 ms at the 99th
+percentile and does not grow with the stream. Step 2 is the open item that
+the benchmark makes urgent: the sigma off the stream is overconfident.
+
+1. **Promote the probe into the package** (done): `NeuralLinearGPR` in its
+   residual form, `FeatureNetLearner` with the doubling schedule and
+   optional reservoir, `get_length_scales` from the Jacobian; torch as an
+   optional dependency like GPyTorch. Still to run: the four-stream benchmark
+   at `d = 10, 20` with real noise against `global_pkg`.
 2. **An honest sigma off the stream** (a day): first the cheap version, the
    learner's prequential error budget added in quadrature as
    `global_mean.error_scale` already does; then `K = 3` to `5` bagged
