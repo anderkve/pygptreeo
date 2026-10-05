@@ -198,6 +198,29 @@ class TestNeuralLinearGPR(unittest.TestCase):
         P, _ = gpt.predict(Xt)
         self.assertLess(np.sqrt(np.mean((P[:, 0] - yt) ** 2)) / (yt.max() - yt.min()), 0.05)
 
+    def test_distance_floor_grows_away_from_the_leaf_points(self):
+        rng = np.random.RandomState(11)
+        X = rng.rand(300, 3); y = _target(X)
+        learner = self._learner(min_points=100)
+        for i in range(300):
+            learner.observe(X[i], y[i], 1e-3)
+        Xl = 0.5 * rng.rand(60, 3); yl = _target(Xl)          # a leaf whose points fill [0, 0.5]^3
+        gpr = NeuralLinearGPR(learner); gpr.set_observation_noise(1e-6); gpr.fit(Xl, yl)
+        off = NeuralLinearGPR(learner, distance_floor=False); off.set_observation_noise(1e-6); off.fit(Xl, yl)
+        near = Xl[:5]; far = np.array([[0.95, 0.95, 0.95], [0.9, 0.1, 0.95]])
+        _, s_near = gpr.predict(near, return_std=True); _, s_near_off = off.predict(near, return_std=True)
+        _, s_far = gpr.predict(far, return_std=True); _, s_far_off = off.predict(far, return_std=True)
+        np.testing.assert_allclose(s_near, s_near_off)        # on the data the floor changes nothing
+        e = float(learner.error_scale[0])
+        d1 = np.sqrt((((far[:, None, :] - Xl[None]) / gpr.x_scale) ** 2).sum(-1)).min(axis=1)
+        r = d1 / gpr.h
+        self.assertTrue(np.all(r > 2.0))                      # the points are far in units of the spacing
+        floor = np.minimum(e * r, learner.y_sd)               # grown with r, capped at the function's scale
+        np.testing.assert_allclose(s_far ** 2 - s_far_off ** 2, floor ** 2 - e ** 2, rtol=1e-6)
+        self.assertTrue(np.all(s_far > s_far_off))
+        c = gpr.clone()
+        np.testing.assert_allclose(c.predict(far, return_std=True)[1], s_far)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -25,7 +25,9 @@ the network rather than to a constant. The tree itself is unchanged.
   grid, by one eigendecomposition per ``s2``. The predicted sigma is the posterior
   sigma of the latent function plus, for residual leaves, the learner's
   ``error_scale`` in quadrature. A fit remembers the feature version it used and
-  re-solves on the current features when asked to predict after a refit.
+  re-solves on the current features when asked to predict after a refit. For a
+  residual leaf the error budget grows with the distance from the leaf's own
+  points (``distance_floor``), so the sigma is conservative away from the data.
 
 The network expects raw inputs, so ``GPTree`` switches ``use_standard_scaling``
 off for this backend (the learner standardises inputs and targets itself).
@@ -370,16 +372,25 @@ class NeuralLinearGPR(GPRegressorInterface):
         stream through :meth:`observe_stream`).
     residual : bool, default=True
         Regress ``y - h(x)`` (the residual of the network's head) rather than ``y``.
+    distance_floor : bool, default=True
+        For residual leaves: grow the sigma with the distance from the leaf's own
+        points. The head's error budget ``e`` is multiplied by ``max(1, r)``, where
+        ``r`` is the distance from ``x`` to the leaf's nearest point over the leaf's
+        typical nearest-neighbour spacing (both in coordinates scaled by the leaf's
+        per-dimension spread), and the result is capped at the function's overall
+        scale. On the data ``r`` is about 1 and the sigma is unchanged; away from it
+        the sigma grows linearly with the distance, as a kernel's would.
     log_s2 : array-like
         Grid of log10 extra-noise variances, relative to the leaf's target variance.
     log_tau2 : array-like
         Grid of log10 prior variances of the standardised feature weights.
     """
 
-    def __init__(self, learner: FeatureNetLearner, residual: bool = True,
+    def __init__(self, learner: FeatureNetLearner, residual: bool = True, distance_floor: bool = True,
                  log_s2=np.linspace(-8, 1, 13), log_tau2=np.linspace(-4, 4, 25)):
         _require_torch()
-        self.learner = learner; self.residual = bool(residual)
+        self.learner = learner; self.residual = bool(residual); self.distance_floor = bool(distance_floor)
+        self.x_scale = None; self.h = None       # per-dimension spread and nearest-neighbour spacing of the fit points
         self.log_s2 = np.asarray(log_s2, float); self.log_tau2 = np.asarray(log_tau2, float)
         self.alpha = 1e-10
         self.mu = None; self.Sigma = None; self.version = -1
@@ -451,6 +462,16 @@ class NeuralLinearGPR(GPRegressorInterface):
             if evidence[j] > best[0]:
                 best = (evidence[j], (10.0 ** self.log_tau2[j], 10.0 ** log_s2, V, c, den[j]))
         _, (t2, s2, V, c, d) = best
+        if self.distance_floor:
+            sd_x = X.std(0); self.x_scale = np.where(sd_x > 0, sd_x, 1.0)
+            if n >= 2:
+                from scipy.spatial.distance import cdist
+                D = cdist(X / self.x_scale, X / self.x_scale); np.fill_diagonal(D, np.inf)
+                self.h = float(np.median(D.min(axis=1)))
+                if not np.isfinite(self.h) or self.h <= 0:
+                    self.h = None
+            else:
+                self.h = None
         self.tau2, self.s2 = t2, s2
         self.mu = V @ (c / d)
         self.Sigma = (V / d) @ V.T
@@ -473,7 +494,13 @@ class NeuralLinearGPR(GPRegressorInterface):
             return mean
         var = np.einsum('ij,jk,ik->i', Phi, self.Sigma, Phi) * self.y_scale ** 2
         if self.residual and self.learner.error_scale is not None:
-            var = var + float(self.learner.error_scale[0]) ** 2
+            e = float(self.learner.error_scale[0])
+            if self.distance_floor and self.h is not None:
+                # the error budget, grown with the distance from the leaf's points
+                e = max(e, float(np.sqrt(self.learner.error_var[0])) if e == 0.0 else e)
+                d1 = np.sqrt((((X[:, None, :] - self.X_fit[None, :, :]) / self.x_scale) ** 2).sum(-1)).min(axis=1)
+                e = np.minimum(e * np.maximum(1.0, d1 / self.h), self.learner.y_sd)
+            var = var + e ** 2
         return mean, np.sqrt(np.maximum(var, 0.0))
 
     def is_trained(self) -> bool:
@@ -486,9 +513,9 @@ class NeuralLinearGPR(GPRegressorInterface):
         return (self.tau2 if self.tau2 is not None else 1.0) * Phi @ Phi.T
 
     def clone(self) -> 'NeuralLinearGPR':
-        c = NeuralLinearGPR(self.learner, self.residual, self.log_s2, self.log_tau2)
+        c = NeuralLinearGPR(self.learner, self.residual, self.distance_floor, self.log_s2, self.log_tau2)
         for k in ('alpha', 'mu', 'Sigma', 'version', 'X_fit', 'y_fit', 'alpha_fit', 'tau2', 's2',
-                  'y_shift', 'y_scale', 'f_mu', 'f_sd'):
+                  'y_shift', 'y_scale', 'f_mu', 'f_sd', 'x_scale', 'h'):
             v = getattr(self, k); setattr(c, k, v.copy() if isinstance(v, np.ndarray) else v)
         return c
 
