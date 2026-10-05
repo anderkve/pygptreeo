@@ -1,1 +1,3 @@
 Created node 0
+RESULT {"target": "rotated_rosenbrock", "stream": "uniform", "config": "hybrid", "seed": 2, "d": 6, "N": 4000, "calibrated": true, "prequential_nrmse": 0.0038654822041212515, "uniform_nrmse": 0.002272078224203476, "focus_nrmse": 0.0019219501526629489, "coverage_prequential": 0.6754649070185963, "coverage_uniform": 0.647, "coverage_focus": 0.638, "sigma_over_rmse_prequential": 0.602095739490942, "sigma_over_rmse_uniform": 0.4611274504449124, "sigma_over_rmse_focus": 0.5483995784840935, "leaves": 62, "seconds": 79.5, "refits": 3, "fit_seconds": 31.6}
+Created node 0
