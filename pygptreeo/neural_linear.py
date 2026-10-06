@@ -17,10 +17,9 @@ the network rather than to a constant. The tree itself is unchanged.
   ``steps``, full-batch L-BFGS by default or minibatch Adam, so its cost does not
   depend on how long the stream has run; refits happen when the observation
   count has doubled since the last fit (or after ``refit_cap`` points),
-  warm-started from the previous weights. Two options reach beyond the
-  reservoir: ``reservoir_value_weight`` makes the coverage design keep more
-  points where the function varies fast, and ``polish_steps`` follows the
-  L-BFGS fit with a fixed budget of Adam steps over every point seen. The last hidden layer is the
+  warm-started from the previous weights. ``polish_steps`` follows the L-BFGS
+  fit with a fixed budget of Adam steps over every point seen, for the fine
+  structure the reservoir cannot hold. The last hidden layer is the
   feature map, the output layer the *head* ``h(x)``. The learner also tracks the
   head's prequential error with the observation noise subtracted
   (``error_scale``), the budget a residual leaf adds to its sigma.
@@ -166,11 +165,6 @@ class FeatureNetLearner:
     reservoir : {'coverage', 'uniform'}
         For a bounded sample: a maximin coverage design of the explored region
         (``CoverageReservoir``), or a uniform random sample of the stream.
-    reservoir_value_weight : float, default=0.0
-        For the coverage design: the weight of the (standardised) output in the
-        maximin metric. Positive, the design keeps more points where the
-        function varies fast and fewer on its flat parts; 0 covers the inputs
-        alone.
     polish_steps : int, default=0
         After the L-BFGS fit on the reservoir, this many minibatch Adam steps
         over every point seen (kept in a store that grows with the stream), at
@@ -198,8 +192,7 @@ class FeatureNetLearner:
                  reservoir: str = 'coverage', warm_start: bool = True,
                  steps_per_update: Optional[int] = None, error_window: int = 200,
                  random_state: Optional[int] = None, optimizer: str = 'lbfgs',
-                 weight_by_sigma: bool = True, reservoir_value_weight: float = 0.0,
-                 polish_steps: int = 0, polish_lr: Optional[float] = None):
+                 weight_by_sigma: bool = True, polish_steps: int = 0, polish_lr: Optional[float] = None):
         _require_torch()
         if reservoir not in ('coverage', 'uniform'):
             raise ValueError("reservoir must be 'coverage' or 'uniform'")
@@ -209,7 +202,6 @@ class FeatureNetLearner:
             steps = 4000 if optimizer == 'adam' else 300
         self.optimizer = optimizer
         self.weight_by_sigma = bool(weight_by_sigma)
-        self.reservoir_value_weight = float(reservoir_value_weight)
         self.polish_steps = int(polish_steps); self.polish_lr = float(polish_lr) if polish_lr is not None else float(lr)
         if self.polish_steps < 0:
             raise ValueError("polish_steps must be non-negative")
@@ -262,8 +254,7 @@ class FeatureNetLearner:
             if self.reservoir_size is None:
                 self.sample = _GrowingStore(self.n_features, self.n_outputs)
             elif self.reservoir_kind == 'coverage':
-                self.sample = CoverageReservoir(self.reservoir_size, self.n_features, self.n_outputs,
-                                                value_weight=self.reservoir_value_weight)
+                self.sample = CoverageReservoir(self.reservoir_size, self.n_features, self.n_outputs)
             else:
                 self.sample = UniformReservoir(self.reservoir_size, self.n_features, self.n_outputs, self.rng)
             if self.polish_steps > 0 and self.reservoir_size is not None:
@@ -479,7 +470,7 @@ class FeatureNetLearner:
     def __repr__(self) -> str:
         return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, optimizer={self.optimizer!r}, "
                 f"steps={self.steps}, weight_by_sigma={self.weight_by_sigma}, "
-                f"reservoir_value_weight={self.reservoir_value_weight}, polish_steps={self.polish_steps}, "
+                f"polish_steps={self.polish_steps}, "
                 f"reservoir_size={self.reservoir_size}, n_seen={self.n_seen}, n_refits={self.n_refits}, "
                 f"version={self.version})")
 

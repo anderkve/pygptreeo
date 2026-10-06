@@ -227,21 +227,6 @@ class TestNeuralLinearGPR(unittest.TestCase):
         self.assertLess(errs[True], 0.5 * errs[False])
         self.assertLess(errs[True], 0.06)
 
-    def test_value_weighted_reservoir_keeps_more_points_where_the_function_varies(self):
-        """A 2D target flat on one half and oscillating on the other: the joint design puts more of its points there."""
-        from pygptreeo.global_mean import CoverageReservoir
-        rng = np.random.RandomState(14)
-        X = rng.rand(6000, 2)
-        y = np.where(X[:, 0] > 0.5, np.sin(12 * np.pi * X[:, 0]) * np.cos(8 * np.pi * X[:, 1]), 0.0)
-        frac = {}
-        for w in (0.0, 2.0):
-            r = CoverageReservoir(300, 2, 1, value_weight=w)
-            for i in range(6000):
-                r.add(X[i], y[i], 1e-3)
-            frac[w] = float(np.mean(r.X[:, 0] > 0.5))
-        self.assertAlmostEqual(frac[0.0], 0.5, delta=0.08)       # coverage of the inputs alone is even
-        self.assertGreater(frac[2.0], 0.65)                        # the oscillating half gets more points
-
     def test_polish_phase_runs_over_every_point_and_amortises(self):
         rng = np.random.RandomState(15)
         X = rng.rand(1200, 3); y = _target(X); Xt = rng.rand(300, 3); yt = _target(Xt)
