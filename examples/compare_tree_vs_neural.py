@@ -27,7 +27,10 @@ and calibrated sigma. Streams: ``uniform`` (the default), ``focusing``,
 (see ``KERNELS``); the default ``matern15`` is what ``Default_GPR`` builds. A
 non-default kernel is recorded as ``<config>_<kernel>``, and ``--plot --kernels``
 draws the hybrid's kernel variants against each other instead of the four
-configurations. ``--Nbar``, ``--retrain`` and ``--splitting`` set the tree
+configurations, ``--plot --overlay a,b,c`` any record names. ``--noise``
+adds heteroscedastic observation noise and scores against the noiseless
+target; the ``--net-*`` options set the network's optimiser, steps, reservoir,
+sigma weighting and log transform. ``--Nbar``, ``--retrain`` and ``--splitting`` set the tree
 structure (defaults 100, 25, gradual; a non-default value is appended to the
 record name), and ``--plot --settings --config <c>`` overlays those variants.
 """
@@ -85,11 +88,33 @@ def config_name(a):
         parts.append(f"retrain{a.retrain}")
     if a.splitting != SETTINGS_DEFAULT['splitting']:
         parts.append(a.splitting)
+    if a.net_opt != 'adam':
+        parts.append(a.net_opt)
+    if a.net_steps is not None:
+        parts.append(f"steps{a.net_steps}")
+    if a.net_reservoir is not None:
+        parts.append(f"res{a.net_reservoir}")
+    if a.net_weight:
+        parts.append('wsig')
+    if a.net_log:
+        parts.append('log')
     return '_'.join(parts)
 
 
+def net_kwargs(a):
+    """The FeatureNetLearner keyword arguments of the --net-* options."""
+    kw = dict(steps_per_update=8, random_state=a.seed, optimizer=a.net_opt, weight_by_sigma=a.net_weight,
+              target_transform='log' if a.net_log else None)
+    if a.net_steps is not None:
+        kw['steps'] = a.net_steps
+    if a.net_reservoir is not None:
+        kw['reservoir_size'] = a.net_reservoir
+    return kw
+
+
 def tag(a):
-    return f"{a.target}_d{a.d}_{a.stream}_N{a.N}_seed{a.seed}"
+    noise = f"_noise{a.noise:g}" if a.noise > 0 else ''
+    return f"{a.target}_d{a.d}_{a.stream}{noise}_N{a.N}_seed{a.seed}"
 
 
 def run(a):
@@ -104,7 +129,13 @@ def run(a):
     target = targets[a.target]
     rng = np.random.RandomState(a.seed)
     X, _ = make_stream(a.stream, target, a.d, a.N, rng)
-    y = target(X.T); sig = np.maximum(1e-3 * np.abs(y), 1e-6)
+    y = target(X.T)
+    if a.noise > 0:
+        # heteroscedastic noise spanning a factor 30; the tree is scored against the noiseless y
+        sig = a.noise * y.std() * 10 ** rng.uniform(-1.5, 0.0, a.N)
+        y_obs = y + sig * rng.randn(a.N)
+    else:
+        sig = np.maximum(1e-3 * np.abs(y), 1e-6); y_obs = y
     np.random.seed(a.seed)
     common = dict(Nbar=a.Nbar, theta=1e-4, retrain_every_n_points=a.retrain, splitting_strategy=a.splitting,
                   use_calibrated_sigma=True)
@@ -112,11 +143,11 @@ def run(a):
     if a.config == 'tree':
         gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1), **common)
     elif a.config == 'neural':
-        gpt = GPTree(GPR=NeuralLinearGPR(FeatureNetLearner(steps_per_update=8, random_state=a.seed)), **common)
+        gpt = GPTree(GPR=NeuralLinearGPR(FeatureNetLearner(**net_kwargs(a))), **common)
     elif a.config == 'hybrid':
         from pygptreeo import NetGlobalMean
         gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1),
-                     global_mean=NetGlobalMean(steps_per_update=8, random_state=a.seed), **common)
+                     global_mean=NetGlobalMean(**net_kwargs(a)), **common)
     elif a.config == 'global_gp':
         # the additive-GP global model of BENCHMARK_RESULTS_global_mean_streams.md, GP leaves on its residual
         from pygptreeo import AdditiveGPGlobalMean
@@ -133,7 +164,7 @@ def run(a):
         for i in range(a.N):
             xi = X[i:i + 1]
             t0 = time.perf_counter(); mu, sd = gpt.predict(xi); t1 = time.perf_counter()
-            gpt.update_tree(xi, np.array([[y[i]]]), np.array([[sig[i]]])); t2 = time.perf_counter()
+            gpt.update_tree(xi, np.array([[y_obs[i]]]), np.array([[sig[i]]])); t2 = time.perf_counter()
             f.write(f"{y[i]:.10e},{mu[0, 0]:.10e},{sd[0, 0]:.6e},{t1 - t0:.3e},{t2 - t1:.3e},{len(gpt.root.leaves)}\n")
             if (i + 1) % BATCH == 0:
                 print(f"{config_name(a)}: {i + 1} points, {time.time() - t_start:.0f} s", file=sys.__stdout__, flush=True)
@@ -166,7 +197,13 @@ def plot(a):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    if a.settings:
+    if a.overlay:
+        cfgs = a.overlay.split(',')
+        palette = ('black', 'tab:blue', 'tab:red', 'tab:orange', 'tab:green', 'tab:purple', 'tab:brown', 'tab:cyan')
+        style = {c: dict(color=col, ls='-') for c, col in zip(cfgs, palette)}
+        name = {c: c for c in cfgs}
+        title = "configurations: " + ", ".join(cfgs); suffix = "overlay"
+    elif a.settings:
         # the tree-structure settings, one base configuration (--config)
         # Nbar and the retrain interval paired for about equal retrain cost per point
         variants = [('', 'Nbar 100, retrain 25, gradual (default)'), ('_Nbar50_retrain6', 'Nbar 50, retrain 6'),
@@ -232,7 +269,7 @@ def plot(a):
     frames = []
     for cfg, m in runs.items():
         df = pd.DataFrame({k: v for k, v in m.items()}); df.insert(0, 'config', cfg); frames.append(df)
-    prefix = f"{a.config}_settings_" if a.settings else ('kernel_' if a.kernels else '')
+    prefix = 'overlay_' if a.overlay else (f"{a.config}_settings_" if a.settings else ('kernel_' if a.kernels else ''))
     pd.concat(frames).to_csv(os.path.join(RESULTS_DIR, f"{tag(a)}_{prefix}batches.csv"),
                              index=False, float_format='%.6g')
     # a compact summary of the last batch
@@ -255,6 +292,14 @@ def main():
     ap.add_argument('--retrain', type=int, default=SETTINGS_DEFAULT['retrain'], help='retrain_every_n_points')
     ap.add_argument('--splitting', default=SETTINGS_DEFAULT['splitting'], choices=('gradual', 'standard'))
     ap.add_argument('--settings', action='store_true', help="with --plot: the Nbar/retrain/splitting variants of --config")
+    ap.add_argument('--noise', type=float, default=0.0,
+                    help='heteroscedastic observation noise: sigma_i = noise * std(y) * 10^U(-1.5, 0); metrics against the noiseless y')
+    ap.add_argument('--net-opt', default='adam', choices=('adam', 'lbfgs'), help="the network's optimiser (hybrid, neural)")
+    ap.add_argument('--net-steps', type=int, default=None, help="the network's steps per refit (default: 4000 Adam, 300 L-BFGS)")
+    ap.add_argument('--net-reservoir', type=int, default=None, help="the network's coverage-reservoir size (default: every point)")
+    ap.add_argument('--net-weight', action='store_true', help='weight the network loss by 1 / (sigma^2 + error^2)')
+    ap.add_argument('--net-log', action='store_true', help='fit the network to log(y - y_min + 0.01 range)')
+    ap.add_argument('--overlay', default=None, help='with --plot: comma-separated record names to overlay (any configurations)')
     a = ap.parse_args()
     if a.plot:
         plot(a)

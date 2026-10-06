@@ -186,6 +186,68 @@ class TestNeuralLinearGPR(unittest.TestCase):
         gpr = NeuralLinearGPR(learner); gpr.set_observation_noise(1e-6); gpr.fit(X[:50], y[:50])
         self.assertEqual(gpr.version, 2)
 
+    def test_lbfgs_fits_and_amortises(self):
+        """L-BFGS reaches a fit as good as Adam's, and advances one iteration per observation when amortised."""
+        rng = np.random.RandomState(11)
+        X = rng.rand(600, 3); y = _target(X); Xt = rng.rand(300, 3); yt = _target(Xt)
+        errs = {}
+        for opt in ('adam', 'lbfgs'):
+            learner = self._learner(min_points=400, optimizer=opt, steps=(600 if opt == 'adam' else 60),
+                                    reservoir_size=400)
+            for i in range(400):
+                learner.observe(X[i], y[i], 1e-3)
+            errs[opt] = np.sqrt(np.mean((learner.head(Xt)[:, 0] - yt) ** 2)) / (yt.max() - yt.min())
+        self.assertLess(errs['lbfgs'], 0.05)
+        self.assertLess(errs['lbfgs'], 2 * errs['adam'] + 0.01)
+        learner = self._learner(min_points=100, optimizer='lbfgs', steps=20, steps_per_update=2)
+        for i in range(200):
+            learner.observe(X[i], y[i], 1e-3)                 # first fit at 100, a refit due at 200
+        self.assertTrue(learner.refit_in_progress)
+        for i in range(200, 210):                             # 10 x 2 = 20 iterations: complete
+            learner.observe(X[i], y[i], 1e-3)
+        self.assertFalse(learner.refit_in_progress)
+        self.assertEqual(learner.version, 2)
+
+    def test_sigma_weighted_loss_discounts_the_noisy_points(self):
+        """Half the points carry noise of the function's own size; weighting by sigma recovers the function."""
+        rng = np.random.RandomState(12)
+        n = 400
+        X = rng.rand(n, 3); y = _target(X)
+        noisy = np.arange(n) % 2 == 0
+        sig = np.where(noisy, 1.0, 1e-3)
+        y_obs = y + sig * rng.randn(n)
+        Xt = rng.rand(300, 3); yt = _target(Xt)
+        errs = {}
+        for weighted in (False, True):
+            learner = self._learner(min_points=n, steps=800, weight_by_sigma=weighted)
+            for i in range(n):
+                learner.observe(X[i], y_obs[i], sig[i])
+            errs[weighted] = np.sqrt(np.mean((learner.head(Xt)[:, 0] - yt) ** 2)) / (yt.max() - yt.min())
+        self.assertLess(errs[True], 0.5 * errs[False])
+        self.assertLess(errs[True], 0.06)
+
+    def test_log_transform_predicts_in_original_units(self):
+        """A positive, heavy-tailed target: the log fit returns original units and its relative error is better."""
+        rng = np.random.RandomState(13)
+        n = 500
+        X = rng.rand(n, 2); y = np.exp(6.0 * X[:, 0] * X[:, 1]) + 0.5 * X[:, 1]    # range 0.5 to 400
+        Xt = rng.rand(300, 2); yt = np.exp(6.0 * Xt[:, 0] * Xt[:, 1]) + 0.5 * Xt[:, 1]
+        rel = {}
+        for tr in (None, 'log'):
+            learner = self._learner(min_points=n, steps=800, target_transform=tr)
+            for i in range(n):
+                learner.observe(X[i], y[i], 1e-3)
+            h = learner.head(Xt)[:, 0]
+            rel[tr] = np.median(np.abs(h - yt) / yt)
+        self.assertIsNotNone(learner.y_shift)
+        self.assertTrue(np.all(np.isfinite(learner.head(X))))
+        self.assertLess(rel['log'], 0.5 * rel[None])
+        # a target with negative values is shifted, not rejected
+        learner = self._learner(min_points=100, steps=50, target_transform='log')
+        for i in range(100):
+            learner.observe(X[i], -y[i], 1e-3)
+        self.assertTrue(np.all(np.isfinite(learner.head(X[:10]))))
+
     def test_tree_with_amortised_refits(self):
         rng = np.random.RandomState(10)
         N = 500

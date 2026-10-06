@@ -126,11 +126,31 @@ class FeatureNetLearner:
     hidden, depth : int
         Width and number of hidden layers of the MLP (SiLU activations). The last
         hidden layer, of ``hidden`` units, is the feature map.
-    steps : int, default=4000
-        Adam steps per (re)fit, with the learning rate cosine-annealed to zero.
-        Fixed, so a refit costs the same however many points the sample holds.
+    optimizer : {'adam', 'lbfgs'}, default='adam'
+        ``'adam'``: minibatch Adam, ``steps`` steps with the learning rate
+        cosine-annealed to zero; a step costs the same however many points the
+        sample holds. ``'lbfgs'``: full-batch L-BFGS with a strong-Wolfe line
+        search, ``steps`` iterations; an iteration costs one or a few passes over
+        the whole sample, so it pairs with a bounded ``reservoir_size``.
+    steps : int or None
+        Optimiser steps per (re)fit: 4000 for Adam, 300 for L-BFGS when None.
     batch_size : int, default=128
+        Adam's minibatch size.
     lr : float, default=1e-3
+        Adam's learning rate.
+    weight_by_sigma : bool, default=False
+        Weight each point's squared error by ``1 / (sigma_i^2 + s^2)``, where
+        ``sigma_i`` is the point's observation noise and ``s`` the network's
+        current prequential error (``error_scale``, zero before the first fit;
+        a floor of 1% of the targets' spread keeps the weights finite). The
+        maximum-likelihood weighting for the noise the stream reports, which
+        tends to uniform where the network's own error dominates the noise.
+    target_transform : {None, 'log'}
+        ``'log'`` fits the network to ``log(y - y_min + 0.01 * range)`` of the
+        sample (per output, redone at every fit) and predicts back in original
+        units. For a heavy-tailed positive target this turns the least-squares
+        fit into one of relative errors instead of letting the largest values
+        dominate it.
     min_points : int, default=200
         Observations before the first fit. Until then leaves regress on
         ``[x, x^2]`` in place of the network's features.
@@ -160,15 +180,25 @@ class FeatureNetLearner:
     random_state : int or None
     """
 
-    def __init__(self, hidden: int = 128, depth: int = 3, steps: int = 4000, batch_size: int = 128,
+    def __init__(self, hidden: int = 128, depth: int = 3, steps: Optional[int] = None, batch_size: int = 128,
                  lr: float = 1e-3, min_points: int = 200, refit_cap: Optional[int] = None,
                  min_turnover: float = 0.0, reservoir_size: Optional[int] = None,
                  reservoir: str = 'coverage', warm_start: bool = True,
                  steps_per_update: Optional[int] = None, error_window: int = 200,
-                 random_state: Optional[int] = None):
+                 random_state: Optional[int] = None, optimizer: str = 'adam',
+                 weight_by_sigma: bool = False, target_transform: Optional[str] = None):
         _require_torch()
         if reservoir not in ('coverage', 'uniform'):
             raise ValueError("reservoir must be 'coverage' or 'uniform'")
+        if optimizer not in ('adam', 'lbfgs'):
+            raise ValueError("optimizer must be 'adam' or 'lbfgs'")
+        if target_transform not in (None, 'log'):
+            raise ValueError("target_transform must be None or 'log'")
+        if steps is None:
+            steps = 4000 if optimizer == 'adam' else 300
+        self.optimizer = optimizer
+        self.weight_by_sigma = bool(weight_by_sigma)
+        self.target_transform = target_transform
         if min_points < 2:
             raise ValueError("min_points must be at least 2")
         if steps_per_update is not None and steps_per_update < 1:
@@ -191,6 +221,7 @@ class FeatureNetLearner:
         self.n_features = None; self.n_outputs = None
         self.body = None; self.head_layer = None; self.net = None
         self.x_mu = None; self.x_sd = None; self.y_mu = None; self.y_sd = None
+        self.y_shift = None                      # the 'log' transform's per-output shift, else None
         self.version = 0
         self.n_seen = 0; self.n_seen_at_fit = 0; self.turnover_at_fit = 0
         self.n_refits = 0; self.n_skipped = 0; self.fit_seconds = 0.0; self.n_seen_at_first_fit = 0
@@ -256,16 +287,35 @@ class FeatureNetLearner:
 
     # -- fitting ------------------------------------------------------------------------
     def _training_set(self):
+        """The standardised sample as tensors, the per-point loss weights and the
+        scaling ``(x_mu, x_sd, y_mu, y_sd, y_shift)`` a fit publishes with the net."""
         if isinstance(self.sample, _GrowingStore):
             self.sample._flush()
-        X = self.sample.X; Y = self.sample.y
+        X = self.sample.X; Y = self.sample.y; S = self.sample.sigma
         if X.shape[0] < 2:
             raise RuntimeError("Need at least 2 observations to fit the feature network")
         x_mu = X.mean(0); x_sd = X.std(0); x_sd = np.where(x_sd > 0, x_sd, 1.0)
+        y_shift = None
+        err = self.error_scale                   # the head's error in original units, or None
+        if self.target_transform == 'log':
+            rng_y = Y.max(0) - Y.min(0)
+            y_shift = 0.01 * np.where(rng_y > 0, rng_y, 1.0) - Y.min(0)
+            scale = Y + y_shift                  # d log(y + c) / dy = 1 / (y + c)
+            Y = np.log(scale)
+            S = S / scale
+            if err is not None:
+                err = err / np.median(scale, axis=0)
         y_mu = Y.mean(0); y_sd = float((Y - y_mu).std()) or 1.0
         Xt = torch.tensor((X - x_mu) / x_sd, dtype=torch.float32)
         Yt = torch.tensor((Y - y_mu) / y_sd, dtype=torch.float32)
-        return Xt, Yt, x_mu, x_sd, y_mu, y_sd
+        if self.weight_by_sigma:
+            var = (S / y_sd) ** 2 + (0.0 if err is None else (err / y_sd) ** 2)
+            w = 1.0 / np.maximum(var, 1e-4)      # floor: 1% of the targets' spread
+            w = w / w.mean(axis=0)
+            Wt = torch.tensor(w, dtype=torch.float32)
+        else:
+            Wt = None
+        return Xt, Yt, Wt, (x_mu, x_sd, y_mu, y_sd, y_shift)
 
     def _new_net(self):
         torch.manual_seed(int(self.rng.randint(1 << 30)))
@@ -275,22 +325,46 @@ class FeatureNetLearner:
         body = nn.Sequential(*layers); head = nn.Linear(w, self.n_outputs)
         return nn.Sequential(body, head)
 
-    def _train(self, net, Xt, Yt, opt, sched, state, n_steps):
-        """Run n_steps minibatch steps on net; `state` carries the epoch permutation
-        and position across calls."""
-        n = Xt.shape[0]; batch = int(min(self.batch_size, max(2, n // 2)))
+    def _make_optimizer(self, net):
+        """The optimiser (and Adam's schedule, else None) for one refit of ``net``."""
+        if self.optimizer == 'lbfgs':
+            # One iteration per step() call, so a refit can be amortised; max_eval must
+            # be set explicitly (its default of max_iter * 5 // 4 = 1 cuts the line search).
+            opt = torch.optim.LBFGS(net.parameters(), lr=1.0, max_iter=1, max_eval=25, history_size=20,
+                                    line_search_fn='strong_wolfe', tolerance_grad=0.0, tolerance_change=0.0)
+            return opt, None
+        opt = torch.optim.Adam(net.parameters(), lr=self.lr)
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=self.steps, eta_min=0.0)
+        return opt, sched
+
+    @staticmethod
+    def _loss(net, X, Y, W):
+        r2 = (net(X) - Y) ** 2
+        return (r2 * W).mean() if W is not None else r2.mean()
+
+    def _train(self, net, Xt, Yt, Wt, opt, sched, state, n_steps):
+        """Run n_steps optimiser steps on net: minibatch Adam steps (`state` carries
+        the epoch permutation and position across calls) or full-batch L-BFGS
+        iterations (the optimiser carries its own history)."""
         net.train(); done = 0
+        if sched is None:                        # L-BFGS: one iteration per step() call
+            def closure():
+                opt.zero_grad(); loss = self._loss(net, Xt, Yt, Wt); loss.backward(); return loss
+            while done < n_steps:
+                opt.step(closure); done += 1
+            net.eval(); return
+        n = Xt.shape[0]; batch = int(min(self.batch_size, max(2, n // 2)))
         while done < n_steps:
             if state['perm'] is None or state['pos'] >= n:
                 state['perm'] = torch.randperm(n, generator=self.gen); state['pos'] = 0
             idx = state['perm'][state['pos']:state['pos'] + batch]; state['pos'] += batch
-            loss = ((net(Xt[idx]) - Yt[idx]) ** 2).mean()
+            loss = self._loss(net, Xt[idx], Yt[idx], None if Wt is None else Wt[idx])
             opt.zero_grad(); loss.backward(); opt.step(); sched.step(); done += 1
         net.eval()
 
     def _publish(self, net, scal, t_spent):
         self.net = net; self.body = net[0]; self.head_layer = net[1]
-        self.x_mu, self.x_sd, self.y_mu, self.y_sd = scal
+        self.x_mu, self.x_sd, self.y_mu, self.y_sd, self.y_shift = scal
         if self.n_refits == 0:
             self.n_seen_at_first_fit = self.n_seen
         self.version += 1; self.n_refits += 1
@@ -303,21 +377,19 @@ class FeatureNetLearner:
         import time
         t0 = time.time()
         self._shadow = None
-        Xt, Yt, x_mu, x_sd, y_mu, y_sd = self._training_set()
+        Xt, Yt, Wt, scal = self._training_set()
         net = self.net if (self.net is not None and self.warm_start) else self._new_net()
-        opt = torch.optim.Adam(net.parameters(), lr=self.lr)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=self.steps, eta_min=0.0)
-        self._train(net, Xt, Yt, opt, sched, {'perm': None, 'pos': 0}, self.steps)
-        self._publish(net, (x_mu, x_sd, y_mu, y_sd), time.time() - t0)
+        opt, sched = self._make_optimizer(net)
+        self._train(net, Xt, Yt, Wt, opt, sched, {'perm': None, 'pos': 0}, self.steps)
+        self._publish(net, scal, time.time() - t0)
 
     def _start_shadow(self):
         """Begin an amortised refit on a copy of the network (or a fresh one)."""
         import copy
-        Xt, Yt, x_mu, x_sd, y_mu, y_sd = self._training_set()
+        Xt, Yt, Wt, scal = self._training_set()
         net = copy.deepcopy(self.net) if self.warm_start else self._new_net()
-        opt = torch.optim.Adam(net.parameters(), lr=self.lr)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=self.steps, eta_min=0.0)
-        self._shadow = dict(net=net, Xt=Xt, Yt=Yt, opt=opt, sched=sched, scal=(x_mu, x_sd, y_mu, y_sd),
+        opt, sched = self._make_optimizer(net)
+        self._shadow = dict(net=net, Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=sched, scal=scal,
                             state={'perm': None, 'pos': 0}, done=0, t=0.0)
         # The schedule restarts from this refit's start, so a second refit cannot
         # become due while this one is in progress.
@@ -327,7 +399,7 @@ class FeatureNetLearner:
         import time
         t0 = time.time(); s = self._shadow
         k = min(self.steps_per_update, self.steps - s['done'])
-        self._train(s['net'], s['Xt'], s['Yt'], s['opt'], s['sched'], s['state'], k)
+        self._train(s['net'], s['Xt'], s['Yt'], s['Wt'], s['opt'], s['sched'], s['state'], k)
         s['done'] += k; s['t'] += time.time() - t0
         if s['done'] >= self.steps:
             self._shadow = None
@@ -352,7 +424,10 @@ class FeatureNetLearner:
         """h(X), the network's own prediction in original units: (n, n_outputs)."""
         with torch.no_grad():
             out = self.net(self._xt(X)).double().numpy()
-        return out * self.y_sd + self.y_mu
+        out = out * self.y_sd + self.y_mu
+        if self.y_shift is not None:
+            out = np.exp(np.minimum(out, 300.0)) - self.y_shift
+        return out
 
     def gradient_of_linear(self, X, w) -> np.ndarray:
         """d/dx of ``w . phi(x)`` (``w`` in feature units) at each row of X: (n, d), in
@@ -363,7 +438,8 @@ class FeatureNetLearner:
         return g.double().numpy() / self.x_sd
 
     def __repr__(self) -> str:
-        return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, steps={self.steps}, "
+        return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, optimizer={self.optimizer!r}, "
+                f"steps={self.steps}, weight_by_sigma={self.weight_by_sigma}, target_transform={self.target_transform!r}, "
                 f"reservoir_size={self.reservoir_size}, n_seen={self.n_seen}, n_refits={self.n_refits}, "
                 f"version={self.version})")
 
