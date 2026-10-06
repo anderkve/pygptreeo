@@ -98,7 +98,9 @@ def run(a):
     import target_functions as tf
     targets = {'eggholder': tf.Eggholder, 'himmelblau': tf.Himmelblau, 'rosenbrock': tf.Rosenbrock,
                'rastrigin': tf.Rastrigin, 'levy': tf.Levy, 'rotated_rosenbrock': tf.RotatedRosenbrock,
-               'gaussian_peaks': tf.GaussianPeaks}
+               'gaussian_peaks': tf.GaussianPeaks, 'active_peaks': tf.ActiveSubspacePeaks,
+               'michalewicz': tf.Michalewicz, 'ackley': tf.Ackley, 'griewank': tf.Griewank,
+               'step_ridge': tf.StepRidge, 'chirp': tf.Chirp}
     target = targets[a.target]
     rng = np.random.RandomState(a.seed)
     X, _ = make_stream(a.stream, target, a.d, a.N, rng)

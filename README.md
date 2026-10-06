@@ -226,7 +226,7 @@ times the update cost (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.2).
 Its accuracy is also nearly flat in `Nbar` and the retrain interval, where the
 plain tree on a smooth 6D target gains a factor of two from large, rarely
 refitted leaves, so the hybrid keeps `Nbar=100`, `retrain_every_n_points=25`
-and standard splitting, which costs it nothing in accuracy (§3.3).
+and gradual splitting, the `GPTree` defaults (§3.3).
 
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:

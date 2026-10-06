@@ -78,7 +78,7 @@ class GPTree:
                  theta: Optional[float] = 0.0001,
                  use_calibrated_sigma: Optional[bool] = True,
                  split_dimension_criteria: Optional[str] = 'min_lengthscale',
-                 splitting_strategy: Optional[str] = 'standard',
+                 splitting_strategy: Optional[str] = 'gradual',
                  max_n_pred_leaves: Optional[int] = None,
                  aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
@@ -111,7 +111,10 @@ class GPTree:
                 length scales), 'max_spread', 'max_variance', 'max_uncertainty',
                 'random'. Defaults to 'min_lengthscale'.
             splitting_strategy (Optional[str]): Strategy for splitting nodes.
-                'standard' or 'gradual'. Defaults to 'standard'.
+                'standard' (each child keeps its own half of the parent's points)
+                or 'gradual' (each child also receives a copy of its sibling's
+                points, dropped as its own arrive, so it starts with a full-size
+                fit and stays continuous across the split). Defaults to 'gradual'.
             max_n_pred_leaves (Optional[int]): Maximum number of leaves to use
                 for prediction. Defaults to None (use all).
             aggregation (Optional[str]): Method for aggregating predictions.

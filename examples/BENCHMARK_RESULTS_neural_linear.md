@@ -772,8 +772,8 @@ leaves, which the recursive prediction does not feel); coverage is 0.67 to
 
 The recommendation for the hybrid is therefore unchanged for Nbar and the
 retrain interval (100 and 25, the package defaults of the benchmarks), and
-standard splitting, the `GPTree` default, is as accurate as gradual and
-cheaper. For the plain tree on a smooth target in six or more dimensions the
+standard splitting is as accurate as gradual for it and cheaper; gradual stays
+the `GPTree` default since it is what the plain tree gains from. For the plain tree on a smooth target in six or more dimensions the
 same runs say that larger, rarely refitted leaves are worth their spikes.
 
 ## Reproduce
