@@ -98,6 +98,10 @@ def config_name(a):
         parts.append('allpoints')
     if a.net_unweighted:
         parts.append('unweighted')
+    if a.net_value_weight is not None:
+        parts.append(f"vw{a.net_value_weight:g}")
+    if a.net_polish is not None:
+        parts.append(f"polish{a.net_polish}")
     return '_'.join(parts)
 
 
@@ -116,6 +120,10 @@ def net_kwargs(a):
         kw['reservoir_size'] = None
     if a.net_unweighted:
         kw['weight_by_sigma'] = False
+    if a.net_value_weight is not None:
+        kw['reservoir_value_weight'] = a.net_value_weight
+    if a.net_polish is not None:
+        kw['polish_steps'] = a.net_polish
     return kw
 
 
@@ -306,6 +314,8 @@ def main():
     ap.add_argument('--net-reservoir', type=int, default=None, help="the network's coverage-reservoir size (default: the learner's, 5000)")
     ap.add_argument('--net-all-points', action='store_true', help='train the network on every point instead of a reservoir')
     ap.add_argument('--net-unweighted', action='store_true', help='switch the 1 / (sigma^2 + error^2) loss weighting off')
+    ap.add_argument('--net-value-weight', type=float, default=None, help="the reservoir's value weight (reservoir_value_weight)")
+    ap.add_argument('--net-polish', type=int, default=None, help='Adam steps over every point after the L-BFGS fit (polish_steps)')
     ap.add_argument('--overlay', default=None, help='with --plot: comma-separated record names to overlay (any configurations)')
     ap.add_argument('--overlay-name', default='overlay', help='with --overlay: the suffix of the figure and table files')
     a = ap.parse_args()

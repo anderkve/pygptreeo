@@ -17,7 +17,10 @@ the network rather than to a constant. The tree itself is unchanged.
   ``steps``, full-batch L-BFGS by default or minibatch Adam, so its cost does not
   depend on how long the stream has run; refits happen when the observation
   count has doubled since the last fit (or after ``refit_cap`` points),
-  warm-started from the previous weights. The last hidden layer is the
+  warm-started from the previous weights. Two options reach beyond the
+  reservoir: ``reservoir_value_weight`` makes the coverage design keep more
+  points where the function varies fast, and ``polish_steps`` follows the
+  L-BFGS fit with a fixed budget of Adam steps over every point seen. The last hidden layer is the
   feature map, the output layer the *head* ``h(x)``. The learner also tracks the
   head's prequential error with the observation noise subtracted
   (``error_scale``), the budget a residual leaf adds to its sigma.
@@ -163,6 +166,18 @@ class FeatureNetLearner:
     reservoir : {'coverage', 'uniform'}
         For a bounded sample: a maximin coverage design of the explored region
         (``CoverageReservoir``), or a uniform random sample of the stream.
+    reservoir_value_weight : float, default=0.0
+        For the coverage design: the weight of the (standardised) output in the
+        maximin metric. Positive, the design keeps more points where the
+        function varies fast and fewer on its flat parts; 0 covers the inputs
+        alone.
+    polish_steps : int, default=0
+        After the L-BFGS fit on the reservoir, this many minibatch Adam steps
+        over every point seen (kept in a store that grows with the stream), at
+        ``polish_lr`` cosine-annealed to zero: the fine structure the reservoir
+        cannot hold, at a cost fixed by the step count. 0 switches it off.
+    polish_lr : float or None
+        The polish phase's learning rate; ``lr`` when None.
     warm_start : bool, default=True
         Continue each refit from the previous weights.
     steps_per_update : int or None, default=None
@@ -183,7 +198,8 @@ class FeatureNetLearner:
                  reservoir: str = 'coverage', warm_start: bool = True,
                  steps_per_update: Optional[int] = None, error_window: int = 200,
                  random_state: Optional[int] = None, optimizer: str = 'lbfgs',
-                 weight_by_sigma: bool = True):
+                 weight_by_sigma: bool = True, reservoir_value_weight: float = 0.0,
+                 polish_steps: int = 0, polish_lr: Optional[float] = None):
         _require_torch()
         if reservoir not in ('coverage', 'uniform'):
             raise ValueError("reservoir must be 'coverage' or 'uniform'")
@@ -193,6 +209,11 @@ class FeatureNetLearner:
             steps = 4000 if optimizer == 'adam' else 300
         self.optimizer = optimizer
         self.weight_by_sigma = bool(weight_by_sigma)
+        self.reservoir_value_weight = float(reservoir_value_weight)
+        self.polish_steps = int(polish_steps); self.polish_lr = float(polish_lr) if polish_lr is not None else float(lr)
+        if self.polish_steps < 0:
+            raise ValueError("polish_steps must be non-negative")
+        self.store = None                        # every point seen, for the polish phase
         if min_points < 2:
             raise ValueError("min_points must be at least 2")
         if steps_per_update is not None and steps_per_update < 1:
@@ -241,9 +262,12 @@ class FeatureNetLearner:
             if self.reservoir_size is None:
                 self.sample = _GrowingStore(self.n_features, self.n_outputs)
             elif self.reservoir_kind == 'coverage':
-                self.sample = CoverageReservoir(self.reservoir_size, self.n_features, self.n_outputs)
+                self.sample = CoverageReservoir(self.reservoir_size, self.n_features, self.n_outputs,
+                                                value_weight=self.reservoir_value_weight)
             else:
                 self.sample = UniformReservoir(self.reservoir_size, self.n_features, self.n_outputs, self.rng)
+            if self.polish_steps > 0 and self.reservoir_size is not None:
+                self.store = _GrowingStore(self.n_features, self.n_outputs)
         self.n_seen += 1
         if self.net is not None:
             # Prequential error of the head; its expectation is (h - f)^2 + noise^2.
@@ -256,6 +280,8 @@ class FeatureNetLearner:
                 self.noise_var = (1.0 - w) * self.noise_var + w * nz2
             self.error_scale = np.sqrt(np.maximum(self.error_var - self.noise_var, 0.0))
         self.sample.add(x, y, sigma)
+        if self.store is not None:
+            self.store.add(x, y, sigma)
         if self._shadow is not None:
             return self._advance_shadow()
         return self._maybe_fit()
@@ -279,16 +305,21 @@ class FeatureNetLearner:
         self.fit(); return True
 
     # -- fitting ------------------------------------------------------------------------
-    def _training_set(self):
-        """The standardised sample as tensors, the per-point loss weights and the
-        scaling ``(x_mu, x_sd, y_mu, y_sd)`` a fit publishes with the net."""
-        if isinstance(self.sample, _GrowingStore):
-            self.sample._flush()
-        X = self.sample.X; Y = self.sample.y; S = self.sample.sigma
+    def _training_set(self, store=None, scal=None):
+        """The standardised sample (or ``store``) as tensors, the per-point loss
+        weights and the scaling ``(x_mu, x_sd, y_mu, y_sd)`` a fit publishes with
+        the net; ``scal`` reuses a scaling instead of computing one."""
+        source = self.sample if store is None else store
+        if isinstance(source, _GrowingStore):
+            source._flush()
+        X = source.X; Y = source.y; S = source.sigma
         if X.shape[0] < 2:
             raise RuntimeError("Need at least 2 observations to fit the feature network")
-        x_mu = X.mean(0); x_sd = X.std(0); x_sd = np.where(x_sd > 0, x_sd, 1.0)
-        y_mu = Y.mean(0); y_sd = float((Y - y_mu).std()) or 1.0
+        if scal is None:
+            x_mu = X.mean(0); x_sd = X.std(0); x_sd = np.where(x_sd > 0, x_sd, 1.0)
+            y_mu = Y.mean(0); y_sd = float((Y - y_mu).std()) or 1.0
+        else:
+            x_mu, x_sd, y_mu, y_sd = scal
         Xt = torch.tensor((X - x_mu) / x_sd, dtype=torch.float32)
         Yt = torch.tensor((Y - y_mu) / y_sd, dtype=torch.float32)
         if self.weight_by_sigma:
@@ -308,6 +339,20 @@ class FeatureNetLearner:
             layers += [nn.Linear(w, self.hidden), nn.SiLU()]; w = self.hidden
         body = nn.Sequential(*layers); head = nn.Linear(w, self.n_outputs)
         return nn.Sequential(body, head)
+
+    def _make_polish_optimizer(self, net):
+        """Adam over the full store for the polish phase, with its own cosine schedule."""
+        opt = torch.optim.Adam(net.parameters(), lr=self.polish_lr)
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=self.polish_steps, eta_min=0.0)
+        return opt, sched
+
+    def _polish_phase(self, net, scal):
+        """The polish phase's tensors and optimiser, or None when it is off."""
+        if self.polish_steps <= 0 or self.store is None or self.store.n < 2:
+            return None
+        Xt, Yt, Wt, _ = self._training_set(self.store, scal)
+        opt, sched = self._make_polish_optimizer(net)
+        return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=sched, state={'perm': None, 'pos': 0})
 
     def _make_optimizer(self, net):
         """The optimiser (and Adam's schedule, else None) for one refit of ``net``."""
@@ -365,6 +410,10 @@ class FeatureNetLearner:
         net = self.net if (self.net is not None and self.warm_start) else self._new_net()
         opt, sched = self._make_optimizer(net)
         self._train(net, Xt, Yt, Wt, opt, sched, {'perm': None, 'pos': 0}, self.steps)
+        polish = self._polish_phase(net, scal)
+        if polish is not None:
+            self._train(net, polish['Xt'], polish['Yt'], polish['Wt'], polish['opt'], polish['sched'],
+                        polish['state'], self.polish_steps)
         self._publish(net, scal, time.time() - t0)
 
     def _start_shadow(self):
@@ -374,7 +423,7 @@ class FeatureNetLearner:
         net = copy.deepcopy(self.net) if self.warm_start else self._new_net()
         opt, sched = self._make_optimizer(net)
         self._shadow = dict(net=net, Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=sched, scal=scal,
-                            state={'perm': None, 'pos': 0}, done=0, t=0.0)
+                            state={'perm': None, 'pos': 0}, done=0, t=0.0, polish=None, polish_done=0)
         # The schedule restarts from this refit's start, so a second refit cannot
         # become due while this one is in progress.
         self.n_seen_at_fit = self.n_seen
@@ -382,10 +431,19 @@ class FeatureNetLearner:
     def _advance_shadow(self) -> bool:
         import time
         t0 = time.time(); s = self._shadow
-        k = min(self.steps_per_update, self.steps - s['done'])
-        self._train(s['net'], s['Xt'], s['Yt'], s['Wt'], s['opt'], s['sched'], s['state'], k)
-        s['done'] += k; s['t'] += time.time() - t0
-        if s['done'] >= self.steps:
+        if s['done'] < self.steps:
+            k = min(self.steps_per_update, self.steps - s['done'])
+            self._train(s['net'], s['Xt'], s['Yt'], s['Wt'], s['opt'], s['sched'], s['state'], k)
+            s['done'] += k
+            if s['done'] >= self.steps:
+                s['polish'] = self._polish_phase(s['net'], s['scal'])   # on the store as it stands now
+        if s['done'] >= self.steps and s['polish'] is not None and s['polish_done'] < self.polish_steps:
+            k = min(POLISH_STEPS_PER_UPDATE * self.steps_per_update, self.polish_steps - s['polish_done'])
+            p = s['polish']
+            self._train(s['net'], p['Xt'], p['Yt'], p['Wt'], p['opt'], p['sched'], p['state'], k)
+            s['polish_done'] += k
+        s['t'] += time.time() - t0
+        if s['done'] >= self.steps and (s['polish'] is None or s['polish_done'] >= self.polish_steps):
             self._shadow = None
             self._publish(s['net'], s['scal'], s['t'])
             return True
@@ -421,6 +479,7 @@ class FeatureNetLearner:
     def __repr__(self) -> str:
         return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, optimizer={self.optimizer!r}, "
                 f"steps={self.steps}, weight_by_sigma={self.weight_by_sigma}, "
+                f"reservoir_value_weight={self.reservoir_value_weight}, polish_steps={self.polish_steps}, "
                 f"reservoir_size={self.reservoir_size}, n_seen={self.n_seen}, n_refits={self.n_refits}, "
                 f"version={self.version})")
 
@@ -472,6 +531,7 @@ class NetGlobalMean(GlobalMeanLearner):
         return f"NetGlobalMean({self.learner!r})"
 
 
+POLISH_STEPS_PER_UPDATE = 8   # Adam steps per L-BFGS iteration in an amortised refit's polish phase (about equal cost)
 LOO_K = 5            # fit points nearest the query whose leave-one-out residuals set the local floor
 RAMP_START = 2.0     # spacings beyond the leaf's points where the floor starts rising to the function's scale
 RAMP_LENGTH = 2.0    # spacings over which it rises

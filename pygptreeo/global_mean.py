@@ -69,18 +69,34 @@ class CoverageReservoir:
     end up roughly evenly spread over the region the stream has explored.
     Rows keep their outputs and noise so the global model can be fitted with
     per-point noise.
+
+    With ``value_weight > 0`` the design is maximin in the joint space of the
+    inputs and the outputs, both scaled by their standard deviations at the
+    moment the reservoir fills and the outputs multiplied by ``value_weight``:
+    two points close in ``x`` but far in ``y`` count as far apart, so regions
+    where the function varies fast keep more points than flat ones. With
+    ``value_weight = 0`` (the default) the metric is the raw inputs alone.
     """
 
-    def __init__(self, size: int, n_features: int, n_outputs: int):
+    def __init__(self, size: int, n_features: int, n_outputs: int, value_weight: float = 0.0):
         if size < 2:
             raise ValueError("reservoir size must be at least 2")
         self.size = int(size)
+        self.value_weight = float(value_weight)
         self.X = np.empty((0, n_features))
         self.y = np.empty((0, n_outputs))
         self.sigma = np.empty((0, n_outputs))
         self._D = None                    # pairwise distances once full (inf on the diagonal)
         self._row_min = None              # per-row minimum of _D, kept so an offer costs O(size)
         self.turnover = 0                 # number of insertions/replacements so far
+        self._scale = None                # (x_scale, y_scale) of the joint metric, fixed at fill
+
+    def _coords(self, X, y):
+        """The points in the metric's coordinates: raw inputs, or scaled inputs and weighted outputs."""
+        if self.value_weight <= 0.0:
+            return X
+        xs, ys = self._scale
+        return np.hstack((X / xs, self.value_weight * y / ys))
 
     @property
     def n(self) -> int:
@@ -100,11 +116,15 @@ class CoverageReservoir:
             self.turnover += 1
             if self.full:
                 from scipy.spatial.distance import cdist
-                self._D = cdist(self.X, self.X)
+                if self.value_weight > 0.0:
+                    xs = self.X.std(axis=0); ys = self.y.std(axis=0)
+                    self._scale = (np.where(xs > 0, xs, 1.0), np.where(ys > 0, ys, 1.0))
+                Z = self._coords(self.X, self.y)
+                self._D = cdist(Z, Z)
                 np.fill_diagonal(self._D, np.inf)
                 self._row_min = self._D.min(axis=1)
             return True
-        d_new = np.sqrt(((self.X - x) ** 2).sum(axis=1))
+        d_new = np.sqrt(((self._coords(self.X, self.y) - self._coords(x, y)) ** 2).sum(axis=1))
         i = int(np.argmin(self._row_min)); j = int(np.argmin(self._D[i]))
         if d_new.min() <= self._D[i, j]:
             return False                  # would not improve the minimum separation

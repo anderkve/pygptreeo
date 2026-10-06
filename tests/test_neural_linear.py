@@ -227,6 +227,43 @@ class TestNeuralLinearGPR(unittest.TestCase):
         self.assertLess(errs[True], 0.5 * errs[False])
         self.assertLess(errs[True], 0.06)
 
+    def test_value_weighted_reservoir_keeps_more_points_where_the_function_varies(self):
+        """A 2D target flat on one half and oscillating on the other: the joint design puts more of its points there."""
+        from pygptreeo.global_mean import CoverageReservoir
+        rng = np.random.RandomState(14)
+        X = rng.rand(6000, 2)
+        y = np.where(X[:, 0] > 0.5, np.sin(12 * np.pi * X[:, 0]) * np.cos(8 * np.pi * X[:, 1]), 0.0)
+        frac = {}
+        for w in (0.0, 2.0):
+            r = CoverageReservoir(300, 2, 1, value_weight=w)
+            for i in range(6000):
+                r.add(X[i], y[i], 1e-3)
+            frac[w] = float(np.mean(r.X[:, 0] > 0.5))
+        self.assertAlmostEqual(frac[0.0], 0.5, delta=0.08)       # coverage of the inputs alone is even
+        self.assertGreater(frac[2.0], 0.65)                        # the oscillating half gets more points
+
+    def test_polish_phase_runs_over_every_point_and_amortises(self):
+        rng = np.random.RandomState(15)
+        X = rng.rand(1200, 3); y = _target(X); Xt = rng.rand(300, 3); yt = _target(Xt)
+        learner = self._learner(min_points=1200, steps=60, reservoir_size=200, polish_steps=400)
+        for i in range(1200):
+            learner.observe(X[i], y[i], 1e-3)
+        self.assertEqual(learner.store.n, 1200)                   # every point is kept for the polish
+        self.assertEqual(learner.sample.n, 200)
+        self.assertLess(np.sqrt(np.mean((learner.head(Xt)[:, 0] - yt) ** 2)) / (yt.max() - yt.min()), 0.05)
+        # amortised: 20 L-BFGS iterations one per update, then 80 Adam steps at 8 per update
+        learner = self._learner(min_points=100, steps=20, reservoir_size=100, polish_steps=80, steps_per_update=1)
+        for i in range(200):
+            learner.observe(X[i], y[i], 1e-3)                     # a refit due at 200
+        self.assertTrue(learner.refit_in_progress)
+        # the polish starts in the update that ends the L-BFGS phase: 20 + 9 updates leave 8 steps to go
+        for i in range(200, 228):
+            learner.observe(X[i], y[i], 1e-3)
+        self.assertTrue(learner.refit_in_progress)
+        learner.observe(X[228], y[228], 1e-3)                     # the 10th polish update completes it
+        self.assertFalse(learner.refit_in_progress)
+        self.assertEqual(learner.version, 2)
+
     def test_tree_with_amortised_refits(self):
         rng = np.random.RandomState(10)
         N = 500
