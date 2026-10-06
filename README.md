@@ -201,23 +201,20 @@ learner = FeatureNetLearner(steps_per_update=8)       # refits spread over the s
 gpt = GPTree(GPR=NeuralLinearGPR(learner), Nbar=100)  # per-leaf standard scaling is switched off for it
 ```
 
-The network is trained by full-batch L-BFGS (300 iterations per refit) on a
-5000-point coverage reservoir of the stream, followed by 3000 Adam steps over
-every point seen (`polish_steps`; the store of points costs `d + 2` floats per
-point, a few percent of the tree's own footprint), with each point's squared
-error weighted by the inverse of its noise variance plus the network's own
-error variance. `reservoir_size` sets the sample, `optimizer='adam'` switches
-to minibatch Adam alone (4000 steps, which may then run on every point,
-`reservoir_size=None`), `polish_steps=0` drops the second phase and
-`weight_by_sigma=False` switches the weighting off. `steps_per_update=None`
-runs each refit in one go instead of amortising it over the following
-updates. The polish recovered most of what the bounded reservoir loses on
-rough targets at a small extra update cost
+The network is trained in two phases per refit: full-batch L-BFGS (`steps`,
+300) on a 5000-point coverage reservoir of the stream (`reservoir_size`), then
+Adam minibatch steps (`polish_steps`, 3000) over every point seen, whose store
+costs `d + 2` floats per point, a few percent of the tree's own footprint. Each
+point's squared error is weighted by the inverse of its noise variance plus
+the network's own error variance. `steps=0` or `polish_steps=0` drops a phase;
+`steps_per_update=None` runs each refit in one go instead of amortising it
+over the following updates. The polish recovered most of what the bounded
+reservoir loses on rough targets at a small extra update cost
 (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.7). On the 6D stream benchmark it has a quarter to a half of the plain
 tree's error. Its sigma is the calibrated posterior sigma of the leaf regression
 with a floor: the leaf's local leave-one-out error near its points, rising to the
 function's overall scale beyond two nearest-neighbour spacings from them
-(`NeuralLinearGPR(distance_floor=...)`). Away from the stream that makes the
+(`NeuralLinearGPR.predict_floor`). Away from the stream that makes the
 sigma conservative rather than overconfident, at the price of over-covering a
 wandering stream's own next points; `examples/BENCHMARK_RESULTS_neural_linear.md`
 has the coverage numbers per stream. `docs/neural_gptree_ideas.md` has the

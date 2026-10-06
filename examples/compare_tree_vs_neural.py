@@ -29,8 +29,9 @@ non-default kernel is recorded as ``<config>_<kernel>``, and ``--plot --kernels`
 draws the hybrid's kernel variants against each other instead of the four
 configurations, ``--plot --overlay a,b,c`` any record names. ``--noise``
 adds heteroscedastic observation noise and scores against the noiseless
-target; the ``--net-*`` options set the network's optimiser, steps, reservoir
-and loss weighting (the learner's defaults otherwise). ``--Nbar``, ``--retrain`` and ``--splitting`` set the tree
+target; ``--net key=value ...`` passes arguments to the ``FeatureNetLearner``
+(the learner's defaults otherwise), and each pair is appended to the record
+name. ``--Nbar``, ``--retrain`` and ``--splitting`` set the tree
 structure (defaults 100, 25, gradual; a non-default value is appended to the
 record name), and ``--plot --settings --config <c>`` overlays those variants.
 """
@@ -88,38 +89,32 @@ def config_name(a):
         parts.append(f"retrain{a.retrain}")
     if a.splitting != SETTINGS_DEFAULT['splitting']:
         parts.append(a.splitting)
-    if a.net_opt is not None:
-        parts.append(a.net_opt)
-    if a.net_steps is not None:
-        parts.append(f"steps{a.net_steps}")
-    if a.net_reservoir is not None:
-        parts.append(f"res{a.net_reservoir}")
-    if a.net_all_points:
-        parts.append('allpoints')
-    if a.net_unweighted:
-        parts.append('unweighted')
-    if a.net_polish is not None:
-        parts.append(f"polish{a.net_polish}")
+    for k, v in net_pairs(a):
+        parts.append(f"{k.replace('_', '')}{v}")
     return '_'.join(parts)
 
 
+def net_pairs(a):
+    """The (key, value) pairs of --net, values parsed as int, float, None or str."""
+    out = []
+    for item in a.net:
+        k, v = item.split('=', 1)
+        if v == 'None':
+            val = None
+        else:
+            try:
+                val = int(v)
+            except ValueError:
+                val = float(v)
+        out.append((k, val))
+    return out
+
+
 def net_kwargs(a):
-    """The FeatureNetLearner keyword arguments of the --net-* options (the learner's defaults otherwise)."""
-    kw = dict(random_state=a.seed)
-    if a.net_opt is not None:
-        kw['optimizer'] = a.net_opt
-    # amortised refits: one full-batch L-BFGS iteration or 8 Adam minibatch steps per update
-    kw['steps_per_update'] = 8 if kw.get('optimizer', 'lbfgs') == 'adam' else 1
-    if a.net_steps is not None:
-        kw['steps'] = a.net_steps
-    if a.net_reservoir is not None:
-        kw['reservoir_size'] = a.net_reservoir
-    if a.net_all_points:
-        kw['reservoir_size'] = None
-    if a.net_unweighted:
-        kw['weight_by_sigma'] = False
-    if a.net_polish is not None:
-        kw['polish_steps'] = a.net_polish
+    """The FeatureNetLearner keyword arguments: the --net pairs on top of the learner's
+    defaults, with amortised refits at one L-BFGS iteration (eight Adam steps) per update."""
+    kw = dict(random_state=a.seed, steps_per_update=1)
+    kw.update(net_pairs(a))
     return kw
 
 
@@ -305,12 +300,9 @@ def main():
     ap.add_argument('--settings', action='store_true', help="with --plot: the Nbar/retrain/splitting variants of --config")
     ap.add_argument('--noise', type=float, default=0.0,
                     help='heteroscedastic observation noise: sigma_i = noise * std(y) * 10^U(-1.5, 0); metrics against the noiseless y')
-    ap.add_argument('--net-opt', default=None, choices=('adam', 'lbfgs'), help="the network's optimiser (default: the learner's, L-BFGS)")
-    ap.add_argument('--net-steps', type=int, default=None, help="the network's steps per refit (default: 300 L-BFGS, 4000 Adam)")
-    ap.add_argument('--net-reservoir', type=int, default=None, help="the network's coverage-reservoir size (default: the learner's, 5000)")
-    ap.add_argument('--net-all-points', action='store_true', help='train the network on every point instead of a reservoir')
-    ap.add_argument('--net-unweighted', action='store_true', help='switch the 1 / (sigma^2 + error^2) loss weighting off')
-    ap.add_argument('--net-polish', type=int, default=None, help="Adam steps over every point after the L-BFGS fit (default: the learner's, 3000)")
+    ap.add_argument('--net', nargs='*', default=[], metavar='KEY=VALUE',
+                    help="FeatureNetLearner arguments for the hybrid and neural configurations, e.g. steps=0 polish_steps=4000 "
+                         "reservoir_size=None (the learner's defaults otherwise)")
     ap.add_argument('--overlay', default=None, help='with --plot: comma-separated record names to overlay (any configurations)')
     ap.add_argument('--overlay-name', default='overlay', help='with --overlay: the suffix of the figure and table files')
     a = ap.parse_args()

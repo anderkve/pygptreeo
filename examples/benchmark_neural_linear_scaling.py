@@ -11,8 +11,6 @@ Configurations:
     tree              plain GPTree (ARD Matern leaves)
     neural            neural-linear tree, network trained on every point seen
     neural_cov<k>     network trained on a maximin coverage reservoir of k points
-    neural_uni<k>     network trained on a uniform reservoir sample of k points
-    neural_cap<k>     every point kept, but a refit at least every k points (as well
                       as at each doubling); shows the cost of refitting more often
     neural_amort<s>   refits spread over the following updates, s Adam steps per
                       update, published when complete (no latency spike)
@@ -57,11 +55,7 @@ def make_model(config, seed, nbar):
         kw = dict(random_state=seed)
         for part in [p for p in config[len('neural'):].split('_') if p]:
             if part.startswith('cov'):
-                kw.update(reservoir_size=int(part[3:]), reservoir='coverage', min_turnover=0.25)
-            elif part.startswith('uni'):
-                kw.update(reservoir_size=int(part[3:]), reservoir='uniform', min_turnover=0.25)
-            elif part.startswith('cap'):
-                kw.update(refit_cap=int(part[3:]))
+                kw.update(reservoir_size=int(part[3:]))
             elif part.startswith('amort'):
                 kw.update(steps_per_update=int(part[5:]))
             else:

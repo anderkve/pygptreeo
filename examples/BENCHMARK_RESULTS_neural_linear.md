@@ -1,5 +1,11 @@
 # Neural-linear leaves: accuracy on the stream benchmark and cost scaling on a long stream
 
+Option names in the measurement sections are those of the code at the time;
+the learner's remaining options are `hidden`, `depth`, `steps`,
+`polish_steps`, `lr`, `min_points`, `reservoir_size`, `steps_per_update` and
+`random_state` (the others, named where they were measured, were removed as
+not worth keeping).
+
 `GPTree(GPR=NeuralLinearGPR(FeatureNetLearner()))` (`pygptreeo/neural_linear.py`):
 one tree-wide feature network, and in every leaf a Bayesian linear regression on
 its features of the residual of the network's own prediction. The design and
@@ -895,7 +901,7 @@ tree, whose leaves do the work there, and the 1000-iteration run starts
 slower over the first 10 000 points. The reservoir alone costs Adam a little
 (0.0032 against 0.0027 on the active peaks) and L-BFGS nothing.
 
-**The sigma-weighted loss** (`weight_by_sigma=True`): each point's squared
+**The sigma-weighted loss** (now always on): each point's squared
 error weighted by `1 / (sigma_i^2 + s^2)`, `s` the network's current
 prequential error, normalised to mean one. Heteroscedastic noise is added to
 the stream (`--noise f`: `sigma_i = f * std(y) * 10^U(-1.5, 0)`, a factor 30
@@ -940,8 +946,10 @@ gains at the low end it loses at the top. The option stays for targets whose
 users want a relative fit from the network, but it is not a default.
 
 On these results L-BFGS and the sigma weighting became the learner's
-defaults, and the log transform was removed from the package; the
-measurements above are the record of why. Every section before this one ran
+defaults and the log transform was removed from the package; the
+measurements above are the record of why. The switches themselves were
+removed afterwards too: the learner always weights by sigma, and Adam-only
+training is `steps=0` (no L-BFGS phase) with the polish over every point. Every section before this one ran
 the earlier default (Adam on every point, unweighted); §3.6 reruns the
 comparisons with the new one, and the size of the reservoir L-BFGS trains on
 was set there.
@@ -1121,14 +1129,17 @@ python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --ker
 # the final default on the ten runs (section 3.8): run the hybrid with no --net-* option, then
 python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid_nopolish,hybrid --overlay-name final
 # the two-phase refit (section 3.7):
-OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target michalewicz --d 5 --config hybrid --net-polish 3000
+OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target michalewicz --d 5 --config hybrid --net polish_steps=3000
 python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid,hybrid_polish3000 --overlay-name polish
 # the new default against the earlier one (section 3.6): run the hybrid with the learner's defaults, then overlay
 OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target michalewicz --d 5 --config hybrid
 python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid_res2000,hybrid --overlay-name default
 # the network's training options (section 3.5): L-BFGS on a reservoir, noise + sigma weighting
-OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target active_peaks --d 10 --config hybrid --net-opt lbfgs --net-steps 1000 --net-reservoir 2000
-OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target rotated_rosenbrock --d 6 --config hybrid --noise 1.0 --net-weight
+# (the record names in sections 3.5 to 3.8 came from the earlier per-option switches of the script;
+#  the learner's options they set are passed as --net key=value now, e.g. the original Adam-only training is
+#  --net steps=0 polish_steps=4000 reservoir_size=None)
+OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target active_peaks --d 10 --config hybrid --net steps=1000 reservoir_size=2000
+OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target rotated_rosenbrock --d 6 --config hybrid --noise 1.0
 python compare_tree_vs_neural.py --target active_peaks --d 10 --plot --overlay hybrid,hybrid_res2000,hybrid_lbfgs_res2000,hybrid_lbfgs_steps1000_res2000 --overlay-name netopt
 # the six harder targets (section 3.4), tree and hybrid, uniform stream (and walker for two):
 for t in "active_peaks 10" "michalewicz 5" "ackley 6" "griewank 6" "step_ridge 6" "chirp 4"; do set -- $t

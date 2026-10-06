@@ -12,7 +12,7 @@ import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from pygptreeo.gptree import GPTree
-from pygptreeo.neural_linear import TORCH_AVAILABLE, FeatureNetLearner, NeuralLinearGPR, NetGlobalMean, UniformReservoir
+from pygptreeo.neural_linear import TORCH_AVAILABLE, FeatureNetLearner, NeuralLinearGPR, NetGlobalMean
 
 warnings.filterwarnings("ignore")
 
@@ -40,7 +40,7 @@ class TestNeuralLinearGPR(unittest.TestCase):
     def test_fit_predict_shapes_and_evidence(self):
         rng = np.random.RandomState(1)
         X = rng.rand(80, 3); y = _target(X) + 0.1 * rng.randn(80)
-        gpr = NeuralLinearGPR(self._learner(), residual=False)
+        gpr = NeuralLinearGPR(self._learner())
         self.assertFalse(gpr.is_trained())
         m, s = gpr.predict(X[:5], return_std=True)          # untrained: prior
         self.assertEqual(m.shape, (5,)); self.assertEqual(s.shape, (5,))
@@ -130,7 +130,7 @@ class TestNeuralLinearGPR(unittest.TestCase):
         for i in range(300):
             learner.observe(X[i], y[i], 1e-3)
         self.assertIsNotNone(learner.error_scale)
-        gpr = NeuralLinearGPR(learner, residual=True); gpr.set_observation_noise(1e-6)
+        gpr = NeuralLinearGPR(learner); gpr.set_observation_noise(1e-6)
         Xl = 0.4 * X[:40]                                     # a leaf with few points, in one corner of the box
         gpr.fit(Xl, _target(Xl))
         far = np.array([[0.95, 0.95, 0.95]])                  # many spacings from the leaf's points
@@ -139,20 +139,15 @@ class TestNeuralLinearGPR(unittest.TestCase):
         self.assertLess(abs(m[0] - h), 5 * (abs(h) + 0.1))    # a bounded correction of the head
         self.assertGreater(gpr.predict_floor(far)[0], s[0])    # far from the leaf's points the floor exceeds the model sigma
 
-    def test_bounded_reservoirs(self):
+    def test_bounded_reservoir(self):
         rng = np.random.RandomState(7)
         X = rng.rand(500, 3); y = _target(X)
-        for kind in ('coverage', 'uniform'):
-            learner = self._learner(min_points=50, reservoir_size=100, reservoir=kind)
-            for i in range(500):
-                learner.observe(X[i], y[i], 1e-3)
-            self.assertEqual(learner.sample.n, 100)
-            self.assertEqual(learner.n_seen, 500)
-            self.assertGreaterEqual(learner.n_refits, 1)
-        r = UniformReservoir(10, 3, 1, np.random.RandomState(0))
-        for i in range(200):
-            r.add(X[i], y[i], 1e-3)
-        self.assertEqual(r.n, 10); self.assertEqual(r.n_offered, 200)
+        learner = self._learner(min_points=50, reservoir_size=100)
+        for i in range(500):
+            learner.observe(X[i], y[i], 1e-3)
+        self.assertEqual(learner.sample.n, 100)
+        self.assertEqual(learner.n_seen, 500)
+        self.assertGreaterEqual(learner.n_refits, 1)
 
     def test_fixed_refit_cost(self):
         """A refit runs a fixed number of steps on a bounded sample, so its cost does not grow with the stream."""
@@ -190,19 +185,19 @@ class TestNeuralLinearGPR(unittest.TestCase):
         self.assertEqual(gpr.version, 2)
 
     def test_lbfgs_fits_and_amortises(self):
-        """L-BFGS reaches a fit as good as Adam's, and advances one iteration per observation when amortised."""
+        """The L-BFGS phase alone reaches a fit as good as the Adam phase alone, and
+        advances one iteration per observation when amortised."""
         rng = np.random.RandomState(11)
         X = rng.rand(600, 3); y = _target(X); Xt = rng.rand(300, 3); yt = _target(Xt)
         errs = {}
-        for opt in ('adam', 'lbfgs'):
-            learner = self._learner(min_points=400, optimizer=opt, steps=(600 if opt == 'adam' else 60),
-                                    reservoir_size=400)
+        for name, kw in (('adam', dict(steps=0, polish_steps=600)), ('lbfgs', dict(steps=60, polish_steps=0))):
+            learner = self._learner(min_points=400, reservoir_size=400, **kw)
             for i in range(400):
                 learner.observe(X[i], y[i], 1e-3)
-            errs[opt] = np.sqrt(np.mean((learner.head(Xt)[:, 0] - yt) ** 2)) / (yt.max() - yt.min())
+            errs[name] = np.sqrt(np.mean((learner.head(Xt)[:, 0] - yt) ** 2)) / (yt.max() - yt.min())
         self.assertLess(errs['lbfgs'], 0.05)
         self.assertLess(errs['lbfgs'], 2 * errs['adam'] + 0.01)
-        learner = self._learner(min_points=100, optimizer='lbfgs', steps=20, steps_per_update=2)
+        learner = self._learner(min_points=100, steps=20, steps_per_update=2)
         for i in range(200):
             learner.observe(X[i], y[i], 1e-3)                 # first fit at 100, a refit due at 200
         self.assertTrue(learner.refit_in_progress)
@@ -212,7 +207,7 @@ class TestNeuralLinearGPR(unittest.TestCase):
         self.assertEqual(learner.version, 2)
 
     def test_sigma_weighted_loss_discounts_the_noisy_points(self):
-        """Half the points carry noise of the function's own size; weighting by sigma recovers the function."""
+        """Half the points carry noise of the function's own size; the sigma weighting recovers the function."""
         rng = np.random.RandomState(12)
         n = 400
         X = rng.rand(n, 3); y = _target(X)
@@ -220,14 +215,11 @@ class TestNeuralLinearGPR(unittest.TestCase):
         sig = np.where(noisy, 1.0, 1e-3)
         y_obs = y + sig * rng.randn(n)
         Xt = rng.rand(300, 3); yt = _target(Xt)
-        errs = {}
-        for weighted in (False, True):
-            learner = self._learner(min_points=n, steps=800, weight_by_sigma=weighted)
-            for i in range(n):
-                learner.observe(X[i], y_obs[i], sig[i])
-            errs[weighted] = np.sqrt(np.mean((learner.head(Xt)[:, 0] - yt) ** 2)) / (yt.max() - yt.min())
-        self.assertLess(errs[True], 0.5 * errs[False])
-        self.assertLess(errs[True], 0.06)
+        learner = self._learner(min_points=n, steps=0, polish_steps=800)
+        for i in range(n):
+            learner.observe(X[i], y_obs[i], sig[i])
+        err = np.sqrt(np.mean((learner.head(Xt)[:, 0] - yt) ** 2)) / (yt.max() - yt.min())
+        self.assertLess(err, 0.06)                            # the noisy half barely moves the fit
 
     def test_polish_phase_runs_over_every_point_and_amortises(self):
         rng = np.random.RandomState(15)
@@ -279,8 +271,6 @@ class TestNeuralLinearGPR(unittest.TestCase):
         self.assertTrue(np.all(f_near < 0.5 * learner.y_sd))
         self.assertTrue(np.all(f_far > 0.9 * learner.y_sd))   # far away: the function's scale
         self.assertTrue(np.all(f_far <= learner.y_sd + 1e-9))
-        off = NeuralLinearGPR(learner, distance_floor=False); off.set_observation_noise(1e-6); off.fit(Xl, yl)
-        self.assertTrue(np.all(off.predict_floor(far) == 0.0))
         np.testing.assert_allclose(gpr.clone().predict_floor(far), f_far)
 
     def test_tree_adds_the_floor_after_calibration(self):
