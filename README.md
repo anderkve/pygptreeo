@@ -182,69 +182,53 @@ several times the run time. `examples/BENCHMARK_RESULTS_global_mean_streams.md` 
 measurements under uniform, focusing, sweeping and random-walk input streams. Leave
 `global_mean=None` (the default) to run the tree exactly as before.
 
-## Neural-linear leaves (opt-in, needs PyTorch)
+## Feature network as global model (opt-in, needs PyTorch)
 
 For targets of many inputs the leaf GPs run out of points: a hundred-point leaf
 cannot fit a function of ten inputs and eleven kernel hyperparameters. The
-neural-linear backend shares what is global across the whole tree and keeps what
-is local in the leaves: one tree-wide feature network is trained on the stream
-(at a fixed cost per refit, refit when the point count has doubled), and every
-leaf is a Bayesian linear regression on the network's features of the residual
-of the network's own prediction. The leaf fit is a closed form on at most `Nbar`
-points, the sigma is the posterior sigma of that regression, and the rest of the
-tree (splitting, overlap, per-leaf calibration) is unchanged:
+hybrid keeps the GP leaves and gives the tree a global model that captures the
+large-scale shape from everything it has seen: one tree-wide feature network,
+trained on the stream at a fixed cost per refit, whose prediction the leaves
+subtract and model the residual of. A leaf with few points then reverts to the
+network instead of to a constant, and the rest of the tree (splitting, overlap,
+per-leaf calibration) is unchanged:
 
 ```python
-from pygptreeo import GPTree, NeuralLinearGPR, FeatureNetLearner
+from pygptreeo import GPTree
 
-learner = FeatureNetLearner(steps_per_update=8)       # refits spread over the stream, no latency spikes
-gpt = GPTree(GPR=NeuralLinearGPR(learner), Nbar=100)  # per-leaf standard scaling is switched off for it
+gpt = GPTree(Nbar=100, global_mean='net')
+# or, with the learner's arguments, e.g. refits spread over the stream instead of a latency spike:
+gpt = GPTree(Nbar=100, global_mean='net', global_mean_kwargs=dict(steps_per_update=1))
 ```
 
-The network is trained in two phases per refit: full-batch L-BFGS (`steps`,
-300) on a 5000-point coverage reservoir of the stream (`reservoir_size`), then
-Adam minibatch steps (`polish_steps`, 3000) over every point seen, whose store
-costs `d + 2` floats per point, a few percent of the tree's own footprint. Each
-point's squared error is weighted by the inverse of its noise variance plus
-the network's own error variance. `steps=0` or `polish_steps=0` drops a phase;
-`steps_per_update=None` runs each refit in one go instead of amortising it
-over the following updates. The polish recovered most of what the bounded
-reservoir loses on rough targets at a small extra update cost
-(`examples/BENCHMARK_RESULTS_neural_linear.md` §3.7). On the 6D stream benchmark it has a quarter to a half of the plain
-tree's error. Its sigma is the calibrated posterior sigma of the leaf regression
-with a floor: the leaf's local leave-one-out error near its points, rising to the
-function's overall scale beyond two nearest-neighbour spacings from them
-(`NeuralLinearGPR.predict_floor`). Away from the stream that makes the
-sigma conservative rather than overconfident, at the price of over-covering a
-wandering stream's own next points; `examples/BENCHMARK_RESULTS_neural_linear.md`
-has the coverage numbers per stream. `docs/neural_gptree_ideas.md` has the
-design and the alternatives considered.
+The network (`FeatureNetLearner`) is a 3 x 128 SiLU MLP refit when the point
+count has doubled, in two phases: full-batch L-BFGS (`steps`, 300) on a
+5000-point coverage reservoir of the stream (`reservoir_size`), then Adam
+minibatch steps (`polish_steps`, 3000) over every point seen, whose store costs
+`d + 2` floats per point, a few percent of the tree's own footprint. Each
+point's squared error is weighted by the inverse of its noise variance plus the
+network's own error variance. `steps=0` or `polish_steps=0` drops a phase;
+`steps_per_update=None` runs each refit in one go instead of amortising it over
+the following updates. `examples/example_hybrid.py` runs the hybrid against the
+plain tree.
 
-The same network can instead serve as the tree's global model, with the leaf GPs
-modelling the residual of its prediction (`GPTree(global_mean='net')`, or
-`global_mean=NetGlobalMean(...)` with the learner's keyword arguments;
-`examples/example_hybrid.py` runs it against the plain tree). On
-40 000-point streams this hybrid matched the GP tree on a rough 3D target and
-the neural-linear tree on the 6D and 10D targets, at the GP leaf's update cost
-and with the GP's sigma (no floor away from the data). On six harder targets it
-beat the plain tree by 13 to 33 times where the function lives on a hidden
-2-plane of ten inputs, by three times across a jump, by 10 to 30% on rough
-oscillatory targets, and was level on one whose ripples 40 000 points do not
-resolve (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.4). With the
-learner's final defaults (L-BFGS on the reservoir, then the polish over every
-point) it is 1.2 to 2 times more accurate than with Adam on every point on
-the smooth and structured targets and within 2 to 18% of it on the rough
-oscillatory ones, at a lower update cost (§3.8); the loss weighting, inert
-while the network's own error exceeds the noise, was worth 2.4 to 2.8 times
-once some points' noise exceeded it (§3.5). Its leaves keep the
-default Matérn 3/2 kernel: on those runs Matérn 5/2 was level with it, RBF
-failed on the rough residual of the 3D target, and the additive kernel gained
-only where the target has low-order additive structure, at three to seven
-times the update cost (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.2).
-Its accuracy is also nearly flat in `Nbar` and the retrain interval, where the
-plain tree on a smooth 6D target gains a factor of two from large, rarely
-refitted leaves, so the hybrid keeps `Nbar=100`, `retrain_every_n_points=25`
-and gradual splitting, the `GPTree` defaults (§3.3).
+On ten 40 000-point streams the hybrid beat the plain tree by an order of
+magnitude or more on smooth targets with a global structure a network can
+learn (coupled valleys, rotated peaks, a function living on a hidden 2-plane
+of ten inputs, a sharp step), by 10 to 30% on rough oscillatory targets, and
+was level on one whose ripples 40 000 points do not resolve, at a mean update
+cost of 4 to 10 ms per point (`examples/BENCHMARK_RESULTS_neural_linear.md`
+§3.8 is the reference table). Its leaves keep the default Matérn 3/2 kernel:
+Matérn 5/2 was level with it, RBF failed on the rough residual of the 3D
+target, and the additive kernel gained only where the target has low-order
+additive structure, at three to seven times the update cost (§3.2). Its
+accuracy is nearly flat in `Nbar` and the retrain interval, where the plain
+tree on a smooth 6D target gains a factor of two from large, rarely refitted
+leaves, so the hybrid keeps `Nbar=100`, `retrain_every_n_points=25` and
+gradual splitting, the `GPTree` defaults (§3.3). `docs/neural_gptree_ideas.md`
+has the design and the alternatives considered, among them neural-linear
+leaves (a Bayesian linear regression on the network's features per leaf),
+which were measured and removed (§3.9).
 
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:

@@ -357,19 +357,12 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
         # GP leaves on the residual of the feature network's head (the network as global model)
         from pygptreeo import NetGlobalMean
         package_learner = NetGlobalMean(steps_per_update=8, random_state=seed)
-    elif config not in ('tree', 'global_pkg', 'neural'):
+    elif config not in ('tree', 'global_pkg'):
         raise ValueError(config)
     _ACTIVE['model'] = model
 
     np.random.seed(seed)
-    neural_learner = None
-    if config == 'neural':
-        # Neural-linear leaves: one shared feature network (trained on every point seen,
-        # refit at each doubling), Bayesian linear regression on its features per leaf.
-        from pygptreeo import FeatureNetLearner, NeuralLinearGPR
-        neural_learner = FeatureNetLearner(random_state=seed)
-        gpr = NeuralLinearGPR(neural_learner)
-    elif linear:
+    if linear:
         # ARD Matern + Bayesian linear trend: the leaf GP then extrapolates with its own local slope
         leaf_kernel = (ConstantKernel() * Matern(nu=1.5, length_scale=np.ones(d))
                        + ConstantKernel(1.0, (1e-5, 1e5)) * DotProduct(sigma_0=1.0, sigma_0_bounds=(1e-3, 1e3)))
@@ -407,8 +400,6 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
         'sigma_over_rmse_focus': float(np.sqrt(np.mean(S_focus[:, 0] ** 2)) / np.sqrt(np.mean(e_focus ** 2))),
         'leaves': len(gpt.root.leaves), 'seconds': round(elapsed, 1),
     }
-    if neural_learner is not None:
-        out.update(refits=neural_learner.n_refits, fit_seconds=round(neural_learner.fit_seconds, 1))
     if config == 'hybrid':
         out.update(refits=package_learner.learner.n_refits, fit_seconds=round(package_learner.learner.fit_seconds, 1))
     elif package_learner is not None:

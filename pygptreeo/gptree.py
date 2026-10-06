@@ -203,15 +203,6 @@ class GPTree:
         # Tree-wide global model (None by default; shared by reference with every node)
         self.global_mean = make_global_mean(global_mean, **(global_mean_kwargs or {}))
 
-        # A backend with a tree-wide model (NeuralLinearGPR) sees the stream through
-        # observe_stream and needs raw inputs, so per-leaf standard scaling is off.
-        self._stream_observer = getattr(GPR, 'observe_stream', None)
-        requires_raw = getattr(GPR, 'requires_raw_inputs', None)
-        if requires_raw is not None and requires_raw():
-            if kwargs.get('use_standard_scaling', False):
-                raise ValueError(f"{type(GPR).__name__} needs raw inputs: use_standard_scaling must be False")
-            kwargs['use_standard_scaling'] = False
-
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
                           output_model=output_model, output_basis=self.output_basis,
@@ -272,8 +263,6 @@ class GPTree:
             self.output_basis.observe(np.asarray(y, dtype=float).reshape(-1), sigma)
         if self.global_mean is not None:
             self.global_mean.observe(x, y, sigma)
-        if self._stream_observer is not None:
-            self._stream_observer(x, y, sigma)
 
         # Find a leaf node for the new (x,y,sigma) point
         # - Start from the root node

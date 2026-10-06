@@ -24,7 +24,7 @@ setuptools.setup(
     ],
     extras_require={
         'gpytorch': ['gpytorch', 'torch'],  # For GPyTorch backend support
-        'neural': ['torch'],  # For the neural-linear leaves (NeuralLinearGPR)
+        'neural': ['torch'],  # For the feature network global model (global_mean='net')
         'all': ['gpytorch', 'torch'],  # Install all optional dependencies
     },
     classifiers=[

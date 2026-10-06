@@ -1413,7 +1413,7 @@ class GPNode(Node):
         return ptilde
 
 
-    def predict(self, x: np.ndarray, return_std=True, use_calibrated_sigma=False, include_floor=True):
+    def predict(self, x: np.ndarray, return_std=True, use_calibrated_sigma=False):
         """Evaluates the prediction from this node's GPR(s) at input point(s) x.
 
         The input x is expected to be in the original (unscaled) space. If
@@ -1433,8 +1433,6 @@ class GPNode(Node):
                 (standard deviation) is scaled by the node's `self.sigma_scaler(s)`
                 attribute(s). This scaler is intended to calibrate the uncertainty
                 estimates. Defaults to False.
-            include_floor (bool): Apply a backend's ``predict_floor`` as
-                ``max(sigma, floor)`` after the calibration. Defaults to True.
 
         Returns:
             tuple:
@@ -1480,15 +1478,6 @@ class GPNode(Node):
                 # Multiply each output by its calibration factor
                 for i in range(self.n_outputs):
                     sigma_pred[:, i] = sigma_pred[:, i] * self.sigma_scalers[i]
-
-        # A backend's uncertainty floor, applied after the calibration so the scaler
-        # cannot push the sigma below it.
-        if include_floor and self.output_model == 'independent':
-            for i, gpr in enumerate(self.my_GPRs):
-                floor_fn = getattr(gpr, 'predict_floor', None)
-                if floor_fn is not None:
-                    f = np.asarray(floor_fn(x), dtype=float).reshape(-1)
-                    sigma_pred[:, i] = np.maximum(sigma_pred[:, i], f)
 
         return mu_pred, sigma_pred
 
@@ -1580,8 +1569,7 @@ class GPNode(Node):
 
         For multi-output: tracks performance per output dimension.
         """
-        # The model sigma alone, which the scaler multiplies.
-        mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False, include_floor=False)
+        mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False)
 
         # Ensure y is array of shape (n_outputs,)
         if isinstance(y, (int, float, np.floating)):

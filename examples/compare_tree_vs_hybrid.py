@@ -1,4 +1,4 @@
-"""Compare tree configurations on one stream, point by point.
+"""Compare the plain GP tree with the hybrid on one stream, point by point.
 
 Every point is predicted before it is given to the tree, and the prediction,
 its sigma, the prediction and update times and the number of leaves are written
@@ -8,12 +8,12 @@ of predictions within 1 to 16% of the true value, the 1-sigma coverage, and
 the number of leaves.
 
     # one configuration per process (so the timings are clean), then the figure
-    OMP_NUM_THREADS=1 python examples/compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config tree
-    OMP_NUM_THREADS=1 python examples/compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config hybrid
-    python examples/compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot
+    OMP_NUM_THREADS=1 python examples/compare_tree_vs_hybrid.py --target eggholder --d 3 --N 40000 --config tree
+    OMP_NUM_THREADS=1 python examples/compare_tree_vs_hybrid.py --target eggholder --d 3 --N 40000 --config hybrid
+    python examples/compare_tree_vs_hybrid.py --target eggholder --d 3 --N 40000 --plot
 
-Configurations: ``tree`` (ARD Matern leaves), ``neural`` (neural-linear leaves),
-``hybrid`` (GP leaves on the residual of the feature network) and ``global_gp``
+Configurations: ``tree`` (ARD Matern leaves), ``hybrid`` (GP leaves on the
+residual of the feature network) and ``global_gp``
 (GP leaves on the residual of the additive global GP); ``Nbar = 100``,
 ``theta = 1e-4``, a retrain every 25 points, gradual splitting and calibrated
 sigma unless ``--Nbar``, ``--retrain``, ``--splitting`` or ``--kernel`` say
@@ -112,7 +112,7 @@ def tag(a):
 
 
 def run(a):
-    from pygptreeo import GPTree, Default_GPR, FeatureNetLearner, NeuralLinearGPR
+    from pygptreeo import GPTree, Default_GPR
     from benchmark_global_mean_streams import make_stream
     import target_functions as tf
     targets = {'eggholder': tf.Eggholder, 'himmelblau': tf.Himmelblau, 'rosenbrock': tf.Rosenbrock,
@@ -136,8 +136,6 @@ def run(a):
     leaf_kernel = None if a.kernel == 'matern15' else make_kernel(a.kernel, a.d)
     if a.config == 'tree':
         gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1), **common)
-    elif a.config == 'neural':
-        gpt = GPTree(GPR=NeuralLinearGPR(FeatureNetLearner(**net_kwargs(a))), **common)
     elif a.config == 'hybrid':
         from pygptreeo import NetGlobalMean
         gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1),
@@ -218,12 +216,12 @@ def plot(a):
                       ('rq', 'rational quadratic'), ('additive', 'additive + Matern 3/2'))})
         title = "hybrid tree, leaf kernels"; suffix = "kernels"
     else:
-        cfgs = ['tree', 'global_gp', 'neural', 'hybrid']
-        style = {'tree': dict(color='tab:blue', ls='-'), 'neural': dict(color='tab:red', ls='-'),
+        cfgs = ['tree', 'global_gp', 'hybrid']
+        style = {'tree': dict(color='tab:blue', ls='-'),
                  'hybrid': dict(color='tab:green', ls='-'), 'global_gp': dict(color='tab:orange', ls='-')}
-        name = {'tree': 'GP tree', 'neural': 'neural-linear tree', 'hybrid': 'hybrid (GP leaves on network residual)',
+        name = {'tree': 'GP tree', 'hybrid': 'hybrid (GP leaves on network residual)',
                 'global_gp': 'GP tree + additive global GP'}
-        title = "GP tree vs neural-linear tree"; suffix = "compare"
+        title = "GP tree vs hybrid"; suffix = "compare"
     runs = {}
     for cfg in cfgs:
         path = os.path.join(RESULTS_DIR, f"{tag(a)}_{cfg}.csv")
@@ -278,7 +276,7 @@ def main():
     ap.add_argument('--target', default='eggholder'); ap.add_argument('--d', type=int, default=3)
     ap.add_argument('--stream', default='uniform'); ap.add_argument('--N', type=int, default=40000)
     ap.add_argument('--seed', type=int, default=1)
-    ap.add_argument('--config', default='tree', help='tree, neural, hybrid or global_gp')
+    ap.add_argument('--config', default='tree', help='tree, hybrid or global_gp')
     ap.add_argument('--kernel', default='matern15', choices=KERNELS, help='leaf kernel of tree and hybrid')
     ap.add_argument('--plot', action='store_true', help='draw the figure from the CSV files of both configurations')
     ap.add_argument('--kernels', action='store_true', help="with --plot: the hybrid's kernel variants")
@@ -289,7 +287,7 @@ def main():
     ap.add_argument('--noise', type=float, default=0.0,
                     help='heteroscedastic observation noise: sigma_i = noise * std(y) * 10^U(-1.5, 0); metrics against the noiseless y')
     ap.add_argument('--net', nargs='*', default=[], metavar='KEY=VALUE',
-                    help="FeatureNetLearner arguments for the hybrid and neural configurations, e.g. steps=0 polish_steps=4000 "
+                    help="FeatureNetLearner arguments for the hybrid, e.g. steps=0 polish_steps=4000 "
                          "reservoir_size=None (the learner's defaults otherwise)")
     ap.add_argument('--overlay', default=None, help='with --plot: comma-separated record names to overlay (any configurations)')
     ap.add_argument('--overlay-name', default='overlay', help='with --overlay: the suffix of the figure and table files')

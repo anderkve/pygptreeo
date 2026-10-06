@@ -1,5 +1,10 @@
 # Neural networks in a GPTreeO-style tree: ideas for many-input online regression
 
+*Status: of the ideas below, the feature network as the tree's global model
+(the hybrid, `GPTree(global_mean='net')`) is in the package. The neural-linear
+leaves were implemented, measured and removed; `examples/BENCHMARK_RESULTS_neural_linear.md`
+§3.9 has the measurements and the reason.*
+
 A design note (October 2026) on how pyGPTreeO's machinery could be kept while
 the leaf Gaussian processes are replaced, or supplemented, by neural networks,
 with the aim of scaling online regression to functions of many inputs. It

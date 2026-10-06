@@ -1,18 +1,11 @@
-"""Neural-linear leaves and the network-residual hybrid for GPTree.
+"""A tree-wide feature network as GPTree's global model (``GPTree(global_mean='net')``).
 
-One tree-wide feature network (``FeatureNetLearner``) is trained on the stream at
-a fixed cost per refit. It serves either as the leaves' feature map
-(``GPTree(GPR=NeuralLinearGPR(learner))``: each leaf is a Bayesian linear
-regression, on the network's features, of the residual of the network's own
-prediction, so a leaf with few points reverts to the network) or as the tree's
-global model (``GPTree(global_mean='net')``: the leaves keep their GPs and model
-that residual).
-
-The network expects raw inputs, so ``GPTree`` switches ``use_standard_scaling``
-off for the neural-linear backend. Requires PyTorch.
+``FeatureNetLearner`` trains an MLP on the stream at a fixed cost per refit;
+``NetGlobalMean`` publishes each refit as a global-model snapshot whose residual
+the GP leaves model. Requires PyTorch.
 """
 
-from typing import Optional, Tuple, Union
+from typing import Optional
 
 import numpy as np
 
@@ -23,7 +16,6 @@ try:
 except ImportError:  # pragma: no cover
     TORCH_AVAILABLE = False
 
-from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.global_mean import CoverageReservoir, GlobalMeanLearner, GlobalMeanSnapshot
 
 
@@ -64,9 +56,8 @@ POLISH_STEPS_PER_UPDATE = 8   # Adam steps per L-BFGS iteration in an amortised 
 class FeatureNetLearner:
     """Tree-wide feature network, trained on the stream at a fixed cost per refit.
 
-    An MLP of ``depth`` hidden layers of ``hidden`` SiLU units; the last hidden
-    layer is the feature map ``phi(x)``, the output layer the head ``h(x)``.
-    Each refit runs two phases of fixed length, so its cost does not depend on
+    An MLP of ``depth`` hidden layers of ``hidden`` SiLU units with a linear
+    output ``h(x)``. Each refit runs two phases of fixed length, so its cost does not depend on
     the stream's length: full-batch L-BFGS on a maximin coverage reservoir of
     the stream, then Adam minibatch steps over every point seen. The loss weights
     each point by ``1 / (sigma^2 + s^2)``, ``s`` the head's prequential error
@@ -85,7 +76,7 @@ class FeatureNetLearner:
     lr : float, default=1e-3
         Adam's learning rate.
     min_points : int, default=200
-        Observations before the first fit; until then leaves regress on ``[x, x^2]``.
+        Observations before the first fit.
     reservoir_size : int or None, default=5000
         Points of the coverage reservoir (``CoverageReservoir``); None trains the
         L-BFGS phase on every point, at a cost per iteration that grows with the stream.
@@ -122,7 +113,7 @@ class FeatureNetLearner:
         self.store = None                        # every point, for the polish phase of a bounded reservoir
         self._shadow = None                      # an in-progress amortised refit
         self.n_features = None; self.n_outputs = None
-        self.body = None; self.head_layer = None; self.net = None
+        self.net = None
         self.x_mu = None; self.x_sd = None; self.y_mu = None; self.y_sd = None
         self.version = 0
         self.n_seen = 0; self.n_seen_at_fit = 0
@@ -130,11 +121,6 @@ class FeatureNetLearner:
         self.error_var = None; self.noise_var = None; self.error_scale = None
 
     # -- stream -------------------------------------------------------------------------
-    @property
-    def m(self) -> int:
-        """Number of features."""
-        return self.hidden
-
     @property
     def fitted(self) -> bool:
         return self.net is not None
@@ -210,8 +196,7 @@ class FeatureNetLearner:
         layers, w = [], self.n_features
         for _ in range(self.depth):
             layers += [nn.Linear(w, self.hidden), nn.SiLU()]; w = self.hidden
-        body = nn.Sequential(*layers); head = nn.Linear(w, self.n_outputs)
-        return nn.Sequential(body, head)
+        return nn.Sequential(*layers, nn.Linear(w, self.n_outputs))
 
     def _lbfgs_phase(self, net):
         """The L-BFGS phase on the reservoir (None when off) and the scaling this
@@ -259,7 +244,7 @@ class FeatureNetLearner:
         net.eval()
 
     def _publish(self, net, scal, t_spent):
-        self.net = net; self.body = net[0]; self.head_layer = net[1]
+        self.net = net
         self.x_mu, self.x_sd, self.y_mu, self.y_sd = scal
         if self.n_refits == 0:
             self.n_seen_at_first_fit = self.n_seen
@@ -314,28 +299,15 @@ class FeatureNetLearner:
     def refit_in_progress(self) -> bool:
         return self._shadow is not None
 
-    # -- queries ------------------------------------------------------------------------
+    # -- prediction ---------------------------------------------------------------------
     def _xt(self, X):
         return torch.tensor((np.atleast_2d(np.asarray(X, float)) - self.x_mu) / self.x_sd, dtype=torch.float32)
-
-    def features(self, X) -> np.ndarray:
-        """phi(X): (n, m)."""
-        with torch.no_grad():
-            return self.body(self._xt(X)).double().numpy()
 
     def head(self, X) -> np.ndarray:
         """h(X), the network's own prediction in original units: (n, n_outputs)."""
         with torch.no_grad():
             out = self.net(self._xt(X)).double().numpy()
         return out * self.y_sd + self.y_mu
-
-    def gradient_of_linear(self, X, w) -> np.ndarray:
-        """d/dx of ``w . phi(x)`` (``w`` in feature units) at each row of X: (n, d), in
-        original input units."""
-        Xt = self._xt(X).requires_grad_(True)
-        f = self.body(Xt) @ torch.tensor(np.asarray(w, float), dtype=torch.float32)
-        g, = torch.autograd.grad(f.sum(), Xt)
-        return g.double().numpy() / self.x_sd
 
     def __repr__(self) -> str:
         return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, steps={self.steps}, "
@@ -385,200 +357,3 @@ class NetGlobalMean(GlobalMeanLearner):
 
     def __repr__(self) -> str:
         return f"NetGlobalMean({self.learner!r})"
-
-
-LOG_S2 = np.linspace(-8, 1, 13)    # grid of log10 extra-noise variances, relative to the leaf's target variance
-LOG_TAU2 = np.linspace(-4, 4, 25)  # grid of log10 prior variances of the standardised feature weights
-LOO_K = 5            # fit points nearest the query whose leave-one-out residuals set the local floor
-RAMP_START = 2.0     # spacings beyond the leaf's points where the floor starts rising to the function's scale
-RAMP_LENGTH = 2.0    # spacings over which it rises
-
-
-class NeuralLinearGPR(GPRegressorInterface):
-    """Bayesian linear regression on a :class:`FeatureNetLearner`'s features, as a leaf model.
-
-    The leaf regresses ``y - h(x)``, the residual of the network's head, on
-    ``[phi(x), 1]`` with a Gaussian prior on the weights and per-point noise
-    ``alpha + s2``; the prior variance and ``s2`` are chosen by the evidence on
-    the grids ``LOG_TAU2`` and ``LOG_S2``. A fit remembers the network version
-    it used and re-solves when the network has been refitted since.
-
-    :meth:`predict_floor` gives an uncertainty floor the tree applies to the
-    calibrated sigma: the rms leave-one-out residual of the ``LOO_K`` fit points
-    nearest to ``x`` (noise subtracted), rising to the targets' scale ``y_sd``
-    from ``RAMP_START`` nearest-neighbour spacings away over ``RAMP_LENGTH``
-    spacings, with distances scaled by the leaf's per-dimension spread.
-
-    Parameters
-    ----------
-    learner : FeatureNetLearner
-        The shared network; the tree feeds it the stream through :meth:`observe_stream`.
-    """
-
-    def __init__(self, learner: FeatureNetLearner):
-        _require_torch()
-        self.learner = learner
-        self.x_scale = None; self.h = None       # per-dimension spread and nearest-neighbour spacing of the fit points
-        self.loo = None                          # leave-one-out residual of each fit point, in y units
-        self.alpha = 1e-10
-        self.mu = None; self.Sigma = None; self.version = -1
-        self.X_fit = None; self.y_fit = None; self.alpha_fit = None
-        self.tau2 = None; self.s2 = None; self.y_shift = 0.0; self.y_scale = 1.0
-        self.f_mu = None; self.f_sd = None
-        self.n_solves = 0
-
-    # -- stream hook used by GPTree -----------------------------------------------------
-    def observe_stream(self, x, y, sigma) -> None:
-        self.learner.observe(x, y, sigma)
-
-    def requires_raw_inputs(self) -> bool:
-        return True
-
-    # -- features -----------------------------------------------------------------------
-    def _phi(self, X):
-        X = np.atleast_2d(np.asarray(X, float))
-        if self.learner.fitted:
-            F = self.learner.features(X)
-        else:
-            F = np.hstack([X, X ** 2])
-        return np.hstack([F, np.ones((F.shape[0], 1))])
-
-    def _head(self, X):
-        X = np.atleast_2d(np.asarray(X, float))
-        if self.learner.fitted:
-            return self.learner.head(X)[:, 0]
-        return np.zeros(X.shape[0])
-
-    def _std(self, Phi):
-        out = Phi.copy(); out[:, :-1] = (Phi[:, :-1] - self.f_mu) / self.f_sd
-        return out
-
-    # -- interface ----------------------------------------------------------------------
-    def set_observation_noise(self, alpha: Union[float, np.ndarray]) -> None:
-        self.alpha = np.asarray(alpha, float).ravel() if isinstance(alpha, np.ndarray) else float(alpha)
-
-    def fit(self, X: np.ndarray, y: np.ndarray) -> 'NeuralLinearGPR':
-        X = np.atleast_2d(np.asarray(X, float)); y = np.asarray(y, float).ravel()
-        if y.shape[0] != X.shape[0]:
-            raise ValueError("NeuralLinearGPR fits one output; y must have one value per row of X")
-        self.X_fit = X; self.y_fit = y
-        self.alpha_fit = np.broadcast_to(np.asarray(self.alpha, float).ravel(), (len(y),)).astype(float)
-        self._solve()
-        return self
-
-    def _solve(self):
-        X, alpha = self.X_fit, self.alpha_fit
-        y = self.y_fit - self._head(X)
-        self.y_shift = float(y.mean()); sd = float(y.std()); self.y_scale = sd if sd > 0 else 1.0
-        yc = (y - self.y_shift) / self.y_scale; a = alpha / self.y_scale ** 2
-        Phi = self._phi(X)
-        self.f_mu = Phi[:, :-1].mean(0); self.f_sd = Phi[:, :-1].std(0) + 1e-8
-        Phi = self._std(Phi); n, m = Phi.shape
-        inv_t2 = 10.0 ** (-LOG_TAU2)                            # (T,)
-        best = (-np.inf, None)
-        for log_s2 in LOG_S2:
-            lam = a + 10.0 ** log_s2; Li = 1.0 / lam
-            G = (Phi.T * Li) @ Phi; b = Phi.T @ (Li * yc)
-            ev_vals, V = np.linalg.eigh(G); ev_vals = np.maximum(ev_vals, 0.0)
-            c = V.T @ b
-            den = ev_vals[None, :] + inv_t2[:, None]            # (T, m)
-            quad = (c[None, :] ** 2 / den).sum(1)
-            logdet = np.log(den).sum(1)
-            evidence = -0.5 * ((yc ** 2 * Li).sum() - quad + logdet + np.log(lam).sum()
-                               + m * np.log(10.0 ** LOG_TAU2) + n * np.log(2 * np.pi))
-            j = int(np.argmax(evidence))
-            if evidence[j] > best[0]:
-                best = (evidence[j], (10.0 ** LOG_TAU2[j], 10.0 ** log_s2, V, c, den[j]))
-        _, (t2, s2, V, c, d) = best
-        self.tau2, self.s2 = t2, s2
-        self.mu = V @ (c / d)
-        self.Sigma = (V / d) @ V.T
-        # Leave-one-out residuals in closed form: r_i / (1 - h_ii), h_ii the leverage.
-        lam = a + s2; lev = (1.0 / lam) * np.einsum('ij,jk,ik->i', Phi, self.Sigma, Phi)
-        self.loo = (yc - Phi @ self.mu) / np.maximum(1.0 - lev, 1e-6) * self.y_scale
-        sd_x = X.std(0); self.x_scale = np.where(sd_x > 0, sd_x, 1.0)
-        self.h = None
-        if n >= 2:
-            from scipy.spatial.distance import cdist
-            D = cdist(X / self.x_scale, X / self.x_scale); np.fill_diagonal(D, np.inf)
-            h = float(np.median(D.min(axis=1)))
-            if np.isfinite(h) and h > 0:
-                self.h = h
-        self.version = self.learner.version; self.n_solves += 1
-
-    def predict(self, X: np.ndarray, return_std: bool = False):
-        X = np.atleast_2d(np.asarray(X, float))
-        if self.mu is None:
-            n = X.shape[0]
-            if self.learner.fitted:
-                mean = self.learner.head(X)[:, 0]; std = np.full(n, self.learner.y_sd)
-            else:
-                mean = np.zeros(n); std = np.ones(n)
-            return (mean, std) if return_std else mean
-        if self.version != self.learner.version:
-            self._solve()                                        # the features changed since this fit
-        Phi = self._std(self._phi(X))
-        mean = Phi @ self.mu * self.y_scale + self.y_shift + self._head(X)
-        if not return_std:
-            return mean
-        var = np.einsum('ij,jk,ik->i', Phi, self.Sigma, Phi) * self.y_scale ** 2
-        return mean, np.sqrt(np.maximum(var, 0.0))
-
-    def predict_floor(self, X: np.ndarray) -> np.ndarray:
-        """The uncertainty floor at X (see the class docstring), shape (n,); zeros
-        when the leaf has no fit."""
-        X = np.atleast_2d(np.asarray(X, float))
-        if self.mu is None or self.X_fit is None:
-            return np.zeros(X.shape[0])
-        if self.version != self.learner.version:
-            self._solve()
-        y_sd = float(self.learner.y_sd) if self.learner.fitted else float(self.y_scale)
-        n_fit = self.X_fit.shape[0]
-        D = np.sqrt((((X[:, None, :] - self.X_fit[None, :, :]) / self.x_scale) ** 2).sum(-1))   # (n, n_fit)
-        k = min(LOO_K, n_fit)
-        nearest = np.argpartition(D, k - 1, axis=1)[:, :k] if k < n_fit else np.tile(np.arange(n_fit), (X.shape[0], 1))
-        noise = float(np.mean(self.alpha_fit))
-        loo2 = np.maximum((self.loo[nearest] ** 2).mean(axis=1) - noise, 0.0)
-        floor2 = np.minimum(loo2, y_sd ** 2)
-        if self.h is not None:
-            r = D.min(axis=1) / self.h
-            w = 1.0 - np.exp(-(np.maximum(r - RAMP_START, 0.0) / RAMP_LENGTH) ** 2)
-            floor2 = floor2 + (y_sd ** 2 - floor2) * w
-        return np.sqrt(floor2)
-
-    def is_trained(self) -> bool:
-        return self.mu is not None
-
-    def get_kernel_covariance(self, X: np.ndarray) -> np.ndarray:
-        Phi = self._phi(X)
-        if self.f_mu is not None:
-            Phi = self._std(Phi)
-        return (self.tau2 if self.tau2 is not None else 1.0) * Phi @ Phi.T
-
-    def clone(self) -> 'NeuralLinearGPR':
-        c = NeuralLinearGPR(self.learner)
-        for k in ('alpha', 'mu', 'Sigma', 'version', 'X_fit', 'y_fit', 'alpha_fit', 'tau2', 's2',
-                  'y_shift', 'y_scale', 'f_mu', 'f_sd', 'x_scale', 'h', 'loo'):
-            v = getattr(self, k); setattr(c, k, v.copy() if isinstance(v, np.ndarray) else v)
-        return c
-
-    def get_kernel(self):
-        return (self.tau2, self.s2)
-
-    def set_kernel(self, kernel) -> None:
-        self.tau2, self.s2 = kernel
-
-    def get_length_scales(self, n_features: int) -> Optional[np.ndarray]:
-        """Inverse rms gradient of the fitted leaf mean per input dimension (the
-        analogue of an ARD length scale), from the network's Jacobian."""
-        if self.mu is None or not self.learner.fitted or self.X_fit is None:
-            return None
-        # The leaf mean is y_scale * sum_j mu_j (phi_j - f_mu_j) / f_sd_j + shift (+ head),
-        # and the head is linear in phi too, so one weight vector gives the whole gradient.
-        w = self.y_scale * self.mu[:-1] / self.f_sd
-        w = w + self.learner.y_sd * self.learner.head_layer.weight.detach().double().numpy()[0]
-        g = self.learner.gradient_of_linear(self.X_fit, w)
-        return 1.0 / (np.sqrt((g ** 2).mean(0)) + 1e-12)
-
-    def __repr__(self) -> str:
-        return f"NeuralLinearGPR(trained={self.is_trained()}, learner={self.learner!r})"

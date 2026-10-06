@@ -1,10 +1,14 @@
 # Neural-linear leaves: accuracy on the stream benchmark and cost scaling on a long stream
 
-Option names in the measurement sections are those of the code at the time;
-the learner's remaining options are `hidden`, `depth`, `steps`,
-`polish_steps`, `lr`, `min_points`, `reservoir_size`, `steps_per_update` and
-`random_state` (the others, named where they were measured, were removed as
-not worth keeping).
+Option and class names in the measurement sections are those of the code at
+the time. What remains in the package is the feature network as GPTree's
+global model (`pygptreeo/feature_net.py`: `FeatureNetLearner` with the options
+`hidden`, `depth`, `steps`, `polish_steps`, `lr`, `min_points`,
+`reservoir_size`, `steps_per_update` and `random_state`, and `NetGlobalMean`,
+`GPTree(global_mean='net')`), the "hybrid" of the sections below. The
+neural-linear leaves (`NeuralLinearGPR`, the "neural" configuration) were
+removed after the measurements of §3.9; the records of the other removed
+options are where they were measured.
 
 `GPTree(GPR=NeuralLinearGPR(FeatureNetLearner()))` (`pygptreeo/neural_linear.py`):
 one tree-wide feature network, and in every leaf a Bayesian linear regression on
@@ -360,7 +364,7 @@ Reading:
 
 ## 2. Cost scaling on a 100 000-point stream
 
-`examples/benchmark_neural_linear_scaling.py`: `GaussianPeaks` in six
+`examples/benchmark_hybrid_scaling.py`: `GaussianPeaks` in six
 dimensions, the walker stream (every proposal of a Metropolis random walk,
 the stream closest to an optimiser's or sampler's), 100 000 points, one seed,
 `Nbar = 100`, each configuration in its own process with nothing else on the
@@ -511,7 +515,7 @@ The hybrid rows in §3 to §3.4 ran the network's original training default
 (Adam on every point); §3.8 has the same ten runs with the final default and
 is the table to quote.
 
-`examples/compare_tree_vs_neural.py` streams the same 40 000 points through
+`examples/compare_tree_vs_hybrid.py` streams the same 40 000 points through
 both trees, predicting every point before giving it to the tree, and draws
 the package's usual performance figure with both overlaid, per batch of 2000
 points: prediction time, update time (mean and maximum in the batch), NRMSE,
@@ -1111,6 +1115,47 @@ The point store the polish needs costs ``d + 2`` floats per point, about 5%
 of the tree's own linear footprint (1.3 kB per point at Nbar 100 in 6D,
 most of it the leaves' Cholesky factors).
 
+### 3.9 The neural-linear leaves against the hybrid, and their removal
+
+The neural-linear leaves (`NeuralLinearGPR`: each leaf a Bayesian linear
+regression, on the network's 128 features, of the residual of the network's
+head, with an evidence-chosen prior and a local leave-one-out uncertainty
+floor) on the ten comparison runs with the final network, against the plain
+tree and the hybrid (figures `*_neural.png`, per-batch values
+`*_neural_batches.csv`). Last 10 000 points:
+
+| run | tree | hybrid | neural-linear leaves |
+|---|---|---|---|
+| rotated_rosenbrock, d = 6 | 0.0045 | 0.0003 | **0.0003** |
+| gaussian_peaks, d = 10 | 0.038 | 0.0024 | **0.0023** |
+| gaussian_peaks, d = 6, walker | 0.015 | **0.0023** | 0.0025 |
+| active_peaks, d = 10 | 0.036 | 0.0018 | **0.0016** |
+| griewank, d = 6 | 0.099 | 0.103 | **0.097** |
+| ackley, d = 6 | 0.065 | **0.060** | 0.066 |
+| eggholder, d = 3 | 0.040 | **0.039** | 0.062 |
+| michalewicz, d = 5 | 0.100 | **0.085** | 0.111 |
+| chirp, d = 4 | 0.088 | **0.067** | 0.114 |
+| step_ridge, d = 6 | 0.043 | **0.012** | 131 |
+
+Over the full stream the leaves' update took 4.6 to 5.0 ms (p99 55 ms)
+against the hybrid's 6 to 10.5 (p99 100 to 220), and their prediction 1.2 to
+1.3 ms mean, 0.66 median, against 2.6 to 4.8 and 0.96: the closed-form leaves
+have no forced refits when the network changes. Coverage 0.72 to 0.77.
+
+So on the smooth targets they matched the hybrid at half its update cost and a
+third of its prediction cost, and on the rough ones they were 5 to 55% behind
+the plain tree. The step ridge shows why they were removed: 13 of the 40 000
+predictions were catastrophic, the worst 25 000 times the target's range
+(Michalewicz 16 times, the chirp 3 times; the hybrid's worst anywhere 1.4),
+with the run level with the hybrid without them (0.022 against 0.021). A leaf
+linear in the network's features extrapolates without bound where a point's
+features lie outside the leaf's feature cloud, near the jump; a GP leaf
+reverts to the network there. The floor flagged every such point (sigma of
+the error's size), but the mean is what a user reads. A second code path
+whose one advantage is cost and which can emit unbounded predictions was not
+worth keeping; the fix (shrinking the leaf's correction toward the head where
+the features are far from the leaf's cloud) would need its own measurements.
+
 ## Reproduce
 
 ```bash
@@ -1123,39 +1168,40 @@ done; done
 python benchmark_global_mean_streams.py --summarize results/neural_linear_streams/*.jsonl
 # the hybrid's leaf kernels (section 3.2), one process per run:
 for k in matern05 matern25 rbf rq additive; do
-  OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config hybrid --kernel $k
+  OMP_NUM_THREADS=1 python compare_tree_vs_hybrid.py --target eggholder --d 3 --N 40000 --config hybrid --kernel $k
 done
-python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --kernels
-# the final default on the ten runs (section 3.8): run the hybrid with no --net-* option, then
-python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid_nopolish,hybrid --overlay-name final
+python compare_tree_vs_hybrid.py --target eggholder --d 3 --N 40000 --plot --kernels
+# (the "neural" configuration of sections 1 to 3.9 is no longer in the script)
+# the final default on the ten runs (section 3.8): run the hybrid with no --net option, then
+python compare_tree_vs_hybrid.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid_nopolish,hybrid --overlay-name final
 # the two-phase refit (section 3.7):
-OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target michalewicz --d 5 --config hybrid --net polish_steps=3000
-python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid,hybrid_polish3000 --overlay-name polish
+OMP_NUM_THREADS=1 python compare_tree_vs_hybrid.py --target michalewicz --d 5 --config hybrid --net polish_steps=3000
+python compare_tree_vs_hybrid.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid,hybrid_polish3000 --overlay-name polish
 # the new default against the earlier one (section 3.6): run the hybrid with the learner's defaults, then overlay
-OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target michalewicz --d 5 --config hybrid
-python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid_res2000,hybrid --overlay-name default
+OMP_NUM_THREADS=1 python compare_tree_vs_hybrid.py --target michalewicz --d 5 --config hybrid
+python compare_tree_vs_hybrid.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid_res2000,hybrid --overlay-name default
 # the network's training options (section 3.5): L-BFGS on a reservoir, noise + sigma weighting
 # (the record names in sections 3.5 to 3.8 came from the earlier per-option switches of the script;
 #  the learner's options they set are passed as --net key=value now, e.g. the original Adam-only training is
 #  --net steps=0 polish_steps=4000 reservoir_size=None)
-OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target active_peaks --d 10 --config hybrid --net steps=1000 reservoir_size=2000
-OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target rotated_rosenbrock --d 6 --config hybrid --noise 1.0
-python compare_tree_vs_neural.py --target active_peaks --d 10 --plot --overlay hybrid,hybrid_res2000,hybrid_lbfgs_res2000,hybrid_lbfgs_steps1000_res2000 --overlay-name netopt
+OMP_NUM_THREADS=1 python compare_tree_vs_hybrid.py --target active_peaks --d 10 --config hybrid --net steps=1000 reservoir_size=2000
+OMP_NUM_THREADS=1 python compare_tree_vs_hybrid.py --target rotated_rosenbrock --d 6 --config hybrid --noise 1.0
+python compare_tree_vs_hybrid.py --target active_peaks --d 10 --plot --overlay hybrid,hybrid_res2000,hybrid_lbfgs_res2000,hybrid_lbfgs_steps1000_res2000 --overlay-name netopt
 # the six harder targets (section 3.4), tree and hybrid, uniform stream (and walker for two):
 for t in "active_peaks 10" "michalewicz 5" "ackley 6" "griewank 6" "step_ridge 6" "chirp 4"; do set -- $t
-  for c in tree hybrid; do OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target $1 --d $2 --N 40000 --config $c; done
-  python compare_tree_vs_neural.py --target $1 --d $2 --N 40000 --plot
+  for c in tree hybrid; do OMP_NUM_THREADS=1 python compare_tree_vs_hybrid.py --target $1 --d $2 --N 40000 --config $c; done
+  python compare_tree_vs_hybrid.py --target $1 --d $2 --N 40000 --plot
 done
 # Nbar / retrain pairs and the splitting strategy (section 3.3), tree and hybrid:
 for c in tree hybrid; do
   for v in "--Nbar 50 --retrain 6" "--Nbar 200 --retrain 75" "--Nbar 400 --retrain 200" "--splitting standard"; do
-    OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config $c $v
+    OMP_NUM_THREADS=1 python compare_tree_vs_hybrid.py --target eggholder --d 3 --N 40000 --config $c $v
   done
-  python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --settings --config $c
+  python compare_tree_vs_hybrid.py --target eggholder --d 3 --N 40000 --plot --settings --config $c
 done
 # the scaling study (one process per configuration, nothing else on the machine):
 for c in tree neural neural_amort8 neural_cov4000_amort8; do
-  OMP_NUM_THREADS=1 python benchmark_neural_linear_scaling.py --target gaussian_peaks --stream walker \
+  OMP_NUM_THREADS=1 python benchmark_hybrid_scaling.py --target gaussian_peaks --stream walker \
       --d 6 --N 100000 --configs $c --seed 1 > results/neural_linear_scaling/walker_${c}.jsonl
 done
 ```
