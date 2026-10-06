@@ -32,7 +32,9 @@ def _target(X):
 class TestNeuralLinearGPR(unittest.TestCase):
 
     def _learner(self, **kw):
+        # small budgets, and no polish phase unless a test asks for one, so the step counting stays explicit
         kw.setdefault('steps', 300); kw.setdefault('min_points', 60); kw.setdefault('random_state', 0)
+        kw.setdefault('polish_steps', 0)
         return FeatureNetLearner(**kw)
 
     def test_fit_predict_shapes_and_evidence(self):
