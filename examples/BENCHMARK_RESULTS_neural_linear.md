@@ -859,6 +859,88 @@ trend from a target whose fine structure the leaves must still fit, and not
 at all where there is neither a learnable global shape nor resolvable fine
 structure. It never did worse than the tree by more than the batch scatter.
 
+### 3.5 The network's training: L-BFGS, a sigma-weighted loss, a log transform
+
+Three options of `FeatureNetLearner`, each on the hybrid in the 40 000-point
+comparison (the default hybrid is Adam, 4000 minibatch steps per refit on
+every point seen, 8 steps per update in the amortised mode). Figures
+`*_netopt.png`, `*_wsig.png` and `*_netlog.png`, per-batch values in the
+matching `_batches.csv`.
+
+**L-BFGS** (`optimizer='lbfgs'`): full-batch, strong-Wolfe line search, one
+iteration per update when amortised. An iteration costs a few passes over the
+sample, 12 ms on a 2000-point coverage reservoir and 120 to 190 ms on the full
+store of 20 000 points (an offline probe on the Eggholder and the active
+peaks), so it is run on the reservoir; Adam on the same reservoir is the
+control that separates the optimiser's effect from the sample's. Last 10 000
+points, NRMSE and mean update time:
+
+| run | Adam, every point (default) | Adam, 2000 reservoir | L-BFGS 300 it., 2000 res. | L-BFGS 1000 it., 2000 res. |
+|---|---|---|---|---|
+| eggholder, d = 3 | 0.039 / 4.8 ms | 0.041 / 4.5 ms | 0.040 / 3.6 ms | 0.043 / 5.1 ms |
+| active_peaks, d = 10 | 0.0027 / 8.9 ms | 0.0032 / 8.2 ms | 0.0026 / 4.8 ms | **0.0019** / 7.6 ms |
+| rotated_rosenbrock, d = 6 | 0.0006 / 5.2 ms | | 0.0003 / 3.7 ms | **0.0002** / 5.9 ms |
+
+At 300 iterations L-BFGS matches or beats the default at a lower update cost
+(one full-batch iteration per update is cheaper than 8 Adam steps). At 1000 it
+is 1.4 times better on the active peaks (within 1%: 0.96 against 0.86) and
+3 times better on the rotated Rosenbrock (0.97 against 0.87), with coverage
+0.65 to 0.69. On the Eggholder every variant is within the batch scatter: the
+offline probe's 12 to 20% gain in the network's own error does not reach the
+tree, whose leaves do the work there, and the 1000-iteration run starts
+slower over the first 10 000 points. The reservoir alone costs Adam a little
+(0.0032 against 0.0027 on the active peaks) and L-BFGS nothing.
+
+**The sigma-weighted loss** (`weight_by_sigma=True`): each point's squared
+error weighted by `1 / (sigma_i^2 + s^2)`, `s` the network's current
+prequential error, normalised to mean one. Heteroscedastic noise is added to
+the stream (`--noise f`: `sigma_i = f * std(y) * 10^U(-1.5, 0)`, a factor 30
+between points) and every model is scored against the noiseless target. Last
+10 000 points:
+
+| run | noise `f` | tree | hybrid | hybrid, weighted |
+|---|---|---|---|---|
+| rotated_rosenbrock, d = 6 | 0.1 (0.3 to 10% of the spread) | 0.0055 | 0.0013 | 0.0013 |
+| gaussian_peaks, d = 6, walker | 0.1 | 0.0165 | 0.0035 | 0.0035 |
+| eggholder, d = 3 | 0.1 | 0.041 | 0.039 | 0.039 |
+| rotated_rosenbrock, d = 6 | 1.0 (3 to 100% of the spread) | 0.0127 | 0.0092 | **0.0033** |
+| gaussian_peaks, d = 6, walker | 1.0 | 0.0293 | 0.0171 | **0.0070** |
+
+At the lower noise the weighting does nothing, by construction: the
+network's own error, a few percent of the spread, exceeds even the noisiest
+points' sigma, so the weights are nearly uniform. At noise up to the
+target's own size it gains a factor of 2.4 to 2.8 over the unweighted hybrid
+(within 4%: 0.66 against 0.34 and 0.94 against 0.61) and 3.8 to 4.2 over the
+tree, from the first 10 000 points on. With noisy observations every model
+over-covers the noiseless truth (0.93 to 0.99), since the calibration
+targets the noisy residuals; that is a property of the score, not of the
+weighting.
+
+**The log transform** (`target_transform='log'`): the network fits
+`log(y - y_min + 0.01 range)` and predicts back in original units. Last
+10 000 points, hybrid against hybrid with the log fit:
+
+| run | hybrid | hybrid, log | within 1%: hybrid / log |
+|---|---|---|---|
+| rotated_rosenbrock, d = 6 (range 10^6) | **0.0006** | 0.0010 | 0.87 / 0.84 |
+| gaussian_peaks, d = 6, walker | **0.0030** | 0.0048 | 0.93 / 0.87 |
+| active_peaks, d = 10 | **0.0027** | 0.0031 | 0.86 / 0.88 |
+| eggholder, d = 3 | **0.039** | 0.040 | 0.38 / 0.37 |
+
+Slightly worse everywhere, on the relative measure too, including the
+heavy-tailed target it was meant for. The reading (inferred from the
+mechanics, not measured separately): the leaves correct the network in
+linear units, and the exponential map amplifies the network's error at the
+large values, which decide the range-normalised error, so what the log fit
+gains at the low end it loses at the top. The option stays for targets whose
+users want a relative fit from the network, but it is not a default.
+
+So: L-BFGS on a bounded reservoir is the one change worth considering as a
+default for the hybrid, with the reservoir size and iteration count as its
+two costs; the sigma weighting is free and matters only when some points'
+noise exceeds the network's error, where it matters a lot; the log transform
+is not recommended.
+
 ## Reproduce
 
 ```bash
@@ -874,6 +956,11 @@ for k in matern05 matern25 rbf rq additive; do
   OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config hybrid --kernel $k
 done
 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --kernels
+# the network's training options (section 3.5): L-BFGS on a reservoir, noise + sigma weighting, the log fit
+OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target active_peaks --d 10 --config hybrid --net-opt lbfgs --net-steps 1000 --net-reservoir 2000
+OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target rotated_rosenbrock --d 6 --config hybrid --noise 1.0 --net-weight
+OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target rotated_rosenbrock --d 6 --config hybrid --net-log
+python compare_tree_vs_neural.py --target active_peaks --d 10 --plot --overlay hybrid,hybrid_res2000,hybrid_lbfgs_res2000,hybrid_lbfgs_steps1000_res2000 --overlay-name netopt
 # the six harder targets (section 3.4), tree and hybrid, uniform stream (and walker for two):
 for t in "active_peaks 10" "michalewicz 5" "ackley 6" "griewank 6" "step_ridge 6" "chirp 4"; do set -- $t
   for c in tree hybrid; do OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target $1 --d $2 --N 40000 --config $c; done

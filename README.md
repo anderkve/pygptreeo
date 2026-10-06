@@ -222,7 +222,13 @@ and with the GP's sigma (no floor away from the data). On six harder targets it
 beat the plain tree by 13 to 33 times where the function lives on a hidden
 2-plane of ten inputs, by three times across a jump, by 10 to 30% on rough
 oscillatory targets, and was level on one whose ripples 40 000 points do not
-resolve (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.4). Its leaves keep the
+resolve (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.4). The learner's
+training has three options: `optimizer='lbfgs'` (full-batch L-BFGS, to be run on
+a bounded `reservoir_size`; on the smooth 6D and 10D targets 1.4 to 3 times
+more accurate than Adam at the same update cost), `weight_by_sigma=True` (a
+`1 / (sigma^2 + error^2)` weighted loss, free, and worth 2.4 to 2.8 times
+when some points' noise exceeds the network's own error) and
+`target_transform='log'` (a relative fit, which did not help the hybrid; §3.5). Its leaves keep the
 default Matérn 3/2 kernel: on those runs Matérn 5/2 was level with it, RBF
 failed on the rough residual of the 3D target, and the additive kernel gained
 only where the target has low-order additive structure, at three to seven
