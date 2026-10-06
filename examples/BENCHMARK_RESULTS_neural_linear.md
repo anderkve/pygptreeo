@@ -1010,6 +1010,45 @@ size; ideas for using every point at bounded cost (a residual-aware
 reservoir, a two-phase refit, a capped sequence of residual networks) are
 the next thing to measure.
 
+### 3.7 Reaching past the reservoir: the two-phase refit
+
+Two ways of giving the network the points the reservoir cannot hold were
+tried on the four rough targets of §3.6 and two smooth controls. A
+*value-weighted coverage reservoir* (the maximin design in the joint space of
+inputs and outputs, so fast-varying regions keep more points) moved 10 to
+17% of the reservoir into the rough regions and made the hybrid 5 to 7%
+worse on Michalewicz and the chirp; it was removed from the package. The
+*two-phase refit* (`polish_steps`: after the L-BFGS fit on the reservoir, a
+fixed budget of Adam minibatch steps over every point seen, kept in a store
+that grows with the stream; eight steps per update when amortised) stays.
+With 3000 polish steps, last 10 000 points:
+
+| run | tree | hybrid, Adam on every point | hybrid, default (L-BFGS on 5000) | hybrid, default + 3000 polish steps |
+|---|---|---|---|---|
+| michalewicz, d = 5 | 0.100 | **0.072** | 0.098 | 0.085 |
+| chirp, d = 4 | 0.088 | **0.065** | 0.081 | 0.067 |
+| ackley, d = 6 | 0.065 | **0.056** | 0.073 | 0.060 |
+| griewank, d = 6 | **0.099** | 0.101 | 0.113 | 0.103 |
+| rotated_rosenbrock, d = 6 | 0.0045 | 0.0006 | **0.0003** | **0.0003** |
+| active_peaks, d = 10 | 0.036 | 0.0027 | **0.0016** | 0.0018 |
+
+| run | update ms: Adam / default / polish | within 4%: Adam / default / polish |
+|---|---|---|
+| michalewicz | 7.5 / 4.7 / 5.7 | 0.55 / 0.42 / 0.48 |
+| chirp | 4.9 / 4.3 / 4.4 | 0.59 / 0.47 / 0.53 |
+| ackley | 7.0 / 5.6 / 5.6 | 0.65 / 0.52 / 0.62 |
+| griewank | 8.2 / 4.9 / 6.7 | 0.40 / 0.28 / 0.37 |
+| rotated_rosenbrock | 5.2 / 4.6 / 4.6 | 0.98 / 0.99 / 0.99 |
+| active_peaks | 8.9 / 5.8 / 6.9 | 0.99 / 0.99 / 1.00 |
+
+The polish recovers 60 to 90% of the rough-target gap between the reservoir
+default and training on every point (within 3% of it on the chirp, 7% on
+Ackley, 2% on Griewank, 18% on Michalewicz) and leaves the smooth targets
+where the default put them, at an update cost 0 to 1.8 ms above the
+default and still below Adam on every point on all but the chirp. Its costs
+are the store of every point (about 100 bytes per point) and, one-shot,
+about 3.5 s per refit on top of the L-BFGS phase. Coverage is unchanged.
+
 ## Reproduce
 
 ```bash
@@ -1025,6 +1064,9 @@ for k in matern05 matern25 rbf rq additive; do
   OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config hybrid --kernel $k
 done
 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --kernels
+# the two-phase refit (section 3.7):
+OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target michalewicz --d 5 --config hybrid --net-polish 3000
+python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid,hybrid_polish3000 --overlay-name polish
 # the new default against the earlier one (section 3.6): run the hybrid with the learner's defaults, then overlay
 OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target michalewicz --d 5 --config hybrid
 python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid_res2000,hybrid --overlay-name default

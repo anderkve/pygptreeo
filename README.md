@@ -207,7 +207,11 @@ weighted by the inverse of its noise variance plus the network's own error
 variance; `reservoir_size` sets the sample, `optimizer='adam'` switches to
 minibatch Adam (4000 steps, which may then run on every point,
 `reservoir_size=None`) and `weight_by_sigma=False` switches the weighting off.
-`steps_per_update=None` runs each refit in one go instead. On the 6D stream benchmark it has a quarter to a half of the plain
+`steps_per_update=None` runs each refit in one go instead. `polish_steps=3000`
+follows each L-BFGS fit with that many Adam steps over every point seen (kept
+in a store that grows with the stream), which recovered most of what the
+bounded reservoir loses on rough targets at a small extra update cost
+(`examples/BENCHMARK_RESULTS_neural_linear.md` §3.7). On the 6D stream benchmark it has a quarter to a half of the plain
 tree's error. Its sigma is the calibrated posterior sigma of the leaf regression
 with a floor: the leaf's local leave-one-out error near its points, rising to the
 function's overall scale beyond two nearest-neighbour spacings from them
