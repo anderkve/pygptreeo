@@ -2,15 +2,15 @@
 
 The README's first animation shows a 2D target. This one shows a target of ten
 inputs learned from tens of thousands of points, where there is no picture of the
-prediction to draw. Instead the stream itself is the x axis (logarithmic, from
-100 points to the end) and three panels are stacked on it:
+prediction to draw. Instead the stream itself is the x axis, in pages of 20 000
+points (the panels are cleared between pages), and three panels are stacked on it:
 
-  1. The input stream: one curve per input coordinate (a running mean over at
-     least ten points). On the walker stream the coordinates drift as the
+  1. The input stream: one curve per input coordinate (a running mean over the
+     points of each column). On the walker stream the coordinates drift as the
      Metropolis walker explores the target.
   2. The function value at each point, and the model's prediction of it made
      *before* the point is given to the tree, as markers; a subsample of the
-     points, spread evenly along the log axis, so the markers stay readable.
+     points, so the markers stay readable.
   3. The relative error, |prediction - truth| / |truth|, of every point predicted
      before it is added: per column, the distribution of the errors of the points
      in that bin of the stream on a log scale from 0.01% to 100% (each column
@@ -144,16 +144,17 @@ def run():
 # Plot phase
 # --------------------------------------------------------------------------
 
-N_START = 100            # the x axis (points seen) runs from here to N, logarithmically
-N_COLS = 600             # columns of the error strip (log-spaced bins of the stream; fewer at the left)
+PAGE_LEN = 1500 if args.quick else 20000   # points per page; the panels are cleared between pages
+N_COLS = 600             # columns per page (equal bins of the stream)
 MIN_WINDOW = 10          # a coordinate curve averages at least this many points
 MARKERS_PER_COL = 3      # the function-value panel shows at most this many points per column
 REL_LOG_MIN, REL_LOG_MAX = -4.0, 0.0     # relative error from 0.01% to 100%
 ROWS_PER_DECADE = 10
-WINDOW = 1.25            # the running median covers the points in (n / WINDOW, n]
+MEDIAN_WINDOW = 500      # the running median covers the last this many points
 FPS = 12
+FRAMES_PER_PAGE = 12 if args.quick else 36
+PAGE_PAUSE_MS = 1500     # hold on the last frame of a page before the panels are cleared
 END_PAUSE_MS = 2500
-N_FRAMES = 24 if args.quick else 64
 DPI = 50 if args.quick else 100
 
 # The model's hue: a sequential ramp for the error strip, a mid step of it for its lines and markers.
@@ -166,7 +167,7 @@ def plot():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib import patheffects
+    from matplotlib import patheffects, ticker
     from PIL import Image
 
     rec = np.load(RECORD_PATH)
@@ -176,43 +177,51 @@ def plot():
     rel = np.abs(mu - y) / np.abs(y)
     v = rec['version']
     refits = n[np.flatnonzero(np.diff(v) > 0) + 1]            # points seen when a network version was published
-
-    # Column edges: log-spaced in n, rounded to whole points, so the leftmost columns hold one point each.
-    edges = np.unique(np.round(np.geomspace(N_START, N, N_COLS + 1)).astype(int))
-    n_cols = len(edges) - 1
-    col = np.clip(np.searchsorted(edges, n, side='right') - 1, -1, n_cols - 1)
-    col[n < N_START] = -1
     n_rows = int(ROWS_PER_DECADE * (REL_LOG_MAX - REL_LOG_MIN))
     row_edges = 10.0 ** np.linspace(REL_LOG_MIN, REL_LOG_MAX, n_rows + 1)
     row = np.clip(((np.log10(np.maximum(rel, 1e-300)) - REL_LOG_MIN) * ROWS_PER_DECADE).astype(int),
                   0, n_rows - 1)
     cum_X = np.vstack([np.zeros((1, d)), np.cumsum(X, axis=0)])     # cum_X[b] - cum_X[a] sums points a..b-1
+    pages = [(lo, min(lo + PAGE_LEN, N)) for lo in range(0, N, PAGE_LEN)]   # a page holds the points n in (lo, hi]
 
-    # The subsample shown in the function-value panel: up to MARKERS_PER_COL points per column, evenly spaced.
-    shown = np.zeros(N, dtype=bool)
-    for j in range(n_cols):
-        idx = np.flatnonzero(col == j)
-        if len(idx):
-            shown[idx[np.linspace(0, len(idx) - 1, min(len(idx), MARKERS_PER_COL)).round().astype(int)]] = True
+    class Page:
+        """The column edges of one page, each point's column, and the subsample shown as markers."""
 
-    def coordinate_curves(n_seen):
-        """Per column: the mean coordinates of the last max(MIN_WINDOW, column width) points up to its right edge."""
-        b = np.minimum(edges[1:], n_seen)
-        keep = edges[:-1] <= n_seen
-        b = b[keep]
-        a = np.maximum(np.minimum(edges[:-1][keep], b - MIN_WINDOW), 0)
-        return b, (cum_X[b] - cum_X[a]) / (b - a)[:, None]
+        def __init__(self, lo, hi):
+            self.lo, self.hi = lo, hi
+            self.edges = np.unique(np.round(np.linspace(lo, hi, N_COLS + 1)).astype(int))
+            self.n_cols = len(self.edges) - 1
+            self.col = np.clip(np.searchsorted(self.edges, n, side='right') - 1, -1, self.n_cols - 1)
+            self.col[(n <= lo) | (n > hi)] = -1
+            self.shown = np.zeros(N, dtype=bool)
+            for j in range(self.n_cols):
+                idx = np.flatnonzero(self.col == j)
+                if len(idx):
+                    pick = np.linspace(0, len(idx) - 1, min(len(idx), MARKERS_PER_COL)).round().astype(int)
+                    self.shown[idx[pick]] = True
 
-    def error_density(n_seen):
-        m = (col >= 0) & (n <= n_seen)
-        D = np.bincount(row[m] * n_cols + col[m], minlength=n_rows * n_cols).reshape(n_rows, n_cols).astype(float)
-        with np.errstate(invalid='ignore', divide='ignore'):
-            D = D / D.max(axis=0)
-        return np.ma.masked_invalid(D)
+        def right_edges(self, n_seen):
+            """The right edge of every column that has started, clipped to the points seen."""
+            keep = self.edges[:-1] < n_seen
+            return np.minimum(self.edges[1:][keep], n_seen), self.edges[:-1][keep]
 
-    def running_median(n_seen):
-        xs = np.unique(np.minimum(edges[1:], n_seen)[edges[:-1] <= n_seen])
-        return xs, np.array([np.median(rel[(n > x / WINDOW) & (n <= x)]) for x in xs])
+        def coordinate_curves(self, n_seen):
+            """Per column: the mean coordinates of the last max(MIN_WINDOW, column width) points up to its right edge."""
+            b, left = self.right_edges(n_seen)
+            a = np.maximum(np.minimum(left, b - MIN_WINDOW), 0)
+            return b, (cum_X[b] - cum_X[a]) / (b - a)[:, None]
+
+        def error_density(self, n_seen):
+            m = (self.col >= 0) & (n <= n_seen)
+            D = np.bincount(row[m] * self.n_cols + self.col[m], minlength=n_rows * self.n_cols)
+            D = D.reshape(n_rows, self.n_cols).astype(float)
+            with np.errstate(invalid='ignore', divide='ignore'):
+                D = D / D.max(axis=0)
+            return np.ma.masked_invalid(D)
+
+        def running_median(self, n_seen):
+            xs = np.unique(self.right_edges(n_seen)[0])
+            return xs, np.array([np.median(rel[max(0, x - MEDIAN_WINDOW):x]) for x in xs])
 
     # ---- figure scaffolding ----
     plt.rcParams.update({"font.size": 13, "axes.titlesize": 14})
@@ -224,18 +233,12 @@ def plot():
     axE = fig.add_subplot(gs[2], sharex=axX)
 
     for ax in (axX, axF, axE):
-        ax.set_xscale('log')
-        ax.set_xlim(N_START, N)
         for s in ax.spines.values():
             s.set_color(INK_MUTED); s.set_linewidth(0.8)
         ax.tick_params(colors=INK, length=3)
-    ticks = [t for t in (100, 1000, 10000, 100000) if N_START <= t <= N]
-    if N not in ticks:
-        ticks.append(N)
-    axE.set_xticks(ticks)
-    axE.set_xticklabels([f"{t:,}".replace(",", " ") for t in ticks])
-    axE.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-    axE.set_xlabel("points seen (log scale)")
+    axE.xaxis.set_major_locator(ticker.MaxNLocator(nbins=8, steps=[1, 2, 5, 10]))
+    axE.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}".replace(",", "\u2009")))
+    axE.set_xlabel("points seen")
     for ax in (axX, axF):
         plt.setp(ax.get_xticklabels(), visible=False)
     legend_kw = dict(loc='lower right', bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=10.5,
@@ -268,7 +271,7 @@ def plot():
     axE.set_ylim(10 ** REL_LOG_MIN, 10 ** REL_LOG_MAX)
     axE.set_yticks([1e-4, 1e-3, 1e-2, 1e-1, 1e0])
     axE.set_yticklabels(["0.01%", "0.1%", "1%", "10%", "100%"])
-    axE.yaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    axE.yaxis.set_minor_formatter(ticker.NullFormatter())
     axE.set_ylabel("relative error")
     axE.grid(axis='y', which='major', color=INK_MUTED, alpha=0.25, linewidth=0.6)
     axE.set_title("Relative error of each point, predicted before the point is added   (line: running median"
@@ -281,27 +284,28 @@ def plot():
     artists = []
 
     # The curves and markers are drawn without anti-aliasing: it keeps the GIF less than half the size.
-    def render_frame(n_seen):
+    def render_frame(page, n_seen):
         for a in artists:
             a.remove()
         artists.clear()
-        xs, C = coordinate_curves(n_seen)
+        axX.set_xlim(page.lo, page.hi)
+        xs, C = page.coordinate_curves(n_seen)
         for k in range(d):
             artists.extend(axX.plot(xs, C[:, k], color=coord_colors[k], lw=1.2, zorder=3, antialiased=False))
-        m = shown & (n <= n_seen)
+        m = page.shown & (n <= n_seen)
         artists.append(axF.scatter(n[m], y[m], s=14, color=INK, linewidths=0, zorder=3, antialiased=False))
         artists.append(axF.scatter(n[m], mu[m], s=34, facecolors='none', edgecolors=COL_MODEL, linewidths=1.0,
                                    zorder=4, antialiased=False))
-        artists.append(axE.pcolormesh(edges, row_edges, error_density(n_seen), cmap=cmap_err,
+        artists.append(axE.pcolormesh(page.edges, row_edges, page.error_density(n_seen), cmap=cmap_err,
                                       vmin=0, vmax=1, shading='flat', rasterized=True))
-        xs, med = running_median(n_seen)
+        xs, med = page.running_median(n_seen)
         artists.extend(axE.plot(xs, med, color=COL_MODEL, lw=2.0, zorder=4, path_effects=halo))
         artists.append(axE.annotate(f"{100 * med[-1]:.2g}%", (xs[-1], med[-1]), xytext=(6, 0),
                                     textcoords='offset points', va='center', fontsize=11,
                                     color=INK, zorder=5, path_effects=halo))
-        for r in refits[refits <= n_seen]:
+        for r in refits[(refits > page.lo) & (refits <= n_seen)]:
             artists.append(axE.axvline(r, color=INK_MUTED, lw=1.0, zorder=3))
-        n_txt = f"{n_seen:,}".replace(",", " ")
+        n_txt = f"{n_seen:,}".replace(",", "\u2009")
         status = f"{n_txt} points seen   |   {rec['n_leaves'][n_seen - 1]} local GPs"
         if args.config == 'hybrid':
             status += f"   |   {int(np.sum(refits <= n_seen))} network refits"
@@ -316,17 +320,19 @@ def plot():
     png_path = os.path.join(OUT_DIR, BASENAME + "_final.png")
     fig.set_dpi(DPI)
     if args.final_only:
-        render_frame(N).save(png_path)
+        render_frame(Page(*pages[-1]), N).save(png_path)
         print(f"wrote {png_path} (final frame only; no GIF)")
         return
-    frame_ns = np.unique(np.round(np.geomspace(N_START, N, N_FRAMES)).astype(int))
-    frames = []
-    for k, n_seen in enumerate(frame_ns):
-        frames.append(render_frame(int(n_seen)))
-        print(f"frame {k + 1:3d}/{len(frame_ns)}  ({n_seen} points)", flush=True)
-    frames[-1].save(png_path)
-    durations = [int(1000 / FPS)] * len(frames)
+    frames, durations = [], []
+    for lo, hi in pages:
+        page = Page(lo, hi)
+        for n_seen in np.unique(np.round(np.linspace(lo, hi, FRAMES_PER_PAGE + 1)[1:]).astype(int)):
+            frames.append(render_frame(page, int(n_seen)))
+            durations.append(int(1000 / FPS))
+            print(f"frame {len(frames):3d}  ({n_seen} points)", flush=True)
+        durations[-1] = PAGE_PAUSE_MS                        # hold the full page before it is cleared
     durations[-1] = END_PAUSE_MS
+    frames[-1].save(png_path)
     frames[0].save(gif_path, save_all=True, append_images=frames[1:], duration=durations, loop=0, optimize=True)
     print(f"wrote {gif_path}  ({len(frames)} frames, {os.path.getsize(gif_path) / 1e6:.1f} MB)")
     print(f"wrote {png_path}")
