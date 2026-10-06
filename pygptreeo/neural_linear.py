@@ -10,7 +10,7 @@ the network rather than to a constant. The tree itself is unchanged.
 * :class:`FeatureNetLearner`: an MLP (``depth`` layers of ``hidden`` units, SiLU)
   trained by weighted least squares on a sample of the stream: a maximin coverage
   reservoir (``reservoir='coverage'``) or a uniform reservoir sample
-  (``'uniform'``) of ``reservoir_size`` points (2000 by default; ``None`` keeps
+  (``'uniform'``) of ``reservoir_size`` points (5000 by default; ``None`` keeps
   every point). Each point's squared error is weighted by the inverse of its
   observation-noise variance plus the network's own current error variance
   (``weight_by_sigma``). Every (re)fit runs a fixed number of optimiser
@@ -157,7 +157,7 @@ class FeatureNetLearner:
     min_turnover : float, default=0.0
         With a bounded reservoir, a due refit is carried out only if at least this
         fraction of the reservoir has been replaced since the last fit.
-    reservoir_size : int or None, default=2000
+    reservoir_size : int or None, default=5000
         The size of the training sample. None keeps every point (memory and, with
         L-BFGS, the cost of a refit then grow with the stream).
     reservoir : {'coverage', 'uniform'}
@@ -179,7 +179,7 @@ class FeatureNetLearner:
 
     def __init__(self, hidden: int = 128, depth: int = 3, steps: Optional[int] = None, batch_size: int = 128,
                  lr: float = 1e-3, min_points: int = 200, refit_cap: Optional[int] = None,
-                 min_turnover: float = 0.0, reservoir_size: Optional[int] = 2000,
+                 min_turnover: float = 0.0, reservoir_size: Optional[int] = 5000,
                  reservoir: str = 'coverage', warm_start: bool = True,
                  steps_per_update: Optional[int] = None, error_window: int = 200,
                  random_state: Optional[int] = None, optimizer: str = 'lbfgs',

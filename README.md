@@ -202,7 +202,7 @@ gpt = GPTree(GPR=NeuralLinearGPR(learner), Nbar=100)  # per-leaf standard scalin
 ```
 
 The network is trained by full-batch L-BFGS (300 iterations per refit) on a
-2000-point coverage reservoir of the stream, with each point's squared error
+5000-point coverage reservoir of the stream, with each point's squared error
 weighted by the inverse of its noise variance plus the network's own error
 variance; `reservoir_size` sets the sample, `optimizer='adam'` switches to
 minibatch Adam (4000 steps, which may then run on every point,

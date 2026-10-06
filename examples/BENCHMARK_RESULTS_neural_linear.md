@@ -935,11 +935,12 @@ large values, which decide the range-normalised error, so what the log fit
 gains at the low end it loses at the top. The option stays for targets whose
 users want a relative fit from the network, but it is not a default.
 
-On these results L-BFGS (300 iterations on a 2000-point coverage reservoir)
-and the sigma weighting became the learner's defaults, and the log transform
-was removed from the package; the measurements above are the record of
-why. Every section before this one ran the earlier default (Adam on every
-point, unweighted); §3.6 reruns the comparisons with the new one.
+On these results L-BFGS and the sigma weighting became the learner's
+defaults, and the log transform was removed from the package; the
+measurements above are the record of why. Every section before this one ran
+the earlier default (Adam on every point, unweighted); §3.6 reruns the
+comparisons with the new one, and the size of the reservoir L-BFGS trains on
+was set there.
 
 ## Reproduce
 

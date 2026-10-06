@@ -303,7 +303,7 @@ def main():
                     help='heteroscedastic observation noise: sigma_i = noise * std(y) * 10^U(-1.5, 0); metrics against the noiseless y')
     ap.add_argument('--net-opt', default=None, choices=('adam', 'lbfgs'), help="the network's optimiser (default: the learner's, L-BFGS)")
     ap.add_argument('--net-steps', type=int, default=None, help="the network's steps per refit (default: 300 L-BFGS, 4000 Adam)")
-    ap.add_argument('--net-reservoir', type=int, default=None, help="the network's coverage-reservoir size (default: the learner's, 2000)")
+    ap.add_argument('--net-reservoir', type=int, default=None, help="the network's coverage-reservoir size (default: the learner's, 5000)")
     ap.add_argument('--net-all-points', action='store_true', help='train the network on every point instead of a reservoir')
     ap.add_argument('--net-unweighted', action='store_true', help='switch the 1 / (sigma^2 + error^2) loss weighting off')
     ap.add_argument('--overlay', default=None, help='with --plot: comma-separated record names to overlay (any configurations)')
