@@ -9,9 +9,8 @@ and the bounded reservoir cost in accuracy.
 
 Configurations:
     tree              plain GPTree (ARD Matern leaves)
-    neural            neural-linear tree, network trained on every point seen
-    neural_cov<k>     network trained on a maximin coverage reservoir of k points
-                      as at each doubling); shows the cost of refitting more often
+    neural            neural-linear tree, the learner at its defaults
+    neural_cov<k>     the L-BFGS phase on a maximin coverage reservoir of k points
     neural_amort<s>   refits spread over the following updates, s Adam steps per
                       update, published when complete (no latency spike)
     Parts combine: neural_cov4000_amort8.
