@@ -164,6 +164,7 @@ cython_debug/
 *.png
 # ...except the animation asset displayed in the README
 !examples/example_plots/animation/pygptreeo_local_learning_nbar100.gif
+!examples/example_plots/animation/pygptreeo_stream_strip_active_peaks_d10_walker.gif
 *.csv
 *.hdf5
 *.log

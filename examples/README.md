@@ -37,6 +37,11 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
     python multioutput_function_learning_pca.py [n_train] [easy|hard] [noise_std]
     ```
 
+- **`make_readme_gif.py`** / **`make_stream_strip_gif.py`**: The two README animations. The first
+  shows a 2D target learned from a sweeping cluster of points (prediction, partition, uncertainty and
+  error maps). The second shows a 10-input target learned from a 40 000-point walker stream as a strip
+  chart: the stream's coordinates, and the per-point error of the plain tree and the hybrid, against
+  the number of points seen (`--run tree`, `--run hybrid`, then `--plot`; `--quick` for a preview).
 - **`test_animated.py`**: Animated visualization of GPTree learning (2D only)
   - Creates animated GIFs showing how the tree learns the target function
   - Displays the tree structure, leaf boundaries, and prediction surface
