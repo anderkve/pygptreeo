@@ -341,3 +341,33 @@ class TestTreeIntegration(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestCoverageReservoirRowMinima(unittest.TestCase):
+    """The O(size) offer (per-row minima) must accept and evict exactly as the full
+    argmin over the distance matrix does."""
+
+    def test_matches_full_argmin(self):
+        from scipy.spatial.distance import cdist
+        rng = np.random.RandomState(0); d = 3; size = 25
+        r = CoverageReservoir(size, d, 1)
+        X_ref = np.empty((0, d)); D = None
+        for k in range(3000):
+            x = rng.rand(d) if k % 3 else 0.5 + 0.1 * rng.randn(d)
+            got = r.add(x, 0.0, 1e-3)
+            # reference: the brute-force rule
+            if X_ref.shape[0] < size:
+                X_ref = np.vstack((X_ref, x)); exp = True
+                if X_ref.shape[0] == size:
+                    D = cdist(X_ref, X_ref); np.fill_diagonal(D, np.inf)
+            else:
+                d_new = np.sqrt(((X_ref - x) ** 2).sum(1)); i, j = np.unravel_index(np.argmin(D), D.shape)
+                if d_new.min() <= D[i, j]:
+                    exp = False
+                else:
+                    exp = True; victim = i if D[i].min() <= D[j].min() else j
+                    X_ref[victim] = x; D[victim, :] = d_new; D[:, victim] = d_new; D[victim, victim] = np.inf
+            self.assertEqual(got, exp, k)
+            np.testing.assert_allclose(r.X, X_ref)
+            if r.full:
+                np.testing.assert_allclose(r._row_min, r._D.min(axis=1))

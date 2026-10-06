@@ -12,6 +12,9 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
   - Processes points one at a time, making predictions and updating the tree
   - Good starting point for understanding the basic workflow
 
+- **`example_hybrid.py`**: The hybrid tree (`GPTree(global_mean='net')`, GP leaves on the
+  residual of a tree-wide feature network) against the plain tree on a 6D stream: prequential
+  error, coverage and time per point. Needs PyTorch.
 - **`performance_test.py`**: Comprehensive performance evaluation script
   - Tests GPTree on various benchmark functions (Eggholder, Himmelblau, etc.)
   - Tracks and plots multiple performance metrics over time:
@@ -55,6 +58,10 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
     through a fixed random rotation (a rotated Rosenbrock valley; a negative-log
     mixture of anisotropic, rotated Gaussian peaks), so no low-order additive model
     represents them exactly.
+  - ActiveSubspacePeaks, Michalewicz, Ackley, Griewank, StepRidge, Chirp: harder
+    targets for the hybrid-vs-tree comparison (a 2-plane of ten inputs, steep narrow
+    valleys, ripples on a bowl, an all-order interaction, a jump across a hyperplane,
+    a length scale that varies across the box); `BENCHMARK_RESULTS_neural_linear.md` §3.4.
 
 - **`plot_performance_metrics.py`**: Post-processing script for performance analysis
   - Reads results from CSV files
@@ -71,6 +78,12 @@ python example.py
 ```
 
 This will run a basic test with 1000 points on the Eggholder function in 2D.
+
+### Hybrid tree
+
+```bash
+OMP_NUM_THREADS=1 python example_hybrid.py
+```
 
 ### Performance Test
 
