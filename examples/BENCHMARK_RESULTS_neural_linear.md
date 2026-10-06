@@ -501,6 +501,10 @@ have been at 128 000 points).
 
 ## 3. Point-by-point comparison figures
 
+The hybrid rows in §3 to §3.4 ran the network's original training default
+(Adam on every point); §3.8 has the same ten runs with the final default and
+is the table to quote.
+
 `examples/compare_tree_vs_neural.py` streams the same 40 000 points through
 both trees, predicting every point before giving it to the tree, and draws
 the package's usual performance figure with both overlaid, per batch of 2000
@@ -1049,6 +1053,56 @@ default and still below Adam on every point on all but the chirp. Its costs
 are the store of every point (about 100 bytes per point) and, one-shot,
 about 3.5 s per refit on top of the L-BFGS phase. Coverage is unchanged.
 
+### 3.8 The final default on the ten comparison runs (reference table)
+
+The hybrid with the learner's final defaults (L-BFGS, 300 iterations on a
+5000-point coverage reservoir, then 3000 Adam steps over every point seen,
+the sigma-weighted loss; one L-BFGS iteration or eight Adam steps per update
+when amortised) on the four runs of §3 and the six of §3.4, against the plain
+tree, the original default (Adam, 4000 steps on every point, unweighted;
+`hybrid_adam`) and the same default without the polish (`hybrid_nopolish`).
+This is the table to quote for the hybrid as the package ships it; the
+figures are `*_final.png`, the per-batch values `*_final_batches.csv`. Last
+10 000 points:
+
+| run | tree | hybrid, original (Adam, every point) | hybrid, no polish | **hybrid, final default** |
+|---|---|---|---|---|
+| eggholder, d = 3 | 0.040 | 0.039 | 0.039 | **0.039** |
+| rotated_rosenbrock, d = 6 | 0.0045 | 0.0006 | **0.0003** | **0.0003** |
+| gaussian_peaks, d = 10 | 0.038 | 0.0039 | 0.0035 | **0.0024** |
+| gaussian_peaks, d = 6, walker | 0.015 | 0.0030 | **0.0023** | **0.0023** |
+| active_peaks, d = 10 | 0.036 | 0.0027 | **0.0016** | 0.0018 |
+| step_ridge, d = 6 | 0.043 | 0.014 | 0.015 | **0.012** |
+| michalewicz, d = 5 | 0.100 | **0.072** | 0.098 | 0.085 |
+| ackley, d = 6 | 0.065 | **0.056** | 0.073 | 0.060 |
+| griewank, d = 6 | **0.099** | 0.101 | 0.113 | 0.103 |
+| chirp, d = 4 | 0.088 | **0.065** | 0.081 | 0.067 |
+
+| run | update ms: tree / original / final | within 1%: original / final | coverage: original / final |
+|---|---|---|---|
+| eggholder | 4.1 / 4.8 / 4.3 | 0.38 / 0.39 | 0.71 / 0.70 |
+| rotated_rosenbrock | 4.4 / 5.2 / 4.6 | 0.87 / 0.94 | 0.68 / 0.66 |
+| gaussian_peaks 10D | 5.4 / 9.1 / 7.7 | 0.75 / 0.90 | 0.66 / 0.67 |
+| gaussian_peaks walker | 4.7 / 5.5 / 5.1 | 0.93 / 0.95 | 0.70 / 0.70 |
+| active_peaks | 4.7 / 8.9 / 7.0 | 0.86 / 0.95 | 0.67 / 0.65 |
+| step_ridge | 4.7 / 7.0 / 5.9 | 0.82 / 0.84 | 0.68 / 0.68 |
+| michalewicz | 5.4 / 7.5 / 5.8 | 0.18 / 0.14 | 0.68 / 0.68 |
+| ackley | 4.6 / 7.0 / 5.4 | 0.19 / 0.18 | 0.67 / 0.68 |
+| griewank | 6.0 / 8.2 / 6.2 | 0.12 / 0.10 | 0.66 / 0.67 |
+| chirp | 4.5 / 4.9 / 4.4 | 0.30 / 0.23 | 0.70 / 0.70 |
+
+Against the original default the final one is better on the six smooth or
+structured targets (by 1.2 to 2 times; the 10D peaks gain the most from the
+polish, 0.0035 to 0.0024) and within 2 to 18% of it on the four rough ones,
+where the reservoir bound still costs a little; against the plain tree it
+is better on nine runs and 4% behind on Griewank, whose ripples 40 000
+points do not resolve. Its mean update is 3 to 25% below the original's on
+every run, with the same maxima; prediction is unchanged at a median of
+0.95 ms, with the forced leaf refits after each network version in the mean.
+The point store the polish needs costs ``d + 2`` floats per point, about 5%
+of the tree's own linear footprint (1.3 kB per point at Nbar 100 in 6D,
+most of it the leaves' Cholesky factors).
+
 ## Reproduce
 
 ```bash
@@ -1064,6 +1118,8 @@ for k in matern05 matern25 rbf rq additive; do
   OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config hybrid --kernel $k
 done
 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --kernels
+# the final default on the ten runs (section 3.8): run the hybrid with no --net-* option, then
+python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid_nopolish,hybrid --overlay-name final
 # the two-phase refit (section 3.7):
 OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target michalewicz --d 5 --config hybrid --net-polish 3000
 python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid,hybrid_polish3000 --overlay-name polish
