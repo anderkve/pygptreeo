@@ -8,13 +8,16 @@ residual of the network's own prediction, so a leaf with few points reverts to
 the network rather than to a constant. The tree itself is unchanged.
 
 * :class:`FeatureNetLearner`: an MLP (``depth`` layers of ``hidden`` units, SiLU)
-  trained by least squares on a sample of the stream. The sample is every point
-  (``reservoir_size=None``), a maximin coverage reservoir (``reservoir='coverage'``)
-  or a uniform reservoir sample (``'uniform'``) of ``reservoir_size`` points.
-  Every (re)fit runs a fixed number of Adam ``steps`` with a cosine schedule, so
-  its cost does not depend on how long the stream has run; refits happen when the
-  observation count has doubled since the last fit (or after ``refit_cap``
-  points), warm-started from the previous weights. The last hidden layer is the
+  trained by weighted least squares on a sample of the stream: a maximin coverage
+  reservoir (``reservoir='coverage'``) or a uniform reservoir sample
+  (``'uniform'``) of ``reservoir_size`` points (2000 by default; ``None`` keeps
+  every point). Each point's squared error is weighted by the inverse of its
+  observation-noise variance plus the network's own current error variance
+  (``weight_by_sigma``). Every (re)fit runs a fixed number of optimiser
+  ``steps``, full-batch L-BFGS by default or minibatch Adam, so its cost does not
+  depend on how long the stream has run; refits happen when the observation
+  count has doubled since the last fit (or after ``refit_cap`` points),
+  warm-started from the previous weights. The last hidden layer is the
   feature map, the output layer the *head* ``h(x)``. The learner also tracks the
   head's prequential error with the observation noise subtracted
   (``error_scale``), the budget a residual leaf adds to its sigma.
@@ -126,31 +129,25 @@ class FeatureNetLearner:
     hidden, depth : int
         Width and number of hidden layers of the MLP (SiLU activations). The last
         hidden layer, of ``hidden`` units, is the feature map.
-    optimizer : {'adam', 'lbfgs'}, default='adam'
-        ``'adam'``: minibatch Adam, ``steps`` steps with the learning rate
-        cosine-annealed to zero; a step costs the same however many points the
-        sample holds. ``'lbfgs'``: full-batch L-BFGS with a strong-Wolfe line
-        search, ``steps`` iterations; an iteration costs one or a few passes over
-        the whole sample, so it pairs with a bounded ``reservoir_size``.
+    optimizer : {'lbfgs', 'adam'}, default='lbfgs'
+        ``'lbfgs'``: full-batch L-BFGS with a strong-Wolfe line search, ``steps``
+        iterations; an iteration costs one or a few passes over the whole sample,
+        so the sample must be bounded (``reservoir_size``). ``'adam'``: minibatch
+        Adam, ``steps`` steps with the learning rate cosine-annealed to zero; a
+        step costs the same however many points the sample holds.
     steps : int or None
-        Optimiser steps per (re)fit: 4000 for Adam, 300 for L-BFGS when None.
+        Optimiser steps per (re)fit: 300 for L-BFGS, 4000 for Adam when None.
     batch_size : int, default=128
         Adam's minibatch size.
     lr : float, default=1e-3
         Adam's learning rate.
-    weight_by_sigma : bool, default=False
+    weight_by_sigma : bool, default=True
         Weight each point's squared error by ``1 / (sigma_i^2 + s^2)``, where
         ``sigma_i`` is the point's observation noise and ``s`` the network's
         current prequential error (``error_scale``, zero before the first fit;
         a floor of 1% of the targets' spread keeps the weights finite). The
         maximum-likelihood weighting for the noise the stream reports, which
         tends to uniform where the network's own error dominates the noise.
-    target_transform : {None, 'log'}
-        ``'log'`` fits the network to ``log(y - y_min + 0.01 * range)`` of the
-        sample (per output, redone at every fit) and predicts back in original
-        units. For a heavy-tailed positive target this turns the least-squares
-        fit into one of relative errors instead of letting the largest values
-        dominate it.
     min_points : int, default=200
         Observations before the first fit. Until then leaves regress on
         ``[x, x^2]`` in place of the network's features.
@@ -160,9 +157,9 @@ class FeatureNetLearner:
     min_turnover : float, default=0.0
         With a bounded reservoir, a due refit is carried out only if at least this
         fraction of the reservoir has been replaced since the last fit.
-    reservoir_size : int or None, default=None
-        None keeps every point (memory grows with the stream); an int bounds the
-        training sample to that many points.
+    reservoir_size : int or None, default=2000
+        The size of the training sample. None keeps every point (memory and, with
+        L-BFGS, the cost of a refit then grow with the stream).
     reservoir : {'coverage', 'uniform'}
         For a bounded sample: a maximin coverage design of the explored region
         (``CoverageReservoir``), or a uniform random sample of the stream.
@@ -182,23 +179,20 @@ class FeatureNetLearner:
 
     def __init__(self, hidden: int = 128, depth: int = 3, steps: Optional[int] = None, batch_size: int = 128,
                  lr: float = 1e-3, min_points: int = 200, refit_cap: Optional[int] = None,
-                 min_turnover: float = 0.0, reservoir_size: Optional[int] = None,
+                 min_turnover: float = 0.0, reservoir_size: Optional[int] = 2000,
                  reservoir: str = 'coverage', warm_start: bool = True,
                  steps_per_update: Optional[int] = None, error_window: int = 200,
-                 random_state: Optional[int] = None, optimizer: str = 'adam',
-                 weight_by_sigma: bool = False, target_transform: Optional[str] = None):
+                 random_state: Optional[int] = None, optimizer: str = 'lbfgs',
+                 weight_by_sigma: bool = True):
         _require_torch()
         if reservoir not in ('coverage', 'uniform'):
             raise ValueError("reservoir must be 'coverage' or 'uniform'")
         if optimizer not in ('adam', 'lbfgs'):
             raise ValueError("optimizer must be 'adam' or 'lbfgs'")
-        if target_transform not in (None, 'log'):
-            raise ValueError("target_transform must be None or 'log'")
         if steps is None:
             steps = 4000 if optimizer == 'adam' else 300
         self.optimizer = optimizer
         self.weight_by_sigma = bool(weight_by_sigma)
-        self.target_transform = target_transform
         if min_points < 2:
             raise ValueError("min_points must be at least 2")
         if steps_per_update is not None and steps_per_update < 1:
@@ -221,7 +215,6 @@ class FeatureNetLearner:
         self.n_features = None; self.n_outputs = None
         self.body = None; self.head_layer = None; self.net = None
         self.x_mu = None; self.x_sd = None; self.y_mu = None; self.y_sd = None
-        self.y_shift = None                      # the 'log' transform's per-output shift, else None
         self.version = 0
         self.n_seen = 0; self.n_seen_at_fit = 0; self.turnover_at_fit = 0
         self.n_refits = 0; self.n_skipped = 0; self.fit_seconds = 0.0; self.n_seen_at_first_fit = 0
@@ -288,34 +281,25 @@ class FeatureNetLearner:
     # -- fitting ------------------------------------------------------------------------
     def _training_set(self):
         """The standardised sample as tensors, the per-point loss weights and the
-        scaling ``(x_mu, x_sd, y_mu, y_sd, y_shift)`` a fit publishes with the net."""
+        scaling ``(x_mu, x_sd, y_mu, y_sd)`` a fit publishes with the net."""
         if isinstance(self.sample, _GrowingStore):
             self.sample._flush()
         X = self.sample.X; Y = self.sample.y; S = self.sample.sigma
         if X.shape[0] < 2:
             raise RuntimeError("Need at least 2 observations to fit the feature network")
         x_mu = X.mean(0); x_sd = X.std(0); x_sd = np.where(x_sd > 0, x_sd, 1.0)
-        y_shift = None
-        err = self.error_scale                   # the head's error in original units, or None
-        if self.target_transform == 'log':
-            rng_y = Y.max(0) - Y.min(0)
-            y_shift = 0.01 * np.where(rng_y > 0, rng_y, 1.0) - Y.min(0)
-            scale = Y + y_shift                  # d log(y + c) / dy = 1 / (y + c)
-            Y = np.log(scale)
-            S = S / scale
-            if err is not None:
-                err = err / np.median(scale, axis=0)
         y_mu = Y.mean(0); y_sd = float((Y - y_mu).std()) or 1.0
         Xt = torch.tensor((X - x_mu) / x_sd, dtype=torch.float32)
         Yt = torch.tensor((Y - y_mu) / y_sd, dtype=torch.float32)
         if self.weight_by_sigma:
+            err = self.error_scale               # the head's error in original units, or None
             var = (S / y_sd) ** 2 + (0.0 if err is None else (err / y_sd) ** 2)
             w = 1.0 / np.maximum(var, 1e-4)      # floor: 1% of the targets' spread
             w = w / w.mean(axis=0)
             Wt = torch.tensor(w, dtype=torch.float32)
         else:
             Wt = None
-        return Xt, Yt, Wt, (x_mu, x_sd, y_mu, y_sd, y_shift)
+        return Xt, Yt, Wt, (x_mu, x_sd, y_mu, y_sd)
 
     def _new_net(self):
         torch.manual_seed(int(self.rng.randint(1 << 30)))
@@ -364,7 +348,7 @@ class FeatureNetLearner:
 
     def _publish(self, net, scal, t_spent):
         self.net = net; self.body = net[0]; self.head_layer = net[1]
-        self.x_mu, self.x_sd, self.y_mu, self.y_sd, self.y_shift = scal
+        self.x_mu, self.x_sd, self.y_mu, self.y_sd = scal
         if self.n_refits == 0:
             self.n_seen_at_first_fit = self.n_seen
         self.version += 1; self.n_refits += 1
@@ -424,10 +408,7 @@ class FeatureNetLearner:
         """h(X), the network's own prediction in original units: (n, n_outputs)."""
         with torch.no_grad():
             out = self.net(self._xt(X)).double().numpy()
-        out = out * self.y_sd + self.y_mu
-        if self.y_shift is not None:
-            out = np.exp(np.minimum(out, 300.0)) - self.y_shift
-        return out
+        return out * self.y_sd + self.y_mu
 
     def gradient_of_linear(self, X, w) -> np.ndarray:
         """d/dx of ``w . phi(x)`` (``w`` in feature units) at each row of X: (n, d), in
@@ -439,7 +420,7 @@ class FeatureNetLearner:
 
     def __repr__(self) -> str:
         return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, optimizer={self.optimizer!r}, "
-                f"steps={self.steps}, weight_by_sigma={self.weight_by_sigma}, target_transform={self.target_transform!r}, "
+                f"steps={self.steps}, weight_by_sigma={self.weight_by_sigma}, "
                 f"reservoir_size={self.reservoir_size}, n_seen={self.n_seen}, n_refits={self.n_refits}, "
                 f"version={self.version})")
 

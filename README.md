@@ -201,9 +201,13 @@ learner = FeatureNetLearner(steps_per_update=8)       # refits spread over the s
 gpt = GPTree(GPR=NeuralLinearGPR(learner), Nbar=100)  # per-leaf standard scaling is switched off for it
 ```
 
-`FeatureNetLearner(reservoir_size=4000)` bounds the training sample (and memory)
-for very long streams; `steps_per_update=None` runs each refit in one go
-instead. On the 6D stream benchmark it has a quarter to a half of the plain
+The network is trained by full-batch L-BFGS (300 iterations per refit) on a
+2000-point coverage reservoir of the stream, with each point's squared error
+weighted by the inverse of its noise variance plus the network's own error
+variance; `reservoir_size` sets the sample, `optimizer='adam'` switches to
+minibatch Adam (4000 steps, which may then run on every point,
+`reservoir_size=None`) and `weight_by_sigma=False` switches the weighting off.
+`steps_per_update=None` runs each refit in one go instead. On the 6D stream benchmark it has a quarter to a half of the plain
 tree's error. Its sigma is the calibrated posterior sigma of the leaf regression
 with a floor: the leaf's local leave-one-out error near its points, rising to the
 function's overall scale beyond two nearest-neighbour spacings from them
@@ -223,12 +227,10 @@ beat the plain tree by 13 to 33 times where the function lives on a hidden
 2-plane of ten inputs, by three times across a jump, by 10 to 30% on rough
 oscillatory targets, and was level on one whose ripples 40 000 points do not
 resolve (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.4). The learner's
-training has three options: `optimizer='lbfgs'` (full-batch L-BFGS, to be run on
-a bounded `reservoir_size`; on the smooth 6D and 10D targets 1.4 to 3 times
-more accurate than Adam at the same update cost), `weight_by_sigma=True` (a
-`1 / (sigma^2 + error^2)` weighted loss, free, and worth 2.4 to 2.8 times
-when some points' noise exceeds the network's own error) and
-`target_transform='log'` (a relative fit, which did not help the hybrid; §3.5). Its leaves keep the
+L-BFGS default was 1.4 to 3 times more accurate than Adam on the smooth 6D and
+10D targets at the same update cost, and its loss weighting, inert while the
+network's own error exceeds the noise, was worth 2.4 to 2.8 times once some
+points' noise exceeded it (§3.5). Its leaves keep the
 default Matérn 3/2 kernel: on those runs Matérn 5/2 was level with it, RBF
 failed on the rough residual of the 3D target, and the additive kernel gained
 only where the target has low-order additive structure, at three to seven

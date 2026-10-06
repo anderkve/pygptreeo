@@ -29,8 +29,8 @@ non-default kernel is recorded as ``<config>_<kernel>``, and ``--plot --kernels`
 draws the hybrid's kernel variants against each other instead of the four
 configurations, ``--plot --overlay a,b,c`` any record names. ``--noise``
 adds heteroscedastic observation noise and scores against the noiseless
-target; the ``--net-*`` options set the network's optimiser, steps, reservoir,
-sigma weighting and log transform. ``--Nbar``, ``--retrain`` and ``--splitting`` set the tree
+target; the ``--net-*`` options set the network's optimiser, steps, reservoir
+and loss weighting (the learner's defaults otherwise). ``--Nbar``, ``--retrain`` and ``--splitting`` set the tree
 structure (defaults 100, 25, gradual; a non-default value is appended to the
 record name), and ``--plot --settings --config <c>`` overlays those variants.
 """
@@ -88,28 +88,34 @@ def config_name(a):
         parts.append(f"retrain{a.retrain}")
     if a.splitting != SETTINGS_DEFAULT['splitting']:
         parts.append(a.splitting)
-    if a.net_opt != 'adam':
+    if a.net_opt is not None:
         parts.append(a.net_opt)
     if a.net_steps is not None:
         parts.append(f"steps{a.net_steps}")
     if a.net_reservoir is not None:
         parts.append(f"res{a.net_reservoir}")
-    if a.net_weight:
-        parts.append('wsig')
-    if a.net_log:
-        parts.append('log')
+    if a.net_all_points:
+        parts.append('allpoints')
+    if a.net_unweighted:
+        parts.append('unweighted')
     return '_'.join(parts)
 
 
 def net_kwargs(a):
-    """The FeatureNetLearner keyword arguments of the --net-* options."""
-    # amortised refits: 8 Adam minibatch steps or one full-batch L-BFGS iteration per update
-    kw = dict(steps_per_update=8 if a.net_opt == 'adam' else 1, random_state=a.seed, optimizer=a.net_opt,
-              weight_by_sigma=a.net_weight, target_transform='log' if a.net_log else None)
+    """The FeatureNetLearner keyword arguments of the --net-* options (the learner's defaults otherwise)."""
+    kw = dict(random_state=a.seed)
+    if a.net_opt is not None:
+        kw['optimizer'] = a.net_opt
+    # amortised refits: one full-batch L-BFGS iteration or 8 Adam minibatch steps per update
+    kw['steps_per_update'] = 8 if kw.get('optimizer', 'lbfgs') == 'adam' else 1
     if a.net_steps is not None:
         kw['steps'] = a.net_steps
     if a.net_reservoir is not None:
         kw['reservoir_size'] = a.net_reservoir
+    if a.net_all_points:
+        kw['reservoir_size'] = None
+    if a.net_unweighted:
+        kw['weight_by_sigma'] = False
     return kw
 
 
@@ -295,11 +301,11 @@ def main():
     ap.add_argument('--settings', action='store_true', help="with --plot: the Nbar/retrain/splitting variants of --config")
     ap.add_argument('--noise', type=float, default=0.0,
                     help='heteroscedastic observation noise: sigma_i = noise * std(y) * 10^U(-1.5, 0); metrics against the noiseless y')
-    ap.add_argument('--net-opt', default='adam', choices=('adam', 'lbfgs'), help="the network's optimiser (hybrid, neural)")
-    ap.add_argument('--net-steps', type=int, default=None, help="the network's steps per refit (default: 4000 Adam, 300 L-BFGS)")
-    ap.add_argument('--net-reservoir', type=int, default=None, help="the network's coverage-reservoir size (default: every point)")
-    ap.add_argument('--net-weight', action='store_true', help='weight the network loss by 1 / (sigma^2 + error^2)')
-    ap.add_argument('--net-log', action='store_true', help='fit the network to log(y - y_min + 0.01 range)')
+    ap.add_argument('--net-opt', default=None, choices=('adam', 'lbfgs'), help="the network's optimiser (default: the learner's, L-BFGS)")
+    ap.add_argument('--net-steps', type=int, default=None, help="the network's steps per refit (default: 300 L-BFGS, 4000 Adam)")
+    ap.add_argument('--net-reservoir', type=int, default=None, help="the network's coverage-reservoir size (default: the learner's, 2000)")
+    ap.add_argument('--net-all-points', action='store_true', help='train the network on every point instead of a reservoir')
+    ap.add_argument('--net-unweighted', action='store_true', help='switch the 1 / (sigma^2 + error^2) loss weighting off')
     ap.add_argument('--overlay', default=None, help='with --plot: comma-separated record names to overlay (any configurations)')
     ap.add_argument('--overlay-name', default='overlay', help='with --overlay: the suffix of the figure and table files')
     a = ap.parse_args()

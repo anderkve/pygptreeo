@@ -129,8 +129,9 @@ class TestNeuralLinearGPR(unittest.TestCase):
             learner.observe(X[i], y[i], 1e-3)
         self.assertIsNotNone(learner.error_scale)
         gpr = NeuralLinearGPR(learner, residual=True); gpr.set_observation_noise(1e-6)
-        gpr.fit(X[:40], y[:40])                               # a leaf with few points
-        far = np.array([[0.95, 0.95, 0.95]])
+        Xl = 0.4 * X[:40]                                     # a leaf with few points, in one corner of the box
+        gpr.fit(Xl, _target(Xl))
+        far = np.array([[0.95, 0.95, 0.95]])                  # many spacings from the leaf's points
         m, s = gpr.predict(far, return_std=True)
         h = learner.head(far)[0, 0]
         self.assertLess(abs(m[0] - h), 5 * (abs(h) + 0.1))    # a bounded correction of the head
@@ -152,13 +153,13 @@ class TestNeuralLinearGPR(unittest.TestCase):
         self.assertEqual(r.n, 10); self.assertEqual(r.n_offered, 200)
 
     def test_fixed_refit_cost(self):
-        """A refit runs a fixed number of steps, so its cost does not grow with the sample."""
+        """A refit runs a fixed number of steps on a bounded sample, so its cost does not grow with the stream."""
         import time
         rng = np.random.RandomState(8)
         times = []
         for n in (200, 1600):
             X = rng.rand(n, 3); y = _target(X)
-            learner = self._learner(min_points=n, steps=400, batch_size=64)
+            learner = self._learner(min_points=n, steps=100, reservoir_size=200)
             for i in range(n):
                 learner.observe(X[i], y[i], 1e-3)
             times.append(learner.fit_seconds)
@@ -225,28 +226,6 @@ class TestNeuralLinearGPR(unittest.TestCase):
             errs[weighted] = np.sqrt(np.mean((learner.head(Xt)[:, 0] - yt) ** 2)) / (yt.max() - yt.min())
         self.assertLess(errs[True], 0.5 * errs[False])
         self.assertLess(errs[True], 0.06)
-
-    def test_log_transform_predicts_in_original_units(self):
-        """A positive, heavy-tailed target: the log fit returns original units and its relative error is better."""
-        rng = np.random.RandomState(13)
-        n = 500
-        X = rng.rand(n, 2); y = np.exp(6.0 * X[:, 0] * X[:, 1]) + 0.5 * X[:, 1]    # range 0.5 to 400
-        Xt = rng.rand(300, 2); yt = np.exp(6.0 * Xt[:, 0] * Xt[:, 1]) + 0.5 * Xt[:, 1]
-        rel = {}
-        for tr in (None, 'log'):
-            learner = self._learner(min_points=n, steps=800, target_transform=tr)
-            for i in range(n):
-                learner.observe(X[i], y[i], 1e-3)
-            h = learner.head(Xt)[:, 0]
-            rel[tr] = np.median(np.abs(h - yt) / yt)
-        self.assertIsNotNone(learner.y_shift)
-        self.assertTrue(np.all(np.isfinite(learner.head(X))))
-        self.assertLess(rel['log'], 0.5 * rel[None])
-        # a target with negative values is shifted, not rejected
-        learner = self._learner(min_points=100, steps=50, target_transform='log')
-        for i in range(100):
-            learner.observe(X[i], -y[i], 1e-3)
-        self.assertTrue(np.all(np.isfinite(learner.head(X[:10]))))
 
     def test_tree_with_amortised_refits(self):
         rng = np.random.RandomState(10)

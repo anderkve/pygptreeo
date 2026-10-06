@@ -935,11 +935,11 @@ large values, which decide the range-normalised error, so what the log fit
 gains at the low end it loses at the top. The option stays for targets whose
 users want a relative fit from the network, but it is not a default.
 
-So: L-BFGS on a bounded reservoir is the one change worth considering as a
-default for the hybrid, with the reservoir size and iteration count as its
-two costs; the sigma weighting is free and matters only when some points'
-noise exceeds the network's error, where it matters a lot; the log transform
-is not recommended.
+On these results L-BFGS (300 iterations on a 2000-point coverage reservoir)
+and the sigma weighting became the learner's defaults, and the log transform
+was removed from the package; the measurements above are the record of
+why. Every section before this one ran the earlier default (Adam on every
+point, unweighted); §3.6 reruns the comparisons with the new one.
 
 ## Reproduce
 
@@ -959,7 +959,6 @@ python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --ker
 # the network's training options (section 3.5): L-BFGS on a reservoir, noise + sigma weighting, the log fit
 OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target active_peaks --d 10 --config hybrid --net-opt lbfgs --net-steps 1000 --net-reservoir 2000
 OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target rotated_rosenbrock --d 6 --config hybrid --noise 1.0 --net-weight
-OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target rotated_rosenbrock --d 6 --config hybrid --net-log
 python compare_tree_vs_neural.py --target active_peaks --d 10 --plot --overlay hybrid,hybrid_res2000,hybrid_lbfgs_res2000,hybrid_lbfgs_steps1000_res2000 --overlay-name netopt
 # the six harder targets (section 3.4), tree and hybrid, uniform stream (and walker for two):
 for t in "active_peaks 10" "michalewicz 5" "ackley 6" "griewank 6" "step_ridge 6" "chirp 4"; do set -- $t
