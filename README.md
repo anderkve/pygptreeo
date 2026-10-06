@@ -222,7 +222,8 @@ design and the alternatives considered.
 
 The same network can instead serve as the tree's global model, with the leaf GPs
 modelling the residual of its prediction (`GPTree(global_mean='net')`, or
-`global_mean=NetGlobalMean(...)` with the learner's keyword arguments). On
+`global_mean=NetGlobalMean(...)` with the learner's keyword arguments;
+`examples/example_hybrid.py` runs it against the plain tree). On
 40 000-point streams this hybrid matched the GP tree on a rough 3D target and
 the neural-linear tree on the 6D and 10D targets, at the GP leaf's update cost
 and with the GP's sigma (no floor away from the data). On six harder targets it
