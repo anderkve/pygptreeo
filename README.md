@@ -202,15 +202,17 @@ gpt = GPTree(GPR=NeuralLinearGPR(learner), Nbar=100)  # per-leaf standard scalin
 ```
 
 The network is trained by full-batch L-BFGS (300 iterations per refit) on a
-5000-point coverage reservoir of the stream, with each point's squared error
-weighted by the inverse of its noise variance plus the network's own error
-variance; `reservoir_size` sets the sample, `optimizer='adam'` switches to
-minibatch Adam (4000 steps, which may then run on every point,
-`reservoir_size=None`) and `weight_by_sigma=False` switches the weighting off.
-`steps_per_update=None` runs each refit in one go instead. `polish_steps=3000`
-follows each L-BFGS fit with that many Adam steps over every point seen (kept
-in a store that grows with the stream), which recovered most of what the
-bounded reservoir loses on rough targets at a small extra update cost
+5000-point coverage reservoir of the stream, followed by 3000 Adam steps over
+every point seen (`polish_steps`; the store of points costs `d + 2` floats per
+point, a few percent of the tree's own footprint), with each point's squared
+error weighted by the inverse of its noise variance plus the network's own
+error variance. `reservoir_size` sets the sample, `optimizer='adam'` switches
+to minibatch Adam alone (4000 steps, which may then run on every point,
+`reservoir_size=None`), `polish_steps=0` drops the second phase and
+`weight_by_sigma=False` switches the weighting off. `steps_per_update=None`
+runs each refit in one go instead of amortising it over the following
+updates. The polish recovered most of what the bounded reservoir loses on
+rough targets at a small extra update cost
 (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.7). On the 6D stream benchmark it has a quarter to a half of the plain
 tree's error. Its sigma is the calibrated posterior sigma of the leaf regression
 with a floor: the leaf's local leave-one-out error near its points, rising to the

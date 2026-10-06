@@ -310,7 +310,7 @@ def main():
     ap.add_argument('--net-reservoir', type=int, default=None, help="the network's coverage-reservoir size (default: the learner's, 5000)")
     ap.add_argument('--net-all-points', action='store_true', help='train the network on every point instead of a reservoir')
     ap.add_argument('--net-unweighted', action='store_true', help='switch the 1 / (sigma^2 + error^2) loss weighting off')
-    ap.add_argument('--net-polish', type=int, default=None, help='Adam steps over every point after the L-BFGS fit (polish_steps)')
+    ap.add_argument('--net-polish', type=int, default=None, help="Adam steps over every point after the L-BFGS fit (default: the learner's, 3000)")
     ap.add_argument('--overlay', default=None, help='with --plot: comma-separated record names to overlay (any configurations)')
     ap.add_argument('--overlay-name', default='overlay', help='with --overlay: the suffix of the figure and table files')
     a = ap.parse_args()

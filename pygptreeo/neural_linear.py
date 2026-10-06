@@ -17,9 +17,9 @@ the network rather than to a constant. The tree itself is unchanged.
   ``steps``, full-batch L-BFGS by default or minibatch Adam, so its cost does not
   depend on how long the stream has run; refits happen when the observation
   count has doubled since the last fit (or after ``refit_cap`` points),
-  warm-started from the previous weights. ``polish_steps`` follows the L-BFGS
-  fit with a fixed budget of Adam steps over every point seen, for the fine
-  structure the reservoir cannot hold. The last hidden layer is the
+  warm-started from the previous weights. Each L-BFGS fit is followed by a
+  fixed budget of Adam steps over every point seen (``polish_steps``), for the
+  fine structure the reservoir cannot hold. The last hidden layer is the
   feature map, the output layer the *head* ``h(x)``. The learner also tracks the
   head's prequential error with the observation noise subtracted
   (``error_scale``), the budget a residual leaf adds to its sigma.
@@ -165,11 +165,13 @@ class FeatureNetLearner:
     reservoir : {'coverage', 'uniform'}
         For a bounded sample: a maximin coverage design of the explored region
         (``CoverageReservoir``), or a uniform random sample of the stream.
-    polish_steps : int, default=0
+    polish_steps : int, default=3000
         After the L-BFGS fit on the reservoir, this many minibatch Adam steps
-        over every point seen (kept in a store that grows with the stream), at
-        ``polish_lr`` cosine-annealed to zero: the fine structure the reservoir
-        cannot hold, at a cost fixed by the step count. 0 switches it off.
+        over every point seen (kept in a store that grows with the stream, at
+        ``d + 2`` floats per point, a few percent of the tree's own footprint),
+        at ``polish_lr`` cosine-annealed to zero: the fine structure the
+        reservoir cannot hold, at a cost fixed by the step count. 0 switches
+        it off.
     polish_lr : float or None
         The polish phase's learning rate; ``lr`` when None.
     warm_start : bool, default=True
@@ -192,7 +194,7 @@ class FeatureNetLearner:
                  reservoir: str = 'coverage', warm_start: bool = True,
                  steps_per_update: Optional[int] = None, error_window: int = 200,
                  random_state: Optional[int] = None, optimizer: str = 'lbfgs',
-                 weight_by_sigma: bool = True, polish_steps: int = 0, polish_lr: Optional[float] = None):
+                 weight_by_sigma: bool = True, polish_steps: int = 3000, polish_lr: Optional[float] = None):
         _require_torch()
         if reservoir not in ('coverage', 'uniform'):
             raise ValueError("reservoir must be 'coverage' or 'uniform'")
