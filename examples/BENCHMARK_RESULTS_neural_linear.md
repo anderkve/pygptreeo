@@ -942,6 +942,74 @@ the earlier default (Adam on every point, unweighted); §3.6 reruns the
 comparisons with the new one, and the size of the reservoir L-BFGS trains on
 was set there.
 
+### 3.6 The new default on the ten comparison runs
+
+The hybrid with the learner's new defaults (L-BFGS, 300 iterations per refit,
+one per update when amortised, on a 5000-point coverage reservoir, the
+sigma-weighted loss) against the plain tree and the earlier default (Adam,
+4000 minibatch steps on every point, unweighted), on the four runs of §3 and
+the six of §3.4. The 2000-point reservoir that was tried first is in the
+figures (`*_default.png`) and the per-batch tables (`*_default_batches.csv`)
+as a fourth line. Last 10 000 points:
+
+| run | tree | hybrid, Adam on every point (earlier default) | hybrid, L-BFGS on 5000 (default) | hybrid, L-BFGS on 2000 |
+|---|---|---|---|---|
+| eggholder, d = 3 | 0.040 | **0.039** | **0.039** | 0.040 |
+| rotated_rosenbrock, d = 6 | 0.0045 | 0.0006 | **0.0003** | **0.0003** |
+| gaussian_peaks, d = 10 | 0.038 | 0.0039 | **0.0035** | 0.0069 |
+| gaussian_peaks, d = 6, walker | 0.015 | 0.0030 | **0.0023** | 0.0026 |
+| active_peaks, d = 10 | 0.036 | 0.0027 | **0.0016** | 0.0019 |
+| step_ridge, d = 6 | 0.043 | **0.014** | 0.015 | 0.020 |
+| michalewicz, d = 5 | 0.100 | **0.072** | 0.098 | 0.123 |
+| ackley, d = 6 | 0.065 | **0.056** | 0.073 | 0.078 |
+| griewank, d = 6 | **0.099** | 0.101 | 0.113 | 0.122 |
+| chirp, d = 4 | 0.088 | **0.065** | 0.081 | 0.095 |
+
+| run | update ms, tree / Adam / L-BFGS 5000 | within 1%, Adam / L-BFGS 5000 | coverage, Adam / L-BFGS 5000 |
+|---|---|---|---|
+| eggholder | 4.1 / 4.8 / 4.4 | 0.38 / 0.40 | 0.71 / 0.70 |
+| rotated_rosenbrock | 4.4 / 5.2 / 4.6 | 0.87 / 0.92 | 0.68 / 0.66 |
+| gaussian_peaks 10D | 5.4 / 9.1 / 6.0 | 0.75 / 0.81 | 0.66 / 0.67 |
+| gaussian_peaks walker | 4.7 / 5.5 / 5.4 | 0.93 / 0.95 | 0.70 / 0.69 |
+| active_peaks | 4.7 / 8.9 / 5.8 | 0.86 / 0.96 | 0.67 / 0.67 |
+| step_ridge | 4.7 / 7.0 / 5.7 | 0.82 / 0.79 | 0.68 / 0.68 |
+| michalewicz | 5.4 / 7.5 / 4.7 | 0.18 / 0.12 | 0.68 / 0.68 |
+| ackley | 4.6 / 7.0 / 5.6 | 0.19 / 0.14 | 0.67 / 0.67 |
+| griewank | 6.0 / 8.2 / 4.9 | 0.12 / 0.07 | 0.66 / 0.67 |
+| chirp | 4.5 / 4.9 / 4.3 | 0.30 / 0.19 | 0.70 / 0.70 |
+
+* **On the smooth targets with a learnable global structure the new default
+  is better**: 2 times on the rotated Rosenbrock, 1.7 on the active peaks,
+  1.3 on the walker, 1.1 on the 10D peaks, with 92 to 96% of predictions
+  within 1% on the first three. Level on the Eggholder and the step ridge.
+* **On the rough, oscillatory targets it is worse than Adam on every point,
+  by 10 to 35%** (Michalewicz, Ackley, Griewank, the chirp), and on Griewank
+  and Ackley it is behind the plain tree. One-factor runs on Michalewicz and
+  the chirp (`*_reservoir.png`) put this on the training sample alone: Adam on
+  the same 2000-point reservoir was as bad as L-BFGS on it (0.137 and 0.098
+  against 0.123 and 0.095), the weighting changed nothing (0.126, 0.092),
+  5000 points recovered most of the loss (0.098, 0.081) and L-BFGS on every
+  point matched Adam on every point (0.075, 0.074) at three times the update
+  cost (11 to 12 ms), a cost that grows with the stream. The offline head
+  probe did not predict this: trained once on 20 000 points, the 2000-point
+  head was level with the all-points head on both targets. What the leaves'
+  residual depends on beyond the head's own error has not been measured.
+* **Cost.** The mean update is 5 to 35% below the earlier default on every
+  run but the walker, and the maxima are the same (leaf fits). The median
+  prediction is 0.95 ms as before; its full-stream mean, 2.8 to 4.8 ms
+  against 2.3 to 3.8, counts the forced leaf refits after each published
+  network version (one refit per leaf, 100 to 450 ms each), and the L-BFGS
+  schedule publishes seven versions in 40 000 points against Adam's six.
+  Over a window that contains a version the mean prediction time reads 4 to
+  8 ms, which is a property of the window, not of the optimiser.
+
+So the default trades the rough-target accuracy of training on every point
+for bounded refit cost and a clear gain on the smooth coupled targets. A
+larger reservoir buys the rough targets back at a cost that grows with its
+size; ideas for using every point at bounded cost (a residual-aware
+reservoir, a two-phase refit, a capped sequence of residual networks) are
+the next thing to measure.
+
 ## Reproduce
 
 ```bash
@@ -957,7 +1025,10 @@ for k in matern05 matern25 rbf rq additive; do
   OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config hybrid --kernel $k
 done
 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --kernels
-# the network's training options (section 3.5): L-BFGS on a reservoir, noise + sigma weighting, the log fit
+# the new default against the earlier one (section 3.6): run the hybrid with the learner's defaults, then overlay
+OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target michalewicz --d 5 --config hybrid
+python compare_tree_vs_neural.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid_res2000,hybrid --overlay-name default
+# the network's training options (section 3.5): L-BFGS on a reservoir, noise + sigma weighting
 OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target active_peaks --d 10 --config hybrid --net-opt lbfgs --net-steps 1000 --net-reservoir 2000
 OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target rotated_rosenbrock --d 6 --config hybrid --noise 1.0 --net-weight
 python compare_tree_vs_neural.py --target active_peaks --d 10 --plot --overlay hybrid,hybrid_res2000,hybrid_lbfgs_res2000,hybrid_lbfgs_steps1000_res2000 --overlay-name netopt

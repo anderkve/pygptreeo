@@ -226,11 +226,13 @@ and with the GP's sigma (no floor away from the data). On six harder targets it
 beat the plain tree by 13 to 33 times where the function lives on a hidden
 2-plane of ten inputs, by three times across a jump, by 10 to 30% on rough
 oscillatory targets, and was level on one whose ripples 40 000 points do not
-resolve (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.4). The learner's
-L-BFGS default was 1.4 to 3 times more accurate than Adam on the smooth 6D and
-10D targets at the same update cost, and its loss weighting, inert while the
-network's own error exceeds the noise, was worth 2.4 to 2.8 times once some
-points' noise exceeded it (§3.5). Its leaves keep the
+resolve (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.4). With the
+learner's defaults (L-BFGS on the 5000-point reservoir) it is 1.1 to 2 times
+more accurate than with Adam on every point on the smooth coupled targets and
+10 to 35% less accurate on the rough oscillatory ones, where the bounded
+sample is what costs (§3.6); the loss weighting, inert while the network's
+own error exceeds the noise, was worth 2.4 to 2.8 times once some points'
+noise exceeded it (§3.5). Its leaves keep the
 default Matérn 3/2 kernel: on those runs Matérn 5/2 was level with it, RBF
 failed on the rough residual of the 3D target, and the additive kernel gained
 only where the target has low-order additive structure, at three to seven
