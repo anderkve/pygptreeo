@@ -295,7 +295,7 @@ def _fit_with_residual(self, force_training=False):
     return did
 
 
-def _predict_with_residual(self, x, return_std=True, use_calibrated_sigma=False, include_floor=True):
+def _predict_with_residual(self, x, return_std=True, use_calibrated_sigma=False):
     model = _ACTIVE['model']
     snap = getattr(self, '_fitted_mean', None)
     if (_ACTIVE['refresh_stale'] and model is not None and model.current is not None and self.is_leaf
@@ -306,7 +306,7 @@ def _predict_with_residual(self, x, return_std=True, use_calibrated_sigma=False,
         _fit_with_residual(self, force_training=True)
         _ACTIVE['n_stale_refits'] += 1
         snap = getattr(self, '_fitted_mean', None)
-    mu, sd = _orig_predict(self, x, return_std, use_calibrated_sigma, include_floor)
+    mu, sd = _orig_predict(self, x, return_std, use_calibrated_sigma)
     if snap is not None:
         mu = mu + snap.predict(x)[:, None]
     return mu, sd
