@@ -776,6 +776,89 @@ standard splitting is as accurate as gradual for it and cheaper; gradual stays
 the `GPTree` default since it is what the plain tree gains from. For the plain tree on a smooth target in six or more dimensions the
 same runs say that larger, rarely refitted leaves are worth their spikes.
 
+### 3.4 Six harder targets: hybrid against the plain tree
+
+The same 40 000-point comparison (`--config tree` and `hybrid`, Nbar 100,
+retrain 25, gradual splitting, Matern 3/2 leaves, the network at its defaults
+with `steps_per_update=8`) on six targets added for this test
+(`target_functions.py`), each chosen to stress one thing:
+
+* `active_peaks`, d = 10: the 2D `GaussianPeaks` landscape of a fixed random
+  2-plane of the ten inputs. Every input matters, two directions do.
+* `michalewicz`, d = 5: steep valleys a few percent of the box wide in a flat
+  plain (exponent 20), offset to stay positive.
+* `ackley`, d = 6, on [-2, 2]: a cosine ripple with four periods per axis on an
+  exponential bowl.
+* `griewank`, d = 6, on [-10, 10]: a product of cosines, an interaction of
+  every order, on a shallow bowl.
+* `step_ridge`, d = 6: a rotated quadratic bowl plus a jump across a rotated
+  hyperplane, the jump about the size of the bowl's spread.
+* `chirp`, d = 4: a sum of sines whose frequency grows six-fold with the first
+  coordinate, a length scale that varies across the box.
+
+Last 10 000 points (figures `*_compare.png`, per-batch values `*_batches.csv`):
+
+| run | config | update ms (max) | NRMSE | within 1% | within 4% | within 16% | coverage |
+|---|---|---|---|---|---|---|---|
+| active_peaks, d = 10, uniform | tree | 4.73 (380) | 0.036 | 0.09 | 0.35 | 0.80 | 0.68 |
+| | hybrid | 8.85 (488) | **0.0027** | **0.86** | **0.99** | **1.00** | 0.67 |
+| active_peaks, d = 10, walker | tree | 6.75 (708) | 0.070 | 0.04 | 0.17 | 0.57 | 0.66 |
+| | hybrid | 7.30 (658) | **0.0021** | **0.97** | **1.00** | **1.00** | 0.70 |
+| michalewicz, d = 5, uniform | tree | 5.41 (332) | 0.100 | 0.19 | 0.48 | 0.89 | 0.67 |
+| | hybrid | 7.51 (507) | **0.072** | 0.18 | **0.55** | **0.95** | 0.68 |
+| michalewicz, d = 5, walker | tree | 4.69 (470) | 0.043 | 0.21 | 0.58 | 0.91 | 0.68 |
+| | hybrid | 5.05 (349) | **0.040** | **0.27** | **0.66** | **0.93** | 0.70 |
+| ackley, d = 6, uniform | tree | 4.61 (329) | 0.065 | 0.16 | 0.57 | 0.98 | 0.66 |
+| | hybrid | 7.03 (367) | **0.056** | **0.19** | **0.65** | 0.99 | 0.67 |
+| griewank, d = 6, uniform | tree | 6.04 (452) | **0.099** | **0.17** | **0.49** | 0.83 | 0.66 |
+| | hybrid | 8.17 (463) | 0.101 | 0.12 | 0.40 | 0.83 | 0.66 |
+| step_ridge, d = 6, uniform | tree | 4.73 (350) | 0.043 | 0.60 | 0.77 | 0.91 | 0.67 |
+| | hybrid | 7.04 (400) | **0.014** | **0.82** | **0.94** | **0.99** | 0.68 |
+| chirp, d = 4, uniform | tree | 4.50 (380) | 0.088 | 0.25 | 0.49 | 0.80 | 0.67 |
+| | hybrid | 4.94 (344) | **0.064** | **0.30** | **0.59** | **0.88** | 0.70 |
+
+Prediction takes 0.8 to 0.9 ms for the tree and 1.1 to 1.3 ms for the hybrid
+on every run; the leaf counts are the same to within 3%.
+
+* **A hidden low-dimensional structure is where the network pays off most:**
+  13 and 33 times lower NRMSE on the active-subspace peaks (uniform and
+  walker), with 86 and 97% of predictions within 1% against 9 and 4% for
+  the tree. The network learns the projection and has a 2D problem; a leaf
+  GP with ten length scales on 100 points has a 10D one, and the ARD cannot
+  express "two rotated directions".
+* **The discontinuity is the second large gain**, a factor of three on the
+  step ridge. The network's SiLU layers approximate the jump sharply enough
+  that the leaves are left a bowl plus a thin band of residual; the plain
+  tree's Matern leaves smear the jump over a length scale.
+* **On the rough and oscillatory targets the hybrid gains 10 to 30%** or
+  nothing: Michalewicz 28% (uniform) and 9% (walker), Ackley 14%, chirp 26%,
+  Griewank level (the hybrid 2% worse, and worse on the within-1% fraction).
+  These are the targets where the network at its fixed training budget is
+  itself inaccurate (the Eggholder's case, §3.1), so the leaves do most of the
+  work on the residual and the hybrid's advantage is whatever large-scale
+  shape the network removes: the bowls of Ackley and Michalewicz's plain, the
+  low-frequency end of the chirp. Griewank's ripples are at a scale the
+  40 000 points do not resolve in 6D (NRMSE 0.10 for both, no improvement
+  after the first 10 000 points), and there is no large-scale shape to
+  remove, since the bowl is 1/10 of the ripple's amplitude on this domain.
+* **Coverage ends at 0.66 to 0.70 for both.** The hybrid dips to 0.50 to 0.53
+  in one early batch on the active-subspace peaks (uniform) and Michalewicz
+  (walker), where a new network version shifts the residual under leaves
+  calibrated against the old one, before the per-leaf calibration catches up
+  within a batch.
+* **The hybrid's update costs 0.4 to 4 ms more per point** (the network's
+  8 amortised Adam steps per observation, its prequential error update and
+  the forced leaf refits at each version), with maxima of the same size as
+  the tree's.
+
+With the earlier runs, the picture of where the hybrid helps is consistent:
+by an order of magnitude or more on smooth targets with a global structure a
+network can learn (coupled valleys, rotated peaks, a low-dimensional
+subspace, a sharp step), by tens of percent where it removes a bowl or a
+trend from a target whose fine structure the leaves must still fit, and not
+at all where there is neither a learnable global shape nor resolvable fine
+structure. It never did worse than the tree by more than the batch scatter.
+
 ## Reproduce
 
 ```bash
@@ -791,6 +874,11 @@ for k in matern05 matern25 rbf rq additive; do
   OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config hybrid --kernel $k
 done
 python compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot --kernels
+# the six harder targets (section 3.4), tree and hybrid, uniform stream (and walker for two):
+for t in "active_peaks 10" "michalewicz 5" "ackley 6" "griewank 6" "step_ridge 6" "chirp 4"; do set -- $t
+  for c in tree hybrid; do OMP_NUM_THREADS=1 python compare_tree_vs_neural.py --target $1 --d $2 --N 40000 --config $c; done
+  python compare_tree_vs_neural.py --target $1 --d $2 --N 40000 --plot
+done
 # Nbar / retrain pairs and the splitting strategy (section 3.3), tree and hybrid:
 for c in tree hybrid; do
   for v in "--Nbar 50 --retrain 6" "--Nbar 200 --retrain 75" "--Nbar 400 --retrain 200" "--splitting standard"; do

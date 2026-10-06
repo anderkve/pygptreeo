@@ -55,6 +55,10 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
     through a fixed random rotation (a rotated Rosenbrock valley; a negative-log
     mixture of anisotropic, rotated Gaussian peaks), so no low-order additive model
     represents them exactly.
+  - ActiveSubspacePeaks, Michalewicz, Ackley, Griewank, StepRidge, Chirp: harder
+    targets for the hybrid-vs-tree comparison (a 2-plane of ten inputs, steep narrow
+    valleys, ripples on a bowl, an all-order interaction, a jump across a hyperplane,
+    a length scale that varies across the box); `BENCHMARK_RESULTS_neural_linear.md` §3.4.
 
 - **`plot_performance_metrics.py`**: Post-processing script for performance analysis
   - Reads results from CSV files
