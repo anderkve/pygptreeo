@@ -1,39 +1,27 @@
-"""Compare the plain GP tree with the neural-linear tree on one stream, point by point.
+"""Compare tree configurations on one stream, point by point.
 
-Both trees receive the same stream; every point is predicted before it is given
-to the tree (prequential), and the prediction, its sigma, the prediction and
-update times and the number of leaves are written per point to a CSV in the
-layout of ``performance_test.py``. ``--plot`` draws the usual performance
-figure, batch by batch, with both configurations overlaid: prediction time,
-update time, NRMSE, the fraction of predictions within 1 to 16% of the true
-value, the empirical 1-sigma coverage, and the number of leaves.
+Every point is predicted before it is given to the tree, and the prediction,
+its sigma, the prediction and update times and the number of leaves are written
+per point to a CSV. ``--plot`` draws the performance figure, batch by batch, with
+the configurations overlaid: prediction time, update time, NRMSE, the fraction
+of predictions within 1 to 16% of the true value, the 1-sigma coverage, and
+the number of leaves.
 
     # one configuration per process (so the timings are clean), then the figure
     OMP_NUM_THREADS=1 python examples/compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config tree
-    OMP_NUM_THREADS=1 python examples/compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config neural
+    OMP_NUM_THREADS=1 python examples/compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --config hybrid
     python examples/compare_tree_vs_neural.py --target eggholder --d 3 --N 40000 --plot
 
-Configurations: ``tree`` (``Default_GPR(n_restarts_optimizer=1)``, ARD Matern
-leaves), ``neural`` (``NeuralLinearGPR`` on a ``FeatureNetLearner`` with
-refits spread over the stream, 8 Adam steps per update) and ``hybrid`` (the GP
-leaves on the residual of that network, ``global_mean=NetGlobalMean(...)``) and ``global_gp``
-(the GP leaves on the residual of the additive-GP global model of
-``BENCHMARK_RESULTS_global_mean_streams.md``); all with
-``Nbar = 100``, ``theta = 1e-4``, a retrain every 25 points, gradual splitting
-and calibrated sigma. Streams: ``uniform`` (the default), ``focusing``,
-``sweeping`` and ``walker`` from ``benchmark_global_mean_streams.py``.
-
-``--kernel`` picks the leaf kernel of the ``tree`` and ``hybrid`` configurations
-(see ``KERNELS``); the default ``matern15`` is what ``Default_GPR`` builds. A
-non-default kernel is recorded as ``<config>_<kernel>``, and ``--plot --kernels``
-draws the hybrid's kernel variants against each other instead of the four
-configurations, ``--plot --overlay a,b,c`` any record names. ``--noise``
-adds heteroscedastic observation noise and scores against the noiseless
-target; ``--net key=value ...`` passes arguments to the ``FeatureNetLearner``
-(the learner's defaults otherwise), and each pair is appended to the record
-name. ``--Nbar``, ``--retrain`` and ``--splitting`` set the tree
-structure (defaults 100, 25, gradual; a non-default value is appended to the
-record name), and ``--plot --settings --config <c>`` overlays those variants.
+Configurations: ``tree`` (ARD Matern leaves), ``neural`` (neural-linear leaves),
+``hybrid`` (GP leaves on the residual of the feature network) and ``global_gp``
+(GP leaves on the residual of the additive global GP); ``Nbar = 100``,
+``theta = 1e-4``, a retrain every 25 points, gradual splitting and calibrated
+sigma unless ``--Nbar``, ``--retrain``, ``--splitting`` or ``--kernel`` say
+otherwise. ``--net key=value ...`` passes arguments to the ``FeatureNetLearner``.
+``--noise`` adds heteroscedastic observation noise and scores against the
+noiseless target. Every non-default setting is appended to the record name;
+``--plot --overlay a,b,c`` overlays any record names, ``--plot --kernels`` and
+``--plot --settings`` the kernel and tree-structure variants.
 """
 
 import argparse

@@ -1,44 +1,15 @@
-"""Neural-linear leaves: one shared feature network, Bayesian linear regression per leaf.
+"""Neural-linear leaves and the network-residual hybrid for GPTree.
 
-``GPTree(GPR=NeuralLinearGPR(FeatureNetLearner()))`` replaces the leaf GPs by
-Bayesian linear regressions on the features of one tree-wide network. The
-network learns the function's representation from everything the tree has seen;
-each leaf re-weights those features on its own points, by default on the
-residual of the network's own prediction, so a leaf with few points reverts to
-the network rather than to a constant. The tree itself is unchanged.
-
-* :class:`FeatureNetLearner`: an MLP (``depth`` layers of ``hidden`` units, SiLU)
-  trained by weighted least squares in two phases: full-batch L-BFGS on a
-  maximin coverage reservoir of the stream (``reservoir_size`` points), then a
-  fixed budget of minibatch Adam steps over every point seen (``polish_steps``),
-  for the fine structure the reservoir cannot hold. Each point's squared error
-  is weighted by the inverse of its observation-noise variance plus the
-  network's own current error variance. Both phases run a fixed number of
-  steps, so a refit costs the same however long the stream has run; refits
-  happen when the observation count has doubled since the last fit,
-  warm-started from the previous weights. The last hidden layer is the feature
-  map, the output layer the *head* ``h(x)``. The learner also tracks the head's
-  prequential error with the observation noise subtracted (``error_scale``),
-  the budget a residual leaf adds to its sigma.
-* :class:`NetGlobalMean`: the same network as a tree-wide *global model*
-  (``GPTree(global_mean='net')`` or ``GPTree(global_mean=NetGlobalMean(...))``):
-  the leaves keep their GPs and model the residual of the network's head, with
-  the global model's refresh rule and error budget. The hybrid for targets whose
-  local structure a kernel describes better than the network's features.
-* :class:`NeuralLinearGPR`: a :class:`GPRegressorInterface` backend. ``fit``
-  regresses ``y - h(X)``, the residual of the network's head, on ``[phi(X), 1]``
-  with a Gaussian prior on the weights and per-point noise ``alpha + s2``; the
-  prior variance ``tau2`` and the extra noise ``s2`` are chosen by the evidence
-  on a grid, by one eigendecomposition per ``s2``. The predicted sigma is the
-  posterior sigma of the latent function. A fit remembers the feature version
-  it used and re-solves on the current features when asked to predict after a
-  refit. The leaf also provides an uncertainty floor: its local leave-one-out
-  error near its points, rising to the function's overall scale away from them,
-  which the tree applies to the calibrated sigma.
+One tree-wide feature network (``FeatureNetLearner``) is trained on the stream at
+a fixed cost per refit. It serves either as the leaves' feature map
+(``GPTree(GPR=NeuralLinearGPR(learner))``: each leaf is a Bayesian linear
+regression, on the network's features, of the residual of the network's own
+prediction, so a leaf with few points reverts to the network) or as the tree's
+global model (``GPTree(global_mean='net')``: the leaves keep their GPs and model
+that residual).
 
 The network expects raw inputs, so ``GPTree`` switches ``use_standard_scaling``
-off for this backend (the learner standardises inputs and targets itself).
-Requires PyTorch.
+off for the neural-linear backend. Requires PyTorch.
 """
 
 from typing import Optional, Tuple, Union
@@ -93,37 +64,36 @@ POLISH_STEPS_PER_UPDATE = 8   # Adam steps per L-BFGS iteration in an amortised 
 class FeatureNetLearner:
     """Tree-wide feature network, trained on the stream at a fixed cost per refit.
 
+    An MLP of ``depth`` hidden layers of ``hidden`` SiLU units; the last hidden
+    layer is the feature map ``phi(x)``, the output layer the head ``h(x)``.
+    Each refit runs two phases of fixed length, so its cost does not depend on
+    the stream's length: full-batch L-BFGS on a maximin coverage reservoir of
+    the stream, then Adam minibatch steps over every point seen. The loss weights
+    each point by ``1 / (sigma^2 + s^2)``, ``s`` the head's prequential error
+    with the observation noise subtracted (``error_scale``). A refit is due when
+    the observation count has doubled since the last one.
+
     Parameters
     ----------
     hidden, depth : int
-        Width and number of hidden layers of the MLP (SiLU activations). The last
-        hidden layer, of ``hidden`` units, is the feature map.
     steps : int, default=300
-        L-BFGS iterations per refit (full batch, strong-Wolfe line search) on the
-        reservoir. An iteration costs one or a few passes over the reservoir. 0
-        skips this phase.
+        L-BFGS iterations per refit on the reservoir; 0 skips the phase.
     polish_steps : int, default=3000
-        Adam minibatch steps per refit over every point seen after the L-BFGS
-        phase, at ``lr`` cosine-annealed to zero: the fine structure the
-        reservoir cannot hold, at a cost fixed by the step count. The store of
-        every point costs ``d + 2`` floats per point, a few percent of the
-        tree's own footprint. 0 skips this phase.
+        Adam steps per refit over every point seen, with the learning rate
+        cosine-annealed to zero; 0 skips the phase. The store of every point
+        costs ``d + 2`` floats per point.
     lr : float, default=1e-3
         Adam's learning rate.
     min_points : int, default=200
-        Observations before the first fit. Until then leaves regress on
-        ``[x, x^2]`` in place of the network's features.
+        Observations before the first fit; until then leaves regress on ``[x, x^2]``.
     reservoir_size : int or None, default=5000
-        Points of the maximin coverage reservoir (``CoverageReservoir``) the
-        L-BFGS phase trains on. None trains it on every point, at a cost per
-        iteration that grows with the stream.
+        Points of the coverage reservoir (``CoverageReservoir``); None trains the
+        L-BFGS phase on every point, at a cost per iteration that grows with the stream.
     steps_per_update : int or None, default=None
-        None: a due refit runs both phases at once inside the ``observe`` call
-        that triggered it (a latency spike of seconds). An int spreads the refit
-        over the following observations, this many L-BFGS iterations (and
-        ``POLISH_STEPS_PER_UPDATE`` times as many Adam steps) per call, on a
-        shadow copy of the network; the leaves keep the old network until the
-        shadow is published as the new version. The first fit always runs at once.
+        None: a due refit runs at once inside the ``observe`` call. An int spreads
+        it over the following observations, this many L-BFGS iterations (and
+        ``POLISH_STEPS_PER_UPDATE`` times as many Adam steps) per call, on a copy
+        of the network published when complete. The first fit always runs at once.
     random_state : int or None
     """
 
@@ -214,9 +184,8 @@ class FeatureNetLearner:
 
     # -- fitting ------------------------------------------------------------------------
     def _training_set(self, source, scal=None):
-        """``source`` (the reservoir or the store) standardised as tensors, the
-        per-point loss weights, and the scaling ``(x_mu, x_sd, y_mu, y_sd)`` a fit
-        publishes with the net; ``scal`` reuses a scaling instead of computing one."""
+        """``source`` standardised as tensors, the per-point loss weights, and the
+        scaling ``(x_mu, x_sd, y_mu, y_sd)``; ``scal`` reuses a scaling."""
         if isinstance(source, _GrowingStore):
             source._flush()
         X = source.X; Y = source.y; S = source.sigma
@@ -229,10 +198,7 @@ class FeatureNetLearner:
             x_mu, x_sd, y_mu, y_sd = scal
         Xt = torch.tensor((X - x_mu) / x_sd, dtype=torch.float32)
         Yt = torch.tensor((Y - y_mu) / y_sd, dtype=torch.float32)
-        # Weights 1 / (sigma^2 + s^2), s the head's current error (zero before the
-        # first fit; a floor of 1% of the targets' spread keeps them finite): the
-        # likelihood for the noise the stream reports, tending to uniform where the
-        # network's own error dominates it.
+        # 1 / (sigma^2 + s^2), floored at 1% of the targets' spread, mean one
         err = self.error_scale
         var = (S / y_sd) ** 2 + (0.0 if err is None else (err / y_sd) ** 2)
         w = 1.0 / np.maximum(var, 1e-4)
@@ -253,8 +219,7 @@ class FeatureNetLearner:
         Xt, Yt, Wt, scal = self._training_set(self.sample)
         if self.steps == 0:
             return None, scal
-        # One iteration per step() call, so a refit can be amortised; max_eval must
-        # be set explicitly (its default of max_iter * 5 // 4 = 1 cuts the line search).
+        # One iteration per step() call; max_eval's default of 1 would cut the line search.
         opt = torch.optim.LBFGS(net.parameters(), lr=1.0, max_iter=1, max_eval=25, history_size=20,
                                 line_search_fn='strong_wolfe', tolerance_grad=0.0, tolerance_change=0.0)
         return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=None, state=None), scal
@@ -274,9 +239,8 @@ class FeatureNetLearner:
         return (((net(X) - Y) ** 2) * W).mean()
 
     def _train(self, net, ph, n_steps):
-        """Run n_steps of a phase on net: full-batch L-BFGS iterations (the optimiser
-        carries its own history) or minibatch Adam steps (``ph['state']`` carries
-        the epoch permutation and position across calls)."""
+        """Run n_steps of a phase: full-batch L-BFGS iterations, or minibatch Adam
+        steps (``ph['state']`` carries the epoch permutation across calls)."""
         net.train(); done = 0
         Xt, Yt, Wt, opt, sched, state = ph['Xt'], ph['Yt'], ph['Wt'], ph['opt'], ph['sched'], ph['state']
         if sched is None:
@@ -304,8 +268,7 @@ class FeatureNetLearner:
         self.fit_seconds += t_spent
 
     def fit(self):
-        """(Re)fit the network in one go; callable directly to force a refit (it
-        also discards an in-progress amortised refit)."""
+        """(Re)fit the network in one go, discarding any amortised refit in progress."""
         import time
         t0 = time.time()
         self._shadow = None
@@ -324,9 +287,7 @@ class FeatureNetLearner:
         net = copy.deepcopy(self.net)
         ph, scal = self._lbfgs_phase(net)
         self._shadow = dict(net=net, scal=scal, lbfgs=ph, done=0, polish=None, polish_started=False, polish_done=0, t=0.0)
-        # The schedule restarts from this refit's start, so a second refit cannot
-        # become due while this one is in progress.
-        self.n_seen_at_fit = self.n_seen
+        self.n_seen_at_fit = self.n_seen         # no second refit is due while this one runs
 
     def _advance_shadow(self) -> bool:
         import time
@@ -403,12 +364,9 @@ class _NetSnapshot(GlobalMeanSnapshot):
 class NetGlobalMean(GlobalMeanLearner):
     """A feature network as the tree's global model: GP leaves on the residual of its head.
 
-    Wraps a :class:`FeatureNetLearner` (constructed from the keyword arguments) as
-    a :class:`GlobalMeanLearner`. Each published network version is a new
-    snapshot, so leaves refit against it on first use, as with the additive GP;
-    ``error_scale`` is the learner's prequential error budget. The network's own
-    weights keep changing only inside a refit, which is published atomically, so
-    a snapshot's predictions are fixed until the next version.
+    Wraps a :class:`FeatureNetLearner` (built from the keyword arguments) as a
+    :class:`GlobalMeanLearner`. Each published network version is a new snapshot
+    the leaves refit against on first use; ``error_scale`` is the learner's.
     """
 
     def __init__(self, **learner_kwargs):
@@ -439,25 +397,22 @@ RAMP_LENGTH = 2.0    # spacings over which it rises
 class NeuralLinearGPR(GPRegressorInterface):
     """Bayesian linear regression on a :class:`FeatureNetLearner`'s features, as a leaf model.
 
-    The leaf regresses ``y - h(x)``, the residual of the network's head, on the
-    features; the prior variance and the extra noise are chosen by the evidence
-    on the grids ``LOG_TAU2`` and ``LOG_S2``. :meth:`predict_floor` returns an
-    uncertainty floor the tree applies to the calibrated sigma as
-    ``max(sigma, floor)``: on the leaf's data it is the leaf's *local*
-    leave-one-out error, the rms of the closed-form leave-one-out residuals at
-    the ``LOO_K`` fit points nearest to ``x`` (observation noise subtracted), a
-    stream-independent estimate of the error at new points there; beyond
-    ``RAMP_START`` nearest-neighbour spacings from the leaf's points it rises to
-    the function's overall scale ``y_sd`` over ``RAMP_LENGTH`` spacings, as a
-    kernel's variance rises to its prior amplitude:
-    ``floor^2 = loo^2 + (y_sd^2 - loo^2) (1 - exp(-((r - RAMP_START) / RAMP_LENGTH)^2))``.
-    Distances are in coordinates scaled by the leaf's per-dimension spread.
+    The leaf regresses ``y - h(x)``, the residual of the network's head, on
+    ``[phi(x), 1]`` with a Gaussian prior on the weights and per-point noise
+    ``alpha + s2``; the prior variance and ``s2`` are chosen by the evidence on
+    the grids ``LOG_TAU2`` and ``LOG_S2``. A fit remembers the network version
+    it used and re-solves when the network has been refitted since.
+
+    :meth:`predict_floor` gives an uncertainty floor the tree applies to the
+    calibrated sigma: the rms leave-one-out residual of the ``LOO_K`` fit points
+    nearest to ``x`` (noise subtracted), rising to the targets' scale ``y_sd``
+    from ``RAMP_START`` nearest-neighbour spacings away over ``RAMP_LENGTH``
+    spacings, with distances scaled by the leaf's per-dimension spread.
 
     Parameters
     ----------
     learner : FeatureNetLearner
-        The shared feature network (one instance per tree; the tree feeds it the
-        stream through :meth:`observe_stream`).
+        The shared network; the tree feeds it the stream through :meth:`observe_stream`.
     """
 
     def __init__(self, learner: FeatureNetLearner):
@@ -571,7 +526,7 @@ class NeuralLinearGPR(GPRegressorInterface):
 
     def predict_floor(self, X: np.ndarray) -> np.ndarray:
         """The uncertainty floor at X (see the class docstring), shape (n,); zeros
-        when the leaf has no fit. The tree applies it as ``max(calibrated sigma, floor)``."""
+        when the leaf has no fit."""
         X = np.atleast_2d(np.asarray(X, float))
         if self.mu is None or self.X_fit is None:
             return np.zeros(X.shape[0])

@@ -1433,10 +1433,8 @@ class GPNode(Node):
                 (standard deviation) is scaled by the node's `self.sigma_scaler(s)`
                 attribute(s). This scaler is intended to calibrate the uncertainty
                 estimates. Defaults to False.
-            include_floor (bool): Apply a backend's uncertainty floor
-                (``predict_floor``) as ``max(sigma, floor)`` after the calibration.
-                The calibration itself records sigma without it, since the scaler
-                multiplies the model sigma alone. Defaults to True.
+            include_floor (bool): Apply a backend's ``predict_floor`` as
+                ``max(sigma, floor)`` after the calibration. Defaults to True.
 
         Returns:
             tuple:
@@ -1483,10 +1481,8 @@ class GPNode(Node):
                 for i in range(self.n_outputs):
                     sigma_pred[:, i] = sigma_pred[:, i] * self.sigma_scalers[i]
 
-        # A backend's uncertainty floor (NeuralLinearGPR.predict_floor): the leaf's
-        # local out-of-sample error, rising to the function's scale away from its
-        # points. Applied after the calibration, so the prequential scaler, fitted
-        # on the stream, cannot push the sigma below it.
+        # A backend's uncertainty floor, applied after the calibration so the scaler
+        # cannot push the sigma below it.
         if include_floor and self.output_model == 'independent':
             for i, gpr in enumerate(self.my_GPRs):
                 floor_fn = getattr(gpr, 'predict_floor', None)
@@ -1584,7 +1580,7 @@ class GPNode(Node):
 
         For multi-output: tracks performance per output dimension.
         """
-        # The model sigma alone: the scaler fitted on these residuals multiplies it.
+        # The model sigma alone, which the scaler multiplies.
         mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False, include_floor=False)
 
         # Ensure y is array of shape (n_outputs,)
