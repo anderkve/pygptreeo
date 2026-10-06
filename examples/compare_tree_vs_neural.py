@@ -103,8 +103,9 @@ def config_name(a):
 
 def net_kwargs(a):
     """The FeatureNetLearner keyword arguments of the --net-* options."""
-    kw = dict(steps_per_update=8, random_state=a.seed, optimizer=a.net_opt, weight_by_sigma=a.net_weight,
-              target_transform='log' if a.net_log else None)
+    # amortised refits: 8 Adam minibatch steps or one full-batch L-BFGS iteration per update
+    kw = dict(steps_per_update=8 if a.net_opt == 'adam' else 1, random_state=a.seed, optimizer=a.net_opt,
+              weight_by_sigma=a.net_weight, target_transform='log' if a.net_log else None)
     if a.net_steps is not None:
         kw['steps'] = a.net_steps
     if a.net_reservoir is not None:
