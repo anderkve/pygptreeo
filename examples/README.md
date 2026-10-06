@@ -41,7 +41,7 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
   shows a 2D target learned from a sweeping cluster of points (prediction, partition, uncertainty and
   error maps). The second shows a 10-input target learned by the hybrid from a 40 000-point walker
   stream: the stream's coordinates, the true and predicted value of each point, and the per-point
-  error, against the number of points seen, in two pages (`--run`, then `--plot`; `--config tree` for the plain
+  error, against the number of points seen, in four pages (`--run`, then `--plot`; `--config tree` for the plain
   tree; `--quick` for a preview).
 - **`test_animated.py`**: Animated visualization of GPTree learning (2D only)
   - Creates animated GIFs showing how the tree learns the target function

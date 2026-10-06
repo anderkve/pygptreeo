@@ -2,7 +2,7 @@
 
 The README's first animation shows a 2D target. This one shows a target of ten
 inputs learned from tens of thousands of points, where there is no picture of the
-prediction to draw. Instead the stream itself is the x axis, in pages of 20 000
+prediction to draw. Instead the stream itself is the x axis, in pages of 10 000
 points (the panels are cleared between pages), and three panels are stacked on it:
 
   1. The input stream: one curve per input coordinate (a running mean over the
@@ -144,7 +144,7 @@ def run():
 # Plot phase
 # --------------------------------------------------------------------------
 
-PAGE_LEN = 1500 if args.quick else 20000   # points per page; the panels are cleared between pages
+PAGE_LEN = 750 if args.quick else 10000    # points per page; the panels are cleared between pages
 N_COLS = 600             # columns per page (equal bins of the stream)
 MIN_WINDOW = 10          # a coordinate curve averages at least this many points
 MARKERS_PER_COL = 3      # the function-value panel shows at most this many points per column
@@ -152,7 +152,7 @@ REL_LOG_MIN, REL_LOG_MAX = -4.0, 0.0     # relative error from 0.01% to 100%
 ROWS_PER_DECADE = 10
 MEDIAN_WINDOW = 500      # the running median covers the last this many points
 FPS = 12
-FRAMES_PER_PAGE = 12 if args.quick else 36
+FRAMES_PER_PAGE = 8 if args.quick else 24
 PAGE_PAUSE_MS = 1500     # hold on the last frame of a page before the panels are cleared
 END_PAUSE_MS = 2500
 DPI = 50 if args.quick else 100
