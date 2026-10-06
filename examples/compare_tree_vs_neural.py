@@ -203,7 +203,7 @@ def plot(a):
         palette = ('black', 'tab:blue', 'tab:red', 'tab:orange', 'tab:green', 'tab:purple', 'tab:brown', 'tab:cyan')
         style = {c: dict(color=col, ls='-') for c, col in zip(cfgs, palette)}
         name = {c: c for c in cfgs}
-        title = "configurations: " + ", ".join(cfgs); suffix = "overlay"
+        title = "configurations: " + ", ".join(cfgs); suffix = a.overlay_name
     elif a.settings:
         # the tree-structure settings, one base configuration (--config)
         # Nbar and the retrain interval paired for about equal retrain cost per point
@@ -270,7 +270,7 @@ def plot(a):
     frames = []
     for cfg, m in runs.items():
         df = pd.DataFrame({k: v for k, v in m.items()}); df.insert(0, 'config', cfg); frames.append(df)
-    prefix = 'overlay_' if a.overlay else (f"{a.config}_settings_" if a.settings else ('kernel_' if a.kernels else ''))
+    prefix = f"{a.overlay_name}_" if a.overlay else (f"{a.config}_settings_" if a.settings else ('kernel_' if a.kernels else ''))
     pd.concat(frames).to_csv(os.path.join(RESULTS_DIR, f"{tag(a)}_{prefix}batches.csv"),
                              index=False, float_format='%.6g')
     # a compact summary of the last batch
@@ -301,6 +301,7 @@ def main():
     ap.add_argument('--net-weight', action='store_true', help='weight the network loss by 1 / (sigma^2 + error^2)')
     ap.add_argument('--net-log', action='store_true', help='fit the network to log(y - y_min + 0.01 range)')
     ap.add_argument('--overlay', default=None, help='with --plot: comma-separated record names to overlay (any configurations)')
+    ap.add_argument('--overlay-name', default='overlay', help='with --overlay: the suffix of the figure and table files')
     a = ap.parse_args()
     if a.plot:
         plot(a)

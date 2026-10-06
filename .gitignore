@@ -187,4 +187,7 @@ examples/results/compare_tree_vs_neural/*_neural.csv
 !examples/results/compare_tree_vs_neural/*_compare.png
 !examples/results/compare_tree_vs_neural/*_kernels.png
 !examples/results/compare_tree_vs_neural/*_settings.png
+!examples/results/compare_tree_vs_neural/*_netopt.png
+!examples/results/compare_tree_vs_neural/*_wsig.png
+!examples/results/compare_tree_vs_neural/*_netlog.png
 !examples/results/compare_tree_vs_neural/*_batches.csv
