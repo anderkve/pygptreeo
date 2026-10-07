@@ -80,7 +80,7 @@ class GPTree:
                  theta: Optional[float] = 0.0001,
                  use_calibrated_sigma: Optional[bool] = True,
                  split_dimension_criteria: Optional[str] = 'min_lengthscale',
-                 splitting_strategy: Optional[str] = 'standard',
+                 splitting_strategy: Optional[str] = 'gradual',
                  max_n_pred_leaves: Optional[int] = None,
                  aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
@@ -113,7 +113,10 @@ class GPTree:
                 length scales), 'max_spread', 'max_variance', 'max_uncertainty',
                 'random'. Defaults to 'min_lengthscale'.
             splitting_strategy (Optional[str]): Strategy for splitting nodes.
-                'standard' or 'gradual'. Defaults to 'standard'.
+                'standard' (each child keeps its own half of the parent's points)
+                or 'gradual' (each child also receives a copy of its sibling's
+                points, dropped as its own arrive, so it starts with a full-size
+                fit and stays continuous across the split). Defaults to 'gradual'.
             max_n_pred_leaves (Optional[int]): Maximum number of leaves to use
                 for prediction. Defaults to None (use all).
             aggregation (Optional[str]): Method for aggregating predictions.
@@ -623,21 +626,23 @@ class GPTree:
 
             ptilde = leaf.marg_prob(X_test)  # Shape: (n_test, 1)
 
-            # We can skip this leaf if its prediction contribute zero for all points in X_test
-            if np.all(ptilde == 0.0):
+            # A leaf predicts only at the points it can own, so the work per leaf is
+            # its share of X_test and the total does not grow with the number of leaves.
+            mask = ptilde[:, 0] > 0.0
+            if not np.any(mask):
                 continue
 
-            mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
-            # mu_leaf and sigma_leaf have shape (n_test, n_outputs)
+            mu_leaf, sigma_leaf = leaf.predict(X_test[mask], return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+            # mu_leaf and sigma_leaf have shape (n_masked, n_outputs)
 
-            # Broadcast ptilde to match shape (n_test, n_outputs)
-            mean_DLGP += ptilde * mu_leaf
-            var_DLGP += ptilde * sigma_leaf**2
-            contributions.append((ptilde, mu_leaf))
+            # Broadcast ptilde to match shape (n_masked, n_outputs)
+            mean_DLGP[mask] += ptilde[mask] * mu_leaf
+            var_DLGP[mask] += ptilde[mask] * sigma_leaf**2
+            contributions.append((mask, ptilde[mask], mu_leaf))
 
         # Between-leaf term of the mixture variance (see predict)
-        for ptilde, mu_leaf in contributions:
-            var_DLGP += ptilde * (mu_leaf - mean_DLGP)**2
+        for mask, p, mu_leaf in contributions:
+            var_DLGP[mask] += p * (mu_leaf - mean_DLGP[mask])**2
 
         return mean_DLGP, np.sqrt(var_DLGP)
 

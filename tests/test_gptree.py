@@ -276,3 +276,23 @@ class TestGPTree(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestPredictModesAgree(unittest.TestCase):
+    """predict_loop evaluates each leaf only at the points it can own; it must give
+    the same mixture as the per-point recursive mode."""
+
+    def test_loop_matches_recursive(self):
+        import io, contextlib
+        rng = np.random.RandomState(0)
+        X = rng.rand(400, 2); Y = np.sin(4 * X[:, :1]) * X[:, 1:2]; S = np.full((400, 1), 1e-3)
+        gpt = GPTree(GPR=Default_GPR(), Nbar=40, theta=1e-2, retrain_every_n_points=20)
+        with contextlib.redirect_stdout(io.StringIO()):
+            for i in range(400):
+                gpt.update_tree(X[i:i + 1], Y[i:i + 1], S[i:i + 1])
+        self.assertGreater(len(gpt.root.leaves), 4)
+        Xt = rng.rand(60, 2)
+        m_loop, s_loop = gpt.predict(Xt, mode='loop')
+        m_rec, s_rec = gpt.predict(Xt, mode='recursive')
+        np.testing.assert_allclose(m_loop, m_rec, rtol=1e-6, atol=1e-7)
+        np.testing.assert_allclose(s_loop, s_rec, rtol=1e-6, atol=1e-7)

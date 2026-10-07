@@ -177,3 +177,22 @@ plot.png
 
 # Run outputs
 runs/
+
+# stderr logs of benchmark runs
+examples/results/**/*.err
+examples/results/compare_tree_vs_neural/log_*.txt
+examples/results/compare_tree_vs_neural/*_N4000_*
+examples/results/compare_tree_vs_neural/*_tree.csv
+examples/results/compare_tree_vs_neural/*_neural.csv
+!examples/results/compare_tree_vs_neural/*_compare.png
+!examples/results/compare_tree_vs_neural/*_kernels.png
+!examples/results/compare_tree_vs_neural/*_settings.png
+!examples/results/compare_tree_vs_neural/*_netopt.png
+!examples/results/compare_tree_vs_neural/*_wsig.png
+!examples/results/compare_tree_vs_neural/*_netlog.png
+!examples/results/compare_tree_vs_neural/*_default.png
+!examples/results/compare_tree_vs_neural/*_reservoir.png
+!examples/results/compare_tree_vs_neural/*_polish.png
+!examples/results/compare_tree_vs_neural/*_final.png
+!examples/results/compare_tree_vs_neural/*_neural.png
+!examples/results/compare_tree_vs_neural/*_batches.csv

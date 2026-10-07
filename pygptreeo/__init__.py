@@ -73,3 +73,6 @@ try:
     _GPYTORCH_AVAILABLE = True
 except ImportError:
     _GPYTORCH_AVAILABLE = False
+
+# The feature network global model ('net'); the module imports without torch, the classes need it.
+from pygptreeo.feature_net import FeatureNetLearner, NetGlobalMean, TORCH_AVAILABLE as _TORCH_AVAILABLE

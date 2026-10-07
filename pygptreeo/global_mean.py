@@ -79,6 +79,7 @@ class CoverageReservoir:
         self.y = np.empty((0, n_outputs))
         self.sigma = np.empty((0, n_outputs))
         self._D = None                    # pairwise distances once full (inf on the diagonal)
+        self._row_min = None              # per-row minimum of _D, kept so an offer costs O(size)
         self.turnover = 0                 # number of insertions/replacements so far
 
     @property
@@ -98,17 +99,26 @@ class CoverageReservoir:
             self.X = np.vstack((self.X, x)); self.y = np.vstack((self.y, y)); self.sigma = np.vstack((self.sigma, sigma))
             self.turnover += 1
             if self.full:
-                diff = self.X[:, None, :] - self.X[None, :, :]
-                self._D = np.sqrt((diff ** 2).sum(-1))
+                from scipy.spatial.distance import cdist
+                self._D = cdist(self.X, self.X)
                 np.fill_diagonal(self._D, np.inf)
+                self._row_min = self._D.min(axis=1)
             return True
         d_new = np.sqrt(((self.X - x) ** 2).sum(axis=1))
-        i, j = np.unravel_index(np.argmin(self._D), self._D.shape)
+        i = int(np.argmin(self._row_min)); j = int(np.argmin(self._D[i]))
         if d_new.min() <= self._D[i, j]:
             return False                  # would not improve the minimum separation
-        victim = i if self._D[i].min() <= self._D[j].min() else j
+        victim = i if self._row_min[i] <= self._row_min[j] else j
+        old_col = self._D[:, victim].copy()
         self.X[victim] = x[0]; self.y[victim] = y[0]; self.sigma[victim] = sigma[0]
         self._D[victim, :] = d_new; self._D[:, victim] = d_new; self._D[victim, victim] = np.inf
+        # Row minima: the victim's row is new; another row changes only through its
+        # entry in the victim's column, and needs a rescan only if that entry was its minimum.
+        self._row_min = np.minimum(self._row_min, d_new)
+        stale = np.where(old_col <= self._row_min)[0]
+        if stale.size:
+            self._row_min[stale] = self._D[stale].min(axis=1)
+        self._row_min[victim] = d_new[np.arange(self.size) != victim].min()
         self.turnover += 1
         return True
 
@@ -292,5 +302,8 @@ def make_global_mean(spec: Union[None, str, GlobalMeanLearner], **kwargs) -> Opt
     if isinstance(spec, str):
         if spec == 'additive_gp':
             return AdditiveGPGlobalMean(**kwargs)
-        raise ValueError(f"Unknown global_mean '{spec}'. Use None, 'additive_gp' or a GlobalMeanLearner instance.")
+        if spec == 'net':
+            from pygptreeo.feature_net import NetGlobalMean
+            return NetGlobalMean(**kwargs)
+        raise ValueError(f"Unknown global_mean '{spec}'. Use None, 'additive_gp', 'net' or a GlobalMeanLearner instance.")
     raise TypeError("global_mean must be None, a string or a GlobalMeanLearner instance")
