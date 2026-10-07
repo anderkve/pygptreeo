@@ -5,6 +5,7 @@ import io
 import os
 import sys
 import unittest
+from unittest.mock import patch
 import warnings
 
 import numpy as np
@@ -176,3 +177,48 @@ class TestFeatureNet(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestDivergenceGuard(unittest.TestCase):
+    """A step that makes the loss or the weights non-finite is undone, the phase
+    ends, and the published network is always finite."""
+
+    def _stream(self, n=400, d=4, seed=3):
+        rng = np.random.RandomState(seed)
+        X = rng.rand(n, d)
+        y = np.sin(3 * X[:, 0]) + X[:, 1] ** 2
+        return X, y[:, None], np.full((n, 1), 1e-2)
+
+    def _run(self, learner, nan_after, X, y, s):
+        calls = {'n': 0}
+        orig = FeatureNetLearner._loss
+
+        def poisoned(net, Xb, Yb, Wb):
+            calls['n'] += 1
+            loss = orig(net, Xb, Yb, Wb)
+            if calls['n'] > nan_after:
+                return loss * float('nan')
+            return loss
+
+        with patch.object(FeatureNetLearner, '_loss', staticmethod(poisoned)):
+            for i in range(len(X)):
+                learner.observe(X[i], y[i], s[i])
+        return calls['n']
+
+    def test_direct_fit_stays_finite_when_the_loss_turns_nan(self):
+        X, y, s = self._stream()
+        learner = FeatureNetLearner(steps=20, polish_steps=50, min_points=100, random_state=0)
+        self._run(learner, nan_after=10, X=X, y=y, s=s)
+        self.assertTrue(learner.fitted)
+        self.assertTrue(FeatureNetLearner._finite(learner.net))
+        self.assertTrue(np.isfinite(learner.head(X)).all())
+
+    def test_amortised_refit_never_publishes_a_non_finite_network(self):
+        X, y, s = self._stream()
+        learner = FeatureNetLearner(steps=20, polish_steps=50, min_points=100, steps_per_update=1, random_state=0)
+        # The first (direct) fit is clean; the amortised refit starting at 200 is poisoned.
+        self._run(learner, nan_after=20 + 50 + 5, X=X, y=y, s=s)
+        self.assertGreaterEqual(learner.version, 1)
+        self.assertIsNone(learner._shadow)            # the poisoned refit finished (early) and was dropped or published finite
+        self.assertTrue(FeatureNetLearner._finite(learner.net))
+        self.assertTrue(np.isfinite(learner.head(X)).all())

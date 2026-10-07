@@ -223,27 +223,64 @@ class FeatureNetLearner:
     def _loss(net, X, Y, W):
         return (((net(X) - Y) ** 2) * W).mean()
 
+    @staticmethod
+    def _finite(net) -> bool:
+        return all(bool(torch.isfinite(p).all()) for p in net.parameters())
+
     def _train(self, net, ph, n_steps):
         """Run n_steps of a phase: full-batch L-BFGS iterations, or minibatch Adam
-        steps (``ph['state']`` carries the epoch permutation across calls)."""
+        steps (``ph['state']`` carries the epoch permutation across calls).
+
+        A step that leaves the loss or a parameter non-finite is undone and ends
+        the phase (``ph['diverged']``), so the network stays at its last finite
+        state and is never published with NaN weights.
+        """
+        if ph.get('diverged'):
+            return
         net.train(); done = 0
         Xt, Yt, Wt, opt, sched, state = ph['Xt'], ph['Yt'], ph['Wt'], ph['opt'], ph['sched'], ph['state']
+
+        def step_guarded(do_step):
+            backup = [p.detach().clone() for p in net.parameters()]
+            loss = do_step()
+            if loss is not None and bool(torch.isfinite(loss)) and self._finite(net):
+                return True
+            with torch.no_grad():
+                for p, b in zip(net.parameters(), backup):
+                    p.copy_(b)
+            ph['diverged'] = True
+            return False
+
         if sched is None:
             def closure():
                 opt.zero_grad(); loss = self._loss(net, Xt, Yt, Wt); loss.backward(); return loss
             while done < n_steps:
-                opt.step(closure); done += 1
+                if not step_guarded(lambda: opt.step(closure)):
+                    break
+                done += 1
             net.eval(); return
         n = Xt.shape[0]; batch = int(min(BATCH_SIZE, max(2, n // 2)))
-        while done < n_steps:
+
+        def adam_step():
             if state['perm'] is None or state['pos'] >= n:
                 state['perm'] = torch.randperm(n, generator=self.gen); state['pos'] = 0
             idx = state['perm'][state['pos']:state['pos'] + batch]; state['pos'] += batch
             loss = self._loss(net, Xt[idx], Yt[idx], Wt[idx])
-            opt.zero_grad(); loss.backward(); opt.step(); sched.step(); done += 1
+            if not bool(torch.isfinite(loss)):
+                return loss
+            opt.zero_grad(); loss.backward(); opt.step(); sched.step()
+            return loss
+
+        while done < n_steps:
+            if not step_guarded(adam_step):
+                break
+            done += 1
         net.eval()
 
     def _publish(self, net, scal, t_spent):
+        if not self._finite(net):
+            # Should not happen after the guarded steps; keep the previous network.
+            return
         self.net = net
         self.x_mu, self.x_sd, self.y_mu, self.y_sd = scal
         if self.n_refits == 0:
@@ -280,14 +317,14 @@ class FeatureNetLearner:
         if s['done'] < self.steps:
             k = min(self.steps_per_update, self.steps - s['done'])
             self._train(s['net'], s['lbfgs'], k)
-            s['done'] += k
+            s['done'] = self.steps if s['lbfgs'].get('diverged') else s['done'] + k
         if s['done'] >= self.steps and not s['polish_started']:
             s['polish'] = self._polish_phase(s['net'], s['scal'])   # on the store as it stands now
             s['polish_started'] = True
         if s['polish'] is not None and s['polish_done'] < self.polish_steps:
             k = min(POLISH_STEPS_PER_UPDATE * self.steps_per_update, self.polish_steps - s['polish_done'])
             self._train(s['net'], s['polish'], k)
-            s['polish_done'] += k
+            s['polish_done'] = self.polish_steps if s['polish'].get('diverged') else s['polish_done'] + k
         s['t'] += time.time() - t0
         if s['done'] >= self.steps and (s['polish'] is None or s['polish_done'] >= self.polish_steps):
             self._shadow = None
