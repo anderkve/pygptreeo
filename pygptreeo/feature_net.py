@@ -43,8 +43,9 @@ class _GrowingStore:
         return self.X.shape[0] + len(self._bx)
 
     def add(self, x, y, sigma) -> bool:
-        self._bx.append(np.asarray(x, float).ravel()); self._by.append(np.asarray(y, float).ravel())
-        self._bs.append(np.asarray(sigma, float).ravel()); self.turnover += 1
+        # Copies: the caller's arrays may be views of memory it frees afterwards.
+        self._bx.append(np.array(x, float).ravel()); self._by.append(np.array(y, float).ravel())
+        self._bs.append(np.array(sigma, float).ravel()); self.turnover += 1
         return True
 
 
