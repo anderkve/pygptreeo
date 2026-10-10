@@ -15,3 +15,9 @@ try:
     __all__.append('GPyTorchAdapter')
 except ImportError:
     pass
+
+try:
+    from .tinygp_adapter import TinyGPAdapter
+    __all__.append('TinyGPAdapter')
+except ImportError:
+    pass

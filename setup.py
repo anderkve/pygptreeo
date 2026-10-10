@@ -24,8 +24,9 @@ setuptools.setup(
     ],
     extras_require={
         'gpytorch': ['gpytorch', 'torch'],  # For GPyTorch backend support
+        'tinygp': ['tinygp', 'jax'],  # For TinyGP backend support
         'neural': ['torch'],  # For the feature network global model (global_mean='net')
-        'all': ['gpytorch', 'torch'],  # Install all optional dependencies
+        'all': ['gpytorch', 'torch', 'tinygp'],  # Install all optional dependencies
     },
     classifiers=[
         'Development Status :: 3 - Alpha',
