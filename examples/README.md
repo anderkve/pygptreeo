@@ -37,6 +37,20 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
     python multioutput_function_learning_pca.py [n_train] [easy|hard] [noise_std]
     ```
 
+- **`hhgrid_amplitude_demo.py`**: the tree on the public gg → HH two-loop virtual amplitude
+  grid of the POWHEG-BOX ggHH code (6320 numerically integrated points with per-point
+  errors), against a port of that code's grid pipeline: closure test, accuracy against the
+  number of points, sigma-driven acquisition, maps; results in
+  `BENCHMARK_RESULTS_hhgrid_amplitude.md`. Downloads the grid files to `data/hhgrid/`.
+  ```bash
+  OMP_NUM_THREADS=1 python hhgrid_amplitude_demo.py --hybrid
+  ```
+- **`tth_amplitude_benchmark.py`**: tree and hybrid on 5D tree-level tt̄H amplitudes, the test
+  functions f1 and f3 of arXiv:2412.09534, with that paper's error metric; the samples are
+  generated with MadGraph as described in `tth_amplitude/README.md`.
+- **`gated_integration_demo.py`**: a Monte Carlo integration of the tt̄H amplitude in which
+  the exact amplitude is called only where the tree's calibrated uncertainty exceeds a
+  tolerance, every exact call teaching the tree.
 - **`test_animated.py`**: Animated visualization of GPTree learning (2D only)
   - Creates animated GIFs showing how the tree learns the target function
   - Displays the tree structure, leaf boundaries, and prediction surface

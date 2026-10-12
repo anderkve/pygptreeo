@@ -1,0 +1,7 @@
+set auto_update 0
+import model sm
+generate g g > t t~ h
+output standalone_cpp PROC_gg_tth
+generate u u~ > t t~ h
+output standalone_cpp PROC_uu_tth
+exit

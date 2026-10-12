@@ -66,6 +66,20 @@ for i in range(len(X_test)):
 # print(gpt.root)
 ```
 
+## Uncertainty calibration
+
+Each leaf rescales its GP's predictive sigma so that the last 25 points it received
+are covered at the 68 % level (`use_calibrated_sigma=True`, the default). The
+observation noise `sigma` you pass with each point is part of that interval: a point
+is covered when `|y - mu| < sqrt((scaler * sigma_pred)^2 + sigma_obs^2)`, so with
+noisy observations the calibrated sigma stays an uncertainty on the underlying
+function instead of inflating to the noise level. Residuals within the noise say
+nothing about the scaler, so a window whose residuals the noise explains leaves the
+GP's own sigma in place; a window whose residuals exceed it sets the scaler as for
+noise-free data. Pass the true noise of each value (a numerical-integration or
+Monte Carlo error, for instance), not a nominal jitter: a declared noise that is not
+really there widens the interval.
+
 ## Selecting a leaf kernel
 
 By default each leaf uses an anisotropic Matérn kernel (`ConstantKernel() * Matern(nu=1.5)`
@@ -241,6 +255,17 @@ For more detailed demonstrations, see the example scripts in the `examples/` dir
     ```bash
     OMP_NUM_THREADS=1 python examples/performance_test.py
     ```
+*   `examples/hhgrid_amplitude_demo.py`: the tree on the public gg → HH two-loop virtual
+    amplitude grid (6320 numerically integrated points, each with its own error), against
+    the POWHEG-BOX grid pipeline; `examples/BENCHMARK_RESULTS_hhgrid_amplitude.md`.
+    ```bash
+    OMP_NUM_THREADS=1 python examples/hhgrid_amplitude_demo.py --hybrid
+    ```
+*   `examples/tth_amplitude_benchmark.py` and `examples/gated_integration_demo.py`: the
+    tree and the hybrid on 5D tree-level tt̄H amplitudes (the test functions of
+    arXiv:2412.09534, generated with MadGraph as described in `examples/tth_amplitude/`),
+    and a Monte Carlo integration that calls the exact amplitude only where the tree's
+    calibrated uncertainty exceeds a tolerance.
 *   `examples/test_animated.py`: Provides an animated visualization of the `GPTree` learning process for 2D data.
     It requires command-line arguments:
     ```bash

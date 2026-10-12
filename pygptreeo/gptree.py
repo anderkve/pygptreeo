@@ -103,7 +103,10 @@ class GPTree:
                 between sibling nodes. The overlap is calculated as
                 theta * range_of_split_dimension. Defaults to 0.0001.
             use_calibrated_sigma (Optional[bool]): If True, enables sigma
-                calibration in GPNode predictions. Defaults to True.
+                calibration in GPNode predictions: each leaf rescales its sigma to
+                cover its recent residuals at the target rate, with the observation
+                noise of each point part of the covered interval (see
+                ``GPNode.update_sigma_scaler``). Defaults to True.
             split_dimension_criteria (Optional[str]): Method to select split
                 dimension. Options: 'min_lengthscale' (the dimension with the
                 smallest fitted ARD length scale, pooled over all of a leaf's GPs;
@@ -275,7 +278,7 @@ class GPTree:
         if node.should_merge_point(x, y, sigma):
             # Point was merged with existing point, don't add as new point
             # Still register prediction performance and update sigma scaler
-            node.register_pred_perf(x, y)
+            node.register_pred_perf(x, y, sigma)
             if self.use_calibrated_sigma:
                 node.update_sigma_scaler()
             return
@@ -287,7 +290,7 @@ class GPTree:
 
         # Add new point and register prediction performance
         node.store_point(x, y, sigma, remove_shared=True)
-        node.register_pred_perf(x, y)
+        node.register_pred_perf(x, y, sigma)
 
         # Update the uncertainty scaler for this node?
         if self.use_calibrated_sigma:

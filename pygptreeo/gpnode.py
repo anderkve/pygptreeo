@@ -286,6 +286,7 @@ class GPNode(Node):
             self.residuals_list = [np.array([])]
             self.mu_preds_list = [np.array([])]
             self.sigma_preds_list = [np.array([])]
+            self.sigma_obs_list = [np.array([])]
             self.sigma_scalers = [DEFAULT_SIGMA_SCALER]
         else:
             self.residuals = None  # Not used for multi-output
@@ -296,6 +297,7 @@ class GPNode(Node):
             self.residuals_list = [np.array([]) for _ in range(n_outputs)]
             self.mu_preds_list = [np.array([]) for _ in range(n_outputs)]
             self.sigma_preds_list = [np.array([]) for _ in range(n_outputs)]
+            self.sigma_obs_list = [np.array([]) for _ in range(n_outputs)]
             self.sigma_scalers = [DEFAULT_SIGMA_SCALER for _ in range(n_outputs)]
 
         print(f"Created node {self.name}")
@@ -411,6 +413,8 @@ class GPNode(Node):
         self.right.mu_preds_list = [arr.copy() for arr in self.mu_preds_list]
         self.left.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
         self.right.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
+        self.left.sigma_obs_list = [arr.copy() for arr in self.sigma_obs_list]
+        self.right.sigma_obs_list = [arr.copy() for arr in self.sigma_obs_list]
         self.left.sigma_scalers = self.sigma_scalers.copy()
         self.right.sigma_scalers = self.sigma_scalers.copy()
 
@@ -955,7 +959,8 @@ class GPNode(Node):
                 X_fit = self.X_scaler.transform(X_train)
             else:
                 X_fit = X_train
-            Z = basis.project(y_train)                  # (N, k) basis scores
+            # The basis is centred on the raw outputs; a global model's residual is not
+            Z = basis.project(y_train + basis.mu if snapshot is not None else y_train)  # (N, k) scores
             noise_z = basis.project_noise(sigma_train)  # (N, k) per-score noise variances
             k = basis.n_components
             # Standardise every score within the leaf (as the per-output scalers do
@@ -1561,21 +1566,31 @@ class GPNode(Node):
             z_mean[:, j] = np.asarray(m, dtype=float).ravel() * z_scale[j] + z_shift[j]
             z_var[:, j] = (np.asarray(sd, dtype=float).ravel() * z_scale[j]) ** 2
         mu_pred, var_pred = basis.reconstruct(z_mean, z_var)
+        if self._fitted_global is not None:
+            mu_pred = mu_pred - basis.mu
         return mu_pred, np.sqrt(var_pred)
 
 
-    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray]):
+    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray],
+                           sigma: Union[None, float, np.ndarray] = None):
         """ Register the residual between prediction and true value for this data point.
 
-        For multi-output: tracks performance per output dimension.
+        ``sigma`` is the observation noise (standard deviation) of ``y``; None means
+        noise-free. For multi-output: tracks performance per output dimension.
         """
         mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False)
 
-        # Ensure y is array of shape (n_outputs,)
+        # Ensure y and sigma are arrays of shape (n_outputs,)
         if isinstance(y, (int, float, np.floating)):
             y = np.array([y])
         else:
             y = np.atleast_1d(y).flatten()
+        if sigma is None:
+            sigma = np.zeros(self.n_outputs)
+        else:
+            sigma = np.atleast_1d(np.asarray(sigma, dtype=float)).flatten()
+            if sigma.shape[0] == 1 and self.n_outputs > 1:
+                sigma = np.tile(sigma, self.n_outputs)
 
         keep_n_points = self.n_points_pred_perf - 1
 
@@ -1590,6 +1605,9 @@ class GPNode(Node):
             self.sigma_preds_list[i] = self.sigma_preds_list[i][:keep_n_points]
             self.sigma_preds_list[i] = np.insert(self.sigma_preds_list[i], 0, sigma_pred[0, i])
 
+            self.sigma_obs_list[i] = self.sigma_obs_list[i][:keep_n_points]
+            self.sigma_obs_list[i] = np.insert(self.sigma_obs_list[i], 0, sigma[i])
+
         # Also update single arrays for backward compatibility (single output case)
         if self.n_outputs == 1:
             self.residuals = self.residuals_list[0]
@@ -1601,27 +1619,42 @@ class GPNode(Node):
         """ Update the scaling factor for the prediction uncertainty.
 
         The scaler is the ``TARGET_COVERAGE`` quantile of the normalized
-        residuals ``|residual| / sigma_pred``, i.e. the value for which a
-        fraction ``TARGET_COVERAGE`` of points satisfy
-        ``|residual| < scaler * sigma_pred``. For multi-output, each output is
-        calibrated independently.
+        residuals, i.e. the value for which a fraction ``TARGET_COVERAGE`` of
+        points satisfy ``|residual| < sqrt((scaler * sigma_pred)^2 + sigma_obs^2)``,
+        ``sigma_obs`` the observation noise registered with each point (zero when
+        none was given). Residuals within the noise say nothing about the scaler,
+        so the window's estimate is weighted by the share of the residual
+        variance the noise does not explain, less one standard error of that
+        share, and the rest of the weight goes to a scaler of one. For
+        multi-output, each output is calibrated independently.
         """
         target_coverage = TARGET_COVERAGE
 
         for i in range(self.n_outputs):
             residuals_i = self.residuals_list[i]
             sigma_preds_i = self.sigma_preds_list[i]
+            sigma_obs_i = self.sigma_obs_list[i]
 
-            # Until the window is full, cover all residuals seen so far.
-            if residuals_i.shape[0] < self.n_points_pred_perf:
-                if len(sigma_preds_i) > 0 and np.max(sigma_preds_i) > 0:
-                    self.sigma_scalers[i] = np.max(np.abs(residuals_i) / (sigma_preds_i + 1e-10))
-                else:
-                    self.sigma_scalers[i] = DEFAULT_SIGMA_SCALER
+            if len(sigma_preds_i) == 0 or np.max(sigma_preds_i) <= 0:
+                self.sigma_scalers[i] = DEFAULT_SIGMA_SCALER
                 continue
 
-            ratios = np.abs(residuals_i) / (sigma_preds_i + 1e-10)
-            self.sigma_scalers[i] = max(float(np.quantile(ratios, target_coverage)), 1e-9)
+            # Normalised residual with the observation noise removed, signed so that
+            # a residual within the noise pulls the scaler down.
+            t = (residuals_i ** 2 - sigma_obs_i ** 2) / (sigma_preds_i + 1e-10) ** 2
+            s = np.sign(t) * np.sqrt(np.abs(t))
+            # Until the window is full, cover all residuals seen so far.
+            if residuals_i.shape[0] < self.n_points_pred_perf:
+                c_data = max(float(np.max(s)), 0.0)
+            else:
+                c_data = max(float(np.quantile(s, target_coverage)), 0.0)
+
+            v_res = float(np.mean(residuals_i ** 2))
+            v_obs = float(np.mean(sigma_obs_i ** 2))
+            # Standard error of mean(r^2) when the residuals are pure noise
+            se = np.sqrt(2.0 / residuals_i.shape[0]) * v_obs
+            w = max(v_res - v_obs - se, 0.0) / v_res if v_res > 0 else 1.0
+            self.sigma_scalers[i] = max(float(np.sqrt(w * c_data ** 2 + (1.0 - w))), 1e-9)
 
         # Also update single sigma_scaler for backward compatibility (single output case)
         if self.n_outputs == 1:

@@ -31,6 +31,7 @@ class TestCalibrationUnit(unittest.TestCase):
         node.n_points_pred_perf = len(res)
         node.residuals_list = [res.copy()]
         node.sigma_preds_list = [sp.copy()]
+        node.sigma_obs_list = [np.zeros_like(res)]
         node.sigma_scalers = [DEFAULT_SIGMA_SCALER]
         _silent(node.update_sigma_scaler)
         return node.sigma_scalers[0]
@@ -67,7 +68,8 @@ class TestCalibrationIntegration(unittest.TestCase):
         self.N = 1500
         self.X = rng.rand(self.N, 2)
         self.y = f(self.X)
-        self.sigma = np.maximum(1e-3 * np.abs(self.y), 1e-6)
+        # Noise-free targets: a declared noise would enter the calibrated interval
+        self.sigma = np.full(self.N, 1e-6)
 
     def test_prequential_coverage_near_target(self):
         np.random.seed(3)
