@@ -1,0 +1,35 @@
+uu tree   N=  1000  eps_uniform 2.66e-02  eps_unweighted 2.57e-02  median rel 6.42e-03  within 1 %: 60 %  cov68 0.74  1.6 ms/pt  leaves 16
+uu tree   N=  2000  eps_uniform 1.93e-02  eps_unweighted 1.92e-02  median rel 4.64e-03  within 1 %: 69 %  cov68 0.65  1.9 ms/pt  leaves 32
+uu tree   N=  4000  eps_uniform 1.39e-02  eps_unweighted 1.36e-02  median rel 3.07e-03  within 1 %: 78 %  cov68 0.68  1.9 ms/pt  leaves 64
+uu tree   N=  8000  eps_uniform 9.57e-03  eps_unweighted 9.40e-03  median rel 2.12e-03  within 1 %: 85 %  cov68 0.69  2.0 ms/pt  leaves 128
+uu tree   N= 16000  eps_uniform 6.59e-03  eps_unweighted 6.31e-03  median rel 1.40e-03  within 1 %: 90 %  cov68 0.71  2.0 ms/pt  leaves 256
+uu tree   N= 32768  eps_uniform 4.30e-03  eps_unweighted 4.26e-03  median rel 9.45e-04  within 1 %: 95 %  cov68 0.70  2.0 ms/pt  leaves 512
+uu tree   N= 65536  eps_uniform 2.98e-03  eps_unweighted 2.82e-03  median rel 6.66e-04  within 1 %: 97 %  cov68 0.69  2.0 ms/pt  leaves 1024
+uu tree   N=131072  eps_uniform 2.17e-03  eps_unweighted 2.03e-03  median rel 4.91e-04  within 1 %: 98 %  cov68 0.68  2.1 ms/pt  leaves 2048
+uu hybrid N=  1000  eps_uniform 1.79e-02  eps_unweighted 1.69e-02  median rel 4.34e-03  within 1 %: 72 %  cov68 0.75  15.2 ms/pt  leaves 16
+uu hybrid N=  2000  eps_uniform 9.61e-03  eps_unweighted 9.50e-03  median rel 2.08e-03  within 1 %: 85 %  cov68 0.73  11.4 ms/pt  leaves 32
+uu hybrid N=  4000  eps_uniform 6.45e-03  eps_unweighted 6.50e-03  median rel 1.36e-03  within 1 %: 90 %  cov68 0.75  9.4 ms/pt  leaves 64
+uu hybrid N=  8000  eps_uniform 4.16e-03  eps_unweighted 4.15e-03  median rel 8.04e-04  within 1 %: 94 %  cov68 0.72  7.8 ms/pt  leaves 128
+uu hybrid N= 16000  eps_uniform 2.38e-03  eps_unweighted 2.39e-03  median rel 4.77e-04  within 1 %: 97 %  cov68 0.71  6.4 ms/pt  leaves 256
+uu hybrid N= 32768  eps_uniform 1.43e-03  eps_unweighted 1.38e-03  median rel 2.87e-04  within 1 %: 99 %  cov68 0.76  5.7 ms/pt  leaves 512
+uu hybrid N= 65536  eps_uniform 8.15e-04  eps_unweighted 7.97e-04  median rel 1.74e-04  within 1 %: 99 %  cov68 0.74  5.1 ms/pt  leaves 1024
+uu hybrid N=131072  eps_uniform 5.07e-04  eps_unweighted 4.90e-04  median rel 1.10e-04  within 1 %: 100 %  cov68 0.70  4.4 ms/pt  leaves 2046
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| uu | tree | 1000 | 2.66e-02 | 2.57e-02 | 6.42e-03 | 60 % | 0.74 | 1.6 |
+| uu | tree | 2000 | 1.93e-02 | 1.92e-02 | 4.64e-03 | 69 % | 0.65 | 1.9 |
+| uu | tree | 4000 | 1.39e-02 | 1.36e-02 | 3.07e-03 | 78 % | 0.68 | 1.9 |
+| uu | tree | 8000 | 9.57e-03 | 9.40e-03 | 2.12e-03 | 85 % | 0.69 | 2.0 |
+| uu | tree | 16000 | 6.59e-03 | 6.31e-03 | 1.40e-03 | 90 % | 0.71 | 2.0 |
+| uu | tree | 32768 | 4.30e-03 | 4.26e-03 | 9.45e-04 | 95 % | 0.70 | 2.0 |
+| uu | tree | 65536 | 2.98e-03 | 2.82e-03 | 6.66e-04 | 97 % | 0.69 | 2.0 |
+| uu | tree | 131072 | 2.17e-03 | 2.03e-03 | 4.91e-04 | 98 % | 0.68 | 2.1 |
+| uu | hybrid | 1000 | 1.79e-02 | 1.69e-02 | 4.34e-03 | 72 % | 0.75 | 15.2 |
+| uu | hybrid | 2000 | 9.61e-03 | 9.50e-03 | 2.08e-03 | 85 % | 0.73 | 11.4 |
+| uu | hybrid | 4000 | 6.45e-03 | 6.50e-03 | 1.36e-03 | 90 % | 0.75 | 9.4 |
+| uu | hybrid | 8000 | 4.16e-03 | 4.15e-03 | 8.04e-04 | 94 % | 0.72 | 7.8 |
+| uu | hybrid | 16000 | 2.38e-03 | 2.39e-03 | 4.77e-04 | 97 % | 0.71 | 6.4 |
+| uu | hybrid | 32768 | 1.43e-03 | 1.38e-03 | 2.87e-04 | 99 % | 0.76 | 5.7 |
+| uu | hybrid | 65536 | 8.15e-04 | 7.97e-04 | 1.74e-04 | 99 % | 0.74 | 5.1 |
+| uu | hybrid | 131072 | 5.07e-04 | 4.90e-04 | 1.10e-04 | 100 % | 0.70 | 4.4 |

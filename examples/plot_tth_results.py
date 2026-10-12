@@ -16,9 +16,9 @@ import matplotlib.pyplot as plt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "results", "tth_amplitude")
-COLORS = {"tree": "#2a78d6", "hybrid": "#eb6834", "acq": "#1baf7a"}
+COLORS = {"tree": "#2a78d6", "hybrid": "#eb6834", "acq": "#1baf7a", "hybrid-big": "#eda100"}
 LABELS = {"tree": "GPTree, Sobol order", "hybrid": "hybrid (GP leaves on a network's residual)",
-          "acq": "GPTree, chooses its points"}
+          "acq": "GPTree, chooses its points", "hybrid-big": "hybrid, 4 x 256 network, longer training"}
 NAMES = {"uu": r"$f_1$: $q\bar q \to t\bar t H$", "gg": r"$f_3$: $gg \to t\bar t H$"}
 # MLP and L-GATr of arXiv:2412.09534, Figure 13, read off the plot (uniform test sampling)
 REFERENCE = {"uu": [(10, 0.3), (100, 0.03), (300, 0.01), (1000, 1e-3), (3000, 3e-4), (1e4, 1e-4), (1e5, 7e-5)],
@@ -32,11 +32,11 @@ for path in sorted(glob.glob(os.path.join(OUT_DIR, "results_*.json"))):
     with open(path) as f:
         for key, rows in json.load(f).items():
             ch, cfg = key.split("_")
-            results[(ch, cfg)] = rows
+            results[(ch, cfg + ("-big" if tag.startswith("bignet") else ""))] = rows
 
 fig, axes = plt.subplots(1, 2, figsize=(10.5, 3.9))
 for ax, ch in zip(axes, ["uu", "gg"]):
-    for cfg in ("tree", "acq", "hybrid"):
+    for cfg in ("tree", "acq", "hybrid", "hybrid-big"):
         rows = results.get((ch, cfg))
         if rows:
             ax.plot([r["N"] for r in rows], [r["eps_uniform"] for r in rows], "-o", color=COLORS[cfg], lw=2, ms=4,

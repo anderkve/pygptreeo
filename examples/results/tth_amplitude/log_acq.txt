@@ -1,0 +1,27 @@
+uu acq    N=  1000  eps_uniform 2.66e-02  eps_unweighted 2.57e-02  median rel 6.42e-03  within 1 %: 60 %  cov68 0.74  0.4 ms/pt  leaves 16
+uu acq    N=  2000  eps_uniform 1.69e-02  eps_unweighted 1.64e-02  median rel 5.95e-03  within 1 %: 64 %  cov68 0.72  1.3 ms/pt  leaves 31
+uu acq    N=  4000  eps_uniform 1.10e-02  eps_unweighted 1.07e-02  median rel 5.11e-03  within 1 %: 69 %  cov68 0.72  1.8 ms/pt  leaves 60
+uu acq    N=  8000  eps_uniform 7.37e-03  eps_unweighted 7.26e-03  median rel 4.04e-03  within 1 %: 77 %  cov68 0.74  2.2 ms/pt  leaves 120
+uu acq    N= 16000  eps_uniform 4.99e-03  eps_unweighted 4.77e-03  median rel 3.29e-03  within 1 %: 83 %  cov68 0.71  2.8 ms/pt  leaves 240
+uu acq    N= 32768  eps_uniform 3.45e-03  eps_unweighted 3.31e-03  median rel 2.51e-03  within 1 %: 87 %  cov68 0.65  4.7 ms/pt  leaves 501
+gg acq    N=  1000  eps_uniform 1.85e-01  eps_unweighted 1.95e-01  median rel 2.45e-02  within 1 %: 29 %  cov68 0.69  0.3 ms/pt  leaves 16
+gg acq    N=  2000  eps_uniform 1.04e-01  eps_unweighted 1.04e-01  median rel 2.33e-02  within 1 %: 30 %  cov68 0.75  1.4 ms/pt  leaves 30
+gg acq    N=  4000  eps_uniform 6.46e-02  eps_unweighted 6.70e-02  median rel 2.12e-02  within 1 %: 31 %  cov68 0.69  2.1 ms/pt  leaves 64
+gg acq    N=  8000  eps_uniform 4.59e-02  eps_unweighted 4.74e-02  median rel 1.81e-02  within 1 %: 34 %  cov68 0.66  2.6 ms/pt  leaves 122
+gg acq    N= 16000  eps_uniform 3.53e-02  eps_unweighted 3.64e-02  median rel 1.42e-02  within 1 %: 40 %  cov68 0.64  3.5 ms/pt  leaves 241
+gg acq    N= 32768  eps_uniform 2.81e-02  eps_unweighted 2.92e-02  median rel 9.31e-03  within 1 %: 52 %  cov68 0.69  5.0 ms/pt  leaves 502
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| uu | acq | 1000 | 2.66e-02 | 2.57e-02 | 6.42e-03 | 60 % | 0.74 | 0.4 |
+| uu | acq | 2000 | 1.69e-02 | 1.64e-02 | 5.95e-03 | 64 % | 0.72 | 1.3 |
+| uu | acq | 4000 | 1.10e-02 | 1.07e-02 | 5.11e-03 | 69 % | 0.72 | 1.8 |
+| uu | acq | 8000 | 7.37e-03 | 7.26e-03 | 4.04e-03 | 77 % | 0.74 | 2.2 |
+| uu | acq | 16000 | 4.99e-03 | 4.77e-03 | 3.29e-03 | 83 % | 0.71 | 2.8 |
+| uu | acq | 32768 | 3.45e-03 | 3.31e-03 | 2.51e-03 | 87 % | 0.65 | 4.7 |
+| gg | acq | 1000 | 1.85e-01 | 1.95e-01 | 2.45e-02 | 29 % | 0.69 | 0.3 |
+| gg | acq | 2000 | 1.04e-01 | 1.04e-01 | 2.33e-02 | 30 % | 0.75 | 1.4 |
+| gg | acq | 4000 | 6.46e-02 | 6.70e-02 | 2.12e-02 | 31 % | 0.69 | 2.1 |
+| gg | acq | 8000 | 4.59e-02 | 4.74e-02 | 1.81e-02 | 34 % | 0.66 | 2.6 |
+| gg | acq | 16000 | 3.53e-02 | 3.64e-02 | 1.42e-02 | 40 % | 0.64 | 3.5 |
+| gg | acq | 32768 | 2.81e-02 | 2.92e-02 | 9.31e-03 | 52 % | 0.69 | 5.0 |

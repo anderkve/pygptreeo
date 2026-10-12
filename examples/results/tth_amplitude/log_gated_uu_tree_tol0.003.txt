@@ -1,0 +1,7 @@
+N=   2000  exact calls 96.5 % (last 5000: 96.5 %)  gated/exact - 1 = -0.000 %  MC error 2.29 %  leaves 28  3 s
+N=   5000  exact calls 87.4 % (last 5000: 87.4 %)  gated/exact - 1 = +0.001 %  MC error 1.44 %  leaves 64  7 s
+N=  10000  exact calls 77.5 % (last 5000: 67.6 %)  gated/exact - 1 = -0.001 %  MC error 1.03 %  leaves 108  13 s
+N=  20000  exact calls 66.5 % (last 5000: 53.3 %)  gated/exact - 1 = -0.001 %  MC error 0.73 %  leaves 186  25 s
+N=  50000  exact calls 50.3 % (last 5000: 34.6 %)  gated/exact - 1 = -0.000 %  MC error 0.46 %  leaves 376  60 s
+N= 100000  exact calls 39.3 % (last 5000: 24.0 %)  gated/exact - 1 = +0.001 %  MC error 0.32 %  leaves 595  131 s
+N= 200000  exact calls 30.0 % (last 5000: 17.6 %)  gated/exact - 1 = +0.001 %  MC error 0.23 %  leaves 916  394 s

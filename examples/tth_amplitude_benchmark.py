@@ -48,10 +48,14 @@ def load(data_dir, ch):
     return tr, te, tu
 
 
+NET_KWARGS = {}   # overrides for the hybrid's FeatureNetLearner, from --net
+
+
 def make(config, seed):
     with contextlib.redirect_stdout(io.StringIO()):
         if config == "hybrid":
-            return GPTree(Nbar=100, global_mean='net', global_mean_kwargs=dict(steps_per_update=8, random_state=seed))
+            kw = dict(steps_per_update=8, random_state=seed); kw.update(NET_KWARGS)
+            return GPTree(Nbar=100, global_mean='net', global_mean_kwargs=kw)
         return GPTree(Nbar=100)
 
 
@@ -167,7 +171,10 @@ def main():
     ap.add_argument("--noise", type=float, default=0.0, help="relative Gaussian noise added to the training values")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--tag", default="")
+    ap.add_argument("--net", default="", help="hybrid network settings, e.g. hidden=256,depth=4,steps=600,polish_steps=10000")
     args = ap.parse_args()
+    for item in filter(None, args.net.split(",")):
+        k, v = item.split("="); NET_KWARGS[k] = int(v)
     os.makedirs(OUT_DIR, exist_ok=True)
     checkpoints = [1000, 2000, 4000, 8000, 16000, 32768, 65536, 131072]
     results = {}

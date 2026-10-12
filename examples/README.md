@@ -47,7 +47,8 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
   ```
 - **`tth_amplitude_benchmark.py`**: tree and hybrid on 5D tree-level tt̄H amplitudes, the test
   functions f1 and f3 of arXiv:2412.09534, with that paper's error metric; the samples are
-  generated with MadGraph as described in `tth_amplitude/README.md`.
+  generated with MadGraph as described in `tth_amplitude/README.md`; results, with the
+  gated integration below, in `BENCHMARK_RESULTS_tth_amplitude.md`.
 - **`gated_integration_demo.py`**: a Monte Carlo integration of the tt̄H amplitude in which
   the exact amplitude is called only where the tree's calibrated uncertainty exceeds a
   tolerance, every exact call teaching the tree.
