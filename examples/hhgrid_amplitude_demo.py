@@ -107,7 +107,7 @@ def metrics(pred_log, y_log, rel_err, sigma=None):
     # chi2: mean squared deviation in units of the QMC error; one for an exact surrogate
     out = dict(median_dev=np.median(dev), frac_gt5=100.0 * np.mean(dev > 5.0),
                within1=100.0 * np.mean(np.abs(r) < rel_err), within2=100.0 * np.mean(np.abs(r) < 2 * rel_err),
-               chi2=np.mean((r / rel_err) ** 2))
+               beyond3=100.0 * np.mean(np.abs(r) > 3 * rel_err), chi2=np.mean((r / rel_err) ** 2))
     if sigma is not None:
         pull = r / np.sqrt(sigma ** 2 + rel_err ** 2)
         out.update(cov68=np.mean(np.abs(pull) < 1), cov95=np.mean(np.abs(pull) < 2),
@@ -136,7 +136,7 @@ def predict(gpt, X):
 
 def fmt_row(name, m, t=None):
     s = (f"| {name} | {m['median_dev']:.2f} % | {m['frac_gt5']:.1f} % | {m['within1']:.0f} % / {m['within2']:.0f} % | "
-         f"{m['chi2']:.2f} |")
+         f"{m['beyond3']:.1f} % | {m['chi2']:.2f} |")
     if 'cov68' in m:
         s += f" {m['median_sigma']:.2f} % | {m['cov68']:.2f} / {m['cov95']:.2f} |"
     else:
@@ -146,8 +146,8 @@ def fmt_row(name, m, t=None):
 
 def closure(X, y, sig, V, E, b, cth, cdf, seeds, hybrid):
     print("\n## Closure test: 80 % learned, 20 % held out\n")
-    print("| method | median |dev| | off by > 5 % | within 1 / 2 QMC errors | chi2 | median sigma | coverage 68 / 95 | time |")
-    print("|---|---|---|---|---|---|---|---|")
+    print("| method | median |dev| | off by > 5 % | within 1 / 2 QMC errors | beyond 3 | chi2 | median sigma | coverage 68 / 95 | time |")
+    print("|---|---|---|---|---|---|---|---|---|")
     acc = {}
     for seed in seeds:
         rng = np.random.RandomState(seed)
