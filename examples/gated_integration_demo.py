@@ -10,6 +10,7 @@ Monte Carlo error of the same points.
 
 Usage: python gated_integration_demo.py <path to tth_driver> [--config tree|hybrid]
            [--tol 0.01] [--npoints 100000] [--chunk 500] [--seed 1] [--tag name]
+           [--inputs cube|invariants] [--kernel matern32|rbf|...] [--nbar 100]
 """
 import argparse
 import contextlib
@@ -42,11 +43,11 @@ def oracle(driver, X):
     return A[:, 0], A[:, 1]
 
 
-def make(config, seed):
-    with contextlib.redirect_stdout(io.StringIO()):
-        if config == "hybrid":
-            return GPTree(Nbar=100, global_mean='net', global_mean_kwargs=dict(steps_per_update=8, random_state=seed))
-        return GPTree(Nbar=100)
+def make(config, seed, inputs="cube", kernel="matern32", nbar=100):
+    """The surrogate; the tree's inputs, leaf kernel and leaf size as in tth_amplitude_benchmark.py."""
+    import tth_amplitude_benchmark as bench
+    bench.OPTS.update(inputs=inputs, kernel=kernel, nbar=nbar, features=inputs)
+    return bench.make(config, seed)
 
 
 def main():
@@ -58,10 +59,16 @@ def main():
     ap.add_argument("--chunk", type=int, default=500)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--tag", default="")
+    ap.add_argument("--inputs", default="cube", choices=["cube", "invariants"], help="the tree's inputs")
+    ap.add_argument("--kernel", default="matern32", choices=["matern32", "matern52", "rbf", "additive"])
+    ap.add_argument("--nbar", type=int, default=100)
     args = ap.parse_args()
     os.makedirs(OUT_DIR, exist_ok=True)
     rng = np.random.RandomState(args.seed)
-    gpt = make(args.config, args.seed)
+    gpt = make(args.config, args.seed, args.inputs, args.kernel, args.nbar)
+    sys.path.insert(0, HERE)
+    from tth_amplitude_benchmark import invariants
+    to_tree = invariants if args.inputs == "invariants" else (lambda Z: Z)
     sig_exact = 1e-6
     f_used, f_exact, called = [], [], []
     log = []
@@ -69,17 +76,18 @@ def main():
     for start in range(0, args.npoints, args.chunk):
         X = rng.uniform(size=(args.chunk, 5))
         w, a = oracle(args.driver, X)                    # exact values, for the record
+        Xt = to_tree(X)
         if start == 0:
             gate = np.ones(args.chunk, dtype=bool)        # nothing learned yet
             mu = np.log(a)
         else:
             with contextlib.redirect_stdout(io.StringIO()):
-                mu, sd = gpt.predict(X, mode='loop')
+                mu, sd = gpt.predict(Xt, mode='loop')
             mu, sd = mu.ravel(), sd.ravel()
             gate = sd > args.tol
         with contextlib.redirect_stdout(io.StringIO()):
             for i in np.flatnonzero(gate):
-                gpt.update_tree(X[i:i + 1], np.log(a[i:i + 1]).reshape(1, 1), sig_exact)
+                gpt.update_tree(Xt[i:i + 1], np.log(a[i:i + 1]).reshape(1, 1), sig_exact)
         f_true = w * a
         f_sur = w * np.where(gate, a, np.exp(mu))
         f_used.append(f_sur); f_exact.append(f_true); called.append(gate)
@@ -95,7 +103,7 @@ def main():
             print(f"N={n_seen:7d}  exact calls {100 * rec['frac_called']:.1f} % (last 5000: {100 * rec['frac_called_last']:.1f} %)  "
                   f"gated/exact - 1 = {100 * rec['surrogate_shift']:+.3f} %  MC error {100 * rec['mc_rel_err']:.2f} %  "
                   f"leaves {rec['leaves']}  {rec['elapsed']:.0f} s", flush=True)
-    tag = args.tag or f"{args.config}_tol{args.tol:g}"
+    tag = args.tag or f"{args.config}_{args.inputs}_{args.kernel}_nbar{args.nbar}_tol{args.tol:g}"
     with open(os.path.join(OUT_DIR, f"gated_{tag}.json"), "w") as f:
         json.dump(log, f, indent=1)
 

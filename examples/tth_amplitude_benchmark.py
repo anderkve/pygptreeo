@@ -64,7 +64,8 @@ def load(data_dir, ch):
 
 
 NET_KWARGS = {}   # overrides for the hybrid's FeatureNetLearner, from --net
-OPTS = dict(kernel="matern32", nbar=100, train="sobol", inputs="cube", features="cube", split="min_lengthscale")
+OPTS = dict(kernel="matern32", nbar=100, train="sobol", inputs="cube", features="cube", split="min_lengthscale",
+            retrain=25, strategy="gradual")
 MT, MH = 1.0, np.sqrt(12.0 / 23.0)
 
 
@@ -117,14 +118,15 @@ def make(config, seed):
                "rbf": ConstantKernel() * RBF(length_scale=np.ones(d)),
                "additive": AdditiveMaternKernel(d=d, order=2, nu=1.5)}
     gpr = Default_GPR(kernel=kernels[OPTS["kernel"]])
+    tree_kw = dict(Nbar=OPTS["nbar"], split_dimension_criteria=OPTS["split"], splitting_strategy=OPTS["strategy"],
+                   retrain_every_n_points=OPTS["retrain"])
     with contextlib.redirect_stdout(io.StringIO()):
         if config == "hybrid":
             kw = dict(steps_per_update=8, random_state=seed); kw.update(NET_KWARGS)
             if OPTS["features"] == "invariants":
                 kw["feature_map"] = invariants if OPTS["inputs"] == "cube" else None
-            return GPTree(GPR=gpr, Nbar=OPTS["nbar"], split_dimension_criteria=OPTS["split"],
-                          global_mean='net', global_mean_kwargs=kw)
-        return GPTree(GPR=gpr, Nbar=OPTS["nbar"], split_dimension_criteria=OPTS["split"])
+            return GPTree(GPR=gpr, global_mean='net', global_mean_kwargs=kw, **tree_kw)
+        return GPTree(GPR=gpr, **tree_kw)
 
 
 def evaluate(gpt, te, tu):
@@ -247,11 +249,14 @@ def main():
     ap.add_argument("--inputs", default="cube", choices=["cube", "invariants", "both"], help="the tree's inputs")
     ap.add_argument("--features", default="cube", choices=["cube", "invariants"], help="the hybrid network's inputs")
     ap.add_argument("--split", default="min_lengthscale", help="GPTree split_dimension_criteria")
+    ap.add_argument("--retrain", type=int, default=25,
+                    help="retrain a leaf's GP every this many new points; a value above Nbar retrains only when the leaf splits")
+    ap.add_argument("--strategy", default="gradual", choices=["gradual", "standard"], help="GPTree splitting_strategy")
     args = ap.parse_args()
     for item in filter(None, args.net.split(",")):
         k, v = item.split("="); NET_KWARGS[k] = None if v == "none" else int(v)
     OPTS.update(kernel=args.kernel, nbar=args.nbar, train=args.train, inputs=args.inputs, features=args.features,
-                split=args.split)
+                split=args.split, retrain=args.retrain, strategy=args.strategy)
     os.makedirs(OUT_DIR, exist_ok=True)
     checkpoints = [1000, 2000, 4000, 8000, 16000, 32768, 65536, 131072]
     results = {}
