@@ -1,21 +1,23 @@
-"""Sample the 5D ttH phase space of arXiv:2412.09534 (folded domain of f1/f3) and
-evaluate the tree-level |M|^2 with the MadGraph driver. Saves X (unit cube), w, me."""
+"""Sample the 5D ttH phase space of arXiv:2412.09534 and evaluate the tree-level |M|^2
+with the MadGraph driver. Saves X (unit cube), w (phase-space measure), me.
+Usage: gen_tth.py <driver> <out.npz> sobol|uniform <n> <seed> [theta_max: pi/2 (folded, default) or pi]"""
 import sys, subprocess, time
 import numpy as np
 from scipy.stats import qmc
 
 driver, out, kind, n, seed = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+theta_max = float(sys.argv[6]) if len(sys.argv) > 6 else 0.5 * np.pi
 if kind == "sobol":
     X = qmc.Sobol(d=5, scramble=True, seed=seed).random(n)
 else:
     X = np.random.RandomState(seed).uniform(size=(n, 5))
 
 def to_physical(X):
-    # Domain reduced by the symmetries of f1/f3 (resources.py of the paper's code)
+    # theta_max = pi/2: domain reduced by the symmetries of f1/f3 (resources.py of the paper's code)
     b2 = 0.1 + 0.86 * X[:, 0]
     frac = X[:, 1]
-    th = 0.5 * np.pi * X[:, 2]
-    tt = 0.5 * np.pi * X[:, 3]
+    th = theta_max * X[:, 2]
+    tt = theta_max * X[:, 3]
     ph = np.pi * X[:, 4]
     return np.column_stack([b2, frac, th, tt, ph])
 

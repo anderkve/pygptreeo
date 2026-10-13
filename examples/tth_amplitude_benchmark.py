@@ -3,11 +3,13 @@
 
 The amplitudes are |M|^2 for q qbar -> t tbar H (f1) and g g -> t tbar H (f3) on
 the paper's five phase-space variables (beta^2, f_ttbar, theta_H, theta_t, phi_t),
-folded by the amplitude's symmetries onto the unit cube, computed with MadGraph
+folded by the amplitude's symmetries onto the unit cube (``--domain full`` for the
+full polar-angle domain the paper's networks use), computed with MadGraph
 (examples/tth_amplitude/README.md has the recipe). The paper's error is the
 relative L1 distance eps = sum |f~ - f| / sum f of the weighted amplitude
-f = w |M|^2 over uniform test points, and on LO-unweighted points the mean
-relative error.
+f = w |M|^2 over uniform test points, where w is the phase-space measure times
+the paper's flux and pseudo-PDF factor rho(beta^2) (``--no-rho`` drops the latter),
+and on LO-unweighted points the mean relative error.
 
 The plain tree and the hybrid (GP leaves on the residual of a tree-wide feature
 network) are streamed over Sobol points, evaluated at checkpoints. Optionally the
@@ -45,8 +47,9 @@ def load(data_dir, ch):
         z = np.load(path)
         return {k: z[k] for k in z.files}
     tr = arrays(os.path.join(data_dir, f"{ch}_train_sobol.npz"))
+    unw = "unweighted_rho" if OPTS["rho"] else "unweighted"     # points drawn with probability ~ f
     if OPTS["train"] in ("unweighted", "mixed"):
-        tw = arrays(os.path.join(data_dir, f"{ch}_train_unweighted.npz"))
+        tw = arrays(os.path.join(data_dir, f"{ch}_train_{unw}.npz"))
         if OPTS["train"] == "unweighted":
             tr = tw
         else:   # alternate Sobol and f-weighted points
@@ -55,17 +58,19 @@ def load(data_dir, ch):
             for k in tr:
                 tr[k][0::2] = arrays(os.path.join(data_dir, f"{ch}_train_sobol.npz"))[k][:n]; tr[k][1::2] = tw[k][:n]
     te = arrays(os.path.join(data_dir, f"{ch}_test_uniform.npz"))
-    path_u = os.path.join(data_dir, f"{ch}_test_unweighted.npz")
+    path_u = os.path.join(data_dir, f"{ch}_test_{unw}.npz")
     tu = arrays(path_u) if os.path.exists(path_u) else None
     for d in (tr, te, tu):
         if d is not None:
+            if OPTS["rho"]:
+                d["w"] = d["w"] * rho(ch, d["X"])
             d["X"] = tree_inputs(d["X"])
     return tr, te, tu
 
 
 NET_KWARGS = {}   # overrides for the hybrid's FeatureNetLearner, from --net
 OPTS = dict(kernel="matern32", nbar=100, train="sobol", inputs="cube", features="cube", split="min_lengthscale",
-            retrain=25, strategy="gradual", target="log", glob="none")
+            retrain=25, strategy="gradual", target="log", glob="none", rho=True)
 GLUON_TOP_PAIRS = [1, 2, 4, 5]   # columns of invariants(): (0,2), (0,3), (1,2), (1,3)
 
 
@@ -79,13 +84,22 @@ def target_shift(X_tree):
     inv = X_tree if OPTS["inputs"] == "invariants" else (X_tree[:, 5:] if OPTS["inputs"] == "both" else invariants(X_tree))
     return p * inv[:, GLUON_TOP_PAIRS].sum(axis=1)
 MT, MH = 1.0, np.sqrt(12.0 / 23.0)
+RHO_C = {"uu": (1.0132, 0.9943, 0.3506), "gg": (1.0134, 0.7344, 0.0987)}   # eq. (10) of arXiv:2412.09534
+THETA_MAX = 0.5 * np.pi   # theta_H and theta_t range: pi/2 on the folded domain, pi on the full one
+
+
+def rho(ch, X):
+    """The paper's flux times pseudo-PDF factor (1/2s) d rho / d beta^2, which multiplies
+    the phase-space measure the driver returns; a function of the unit-cube coordinates."""
+    c1, c2, c3 = RHO_C[ch]; b2 = 0.1 + 0.86 * X[:, 0]
+    return (1 - c1 * b2) ** 2 / ((1 - c2 * b2) * (1 - c3 * b2))
 
 
 def momenta(X):
     """Four-momenta (n, 5, 4) of g/q, g/qbar, t, tbar, H from the unit-cube variables,
     as tth_driver.cpp builds them (folded domain, m_t = 1)."""
     X = np.atleast_2d(X)
-    b2 = 0.1 + 0.86 * X[:, 0]; frac = X[:, 1]; th = 0.5 * np.pi * X[:, 2]; tt = 0.5 * np.pi * X[:, 3]; ph = np.pi * X[:, 4]
+    b2 = 0.1 + 0.86 * X[:, 0]; frac = X[:, 1]; th = THETA_MAX * X[:, 2]; tt = THETA_MAX * X[:, 3]; ph = np.pi * X[:, 4]
     s = (2 * MT + MH) ** 2 / (1 - b2); rs = np.sqrt(s)
     stt = 4 * MT ** 2 + frac * ((rs - MH) ** 2 - 4 * MT ** 2); rstt = np.sqrt(stt)
     pt = np.sqrt(stt - 4 * MT ** 2) / 2
@@ -271,10 +285,13 @@ def main():
                     help="learn log|M|^2, or log|M|^2 with the gluon-top propagator poles 1/(p_g.p_t)^p factored out")
     ap.add_argument("--global", dest="glob", default="none", choices=["none", "additive"],
                     help="tree-wide global model whose residual the leaves fit (plain tree only)")
+    ap.add_argument("--no-rho", dest="rho", action="store_false", help="weights without the flux and pseudo-PDF factor")
+    ap.add_argument("--domain", default="folded", choices=["folded", "full"], help="polar angles in [0, pi/2] or [0, pi]")
     args = ap.parse_args()
+    globals()["THETA_MAX"] = np.pi if args.domain == "full" else 0.5 * np.pi
     for item in filter(None, args.net.split(",")):
         k, v = item.split("="); NET_KWARGS[k] = None if v == "none" else int(v)
-    OPTS.update(kernel=args.kernel, nbar=args.nbar, train=args.train, inputs=args.inputs, features=args.features,
+    OPTS.update(rho=args.rho, kernel=args.kernel, nbar=args.nbar, train=args.train, inputs=args.inputs, features=args.features,
                 split=args.split, retrain=args.retrain, strategy=args.strategy, target=args.target, glob=args.glob)
     os.makedirs(OUT_DIR, exist_ok=True)
     checkpoints = [1000, 2000, 4000, 8000, 16000, 32768, 65536, 131072]
