@@ -200,14 +200,21 @@ where run, 32 768 points. The baselines are the rows of Section 2.
 | tree, invariants, training ~ f | – | – | – | – | 1.90e-02 | 9.74e-03 | – | – | nan |
 | tree, invariants + RBF, training ~ f | 7.51e-04 | 2.19e-04 | – | – | 1.54e-02 | 6.61e-03 | – | – | 7.9 |
 | hybrid, tree and network on invariants, training ~ f | – | – | – | – | 7.05e-03 | 2.66e-03 | – | – | nan |
-| full stream: tree, invariants + RBF, Sobol | 1.04e-03 | 4.07e-04 | 2.48e-04 | 7.50e-05 | 6.18e-02 | 2.38e-02 | 2.00e-02 | 7.91e-03 | 3.8 |
-| full stream: tree, invariants + RBF, Sobol + f-weighted | 7.97e-04 | 2.66e-04 | 1.45e-04 | 5.07e-05 | 1.90e-02 | 7.78e-03 | 5.15e-03 | 1.81e-03 | 7.6 |
-| full stream: hybrid, invariants (both), Sobol + f-weighted | 1.10e-03 | 4.40e-04 | 2.62e-04 | 9.36e-05 | 1.02e-02 | 3.98e-03 | 2.42e-03 | 1.07e-03 | 17.0 |
-| full stream: same, 4x256 | 5.91e-04 | 1.97e-04 | 1.15e-04 | – | 4.42e-03 | 1.87e-03 | 1.46e-03 | – | 40.9 |
+| FULL: tree, invariants + RBF, Sobol | 1.04e-03 | 4.07e-04 | 2.48e-04 | 7.50e-05 | 6.18e-02 | 2.38e-02 | 2.00e-02 | 7.91e-03 | 3.8 |
+| FULL: tree, invariants + RBF, Sobol + f-weighted | 7.97e-04 | 2.66e-04 | 1.45e-04 | 5.07e-05 | 1.90e-02 | 7.78e-03 | 5.15e-03 | 1.81e-03 | 7.6 |
+| FULL: hybrid, invariants (both), Sobol + f-weighted | 1.10e-03 | 4.40e-04 | 2.62e-04 | 9.36e-05 | 1.02e-02 | 3.98e-03 | 2.42e-03 | 1.07e-03 | 17.0 |
+| FULL: same, 4x256 | 5.91e-04 | 1.97e-04 | 1.15e-04 | – | 4.42e-03 | 1.87e-03 | 1.46e-03 | – | 40.9 |
 | tree, invariants + RBF, mixed, Nbar 300 | 1.90e-04 | 5.42e-05 | – | – | 1.35e-02 | 4.61e-03 | – | – | 13.9 |
 | hybrid, invariants (both), mixed, RBF leaves | 9.65e-04 | 2.94e-04 | – | – | 1.02e-02 | 3.75e-03 | – | – | 9.8 |
 | tree, invariants + RBF, mixed, 0.3 % noise on the values | 3.05e-03 | 2.11e-03 | 1.86e-03 | – | 2.08e-02 | 9.57e-03 | 6.64e-03 | – | 2.9 |
-| full stream: tree, invariants + RBF, Sobol + f-weighted, Nbar 300 | 1.90e-04 | 5.38e-05 | 2.64e-05 | 7.42e-06 | 1.35e-02 | 4.60e-03 | 2.48e-03 | 7.88e-04 | 16.7 |
+| FULL: tree, invariants + RBF, Sobol + f-weighted, Nbar 300 | 1.90e-04 | 5.38e-05 | 2.64e-05 | 7.42e-06 | 1.35e-02 | 4.60e-03 | 2.48e-03 | 7.88e-04 | 16.7 |
+| tree, invariants + RBF, mixed, Nbar 300, target log(|M|^2 prod s_gt^2) | 2.20e-04 | 9.50e-05 | – | – | 1.29e-02 | 3.86e-03 | – | – | 63.1 |
+| tree, invariants + RBF, mixed, Nbar 300, target log(|M|^2 prod s_gt) | – | – | – | – | 1.08e-02 | 3.39e-03 | – | – | nan |
+| tree, invariants + RBF, training ~ f, Nbar 300, target log(|M|^2 prod s_gt^2) | – | – | – | – | 8.21e-03 | 2.72e-03 | – | – | nan |
+| tree, invariants + RBF, mixed, Nbar 300, additive global GP | – | – | – | – | 1.41e-02 | 5.03e-03 | – | – | nan |
+| tree, invariants + RBF, mixed, Nbar 300, seed 2 | – | – | – | – | 1.09e-02 | 3.79e-03 | – | – | nan |
+| tree, invariants + RBF, mixed, Nbar 300, seed 3 | – | – | – | – | 1.10e-02 | 3.75e-03 | – | – | nan |
+| tree, invariants + RBF, training ~ f, Nbar 300 | – | – | – | – | 7.86e-03 | 2.62e-03 | – | – | nan |
 
 Reading:
 
@@ -332,4 +339,14 @@ stream) at 16 384 points, ε = 3.4e-3, broken down over the uniform test set:
   constant prior mean extrapolates it badly at the edge of its data.
 * Two remedies follow: factor the poles out of the target, learning
   log(|M|² Π s_gt^p) (`--target pole1`, `pole2`), and give the leaves a global
-  additive model in the invariants (`--global additive`). REMEDY_RESULTS
+  additive model in the invariants (`--global additive`). Neither helps. At
+  16 000 points on the mixed stream the plain target gives 3.8e-3, 3.8e-3 and
+  4.6e-3 over three seeds; the pole-subtracted targets give 3.4e-3 (one power)
+  and 3.9e-3 (two), inside the seed spread, and the additive global model
+  5.0e-3 at twice the cost. On f1, which has no gluon–top poles, the shift
+  only adds structure (9.5e-5 against 5.4e-5).
+* What moves f3 is the stream. With every training point drawn ∝ f instead of
+  every other one, the same tree reaches 2.6e-3 at 16 000 points (2.7e-3 with
+  the pole-subtracted target), 1.5 × below the mixed stream: the collinear
+  peaks are learned from points in them, which the importance-sampled stream
+  supplies, rather than from a prior shape.
