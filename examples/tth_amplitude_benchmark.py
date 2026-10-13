@@ -65,7 +65,19 @@ def load(data_dir, ch):
 
 NET_KWARGS = {}   # overrides for the hybrid's FeatureNetLearner, from --net
 OPTS = dict(kernel="matern32", nbar=100, train="sobol", inputs="cube", features="cube", split="min_lengthscale",
-            retrain=25, strategy="gradual")
+            retrain=25, strategy="gradual", target="log", glob="none")
+GLUON_TOP_PAIRS = [1, 2, 4, 5]   # columns of invariants(): (0,2), (0,3), (1,2), (1,3)
+
+
+def target_shift(X_tree):
+    """What is added to log|M|^2 before learning: zero, or p * sum of the gluon-top
+    log invariants (``--target pole1``, ``pole2``), which flattens the t-channel
+    top propagators 1/(p_g . p_t)^p."""
+    if OPTS["target"] == "log":
+        return 0.0
+    p = {"pole1": 1.0, "pole2": 2.0}[OPTS["target"]]
+    inv = X_tree if OPTS["inputs"] == "invariants" else (X_tree[:, 5:] if OPTS["inputs"] == "both" else invariants(X_tree))
+    return p * inv[:, GLUON_TOP_PAIRS].sum(axis=1)
 MT, MH = 1.0, np.sqrt(12.0 / 23.0)
 
 
@@ -120,11 +132,14 @@ def make(config, seed):
     gpr = Default_GPR(kernel=kernels[OPTS["kernel"]])
     tree_kw = dict(Nbar=OPTS["nbar"], split_dimension_criteria=OPTS["split"], splitting_strategy=OPTS["strategy"],
                    retrain_every_n_points=OPTS["retrain"])
+    if OPTS["glob"] == "additive":
+        tree_kw["global_mean"] = "additive_gp"
     with contextlib.redirect_stdout(io.StringIO()):
         if config == "hybrid":
             kw = dict(steps_per_update=8, random_state=seed); kw.update(NET_KWARGS)
             if OPTS["features"] == "invariants":
                 kw["feature_map"] = invariants if OPTS["inputs"] == "cube" else None
+            tree_kw.pop("global_mean", None)
             return GPTree(GPR=gpr, global_mean='net', global_mean_kwargs=kw, **tree_kw)
         return GPTree(GPR=gpr, **tree_kw)
 
@@ -132,7 +147,7 @@ def make(config, seed):
 def evaluate(gpt, te, tu):
     with contextlib.redirect_stdout(io.StringIO()):
         mu, sd = gpt.predict(te["X"], mode='loop')
-    mu, sd = mu.ravel(), sd.ravel()
+    mu, sd = mu.ravel() - target_shift(te["X"]), sd.ravel()
     a_true = te["me"]; a_pred = np.exp(mu)
     f_true = te["w"] * a_true; f_pred = te["w"] * a_pred
     rel = np.abs(a_pred / a_true - 1.0)
@@ -143,7 +158,7 @@ def evaluate(gpt, te, tu):
     if tu is not None:
         with contextlib.redirect_stdout(io.StringIO()):
             mu_u, _ = gpt.predict(tu["X"], mode='loop')
-        out["eps_unweighted"] = float(np.mean(np.abs(np.exp(mu_u.ravel()) / tu["me"] - 1.0)))
+        out["eps_unweighted"] = float(np.mean(np.abs(np.exp(mu_u.ravel() - target_shift(tu["X"])) / tu["me"] - 1.0)))
     return out
 
 
@@ -151,7 +166,7 @@ def run(ch, config, data_dir, nmax, noise, seed, checkpoints):
     tr, te, tu = load(data_dir, ch)
     X = tr["X"][:nmax]; a = tr["me"][:nmax]
     rng = np.random.RandomState(seed)
-    y = np.log(a) + (rng.normal(0.0, noise, len(a)) if noise > 0 else 0.0)
+    y = np.log(a) + target_shift(X) + (rng.normal(0.0, noise, len(a)) if noise > 0 else 0.0)
     sig = np.full(len(a), noise if noise > 0 else 1e-6)
     gpt = make(config, seed)
     rows, done, t0 = [], 0, time.time()
@@ -177,7 +192,7 @@ def run_acquisition(ch, data_dir, nmax, seed, checkpoints, batch=500, candidates
     the tree's own prediction."""
     tr, te, tu = load(data_dir, ch)
     X = tr["X"]; a = tr["me"]; w = tr["w"]
-    y = np.log(a); sig = 1e-6
+    y = np.log(a) + target_shift(X); sig = 1e-6
     rng = np.random.RandomState(seed)
     gpt = make("tree", seed)
     bought = list(range(checkpoints[0]))
@@ -252,11 +267,15 @@ def main():
     ap.add_argument("--retrain", type=int, default=25,
                     help="retrain a leaf's GP every this many new points; a value above Nbar retrains only when the leaf splits")
     ap.add_argument("--strategy", default="gradual", choices=["gradual", "standard"], help="GPTree splitting_strategy")
+    ap.add_argument("--target", default="log", choices=["log", "pole1", "pole2"],
+                    help="learn log|M|^2, or log|M|^2 with the gluon-top propagator poles 1/(p_g.p_t)^p factored out")
+    ap.add_argument("--global", dest="glob", default="none", choices=["none", "additive"],
+                    help="tree-wide global model whose residual the leaves fit (plain tree only)")
     args = ap.parse_args()
     for item in filter(None, args.net.split(",")):
         k, v = item.split("="); NET_KWARGS[k] = None if v == "none" else int(v)
     OPTS.update(kernel=args.kernel, nbar=args.nbar, train=args.train, inputs=args.inputs, features=args.features,
-                split=args.split, retrain=args.retrain, strategy=args.strategy)
+                split=args.split, retrain=args.retrain, strategy=args.strategy, target=args.target, glob=args.glob)
     os.makedirs(OUT_DIR, exist_ok=True)
     checkpoints = [1000, 2000, 4000, 8000, 16000, 32768, 65536, 131072]
     results = {}
