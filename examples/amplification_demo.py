@@ -98,6 +98,7 @@ def main():
     ap.add_argument("--targeted", default="", help="npz of uniform points kept only in the tail p_T(H) > pt_min")
     ap.add_argument("--pt-min", type=float, default=3.0, help="start of the targeted tail, in units of m_t")
     ap.add_argument("--nmax", type=int, default=65536)
+    ap.add_argument("--checkpoints", default="1000,4000,16000,65536,131072")
     ap.add_argument("--nbar", type=int, default=300); ap.add_argument("--train", default="mixed")
     ap.add_argument("--retrain", type=int, default=25); ap.add_argument("--kernel", default="rbf")
     ap.add_argument("--seed", type=int, default=1); ap.add_argument("--tag", default="")
@@ -108,15 +109,17 @@ def main():
     tr, _, _ = bench.load(args.data_dir, ch)
     bins_train = np.digitize(pt_higgs(raw_stream(args.data_dir, ch, args.train)), PT_EDGES) - 1
     zu = np.load(args.uniform); Xu = bench.tree_inputs(zu["X"]); gu = zu["w"] * zu["me"]
+    weight = (lambda X: bench.rho(ch, X)) if bench.OPTS["rho"] else (lambda X: 1.0)   # the samples carry the measure only
+    gu = gu * weight(zu["X"])
     bins_u = np.digitize(pt_higgs(zu["X"]), PT_EDGES) - 1
     if args.targeted:
-        zt = np.load(args.targeted); Xt = bench.tree_inputs(zt["X"]); gt = zt["w"] * zt["me"]
+        zt = np.load(args.targeted); Xt = bench.tree_inputs(zt["X"]); gt = zt["w"] * zt["me"] * weight(zt["X"])
         bins_t = np.digitize(pt_higgs(zt["X"]), PT_EDGES) - 1
         tail = np.flatnonzero(PT_EDGES[:-1] >= args.pt_min)
         in_tail = bins_u >= tail[0]
     X = tr["X"]; y = np.log(tr["me"]); sig = 1e-6
     gpt = bench.make("tree", args.seed)
-    checkpoints = [c for c in (1000, 4000, 16000, 65536, 131072) if c <= args.nmax]
+    checkpoints = [c for c in map(int, args.checkpoints.split(",")) if c <= args.nmax]
     done, out, t0 = 0, {}, time.time()
     for N in checkpoints:
         with contextlib.redirect_stdout(io.StringIO()):
