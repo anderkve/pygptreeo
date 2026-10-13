@@ -52,6 +52,11 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
 - **`gated_integration_demo.py`**: a Monte Carlo integration of the tt̄H amplitude in which
   the exact amplitude is called only where the tree's calibrated uncertainty exceeds a
   tolerance, every exact call teaching the tree.
+- **`tth_kde_stream.py`**: a tt̄H training stream with 20 % of its points drawn from a kernel
+  density estimate of where a first tree is least accurate, the adaptive sampling of
+  arXiv:2601.00950, for `tth_amplitude_benchmark.py --train unweighted`.
+- **`amplification_demo.py`**: how many exact events a tt̄H surrogate is worth, the
+  amplification measure of arXiv:2608.06450, from bin fractions over a large exact sample.
 - **`test_animated.py`**: Animated visualization of GPTree learning (2D only)
   - Creates animated GIFs showing how the tree learns the target function
   - Displays the tree structure, leaf boundaries, and prediction surface

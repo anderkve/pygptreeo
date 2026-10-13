@@ -20,3 +20,11 @@ phi_t in [0, pi]) and m_H / m_t = sqrt(12/23).
    `python gen_tth.py ./tth_driver gg_test_uniform.npz uniform 40000 2`,
    `python gen_unweighted.py ./tth_driver gg_test_unweighted.npz 5000 7 <1.3 * max(w |M|^2)>`,
    and the same with `uu`.
+5. The paper's test functions carry a flux and pseudo-PDF factor ρ(β²) that the driver's
+   weight does not; the benchmark applies it (`rho()` in `tth_amplitude_benchmark.py`).
+   LO-unweighted points drawn with that factor, which `--train unweighted`/`mixed` read
+   by default, are generated with the channel as sixth argument:
+   `python gen_unweighted.py ./tth_driver gg_train_unweighted_rho.npz 65536 13 <1.3 * max(w |M|^2 rho)> gg`
+   (and 5000 test points with another seed). For the full polar-angle domain
+   (`--domain full`) pass `theta_max = pi` as the last argument of both generators and
+   keep the files in a separate data directory.
