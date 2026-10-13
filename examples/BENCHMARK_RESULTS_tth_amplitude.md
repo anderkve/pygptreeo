@@ -1,6 +1,7 @@
 # pyGPTreeO on 5D tree-level tt̄H amplitudes, and an uncertainty-gated integration
 
 `examples/tth_amplitude_benchmark.py`, `examples/gated_integration_demo.py`,
+`examples/tth_kde_stream.py`, `examples/amplification_demo.py`,
 `examples/plot_tth_results.py`; data as in `examples/tth_amplitude/README.md`; one
 CPU core per run, up to four runs in parallel; seed 1; 12–13 October 2026.
 
@@ -9,23 +10,171 @@ CPU core per run, up to four runs in parallel; seed 1; 12–13 October 2026.
 "Interpolating amplitudes" (Bresó-Pla, Heinrich, Magerya, Olsson, SciPost Phys. 19,
 123 (2025), arXiv:2412.09534) compares interpolation methods for 2 → 3 amplitudes on
 test functions of five phase-space variables, two of them tree level: f1,
-q q̄ → t t̄ H, and f3, g g → t t̄ H. Their error is the relative L1 distance
-`ε = Σ|f̃ − f| / Σ f` of the weighted amplitude `f = w |M|²` over uniformly sampled
-test points, with 1 % as the target, and they also evaluate on LO-unweighted points,
-where it is the mean relative error. Their training points are Sobol points of the
-unit cube. The amplitudes here are the same functions computed with MadGraph
-(`tth_amplitude/tth_driver.cpp` builds their momenta from the five variables),
-on the domain folded by the amplitude's symmetries as in their code. 131 072 Sobol
-training points, 40 000 uniform and 5000 unweighted test points per channel.
+q q̄ → t t̄ H, and f3, g g → t t̄ H. The test function is the weighted amplitude
+`f = |M|² · dΦ/d(x₂..x₅) · (1/2ŝ) dρ/dβ²`, where the last factor is the flux times a
+pseudo-PDF, their eq. (10), `ρ(β²) ∝ (1 − c₁β²)² / ((1 − c₂β²)(1 − c₃β²))` with
+c = {1.0132, 0.9943, 0.3506} for q q̄ and {1.0134, 0.7344, 0.0987} for g g. It
+falls from 0.9 at the low end of the β² range to 0.025 (f1) and 0.003 (f3) at the
+high end, so the paper's f weights the high-energy region far less than the
+phase-space measure alone. Their error is the relative L1 distance
+`ε = Σ|f̃ − f| / Σ f` over uniformly sampled test points, with 1 % as the target, and
+on LO-unweighted points (drawn with probability ∝ f) the mean relative error. Their
+training points are Sobol points of the unit cube or LO-unweighted points.
+
+The amplitudes here are the same functions computed with MadGraph
+(`tth_amplitude/tth_driver.cpp` builds the momenta from the five variables and
+returns the phase-space measure; the benchmark multiplies it by ρ, `--no-rho` leaves
+it out). The domain is folded by the amplitude's symmetries as in the paper's
+interpolation code, θ_H, θ_t ∈ [0, π/2] and φ_t ∈ [0, π]; the paper's networks use
+θ ∈ [0, π] and fold only φ, four times the volume, which `--domain full` reproduces.
+131 072 Sobol training points, 65 536 LO-unweighted ones, 40 000 uniform and 5000
+unweighted test points per channel, on each domain.
+
+Two weightings appear below. **Section 2 uses the paper's f**, with ρ, and is the
+comparison with the paper and with arXiv:2601.00950. **Sections 3–7 were measured
+before ρ was included**, with `f = |M|² dΦ` alone: a harder variant of the metric
+that weights the high-energy collinear region 10–300 times more than the paper's
+and is kept as such; the training target `log |M|²` and the trees are the same, only
+the error weights and the importance-sampled streams differ.
 
 The tree learns `log |M|²`: `GPTree(Nbar=100)` at the defaults; the hybrid adds the
 feature network (`global_mean='net'`, refits amortised at 8 steps per update); a
 larger network (`--net hidden=256,depth=4,steps=600,polish_steps=10000`) is run to
-32 768 points. `acq` is the plain tree choosing which Sobol points to learn from,
+32 768 points. `acq` is the plain tree choosing which pool points to learn from,
 500 at a time out of 20 000 random candidates, by the largest expected error
-contribution `w |M|² σ`, against the Sobol order.
+contribution `w |M|² σ`, against the stream order. The improved tree of Section 7
+takes the ten `log(p_i · p_j)` as inputs, RBF leaves of 300 or 1000 points, and the
+"mixed" stream that alternates Sobol and LO-unweighted points.
 
-## 2. Exact amplitudes: ε against the number of training points
+## 2. Results with the paper's weights
+
+`eps_vs_points_paper_weights.png`; ε on the uniform test set, seed 1, one run each.
+Networks: the MLP and L-GATr curves of the paper's Figure 13, read off the plot.
+
+| configuration (ε on the uniform test set, paper's weights) | f1 @4000 | f1 @16000 | f1 @65536 | f1 @131072 | f3 @4000 | f3 @16000 | f3 @65536 | f3 @131072 |
+|---|---|---|---|---|---|---|---|---|
+| tree, package defaults (cube inputs, Matérn 3/2, Nbar 100, Sobol) | 8.09e-03 | 3.78e-03 | 1.75e-03 | 1.28e-03 | 3.88e-02 | 1.89e-02 | 9.17e-03 | 6.42e-03 |
+| tree on log invariants, RBF leaves, Nbar 300, mixed stream | 8.27e-05 | 2.12e-05 | 5.16e-06 | 2.77e-06 | 5.53e-03 | 2.32e-03 | 7.17e-04 | 3.92e-04 |
+| tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, mixed stream | 4.65e-05 | 1.19e-05 | 2.38e-06 | 1.32e-06 | 9.76e-03 | 4.20e-03 | 9.41e-04 | 6.29e-04 |
+| tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, importance-sampled stream | 6.87e-05 | 1.67e-05 | 4.33e-06 | – | 7.02e-03 | 3.05e-03 | 8.13e-04 | – |
+| tree on log invariants, RBF leaves, Nbar 300, chooses its points from the mixed pool | 4.33e-05 | 6.99e-06 | 2.78e-06 | – | 3.18e-03 | 7.56e-04 | 3.84e-04 | – |
+| tree on log invariants, RBF leaves, Nbar 300, importance-sampled stream with 20 % KDE-targeted points | – | – | – | – | 5.32e-03 | 1.76e-03 | 5.78e-04 | – |
+| the same stream with the KDE points after the first 16 384 | – | – | – | – | 6.44e-03 | 2.28e-03 | 6.10e-04 | – |
+| FULL DOMAIN: tree, package defaults | 1.63e-02 | 8.00e-03 | 3.52e-03 | 2.58e-03 | 7.29e-02 | 3.77e-02 | 1.87e-02 | 1.36e-02 |
+| FULL DOMAIN: tree on log invariants, RBF leaves, Nbar 300, mixed stream | 4.58e-04 | 1.12e-04 | 2.48e-05 | 1.28e-05 | 1.15e-02 | 4.97e-03 | 1.85e-03 | 1.09e-03 |
+| MLP / L-GATr of arXiv:2412.09534, Fig. 13 (read off the plot) | 3e-4 | 9e-5 | 8e-5 | 7e-5 | 7e-3 | 8e-4 | 4e-4 | 3e-4 |
+
+### 2.1 Against the paper's networks
+
+* **f1 is won by 25 to 50 times.** The 300-point tree on the invariants reaches
+  2.8e-6 at 131 072 points (median relative error 4e-7, every test point within
+  1 %) against the networks' 7e-5 at 10⁵; the 1000-point tree refitted only at
+  splits reaches 1.3e-6, and both curves keep falling as N⁻¹ where the networks'
+  flatten. Choosing its points, the 300-point tree is at 7.0e-6 at 16 000, where
+  the networks are at 9e-5.
+* **f3 is level with the networks.** The 300-point tree on the mixed stream ends
+  at 3.9e-4 against their 3e-4 at 10⁵; choosing its points it follows their curve
+  from 16 000 on (7.6e-4 against 8e-4) and reaches 3.8e-4 at 65 536, where they
+  are near 4e-4. The 1000-point leaves that help f1 hurt f3 here (6.3e-4): under
+  the pseudo-PDF the error that counts sits at low β², near threshold, where the
+  amplitude varies fastest and the smaller, more often refitted leaves do better.
+* **The folding is worth a factor 3 to 5 at equal N** (1.3e-5 against 2.8e-6 on
+  f1, 1.1e-3 against 3.9e-4 on f3 at 131 072), as four times the point density
+  should give. On the full domain, which is what the networks were trained on, the
+  tree is 5 times below them on f1 and 3.6 times above them on f3 at 131 072
+  (PENDING_FULLSPLIT); the folding is an exact symmetry, so it is legitimate for
+  either side, but the two comparisons should be read with that in mind.
+* **The package defaults** (cube inputs, Matérn 3/2, 100-point leaves, Sobol) end
+  at 1.3e-3 and 6.4e-3: the representation, the leaf size and the stream are what
+  separate them from the rows above, not the method.
+* **Cost.** 35–55 ms per update for the 300-point tree on the invariants on a
+  shared four-core machine; the networks' cost is their training, which the paper
+  does not quote per point.
+
+### 2.2 Against Table 2 of arXiv:2601.00950
+
+"How to Trust Learned Loop Amplitudes" (Bahl, Braun, Heinrich, Plehn, Revelli)
+trains a 5 × 512 MLP on the same tree-level amplitudes with 8·10⁴ LO-unweighted
+points under the pseudo-PDF and reports, averaged over five runs, the mean and
+median relative error on an LO-unweighted test sample (their Table 2): g g → t t̄ H
+mean |Δ| (5.5 ± 0.4)e-4, median 7.3e-5, improved to (2.34 ± 0.04)e-4 and 3.2e-5 by
+a 1.5·10⁴-point KDE resample into the low-accuracy regions; q q̄ → t t̄ H
+(9.6 ± 0.7)e-5 and 2.0e-5, improved to 5.5e-5. The tree's mean relative error on
+the 5000 LO-unweighted test points (`eps_unweighted`):
+
+| tree (paper's weights, folded domain) | f1 @65 536 | f1 @131 072 | f3 @65 536 | f3 @131 072 |
+|---|---|---|---|---|
+| 300-point leaves, mixed stream | 5.2e-6 | 3.2e-6 | 6.6e-4 | 3.5e-4 |
+| 1000-point leaves, refit at splits, mixed stream | 2.7e-6 | 1.3e-6 | 8.0e-4 | 4.5e-4 |
+| 300-point leaves, choosing its points | 2.7e-6 | | 3.5e-4 | |
+
+On f1 the tree is 20 to 70 times below their network; on f3 it matches their
+plain network at 65 536 points and their resampled one at 131 072, with a median
+relative error (on the uniform set) of 2e-6 against their 3e-5 to 7e-5: the
+tree's residual error is entirely in the tail, as its diagnosis showed. Their
+domain is θ ∈ [0, π] and φ ∈ [0, 2π], eight times the folded volume, so at equal
+N they work with an eighth of the density; the full-domain rows of Section 2.1
+cover half of that difference (f1 1.0e-5, f3 1.0e-3 at 131 072). Their learned
+Gaussian σ is underconfident in 5D; the tree's calibrated σ covers 0.62–0.74 of
+the test residuals at the 1σ level in every run here (target 0.68).
+
+### 2.3 Where f3's error sits, and the remedies
+
+The diagnosis of Section 7 holds under the paper's weights: the worst 1 % of test
+points carry most of the error, in the forward and backward top configurations
+(a gluon–top invariant small), which arXiv:2601.00950 also identifies as the
+low-accuracy clusters of its network (its Fig. 10). Three ways of putting training
+points there, each at 65 536 points with 300-point leaves:
+
+| f3, paper's weights | ε @16 000 | ε @65 536 |
+|---|---|---|
+| mixed stream (reference) | 2.3e-3 | 7.2e-4 |
+| LO-unweighted stream, nothing else | PENDING_RHOUNW300 |
+| LO-unweighted stream with 20 % KDE-targeted points, interleaved | 1.8e-3 | 5.8e-4 |
+| the same, the KDE points after the first 16 384 (the paper's two-step order) | 2.3e-3 | 6.1e-4 |
+| the tree choosing its points from the mixed pool by `w |M|² σ` | 7.6e-4 | 3.8e-4 |
+
+* The KDE resample of arXiv:2601.00950, reproduced with `tth_kde_stream.py` (a
+  tree trained on the first 16 384 stream points, its relative errors on the
+  uniform test set as KDE weights, Scott's bandwidth on the effective sample size),
+  gives the tree the same factor 1.2–1.4 it gives their network. Interleaving the
+  points beats appending them, as an online learner would expect.
+* The tree's own acquisition does what the resample does, continuously and with
+  no second stage: a factor 1.9 at 65 536 and 3 at 16 000 over the mixed stream.
+  It is the one lever that brings f3 onto the networks' curve at every N.
+* Under the paper's weights the pure LO-unweighted stream no longer helps (it
+  gave 2 × on the flat-flux metric): its points sit at low β² and leave the
+  collinear region to the Sobol half of the mixed stream. With 1000-point leaves
+  it gives 8.1e-4 at 65 536.
+
+### 2.4 Statistical amplification
+
+`amplification_demo.py`, the measure of arXiv:2608.06450 ("Generative Amplification
+with Surrogate Monte Carlo"): the fraction of the cross section in a bin of p_T(H),
+computed from the tree's prediction over a million exact uniform points, is compared
+with the exact fraction; the deviation is the surrogate's systematic error on that
+bin, and `n_equiv = I (1 − I) / dev²` is the number of exact unweighted events whose
+statistical error equals it. A second million exact points in the tail
+p_T(H) > 3 m_t sharpens the tail bins (their stratified estimate). The 300-point tree
+on the mixed stream at 65 536 points, paper's weights:
+
+| | f1 | f3 |
+|---|---|---|
+| largest pull of a bin fraction, all bins | 0.00 | 0.5 |
+| n_equiv, bulk bins (p_T(H) < 2 m_t) | > 5e5 | > 5e5 |
+| n_equiv, tail bin [4, 6] m_t (164–205 training points in it) | > 8e6 | > 1.2e7 |
+| amplification factor n_equiv / n_train, bulk to tail | > 21 to > 4e4 | > 16 to > 7e4 |
+
+No bin deviates from the truth beyond the exact samples' own Monte Carlo error,
+so every entry is a lower bound set by the test statistics, not by the tree. The
+L-GATr of that paper reaches 2e4–1.7e5 in the tails of Z + jets with a million
+training points. The calibrated σ propagated into a bin fraction as independent
+per-point errors (their eq. 16) is 1e-8 to 1e-5, far below the resolution; the
+paper reads its own numbers off a plateau rather than from that propagation. The
+KS-based "differential" variant is not reported: with a finite holdout it
+saturates at the holdout size.
+
+## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 
 `eps_vs_points.png`; uniform-test ε, with the networks of the paper's Figure 13
 (MLP and L-GATr, read off the plot) for reference.
@@ -62,7 +211,7 @@ Reading:
 * **The paper's networks are far ahead of these default settings**: 30 to 50
   times lower ε at 10⁴ points than the default hybrid, 10 to 20 times than the larger
   network. With the defaults the tree family sits with the paper's classical
-  interpolants, which reach 1 % at 10⁴–10⁵ points in 5D. Section 6 shows what
+  interpolants, which reach 1 % at 10⁴–10⁵ points in 5D. Section 7 shows what
   closes the gap: the inputs, the leaf kernel and size, and the sampling. Every
   method here keeps improving with points, with no plateau in sight, which is the
   behaviour the paper reports for its classical methods and not for its networks.
@@ -71,7 +220,7 @@ Reading:
   the weighted error is dominated by the peaks of `w |M|²` (collinear tops, the
   Coulomb region), which a 100-point leaf in five dimensions resolves last.
 
-## 3. Noisy amplitudes: 0.3 % relative noise on the training values
+## 4. Noisy amplitudes (flat-flux weights): 0.3 % relative noise on the training values
 
 The paper's code carries a `NoisyEvaluator` with 3e-3 relative Gaussian noise; the
 paper does not report results with it. Here the noise is added to `log |M|²` and
@@ -91,7 +240,7 @@ with noise: the network's error budget is added to every leaf's sigma, and with
 noise-dominated residuals the calibration leaves it in place, as on the gg → HH grid.
 A local version of that budget is the obvious next improvement.
 
-## 4. Uncertainty-gated integration of f1
+## 5. Uncertainty-gated integration (flat-flux weights)
 
 `gated_integration_demo.py`: uniform Monte Carlo points in chunks of 500; for each
 point the tree predicts `log |M|²` with its calibrated sigma; where sigma exceeds the
@@ -112,51 +261,63 @@ the integral by a hundredth of its Monte Carlo error; the cube hybrid answers 99
 them and moves it by a seventh of the Monte Carlo error. The hybrid's shift is a
 coherent bias of the network, the tree's local errors average out, so for a fixed
 error budget the tree can be gated more aggressively than its tolerance alone
-suggests and the hybrid less. The improved tree of Section 6 (`--inputs invariants
+suggests and the hybrid less. The improved tree of Section 7 (`--inputs invariants
 --kernel rbf --nbar 300`) needs 600 exact evaluations of f1 in 100 000 points, none
 at all after the first 10 000, for a shift a twelfth of the Monte Carlo error, and
 6800 of f3 (3 % of the last batch) for a shift a hundred-and-fiftieth of it. In every
 case the shift is far inside the tolerance, since only points the surrogate is sure
 of are taken from it.
 
-## 5. What this demonstrates
+## 6. What this demonstrates
 
-With the package defaults on the cube coordinates the dedicated networks of the paper
-are the better interpolants by 30–50 ×. Section 6 shows that this is a matter of
-representation and sampling, not of the method: on the log-invariants, with RBF
-leaves of 300 points and the importance-sampled stream an integrator produces, the
-plain tree matches the networks on f1 at 16 000 points and is ten times below them
-at 131 072, and is within a factor 2.6 on f3 with its curve still falling. On top
-of that the tree family offers what the networks do not: learning from the
-evaluations as they are made with no retraining, a per-point calibrated uncertainty
-that can gate when the exact amplitude is needed (Section 4), the choice of which
-points to evaluate, and per-point noise in the training values. The real two-loop
-case, where the evaluations are hours each and carry a QMC error, is in
-`BENCHMARK_RESULTS_hhgrid_amplitude.md`.
+On the paper's own metric (Section 2) the plain tree, given the log-invariants as
+inputs, RBF leaves and the stream an integrator produces, is 25–50 times below the
+paper's networks on f1 and level with them on f3 at 10⁵ points, with no network,
+learning online, and with its curves still falling where theirs flatten; it matches
+the five-run averages of arXiv:2601.00950 as well. The 30–50 × deficit of the
+package defaults (Section 3) is a matter of representation, leaf size and
+sampling, not of the method. On top of that the tree family offers what the
+networks do not: learning from the evaluations as they are made with no
+retraining, a per-point calibrated uncertainty that can gate when the exact
+amplitude is needed (Section 5) and that is worth more than 10⁷ exact events in
+the tails (Section 2.4), the choice of which points to evaluate, which is what
+brings f3 onto the networks' curve (Section 2.3), and per-point noise in the
+training values (Section 4). The real two-loop case, where the evaluations are
+hours each and carry a QMC error, is in `BENCHMARK_RESULTS_hhgrid_amplitude.md`.
 
 ## Reproduce
 
 ```bash
 cd examples
-python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs tree,hybrid --tag exact
-python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs acq --nmax 32768 --tag acq
+# Section 2: the paper's weights (the default); <data_dir> needs the {ch}_train_unweighted_rho.npz sets
+python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs tree --tag sweep_rhoDefault
+python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs tree --inputs invariants --kernel rbf --train mixed --nbar 300 --tag sweep_rhoMix300
+python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs tree --inputs invariants --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_rhoSplit1000
+python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs acq --nmax 65536 --inputs invariants --kernel rbf --train mixed --nbar 300 --tag sweep_rhoAcq300
+python tth_amplitude_benchmark.py <full_domain_data_dir> --channels uu,gg --configs tree --inputs invariants --kernel rbf --train mixed --nbar 300 --domain full --tag sweep_fullMix300
+python tth_kde_stream.py <data_dir> gg <path to tth_driver> <kde_data_dir> --order interleaved
+python tth_amplitude_benchmark.py <kde_data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rbf --train unweighted --nbar 300 --tag sweep_kdeint300
+python amplification_demo.py <data_dir> gg --uniform <1e6 uniform points> --targeted <1e6 points with p_T(H) > 3 m_t> --checkpoints 16000,65536
+# Sections 3-7: the flat-flux weights (--no-rho)
+python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs tree,hybrid --no-rho --tag exact
+python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs acq --nmax 32768 --no-rho --tag acq
 python tth_amplitude_benchmark.py <data_dir> --channels uu --configs hybrid --nmax 32768 \
     --net hidden=256,depth=4,steps=600,polish_steps=10000 --tag bignet_uu
 python tth_amplitude_benchmark.py <data_dir> --channels uu --configs tree,hybrid --nmax 32768 --noise 0.003 --tag noise0.003_uu
 python gated_integration_demo.py <path to tth_driver> --config tree --tol 0.01 --npoints 100000
-# Section 6: the variants, e.g. the best plain tree and the best hybrid over the full stream
+# Section 7: the variants (with --no-rho), e.g. the best plain tree and the best hybrid over the full stream
 python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs tree --inputs invariants --kernel rbf --train mixed --nbar 300 --tag sweep_finalTreeMix300
 python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs hybrid --inputs invariants --features invariants --train mixed \
     --net hidden=256,depth=4,steps=600,polish_steps=10000 --nmax 65536 --tag sweep_finalHybMixBig
 python plot_tth_results.py
 ```
-`<data_dir>` needs the `{ch}_train_unweighted.npz` sets of `tth_amplitude/README.md` for `--train mixed`.
+With `--no-rho`, `<data_dir>` needs the `{ch}_train_unweighted.npz` sets of `tth_amplitude/README.md` for `--train mixed`.
 
-## 6. Improving on the 5D benchmark: what moves the error
+## 7. Improving on the 5D benchmark (flat-flux weights): what moves the error
 
 A controlled sweep on f1 and f3 to 16 384 points (seed 1, one run each; the hybrid
 variants with `steps_per_update=8`), ε on the uniform test set at 4000, 16 000 and,
-where run, 32 768 points. The baselines are the rows of Section 2.
+where run, 32 768 points. The baselines are the rows of Section 3.
 
 * **Inputs.** `--inputs invariants` feeds the tree the ten `log(p_i · p_j)` of the
   external momenta (the inputs of the paper's networks) instead of the five cube
@@ -260,7 +421,7 @@ Reading:
 
 | configuration (131 072 points, mixed stream unless noted) | f1 | f3 | update cost |
 |---|---|---|---|
-| tree on the cube, Matérn 3/2 leaves, Sobol (Section 2 baseline) | 2.2e-3 | 2.3e-2 | 2 ms |
+| tree on the cube, Matérn 3/2 leaves, Sobol (Section 3 baseline) | 2.2e-3 | 2.3e-2 | 2 ms |
 | tree on log invariants, RBF leaves, Sobol | 7.5e-5 | 7.9e-3 | 4 ms |
 | tree on log invariants, RBF leaves | 5.1e-5 | 1.8e-3 | 8 ms |
 | tree on log invariants, RBF leaves, `Nbar = 300` | 7.4e-6 | 7.9e-4 | 16 ms |
