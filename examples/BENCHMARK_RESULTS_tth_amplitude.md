@@ -2,7 +2,7 @@
 
 `examples/tth_amplitude_benchmark.py`, `examples/gated_integration_demo.py`,
 `examples/plot_tth_results.py`; data as in `examples/tth_amplitude/README.md`; one
-CPU core per run, up to four runs in parallel; seed 1; 12 October 2026.
+CPU core per run, up to four runs in parallel; seed 1; 12–13 October 2026.
 
 ## 1. The benchmark
 
@@ -59,13 +59,13 @@ Reading:
 * **Choosing the points by the expected error contribution saves about a third of
   them**: the tree with acquisition reaches at 8000 points what the Sobol order
   reaches at 12 000 (f1) and at 16 000 what Sobol reaches at 30 000 (f3).
-* **The paper's networks are far ahead on these exact, smooth amplitudes**: 30 to 50
-  times lower ε at 10⁴ points for the default hybrid, 10 to 20 times for the larger
-  network. The tree family sits with the paper's classical interpolants, which reach
-  1 % at 10⁴–10⁵ points in 5D: the default hybrid crosses 1 % at 2000 points on f1
-  and would need about 2 × 10⁵ on f3. Every method here keeps improving with points,
-  with no plateau in sight, which is the behaviour the paper reports for its
-  classical methods and not for its networks.
+* **The paper's networks are far ahead of these default settings**: 30 to 50
+  times lower ε at 10⁴ points than the default hybrid, 10 to 20 times than the larger
+  network. With the defaults the tree family sits with the paper's classical
+  interpolants, which reach 1 % at 10⁴–10⁵ points in 5D. Section 6 shows what
+  closes the gap: the inputs, the leaf kernel and size, and the sampling. Every
+  method here keeps improving with points, with no plateau in sight, which is the
+  behaviour the paper reports for its classical methods and not for its networks.
 * **Where the tree's errors sit.** On f3 the median relative error of the tree is
   1.5e-3 at 131 072 points with 87 % of test points within 1 %, while ε is 2.3e-2:
   the weighted error is dominated by the peaks of `w |M|²` (collinear tops, the
@@ -115,14 +115,18 @@ surrogate is sure of are taken from it.
 
 ## 5. What this demonstrates
 
-On exact, cheap-to-sample 5D amplitudes the dedicated networks of the paper are the
-better interpolants, and the hybrid's accuracy is set by its network budget. The
-tree family's case is what the networks do not offer: learning from the evaluations
-as they are made with no retraining, a per-point calibrated uncertainty that can gate
-when the exact amplitude is needed, the choice of which points to evaluate, and
-per-point noise in the training values at no cost in accuracy. The first two are
-measured above; the real two-loop case, where the evaluations are hours each and
-carry a QMC error, is in `BENCHMARK_RESULTS_hhgrid_amplitude.md`.
+With the package defaults on the cube coordinates the dedicated networks of the paper
+are the better interpolants by 30–50 ×. Section 6 shows that this is a matter of
+representation and sampling, not of the method: on the log-invariants, with RBF
+leaves of 300 points and the importance-sampled stream an integrator produces, the
+plain tree matches the networks on f1 at 16 000 points and is ten times below them
+at 131 072, and is within a factor 2.6 on f3 with its curve still falling. On top
+of that the tree family offers what the networks do not: learning from the
+evaluations as they are made with no retraining, a per-point calibrated uncertainty
+that can gate when the exact amplitude is needed (Section 4), the choice of which
+points to evaluate, and per-point noise in the training values. The real two-loop
+case, where the evaluations are hours each and carry a QMC error, is in
+`BENCHMARK_RESULTS_hhgrid_amplitude.md`.
 
 ## Reproduce
 
@@ -134,8 +138,13 @@ python tth_amplitude_benchmark.py <data_dir> --channels uu --configs hybrid --nm
     --net hidden=256,depth=4,steps=600,polish_steps=10000 --tag bignet_uu
 python tth_amplitude_benchmark.py <data_dir> --channels uu --configs tree,hybrid --nmax 32768 --noise 0.003 --tag noise0.003_uu
 python gated_integration_demo.py <path to tth_driver> --config tree --tol 0.01 --npoints 100000
+# Section 6: the variants, e.g. the best plain tree and the best hybrid over the full stream
+python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs tree --inputs invariants --kernel rbf --train mixed --nbar 300 --tag sweep_finalTreeMix300
+python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs hybrid --inputs invariants --features invariants --train mixed \
+    --net hidden=256,depth=4,steps=600,polish_steps=10000 --nmax 65536 --tag sweep_finalHybMixBig
 python plot_tth_results.py
 ```
+`<data_dir>` needs the `{ch}_train_unweighted.npz` sets of `tth_amplitude/README.md` for `--train mixed`.
 
 ## 6. Improving on the 5D benchmark: what moves the error
 
@@ -158,33 +167,41 @@ where run, 32 768 points. The baselines are the rows of Section 2.
   3000 L-BFGS iterations and 30 000 Adam steps, to see what the amortised online
   training costs against a converged fit.
 
-| variant (ε on the uniform test set) | f1 @4000 | f1 @16000 | f1 @32768 | f3 @4000 | f3 @16000 | f3 @32768 | ms/pt (f1 @16k) |
-|---|---|---|---|---|---|---|---|
-| tree (baseline: Matern 3/2, Nbar 100, Sobol) | 1.39e-02 | 6.59e-03 | 4.30e-03 | 1.16e-01 | 6.36e-02 | 4.42e-02 | 2.0 |
-| tree, chooses its points (w|M|^2 sigma) | 1.10e-02 | 4.99e-03 | 3.45e-03 | 6.46e-02 | 3.53e-02 | 2.81e-02 | 2.8 |
-| hybrid (baseline: 3x128 network on the cube) | 6.45e-03 | 2.38e-03 | 1.43e-03 | 6.76e-02 | 4.16e-02 | 2.91e-02 | 6.4 |
-| hybrid, 4x256 network | 3.13e-03 | 1.25e-03 | 8.34e-04 | 5.04e-02 | 2.03e-02 | 1.31e-02 | 32.5 |
-| tree, Matern 5/2 | 9.81e-03 | 4.21e-03 | – | 1.05e-01 | 6.24e-02 | – | 2.6 |
-| tree, RBF | 9.55e-03 | 3.67e-03 | – | 1.10e-01 | 6.65e-02 | – | 2.7 |
-| tree, additive + Matern | 9.40e-03 | 4.28e-03 | – | 1.14e-01 | 6.77e-02 | – | 13.1 |
-| tree, Nbar 300 | 9.20e-03 | 4.27e-03 | – | 8.14e-02 | 4.98e-02 | – | 14.7 |
-| tree, training points ~ f | 1.11e-02 | 5.20e-03 | – | 6.17e-02 | 3.21e-02 | – | 6.0 |
-| tree, Sobol + f-weighted alternating | 1.19e-02 | 5.93e-03 | – | 6.83e-02 | 3.44e-02 | – | 5.9 |
-| tree, inputs = 10 log invariants | 3.62e-03 | 1.82e-03 | – | 5.42e-02 | 2.29e-02 | – | 8.9 |
-| tree, split by max_uncertainty | 1.35e-02 | 6.65e-03 | – | 1.10e-01 | 6.45e-02 | – | 7.6 |
-| hybrid, network on log invariants | 1.58e-03 | 5.68e-04 | – | 2.42e-02 | 1.08e-02 | – | 17.6 |
-| hybrid, Sobol + f-weighted | 5.12e-03 | 2.07e-03 | – | 4.16e-02 | 1.82e-02 | – | 14.2 |
-| hybrid, invariants + 4x256 network | 8.93e-04 | 3.00e-04 | – | 1.53e-02 | 7.44e-03 | – | 75.2 |
-| hybrid, invariants + mixed + 4x256 | 6.42e-04 | 2.34e-04 | 1.46e-04 | 4.50e-03 | 2.02e-03 | 2.19e-03 | 72.5 |
-| hybrid, invariants, one 4x256 fit at the end (3000 L-BFGS + 30000 Adam) | 1.39e-02 | 3.82e-04 | – | 1.16e-01 | 5.44e-03 | – | 43.7 |
-| tree, invariants + RBF | 1.04e-03 | 4.07e-04 | – | 8.15e-02 | 2.77e-02 | – | 7.8 |
-| tree, invariants + Matern 5/2 | 1.69e-03 | 7.51e-04 | – | 4.88e-02 | 2.06e-02 | – | 10.5 |
-| tree, inputs = cube + invariants (15D) | 3.56e-03 | 1.73e-03 | – | 5.72e-02 | 2.26e-02 | – | 13.6 |
-| hybrid, tree and network on invariants | 1.58e-03 | 5.92e-04 | – | 2.54e-02 | 1.01e-02 | – | 20.1 |
-| hybrid, tree and network on invariants, 4x256 | 8.77e-04 | 2.78e-04 | – | 2.23e-02 | 6.64e-03 | – | 48.1 |
-| tree, invariants, training ~ f | – | – | – | 1.90e-02 | 9.74e-03 | – | nan |
-| tree, invariants + RBF, training ~ f | 7.51e-04 | 2.19e-04 | – | 1.54e-02 | 6.61e-03 | – | 7.9 |
-| hybrid, tree and network on invariants, training ~ f | – | – | – | 7.05e-03 | 2.66e-03 | – | nan |
+| variant (ε on the uniform test set) | f1 @4000 | f1 @16000 | f1 @32768 | f1 @131072 | f3 @4000 | f3 @16000 | f3 @32768 | f3 @131072 | ms/pt (f1 @16k) |
+|---|---|---|---|---|---|---|---|---|---|
+| tree (baseline: Matern 3/2, Nbar 100, Sobol) | 1.39e-02 | 6.59e-03 | 4.30e-03 | 2.17e-03 | 1.16e-01 | 6.36e-02 | 4.42e-02 | 2.27e-02 | 2.0 |
+| tree, chooses its points (w|M|^2 sigma) | 1.10e-02 | 4.99e-03 | 3.45e-03 | – | 6.46e-02 | 3.53e-02 | 2.81e-02 | – | 2.8 |
+| hybrid (baseline: 3x128 network on the cube) | 6.45e-03 | 2.38e-03 | 1.43e-03 | 5.07e-04 | 6.76e-02 | 4.16e-02 | 2.91e-02 | 1.46e-02 | 6.4 |
+| hybrid, 4x256 network | 3.13e-03 | 1.25e-03 | 8.34e-04 | – | 5.04e-02 | 2.03e-02 | 1.31e-02 | – | 32.5 |
+| tree, Matern 5/2 | 9.81e-03 | 4.21e-03 | – | – | 1.05e-01 | 6.24e-02 | – | – | 2.6 |
+| tree, RBF | 9.55e-03 | 3.67e-03 | – | – | 1.10e-01 | 6.65e-02 | – | – | 2.7 |
+| tree, additive + Matern | 9.40e-03 | 4.28e-03 | – | – | 1.14e-01 | 6.77e-02 | – | – | 13.1 |
+| tree, Nbar 300 | 9.20e-03 | 4.27e-03 | – | – | 8.14e-02 | 4.98e-02 | – | – | 14.7 |
+| tree, training points ~ f | 1.11e-02 | 5.20e-03 | – | – | 6.17e-02 | 3.21e-02 | – | – | 6.0 |
+| tree, Sobol + f-weighted alternating | 1.19e-02 | 5.93e-03 | – | – | 6.83e-02 | 3.44e-02 | – | – | 5.9 |
+| tree, inputs = 10 log invariants | 3.62e-03 | 1.82e-03 | – | – | 5.42e-02 | 2.29e-02 | – | – | 8.9 |
+| tree, split by max_uncertainty | 1.35e-02 | 6.65e-03 | – | – | 1.10e-01 | 6.45e-02 | – | – | 7.6 |
+| hybrid, network on log invariants | 1.58e-03 | 5.68e-04 | – | – | 2.42e-02 | 1.08e-02 | – | – | 17.6 |
+| hybrid, Sobol + f-weighted | 5.12e-03 | 2.07e-03 | – | – | 4.16e-02 | 1.82e-02 | – | – | 14.2 |
+| hybrid, invariants + 4x256 network | 8.93e-04 | 3.00e-04 | – | – | 1.53e-02 | 7.44e-03 | – | – | 75.2 |
+| hybrid, invariants + mixed + 4x256 | 6.42e-04 | 2.34e-04 | 1.46e-04 | – | 4.50e-03 | 2.02e-03 | 2.19e-03 | – | 72.5 |
+| hybrid, invariants, one 4x256 fit at the end (3000 L-BFGS + 30000 Adam) | 1.39e-02 | 3.82e-04 | – | – | 1.16e-01 | 5.44e-03 | – | – | 43.7 |
+| tree, invariants + RBF | 1.04e-03 | 4.07e-04 | – | – | 8.15e-02 | 2.77e-02 | – | – | 7.8 |
+| tree, invariants + Matern 5/2 | 1.69e-03 | 7.51e-04 | – | – | 4.88e-02 | 2.06e-02 | – | – | 10.5 |
+| tree, inputs = cube + invariants (15D) | 3.56e-03 | 1.73e-03 | – | – | 5.72e-02 | 2.26e-02 | – | – | 13.6 |
+| hybrid, tree and network on invariants | 1.58e-03 | 5.92e-04 | – | – | 2.54e-02 | 1.01e-02 | – | – | 20.1 |
+| hybrid, tree and network on invariants, 4x256 | 8.77e-04 | 2.78e-04 | – | – | 2.23e-02 | 6.64e-03 | – | – | 48.1 |
+| tree, invariants, training ~ f | – | – | – | – | 1.90e-02 | 9.74e-03 | – | – | nan |
+| tree, invariants + RBF, training ~ f | 7.51e-04 | 2.19e-04 | – | – | 1.54e-02 | 6.61e-03 | – | – | 7.9 |
+| hybrid, tree and network on invariants, training ~ f | – | – | – | – | 7.05e-03 | 2.66e-03 | – | – | nan |
+| full stream: tree, invariants + RBF, Sobol | 1.04e-03 | 4.07e-04 | 2.48e-04 | 7.50e-05 | 6.18e-02 | 2.38e-02 | 2.00e-02 | 7.91e-03 | 3.8 |
+| full stream: tree, invariants + RBF, Sobol + f-weighted | 7.97e-04 | 2.66e-04 | 1.45e-04 | 5.07e-05 | 1.90e-02 | 7.78e-03 | 5.15e-03 | 1.81e-03 | 7.6 |
+| full stream: hybrid, invariants (both), Sobol + f-weighted | 1.10e-03 | 4.40e-04 | 2.62e-04 | 9.36e-05 | 1.02e-02 | 3.98e-03 | 2.42e-03 | 1.07e-03 | 17.0 |
+| full stream: same, 4x256 | 5.91e-04 | 1.97e-04 | 1.15e-04 | – | 4.42e-03 | 1.87e-03 | 1.46e-03 | – | 40.9 |
+| tree, invariants + RBF, mixed, Nbar 300 | 1.90e-04 | 5.42e-05 | – | – | 1.35e-02 | 4.61e-03 | – | – | 13.9 |
+| hybrid, invariants (both), mixed, RBF leaves | 9.65e-04 | 2.94e-04 | – | – | 1.02e-02 | 3.75e-03 | – | – | 9.8 |
+| tree, invariants + RBF, mixed, 0.3 % noise on the values | 3.05e-03 | 2.11e-03 | 1.86e-03 | – | 2.08e-02 | 9.57e-03 | 6.64e-03 | – | 2.9 |
+| full stream: tree, invariants + RBF, Sobol + f-weighted, Nbar 300 | 1.90e-04 | 5.38e-05 | 2.64e-05 | 7.42e-06 | 1.35e-02 | 4.60e-03 | 2.48e-03 | 7.88e-04 | 16.7 |
 
 Reading:
 
@@ -214,10 +231,43 @@ Reading:
   it reaches 2.3e-4 at 16 000 and 1.5e-4 at 32 768 on f1. A single converged fit at
   the end of the same stream gives 3.8e-4 against 3.0e-4 for the amortised online
   training with the same network, so the online schedule costs little.
-* **Against the paper's networks.** Read off their Figure 13, the MLP and L-GATr are
-  at about 8e-5 (f1) and 7e-4 (f3) at 16 000 points. The best online configurations
-  here are within 3 × on f1 (the plain tree at 2.2e-4, the large hybrid at 2.3e-4
-  and 1.5e-4 at 32 768) and within 4 × on f3 (the hybrid at 2.7e-3), against the
-  30–50 × of the package defaults on the cube.
+* **Leaf size in the invariants.** With ten inputs a 100-point leaf is short of
+  points for its ten length scales; `Nbar = 300` on the invariants with RBF leaves
+  and the mixed stream gives a further 4 × on f1 (5.4e-5 at 16 000, a median
+  relative error of 1e-6) and 1.4 × on f3, at twice the update cost. In the cube
+  the same change gave 1.5 ×.
+* **Noise.** With 0.3 % noise on the training values the improved tree sits at
+  1.9e-3 (f1) and 6.6e-3 (f3) at 32 768 points: on f1 its exact-data error is now
+  far below the noise, so the noise sets the floor; on f3 the noisy and exact runs
+  coincide.
 
-FULL_STREAM_PARAGRAPH
+### Full streams with the best configurations
+
+`eps_vs_points_improved.png`; the "full stream" rows of the table.
+
+| configuration (131 072 points, mixed stream unless noted) | f1 | f3 | update cost |
+|---|---|---|---|
+| tree on the cube, Matérn 3/2 leaves, Sobol (Section 2 baseline) | 2.2e-3 | 2.3e-2 | 2 ms |
+| tree on log invariants, RBF leaves, Sobol | 7.5e-5 | 7.9e-3 | 4 ms |
+| tree on log invariants, RBF leaves | 5.1e-5 | 1.8e-3 | 8 ms |
+| tree on log invariants, RBF leaves, `Nbar = 300` | 7.4e-6 | 7.9e-4 | 16 ms |
+| hybrid on log invariants, Matérn 3/2 leaves | 9.4e-5 | 1.1e-3 | 11 ms |
+| hybrid on log invariants, 4 × 256 network (65 536 points) | 7.1e-5 | 9.4e-4 | 21 ms |
+| MLP / L-GATr of arXiv:2412.09534 at 10⁵ points (Figure 13) | 7e-5 | 3e-4 | |
+
+* **f1 is solved by the plain tree.** On the log-invariants with RBF leaves it
+  matches the paper's networks at 131 072 points (7.5e-5 with Sobol points,
+  5.1e-5 with the mixed stream), and with 300-point leaves it is ten times below
+  them (7.4e-6, a median relative error of 4e-7, every test point within 1 %),
+  online, at 16 ms per point, with no network. Its curve keeps falling as a power
+  law where the networks' flattens.
+* **f3 closes to a factor 2.6.** The tree with 300-point leaves reaches 7.9e-4 and
+  the hybrids 9.4e-4 to 1.1e-3 against the networks' 3e-4, from 13 × worse at the
+  baseline, with no sign of a plateau; the mixed stream alone is worth 4 × on f3
+  at 131 072 points (7.9e-3 with Sobol against 1.8e-3), because the error lives in
+  the collinear peaks the importance-sampled points populate.
+* **The network no longer carries the result.** With the right inputs the plain
+  tree with RBF leaves beats the hybrid with Matérn leaves on f1 and nearly matches
+  it on f3; the hybrid's remaining advantage is on f3 at small point counts
+  (4.4e-3 against 1.4e-2 at 4000). RBF leaves inside the hybrid give 2 × on f1
+  (2.9e-4 against 5.9e-4 at 16 000) and nothing on f3.
