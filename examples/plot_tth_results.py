@@ -34,8 +34,8 @@ FIGURES = {
     "eps_vs_points_improved.png": [
         ("sweep_finalTreeSobol_{ch}", "tree", "GPTree on log invariants, RBF leaves, Sobol"),
         ("sweep_finalTreeMix_{ch}", "tree", "same, half the points drawn with probability ~ f"),
-        ("sweep_finalHybMix_{ch}", "hybrid", "hybrid on log invariants, half the points ~ f"),
-        ("sweep_finalHybMixBig_{ch}", "hybrid", "same, 4 x 256 network, longer training"),
+        ("sweep_finalTreeMix300_{ch}", "tree", "same, 300-point leaves"),
+        ("sweep_finalHybMixBig_{ch}", "hybrid", "hybrid on log invariants, half the points ~ f, 4 x 256 network"),
     ],
 }
 
