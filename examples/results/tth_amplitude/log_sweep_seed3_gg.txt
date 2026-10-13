@@ -2,3 +2,12 @@ gg tree   N=  1000  eps_uniform 3.23e-02  eps_unweighted 3.16e-02  median rel 6.
 gg tree   N=  2000  eps_uniform 1.99e-02  eps_unweighted 1.87e-02  median rel 3.61e-04  within 1 %: 86 %  cov68 0.70  88.1 ms/pt  leaves 8
 gg tree   N=  4000  eps_uniform 1.10e-02  eps_unweighted 1.03e-02  median rel 1.55e-04  within 1 %: 90 %  cov68 0.66  93.2 ms/pt  leaves 16
 gg tree   N=  8000  eps_uniform 6.37e-03  eps_unweighted 5.93e-03  median rel 7.13e-05  within 1 %: 94 %  cov68 0.65  88.8 ms/pt  leaves 32
+gg tree   N= 16000  eps_uniform 3.75e-03  eps_unweighted 3.49e-03  median rel 3.07e-05  within 1 %: 97 %  cov68 0.63  84.1 ms/pt  leaves 66
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| gg | tree | 1000 | 3.23e-02 | 3.16e-02 | 6.80e-04 | 79 % | 0.60 | 72.3 |
+| gg | tree | 2000 | 1.99e-02 | 1.87e-02 | 3.61e-04 | 86 % | 0.70 | 88.1 |
+| gg | tree | 4000 | 1.10e-02 | 1.03e-02 | 1.55e-04 | 90 % | 0.66 | 93.2 |
+| gg | tree | 8000 | 6.37e-03 | 5.93e-03 | 7.13e-05 | 94 % | 0.65 | 88.8 |
+| gg | tree | 16000 | 3.75e-03 | 3.49e-03 | 3.07e-05 | 97 % | 0.63 | 84.1 |
