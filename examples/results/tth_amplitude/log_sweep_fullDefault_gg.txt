@@ -1,0 +1,19 @@
+gg tree   N=  1000  eps_uniform 1.18e-01  eps_unweighted 1.15e-01  median rel 4.72e-02  within 1 %: 16 %  cov68 0.68  2.4 ms/pt  leaves 16
+gg tree   N=  2000  eps_uniform 9.53e-02  eps_unweighted 9.30e-02  median rel 3.45e-02  within 1 %: 22 %  cov68 0.66  2.5 ms/pt  leaves 32
+gg tree   N=  4000  eps_uniform 7.29e-02  eps_unweighted 6.94e-02  median rel 2.57e-02  within 1 %: 28 %  cov68 0.69  2.5 ms/pt  leaves 64
+gg tree   N=  8000  eps_uniform 5.63e-02  eps_unweighted 5.29e-02  median rel 1.77e-02  within 1 %: 36 %  cov68 0.68  2.6 ms/pt  leaves 128
+gg tree   N= 16000  eps_uniform 3.77e-02  eps_unweighted 3.75e-02  median rel 1.16e-02  within 1 %: 47 %  cov68 0.68  2.7 ms/pt  leaves 256
+gg tree   N= 32768  eps_uniform 2.69e-02  eps_unweighted 2.67e-02  median rel 7.19e-03  within 1 %: 58 %  cov68 0.69  2.7 ms/pt  leaves 512
+gg tree   N= 65536  eps_uniform 1.87e-02  eps_unweighted 1.79e-02  median rel 4.71e-03  within 1 %: 67 %  cov68 0.68  2.8 ms/pt  leaves 1024
+gg tree   N=131072  eps_uniform 1.36e-02  eps_unweighted 1.33e-02  median rel 3.15e-03  within 1 %: 75 %  cov68 0.68  2.8 ms/pt  leaves 2047
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| gg | tree | 1000 | 1.18e-01 | 1.15e-01 | 4.72e-02 | 16 % | 0.68 | 2.4 |
+| gg | tree | 2000 | 9.53e-02 | 9.30e-02 | 3.45e-02 | 22 % | 0.66 | 2.5 |
+| gg | tree | 4000 | 7.29e-02 | 6.94e-02 | 2.57e-02 | 28 % | 0.69 | 2.5 |
+| gg | tree | 8000 | 5.63e-02 | 5.29e-02 | 1.77e-02 | 36 % | 0.68 | 2.6 |
+| gg | tree | 16000 | 3.77e-02 | 3.75e-02 | 1.16e-02 | 47 % | 0.68 | 2.7 |
+| gg | tree | 32768 | 2.69e-02 | 2.67e-02 | 7.19e-03 | 58 % | 0.69 | 2.7 |
+| gg | tree | 65536 | 1.87e-02 | 1.79e-02 | 4.71e-03 | 67 % | 0.68 | 2.8 |
+| gg | tree | 131072 | 1.36e-02 | 1.33e-02 | 3.15e-03 | 75 % | 0.68 | 2.8 |

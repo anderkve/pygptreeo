@@ -1,0 +1,5 @@
+gg tree   N=  1000  eps_uniform 1.27e-02  eps_unweighted 1.24e-02  median rel 1.08e-03  within 1 %: 79 %  cov68 0.66  36.0 ms/pt  leaves 4
+gg tree   N=  2000  eps_uniform 7.85e-03  eps_unweighted 7.22e-03  median rel 5.41e-04  within 1 %: 84 %  cov68 0.68  42.6 ms/pt  leaves 8
+gg tree   N=  4000  eps_uniform 5.32e-03  eps_unweighted 4.71e-03  median rel 2.38e-04  within 1 %: 89 %  cov68 0.72  45.1 ms/pt  leaves 16
+gg tree   N=  8000  eps_uniform 3.35e-03  eps_unweighted 2.98e-03  median rel 7.95e-05  within 1 %: 93 %  cov68 0.71  46.1 ms/pt  leaves 32
+gg tree   N= 16000  eps_uniform 1.76e-03  eps_unweighted 1.72e-03  median rel 3.75e-05  within 1 %: 96 %  cov68 0.67  46.0 ms/pt  leaves 69
