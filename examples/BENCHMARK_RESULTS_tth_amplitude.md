@@ -302,15 +302,15 @@ test set:
 | 8000 | 1.1e-04 | 6.1e-05 | 8.2e-03 | 6.7e-03 | 33 / 12 | 19 / 81 |
 | 16000 | 5.4e-05 | 2.3e-05 | 4.6e-03 | 4.3e-03 | 66 / 25 | 17 / 69 |
 | 32768 | 2.6e-05 | 1.1e-05 | 2.5e-03 | 2.1e-03 | 139 / 53 | 16 / 58 |
-| 65536 | 1.4e-05 | 4.6e-06 | 1.7e-03 | – | 286 / 106 | 16 / 49 |
-| 131072 | 7.4e-06 | – | 7.9e-04 | – | 586 / – | 15 / – |
+| 65536 | 1.4e-05 | 4.6e-06 | 1.7e-03 | 1.2e-03 | 286 / 106 | 16 / 49 |
+| 131072 | 7.4e-06 | 3.4e-06 | 7.9e-04 | – | 586 / 201 | 15 / 45 |
 <!-- /nbar1000 table -->
 
-* **f1 gains 2–3 ×** at every point count: 2.3e-5 at 16 000 and 4.6e-6 at 65 536
-  (a median relative error of 3e-7), fifteen times below the paper's networks at
-  10⁵ points, and the curve still falls as N⁻¹·¹. With ten length scales a leaf
-  is better determined by 1000 points than by 300, and the single fit at the split
-  is as good as the 40 refits the smaller leaves get.
+* **f1 gains 2–3 ×** at every point count: 2.3e-5 at 16 000 and 3.4e-6 at
+  131 072 (a median relative error of 2e-7), twenty times below the paper's
+  networks at 10⁵ points, and the curve still falls as N⁻¹·¹. With ten length
+  scales a leaf is better determined by 1000 points than by 300, and the single
+  fit at the split is as good as the 40 refits the smaller leaves get.
 * **f3 gains 1.1–1.2 ×** (4.3e-3 against 4.6e-3 at 16 000, 2.1e-3 against 2.5e-3
   at 32 768): its error sits in the collinear peaks, where a larger leaf extends
   the same smooth extrapolation over more points rather than resolving the peak
