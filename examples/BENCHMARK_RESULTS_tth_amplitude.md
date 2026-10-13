@@ -264,6 +264,7 @@ Reading:
 | tree on log invariants, RBF leaves, Sobol | 7.5e-5 | 7.9e-3 | 4 ms |
 | tree on log invariants, RBF leaves | 5.1e-5 | 1.8e-3 | 8 ms |
 | tree on log invariants, RBF leaves, `Nbar = 300` | 7.4e-6 | 7.9e-4 | 16 ms |
+| tree on log invariants, RBF leaves, `Nbar = 1000`, refit only at splits | 3.4e-6 | 5.8e-4 | 50 ms |
 | hybrid on log invariants, Matérn 3/2 leaves | 9.4e-5 | 1.1e-3 | 11 ms |
 | hybrid on log invariants, 4 × 256 network (65 536 points) | 7.1e-5 | 9.4e-4 | 21 ms |
 | MLP / L-GATr of arXiv:2412.09534 at 10⁵ points (Figure 13) | 7e-5 | 3e-4 | |
@@ -303,7 +304,7 @@ test set:
 | 16000 | 5.4e-05 | 2.3e-05 | 4.6e-03 | 4.3e-03 | 66 / 25 | 17 / 69 |
 | 32768 | 2.6e-05 | 1.1e-05 | 2.5e-03 | 2.1e-03 | 139 / 53 | 16 / 58 |
 | 65536 | 1.4e-05 | 4.6e-06 | 1.7e-03 | 1.2e-03 | 286 / 106 | 16 / 49 |
-| 131072 | 7.4e-06 | 3.4e-06 | 7.9e-04 | – | 586 / 201 | 15 / 45 |
+| 131072 | 7.4e-06 | 3.4e-06 | 7.9e-04 | 5.8e-04 | 586 / 201 | 15 / 45 |
 <!-- /nbar1000 table -->
 
 * **f1 gains 2–3 ×** at every point count: 2.3e-5 at 16 000 and 3.4e-6 at
@@ -311,10 +312,11 @@ test set:
   networks at 10⁵ points, and the curve still falls as N⁻¹·¹. With ten length
   scales a leaf is better determined by 1000 points than by 300, and the single
   fit at the split is as good as the 40 refits the smaller leaves get.
-* **f3 gains 1.1–1.2 ×** (4.3e-3 against 4.6e-3 at 16 000, 2.1e-3 against 2.5e-3
-  at 32 768): its error sits in the collinear peaks, where a larger leaf extends
-  the same smooth extrapolation over more points rather than resolving the peak
-  (next subsection).
+* **f3 gains 1.1–1.4 ×**, growing with the point count (4.3e-3 against 4.6e-3 at
+  16 000, 5.8e-4 against 7.9e-4 at 131 072): its error sits in the collinear
+  peaks, where a larger leaf extends the same smooth extrapolation over more
+  points rather than resolving the peak (next subsection). At 131 072 points
+  f3 is within a factor 2 of the paper's networks.
 * **The cost is 3–4 × per point** (50–80 ms against 16–20; all sweep runs share
   a four-core machine three at a time, so these are relative numbers), from the
   O(n³) factorisations of 1000-point leaves. Refitting such leaves every 250
