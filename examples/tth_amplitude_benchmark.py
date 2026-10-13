@@ -41,22 +41,90 @@ CHANNEL_NAMES = {"uu": "f1: q qbar -> t tbar H", "gg": "f3: g g -> t tbar H"}
 
 
 def load(data_dir, ch):
-    tr = np.load(os.path.join(data_dir, f"{ch}_train_sobol.npz"))
-    te = np.load(os.path.join(data_dir, f"{ch}_test_uniform.npz"))
+    def arrays(path):
+        z = np.load(path)
+        return {k: z[k] for k in z.files}
+    tr = arrays(os.path.join(data_dir, f"{ch}_train_sobol.npz"))
+    if OPTS["train"] in ("unweighted", "mixed"):
+        tw = arrays(os.path.join(data_dir, f"{ch}_train_unweighted.npz"))
+        if OPTS["train"] == "unweighted":
+            tr = tw
+        else:   # alternate Sobol and f-weighted points
+            n = min(len(tr["me"]), len(tw["me"]))
+            tr = {k: np.empty((2 * n,) + tr[k].shape[1:]) for k in tr}
+            for k in tr:
+                tr[k][0::2] = arrays(os.path.join(data_dir, f"{ch}_train_sobol.npz"))[k][:n]; tr[k][1::2] = tw[k][:n]
+    te = arrays(os.path.join(data_dir, f"{ch}_test_uniform.npz"))
     path_u = os.path.join(data_dir, f"{ch}_test_unweighted.npz")
-    tu = np.load(path_u) if os.path.exists(path_u) else None
+    tu = arrays(path_u) if os.path.exists(path_u) else None
+    for d in (tr, te, tu):
+        if d is not None:
+            d["X"] = tree_inputs(d["X"])
     return tr, te, tu
 
 
 NET_KWARGS = {}   # overrides for the hybrid's FeatureNetLearner, from --net
+OPTS = dict(kernel="matern32", nbar=100, train="sobol", inputs="cube", features="cube", split="min_lengthscale")
+MT, MH = 1.0, np.sqrt(12.0 / 23.0)
+
+
+def momenta(X):
+    """Four-momenta (n, 5, 4) of g/q, g/qbar, t, tbar, H from the unit-cube variables,
+    as tth_driver.cpp builds them (folded domain, m_t = 1)."""
+    X = np.atleast_2d(X)
+    b2 = 0.1 + 0.86 * X[:, 0]; frac = X[:, 1]; th = 0.5 * np.pi * X[:, 2]; tt = 0.5 * np.pi * X[:, 3]; ph = np.pi * X[:, 4]
+    s = (2 * MT + MH) ** 2 / (1 - b2); rs = np.sqrt(s)
+    stt = 4 * MT ** 2 + frac * ((rs - MH) ** 2 - 4 * MT ** 2); rstt = np.sqrt(stt)
+    pt = np.sqrt(stt - 4 * MT ** 2) / 2
+    t1 = np.column_stack([rstt / 2, pt * np.sin(tt) * np.cos(ph), pt * np.sin(tt) * np.sin(ph), pt * np.cos(tt)])
+    t2 = np.column_stack([t1[:, 0], -t1[:, 1], -t1[:, 2], -t1[:, 3]])
+    kl = (stt - (rs + MH) ** 2) * (stt - (rs - MH) ** 2); qh2 = kl / (4 * s); qh = np.sqrt(qh2)
+    g = np.sqrt(1 + qh2 / stt); gb = qh / rstt
+    def boost_rot(p):
+        E = g * p[:, 0] + gb * p[:, 3]; pz = gb * p[:, 0] + g * p[:, 3]; px, py = p[:, 1], p[:, 2]
+        return np.column_stack([E, -np.cos(th) * px - np.sin(th) * pz, py, np.sin(th) * px - np.cos(th) * pz])
+    q1 = np.column_stack([rs / 2, 0 * rs, 0 * rs, rs / 2]); q2 = np.column_stack([rs / 2, 0 * rs, 0 * rs, -rs / 2])
+    qH = np.column_stack([np.sqrt(qh2 + MH ** 2), qh * np.sin(th), 0 * qh, qh * np.cos(th)])
+    return np.stack([q1, q2, boost_rot(t1), boost_rot(t2), qH], axis=1)
+
+
+def invariants(X):
+    """log(p_i . p_j) for the ten pairs of external momenta (the inputs of the
+    networks of arXiv:2412.09534)."""
+    P = momenta(X)
+    metric = np.array([1.0, -1.0, -1.0, -1.0])
+    out = []
+    for i in range(5):
+        for j in range(i + 1, 5):
+            out.append(np.log(np.sum(P[:, i] * P[:, j] * metric, axis=1)))
+    return np.column_stack(out)
+
+
+def tree_inputs(X):
+    if OPTS["inputs"] == "invariants":
+        return invariants(X)
+    if OPTS["inputs"] == "both":
+        return np.hstack([X, invariants(X)])
+    return X
 
 
 def make(config, seed):
+    from pygptreeo import Default_GPR, AdditiveMaternKernel
+    from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
+    d = {"cube": 5, "invariants": 10, "both": 15}[OPTS["inputs"]]
+    kernels = {"matern32": None,
+               "matern52": ConstantKernel() * Matern(nu=2.5, length_scale=np.ones(d)),
+               "rbf": ConstantKernel() * RBF(length_scale=np.ones(d)),
+               "additive": AdditiveMaternKernel(d=d, order=2, nu=1.5)}
+    gpr = Default_GPR(kernel=kernels[OPTS["kernel"]])
     with contextlib.redirect_stdout(io.StringIO()):
         if config == "hybrid":
             kw = dict(steps_per_update=8, random_state=seed); kw.update(NET_KWARGS)
-            return GPTree(Nbar=100, global_mean='net', global_mean_kwargs=kw)
-        return GPTree(Nbar=100)
+            if OPTS["features"] == "invariants":
+                kw["feature_map"] = invariants if OPTS["inputs"] == "cube" else None
+            return GPTree(GPR=gpr, Nbar=OPTS["nbar"], split_dimension_criteria=OPTS["split"],
+                          global_mean='net', global_mean_kwargs=kw)
+        return GPTree(GPR=gpr, Nbar=OPTS["nbar"], split_dimension_criteria=OPTS["split"])
 
 
 def evaluate(gpt, te, tu):
@@ -172,9 +240,18 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--tag", default="")
     ap.add_argument("--net", default="", help="hybrid network settings, e.g. hidden=256,depth=4,steps=600,polish_steps=10000")
+    ap.add_argument("--kernel", default="matern32", choices=["matern32", "matern52", "rbf", "additive"], help="leaf kernel")
+    ap.add_argument("--nbar", type=int, default=100)
+    ap.add_argument("--train", default="sobol", choices=["sobol", "unweighted", "mixed"],
+                    help="training points: Sobol, drawn with probability proportional to w |M|^2, or alternating")
+    ap.add_argument("--inputs", default="cube", choices=["cube", "invariants", "both"], help="the tree's inputs")
+    ap.add_argument("--features", default="cube", choices=["cube", "invariants"], help="the hybrid network's inputs")
+    ap.add_argument("--split", default="min_lengthscale", help="GPTree split_dimension_criteria")
     args = ap.parse_args()
     for item in filter(None, args.net.split(",")):
-        k, v = item.split("="); NET_KWARGS[k] = int(v)
+        k, v = item.split("="); NET_KWARGS[k] = None if v == "none" else int(v)
+    OPTS.update(kernel=args.kernel, nbar=args.nbar, train=args.train, inputs=args.inputs, features=args.features,
+                split=args.split)
     os.makedirs(OUT_DIR, exist_ok=True)
     checkpoints = [1000, 2000, 4000, 8000, 16000, 32768, 65536, 131072]
     results = {}

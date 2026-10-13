@@ -176,3 +176,25 @@ class TestFeatureNet(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "PyTorch not installed")
+class TestFeatureMap(unittest.TestCase):
+
+    def test_network_sees_the_mapped_inputs(self):
+        from pygptreeo.default_gpr import Default_GPR
+        rng = np.random.RandomState(17)
+        N = 400
+        X = rng.rand(N, 3); Y = _target(X)[:, None]; S = np.full((N, 1), 1e-3)
+        fmap = lambda Z: np.hstack([Z, np.sin(3 * Z)])
+        gpt = GPTree(GPR=Default_GPR(), Nbar=60, retrain_every_n_points=20, global_mean='net',
+                     global_mean_kwargs=dict(steps=100, polish_steps=0, min_points=60, random_state=0, feature_map=fmap))
+        _stream(gpt, X, Y, S)
+        learner = gpt.global_mean.learner
+        self.assertEqual(learner.n_features, 3)
+        self.assertEqual(learner.n_net_inputs, 6)
+        self.assertEqual(learner.net[0].in_features, 6)
+        Xt = rng.rand(100, 3)
+        self.assertEqual(learner.head(Xt).shape, (100, 1))
+        P, _ = gpt.predict(Xt)
+        self.assertLess(np.sqrt(np.mean((P[:, 0] - _target(Xt)) ** 2)) / 1.5, 0.05)

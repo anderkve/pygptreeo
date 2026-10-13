@@ -86,11 +86,15 @@ class FeatureNetLearner:
         ``POLISH_STEPS_PER_UPDATE`` times as many Adam steps) per call, on a copy
         of the network published when complete. The first fit always runs at once.
     random_state : int or None
+    feature_map : callable or None
+        Maps raw inputs (n, d) to the network's inputs (n, m), e.g. physics
+        features; the reservoir, the tree and its leaves keep the raw inputs.
     """
 
     def __init__(self, hidden: int = 128, depth: int = 3, steps: int = 300, polish_steps: int = 3000,
                  lr: float = 1e-3, min_points: int = 200, reservoir_size: Optional[int] = 5000,
-                 steps_per_update: Optional[int] = None, random_state: Optional[int] = None):
+                 steps_per_update: Optional[int] = None, random_state: Optional[int] = None,
+                 feature_map=None):
         _require_torch()
         if steps < 0 or polish_steps < 0:
             raise ValueError("steps and polish_steps must be non-negative")
@@ -101,6 +105,7 @@ class FeatureNetLearner:
         if steps_per_update is not None and steps_per_update < 1:
             raise ValueError("steps_per_update must be at least 1")
         self.hidden, self.depth, self.steps, self.polish_steps = int(hidden), int(depth), int(steps), int(polish_steps)
+        self.feature_map = feature_map
         self.lr = float(lr)
         self.min_points = int(min_points)
         self.reservoir_size = int(reservoir_size) if reservoir_size is not None else None
@@ -112,7 +117,7 @@ class FeatureNetLearner:
         self.sample = None                       # the reservoir (or every point when unbounded)
         self.store = None                        # every point, for the polish phase of a bounded reservoir
         self._shadow = None                      # an in-progress amortised refit
-        self.n_features = None; self.n_outputs = None
+        self.n_features = None; self.n_outputs = None; self.n_net_inputs = None
         self.net = None
         self.x_mu = None; self.x_sd = None; self.y_mu = None; self.y_sd = None
         self.version = 0
@@ -133,6 +138,7 @@ class FeatureNetLearner:
             sigma = np.tile(sigma, (1, y.shape[1]))
         if self.sample is None:
             self.n_features, self.n_outputs = x.shape[1], y.shape[1]
+            self.n_net_inputs = self._features(x).shape[1]
             if self.reservoir_size is None:
                 self.sample = _GrowingStore(self.n_features, self.n_outputs)
             else:
@@ -169,12 +175,17 @@ class FeatureNetLearner:
         self.fit(); return True
 
     # -- fitting ------------------------------------------------------------------------
+    def _features(self, X):
+        """The network's inputs for raw inputs ``X`` (n, d): ``feature_map(X)`` or ``X``."""
+        X = np.atleast_2d(np.asarray(X, float))
+        return X if self.feature_map is None else np.atleast_2d(np.asarray(self.feature_map(X), float))
+
     def _training_set(self, source, scal=None):
         """``source`` standardised as tensors, the per-point loss weights, and the
         scaling ``(x_mu, x_sd, y_mu, y_sd)``; ``scal`` reuses a scaling."""
         if isinstance(source, _GrowingStore):
             source._flush()
-        X = source.X; Y = source.y; S = source.sigma
+        X = self._features(source.X); Y = source.y; S = source.sigma
         if X.shape[0] < 2:
             raise RuntimeError("Need at least 2 observations to fit the feature network")
         if scal is None:
@@ -193,7 +204,7 @@ class FeatureNetLearner:
 
     def _new_net(self):
         torch.manual_seed(int(self.rng.randint(1 << 30)))
-        layers, w = [], self.n_features
+        layers, w = [], self.n_net_inputs
         for _ in range(self.depth):
             layers += [nn.Linear(w, self.hidden), nn.SiLU()]; w = self.hidden
         return nn.Sequential(*layers, nn.Linear(w, self.n_outputs))
@@ -301,7 +312,7 @@ class FeatureNetLearner:
 
     # -- prediction ---------------------------------------------------------------------
     def _xt(self, X):
-        return torch.tensor((np.atleast_2d(np.asarray(X, float)) - self.x_mu) / self.x_sd, dtype=torch.float32)
+        return torch.tensor((self._features(X) - self.x_mu) / self.x_sd, dtype=torch.float32)
 
     def head(self, X) -> np.ndarray:
         """h(X), the network's own prediction in original units: (n, n_outputs)."""
