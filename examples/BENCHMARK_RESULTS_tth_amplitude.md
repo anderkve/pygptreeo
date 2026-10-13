@@ -278,6 +278,44 @@ Reading:
   (4.4e-3 against 1.4e-2 at 4000). RBF leaves inside the hybrid give 2 × on f1
   (2.9e-4 against 5.9e-4 at 16 000) and nothing on f3.
 
+### 1000-point leaves, refit only at splits
+
+`--nbar 1000 --retrain 1000000000` with gradual splitting: a leaf's hyperparameters
+are fitted once, when it fills and splits, and its children inherit them; between
+splits new points enter a leaf's kernel matrix without a refit. Against the
+300-point leaves refitted every 25 points (the best row above), ε on the uniform
+test set:
+
+<!-- nbar1000 table -->
+| points | f1, Nbar 300 | f1, Nbar 1000 | f3, Nbar 300 | f3, Nbar 1000 | leaves (f1), 300 / 1000 | ms/pt (f1), 300 / 1000 |
+|---|---|---|---|---|---|---|
+| 1000 | 7.2e-04 | 3.7e-04 | 4.3e-02 | 3.8e-02 | 4 / 2 | 18 / 25 |
+| 2000 | 3.7e-04 | 1.6e-04 | 2.5e-02 | 3.6e-02 | 8 / 3 | 21 / 31 |
+| 4000 | 1.9e-04 | 9.6e-05 | 1.3e-02 | 1.1e-02 | 16 / 6 | 22 / 71 |
+| 8000 | 1.1e-04 | 6.1e-05 | 8.2e-03 | 6.7e-03 | 33 / 12 | 19 / 81 |
+| 16000 | 5.4e-05 | 2.3e-05 | 4.6e-03 | 4.3e-03 | 66 / 25 | 17 / 69 |
+| 32768 | 2.6e-05 | 1.1e-05 | 2.5e-03 | 2.1e-03 | 139 / 53 | 16 / 58 |
+| 65536 | 1.4e-05 | 4.6e-06 | 1.7e-03 | – | 286 / 106 | 16 / 49 |
+| 131072 | 7.4e-06 | – | 7.9e-04 | – | 586 / – | 15 / – |
+<!-- /nbar1000 table -->
+
+* **f1 gains 2–3 ×** at every point count: 2.3e-5 at 16 000 and 4.6e-6 at 65 536
+  (a median relative error of 3e-7), fifteen times below the paper's networks at
+  10⁵ points, and the curve still falls as N⁻¹·¹. With ten length scales a leaf
+  is better determined by 1000 points than by 300, and the single fit at the split
+  is as good as the 40 refits the smaller leaves get.
+* **f3 gains 1.1–1.2 ×** (4.3e-3 against 4.6e-3 at 16 000, 2.1e-3 against 2.5e-3
+  at 32 768): its error sits in the collinear peaks, where a larger leaf extends
+  the same smooth extrapolation over more points rather than resolving the peak
+  (next subsection).
+* **The cost is 3–4 × per point** (50–80 ms against 16–20; all sweep runs share
+  a four-core machine three at a time, so these are relative numbers), from the
+  O(n³) factorisations of 1000-point leaves. Refitting such leaves every 250
+  points instead (`--retrain 250`, run to 8000 points) buys 1.2 × on f1 (4.9e-5
+  against 6.1e-5) and 1.3 × on f3 (5.2e-3 against 6.7e-3) at twice the cost
+  (150–185 ms per point), so the refit-at-splits schedule keeps nearly all of the
+  accuracy at half the price. NBAR1000_FINAL
+
 ### Where f3's error sits
 
 `tth_error_diagnostic.py`, the tree above (invariants, RBF, 300-point leaves, mixed

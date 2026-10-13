@@ -21,7 +21,7 @@ NAMES = {"uu": r"$f_1$: $q\bar q \to t\bar t H$", "gg": r"$f_3$: $gg \to t\bar t
 # MLP and L-GATr of arXiv:2412.09534, Figure 13, read off the plot (uniform test sampling)
 REFERENCE = {"uu": [(10, 0.3), (100, 0.03), (300, 0.01), (1000, 1e-3), (3000, 3e-4), (1e4, 1e-4), (1e5, 7e-5)],
              "gg": [(10, 0.5), (100, 0.1), (1000, 1e-2), (1e4, 1e-3), (1e5, 3e-4)]}
-COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#eda100"]
+COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100"]
 
 # (file tag, key suffix, label) per series; {ch} is the channel
 FIGURES = {
@@ -35,6 +35,7 @@ FIGURES = {
         ("sweep_finalTreeSobol_{ch}", "tree", "GPTree on log invariants, RBF leaves, Sobol"),
         ("sweep_finalTreeMix_{ch}", "tree", "same, half the points drawn with probability ~ f"),
         ("sweep_finalTreeMix300_{ch}", "tree", "same, 300-point leaves"),
+        ("sweep_nbar1000split_{ch}", "tree", "same, 1000-point leaves, refit only at splits"),
         ("sweep_finalHybMixBig_{ch}", "hybrid", "hybrid on log invariants, half the points ~ f, 4 x 256 network"),
     ],
 }
