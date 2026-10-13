@@ -1,0 +1,13 @@
+gg hybrid N=  1000  eps_uniform 1.85e-01  eps_unweighted 1.95e-01  median rel 2.45e-02  within 1 %: 29 %  cov68 0.69  7.2 ms/pt  leaves 16
+gg hybrid N=  2000  eps_uniform 1.47e-01  eps_unweighted 1.53e-01  median rel 1.77e-02  within 1 %: 37 %  cov68 0.65  8.5 ms/pt  leaves 32
+gg hybrid N=  4000  eps_uniform 1.16e-01  eps_unweighted 1.18e-01  median rel 1.16e-02  within 1 %: 47 %  cov68 0.69  8.7 ms/pt  leaves 64
+gg hybrid N=  8000  eps_uniform 8.77e-02  eps_unweighted 9.53e-02  median rel 7.35e-03  within 1 %: 57 %  cov68 0.68  9.9 ms/pt  leaves 128
+gg hybrid N= 16000  eps_uniform 5.44e-03  eps_unweighted 6.35e-03  median rel 2.55e-04  within 1 %: 98 %  cov68 0.91  83.8 ms/pt  leaves 256
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| gg | hybrid | 1000 | 1.85e-01 | 1.95e-01 | 2.45e-02 | 29 % | 0.69 | 7.2 |
+| gg | hybrid | 2000 | 1.47e-01 | 1.53e-01 | 1.77e-02 | 37 % | 0.65 | 8.5 |
+| gg | hybrid | 4000 | 1.16e-01 | 1.18e-01 | 1.16e-02 | 47 % | 0.69 | 8.7 |
+| gg | hybrid | 8000 | 8.77e-02 | 9.53e-02 | 7.35e-03 | 57 % | 0.68 | 9.9 |
+| gg | hybrid | 16000 | 5.44e-03 | 6.35e-03 | 2.55e-04 | 98 % | 0.91 | 83.8 |
