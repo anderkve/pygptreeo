@@ -83,7 +83,7 @@ def averaging(frac, n_train_bins, P=None):
         dev = I - I_true
         resolved = dev ** 2 > 4 * s_stat ** 2
         n_eq = I * (1 - I) / (dev ** 2 if resolved else s_stat ** 2)
-        rows.append(dict(bin=b, pt_lo=float(PT_EDGES[b]), pt_hi=float(PT_EDGES[b + 1]), n_uniform=f["n"], targeted=P is not None,
+        rows.append(dict(bin=int(b), pt_lo=float(PT_EDGES[b]), pt_hi=float(PT_EDGES[b + 1]), n_uniform=f["n"], targeted=P is not None,
                          n_train=int(n_train_bins[b]), I_true=float(I_true), I_tree=float(I), dev=float(dev),
                          sigma_stat=float(s_stat), sigma_model=float(s_model), pull=float(dev / np.sqrt(s_model ** 2 + s_stat ** 2)),
                          resolved=bool(resolved), n_equiv=float(n_eq), G=float(n_eq / max(n_train_bins[b], 1)),
