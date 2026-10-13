@@ -5,3 +5,15 @@ uu hybrid N=  8000  eps_uniform 7.37e-04  eps_unweighted 7.27e-04  median rel 6.
 uu hybrid N= 16000  eps_uniform 4.40e-04  eps_unweighted 4.28e-04  median rel 3.97e-05  within 1 %: 100 %  cov68 0.82  17.0 ms/pt  leaves 243
 uu hybrid N= 32768  eps_uniform 2.62e-04  eps_unweighted 2.50e-04  median rel 2.52e-05  within 1 %: 100 %  cov68 0.84  13.8 ms/pt  leaves 489
 uu hybrid N= 65536  eps_uniform 1.65e-04  eps_unweighted 1.60e-04  median rel 1.64e-05  within 1 %: 100 %  cov68 0.84  12.0 ms/pt  leaves 967
+uu hybrid N=131072  eps_uniform 9.36e-05  eps_unweighted 8.87e-05  median rel 1.03e-05  within 1 %: 100 %  cov68 0.89  11.0 ms/pt  leaves 1929
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| uu | hybrid | 1000 | 3.55e-03 | 3.52e-03 | 4.12e-04 | 95 % | 0.73 | 42.2 |
+| uu | hybrid | 2000 | 2.08e-03 | 2.03e-03 | 1.95e-04 | 98 % | 0.77 | 33.5 |
+| uu | hybrid | 4000 | 1.10e-03 | 1.07e-03 | 1.17e-04 | 99 % | 0.69 | 26.9 |
+| uu | hybrid | 8000 | 7.37e-04 | 7.27e-04 | 6.41e-05 | 100 % | 0.79 | 21.0 |
+| uu | hybrid | 16000 | 4.40e-04 | 4.28e-04 | 3.97e-05 | 100 % | 0.82 | 17.0 |
+| uu | hybrid | 32768 | 2.62e-04 | 2.50e-04 | 2.52e-05 | 100 % | 0.84 | 13.8 |
+| uu | hybrid | 65536 | 1.65e-04 | 1.60e-04 | 1.64e-05 | 100 % | 0.84 | 12.0 |
+| uu | hybrid | 131072 | 9.36e-05 | 8.87e-05 | 1.03e-05 | 100 % | 0.89 | 11.0 |
