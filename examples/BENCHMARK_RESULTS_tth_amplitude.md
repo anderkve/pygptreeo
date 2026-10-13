@@ -101,17 +101,23 @@ surrogate introduces into the integral is known.
 
 | surrogate, tolerance | points | exact calls, all / last 5000 | integral shift from the surrogate | Monte Carlo error |
 |---|---|---|---|---|
-| tree, 1 % | 100 000 | 13.7 % / 5.4 % | +0.002 % | 0.32 % |
-| tree, 0.3 % | 200 000 | 30.0 % / 17.6 % | +0.001 % | 0.23 % |
-| hybrid, 1 % | 100 000 | 3.4 % / 0.8 % | +0.044 % | 0.32 % |
+| f1, tree on the cube, 1 % | 100 000 | 13.7 % / 5.4 % | +0.002 % | 0.32 % |
+| f1, tree on the cube, 0.3 % | 200 000 | 30.0 % / 17.6 % | +0.001 % | 0.23 % |
+| f1, hybrid on the cube, 1 % | 100 000 | 3.4 % / 0.8 % | +0.044 % | 0.32 % |
+| f1, tree on log invariants, RBF, 300-point leaves, 1 % | 100 000 | 0.6 % / 0.0 % | −0.026 % | 0.32 % |
+| f3, tree on log invariants, RBF, 300-point leaves, 1 % | 100 000 | 6.8 % / 2.9 % | +0.007 % | 1.05 % |
 
-With a 1 % tolerance the tree answers 95 % of the last points itself and moves the
-integral by a hundredth of its Monte Carlo error; the hybrid answers 99 % of them and
-moves it by a seventh of the Monte Carlo error. The hybrid's shift is a coherent bias
-of the network, the tree's local errors average out, so for a fixed error budget the
-tree can be gated more aggressively than its tolerance alone suggests and the hybrid
-less. In every case the shift is far inside the tolerance, since only points the
-surrogate is sure of are taken from it.
+With a 1 % tolerance the cube tree answers 95 % of the last points itself and moves
+the integral by a hundredth of its Monte Carlo error; the cube hybrid answers 99 % of
+them and moves it by a seventh of the Monte Carlo error. The hybrid's shift is a
+coherent bias of the network, the tree's local errors average out, so for a fixed
+error budget the tree can be gated more aggressively than its tolerance alone
+suggests and the hybrid less. The improved tree of Section 6 (`--inputs invariants
+--kernel rbf --nbar 300`) needs 600 exact evaluations of f1 in 100 000 points, none
+at all after the first 10 000, for a shift a twelfth of the Monte Carlo error, and
+6800 of f3 (3 % of the last batch) for a shift a hundred-and-fiftieth of it. In every
+case the shift is far inside the tolerance, since only points the surrogate is sure
+of are taken from it.
 
 ## 5. What this demonstrates
 
@@ -271,3 +277,21 @@ Reading:
   it on f3; the hybrid's remaining advantage is on f3 at small point counts
   (4.4e-3 against 1.4e-2 at 4000). RBF leaves inside the hybrid give 2 × on f1
   (2.9e-4 against 5.9e-4 at 16 000) and nothing on f3.
+
+### Where f3's error sits
+
+`tth_error_diagnostic.py`, the tree above (invariants, RBF, 300-point leaves, mixed
+stream) at 16 384 points, ε = 3.4e-3, broken down over the uniform test set:
+
+* 61 % of the error sum comes from 1 % of the test points, whose relative errors
+  run to 290 % while the median is 3e-5; 85 % of it from the top fifth in energy
+  (β² > 0.8, which holds 62 % of the integral) and 59 % from φ_t > 0.8 π, where a
+  top can line up with a beam after the boost.
+* For those worst points the smallest invariant is a gluon–top one (p_g·p_t,
+  80 % of cases) rather than a top–top or Higgs one: the t-channel top propagator,
+  |M|² ∝ 1/(p_g·p_t)², whose peaks sharpen as (E_t/m_t)² with the energy. In the
+  log-invariants the peak is a linear trend, −2 log(p_g·p_t), and a leaf with a
+  constant prior mean extrapolates it badly at the edge of its data.
+* Two remedies follow: factor the poles out of the target, learning
+  log(|M|² Π s_gt^p) (`--target pole1`, `pole2`), and give the leaves a global
+  additive model in the invariants (`--global additive`). REMEDY_RESULTS
