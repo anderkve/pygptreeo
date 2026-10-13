@@ -1,6 +1,18 @@
-gg tree   N=  1000  eps_uniform 2.64e-02  eps_unweighted 2.43e-02  median rel 3.32e-03  within 1 %: 75 %  cov68 1.00  27.2 ms/pt  leaves 2
-gg tree   N=  2000  eps_uniform 1.59e-02  eps_unweighted 1.46e-02  median rel 3.33e-03  within 1 %: 76 %  cov68 0.63  33.7 ms/pt  leaves 3
-gg tree   N=  4000  eps_uniform 7.54e-03  eps_unweighted 6.90e-03  median rel 5.54e-04  within 1 %: 87 %  cov68 0.68  50.6 ms/pt  leaves 7
-gg tree   N=  8000  eps_uniform 4.73e-03  eps_unweighted 4.36e-03  median rel 2.79e-04  within 1 %: 93 %  cov68 0.68  49.5 ms/pt  leaves 12
-gg tree   N= 16000  eps_uniform 2.52e-03  eps_unweighted 2.34e-03  median rel 1.30e-04  within 1 %: 94 %  cov68 0.66  47.6 ms/pt  leaves 23
-gg tree   N= 32768  eps_uniform 1.23e-03  eps_unweighted 1.04e-03  median rel 2.27e-05  within 1 %: 97 %  cov68 0.66  50.3 ms/pt  leaves 52
+Traceback (most recent call last):
+  File "/home/user/pygptreeo/examples/tth_amplitude_benchmark.py", line 318, in <module>
+    main()
+    ~~~~^^
+  File "/home/user/pygptreeo/examples/tth_amplitude_benchmark.py", line 304, in main
+    results[(ch, cfg)] = run(ch, cfg, args.data_dir, args.nmax, args.noise, args.seed, checkpoints)
+                         ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/pygptreeo/examples/tth_amplitude_benchmark.py", line 180, in run
+    tr, te, tu = load(data_dir, ch)
+                 ~~~~^^^^^^^^^^^^^^
+  File "/home/user/pygptreeo/examples/tth_amplitude_benchmark.py", line 52, in load
+    tw = arrays(os.path.join(data_dir, f"{ch}_train_{unw}.npz"))
+  File "/home/user/pygptreeo/examples/tth_amplitude_benchmark.py", line 47, in arrays
+    z = np.load(path)
+  File "/usr/local/lib/python3.13/dist-packages/numpy/lib/_npyio_impl.py", line 454, in load
+    fid = stack.enter_context(open(os.fspath(file), "rb"))
+                              ~~~~^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/claude-0/-home-user-pygptreeo/c104b40a-aeba-5f56-9265-dbaae8b6a4eb/scratchpad/tth_data_unw2/gg_train_unweighted_rho.npz'

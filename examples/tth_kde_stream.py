@@ -4,7 +4,7 @@ of the stream is tested on the uniform test set, and a Gaussian kernel density e
 weighted by the relative errors |Delta_i|, with Scott's bandwidth on the effective sample
 size, is sampled for the extra points, which the exact amplitude then evaluates.
 
-Writes <out_dir>/<channel>_train_unweighted.npz, a stream the benchmark reads with
+Writes <out_dir>/<channel>_train_unweighted_rho.npz, a stream the benchmark reads with
 --train unweighted: "interleaved" puts one KDE point after every four stream points,
 "twostep" puts all KDE points after the first n_first points (the paper's two-step procedure).
 
@@ -34,7 +34,8 @@ args = ap.parse_args()
 bench.OPTS.update(kernel="rbf", nbar=args.nbar, train=args.train, inputs="invariants")
 ch = args.channel
 tr, te, _ = bench.load(args.data_dir, ch)
-stream = {k: np.load(os.path.join(args.data_dir, f"{ch}_train_{'sobol' if args.train == 'sobol' else 'unweighted'}.npz"))[k]
+unw = "unweighted_rho" if bench.OPTS["rho"] else "unweighted"     # the file names the benchmark reads
+stream = {k: np.load(os.path.join(args.data_dir, f"{ch}_train_{'sobol' if args.train == 'sobol' else unw}.npz"))[k]
           for k in ("X", "P", "w", "me")}
 Xc_test = np.load(os.path.join(args.data_dir, f"{ch}_test_uniform.npz"))["X"]
 
@@ -80,8 +81,8 @@ else:
     out = {k: np.concatenate([stream[k][:args.n_first], kde[k], stream[k][args.n_first:]]) for k in stream}
 os.makedirs(args.out_dir, exist_ok=True)
 for f in os.listdir(args.data_dir):
-    if f.endswith(".npz") and f != f"{ch}_train_unweighted.npz" and not os.path.exists(os.path.join(args.out_dir, f)):
+    if f.endswith(".npz") and f != f"{ch}_train_{unw}.npz" and not os.path.exists(os.path.join(args.out_dir, f)):
         os.symlink(os.path.join(args.data_dir, f), os.path.join(args.out_dir, f))
-np.savez(os.path.join(args.out_dir, f"{ch}_train_unweighted.npz"), **out)
+np.savez(os.path.join(args.out_dir, f"{ch}_train_{unw}.npz"), **out)
 np.savez(os.path.join(args.out_dir, f"{ch}_kde_points.npz"), **kde)
-print(f"wrote {args.out_dir}/{ch}_train_unweighted.npz: {len(out['me'])} points ({args.order})")
+print(f"wrote {args.out_dir}/{ch}_train_{unw}.npz: {len(out['me'])} points ({args.order})")
