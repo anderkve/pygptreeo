@@ -11,3 +11,42 @@ uu N= 16000  eps 2.18e-05  mean |Delta| 4.47e-05  median 9.87e-07  coverage 1 si
   [ 3.0,  4.0)T     148  0.00600  0.00600  +7.4e-08  5.4e-05     1.7e-09    +0.00  > 2.1e+06  > 1.4e+04
   [ 4.0,  6.0)T      52  0.00147  0.00147  +4.6e-08  1.3e-05     1.7e-09    +0.00  > 8.1e+06  > 1.6e+05
   [ 6.0, 20.0)T       1  0.00001  0.00001  -8.0e-09  1.8e-07     3.3e-10    -0.04  >   3e+08  >   3e+08
+uu N= 65536  eps 5.31e-06  mean |Delta| 1.06e-05  median 5.06e-07  coverage 1 sigma 0.73  2 sigma 0.93  3212 s
+  p_T(H)/m_t    n_train   I_true    I_tree    dev       sigma_stat  sigma_model  pull   n_equiv       G
+  [ 0.0,  0.5)    29679  0.35920  0.35920  -4.3e-08  6.0e-04     1.6e-08    -0.00  > 6.3e+05  >      21
+  [ 0.5,  1.0)    20821  0.38545  0.38545  -9.2e-08  6.8e-04     1.9e-08    -0.00  > 5.2e+05  >      25
+  [ 1.0,  1.5)     8535  0.15798  0.15798  +2.4e-08  5.2e-04     1.7e-08    +0.00  > 4.9e+05  >      57
+  [ 1.5,  2.0)     3489  0.05803  0.05803  +3.4e-08  3.0e-04     1.0e-08    +0.00  > 6.1e+05  > 1.7e+02
+  [ 2.0,  2.5)     1509  0.02253  0.02253  +1.5e-09  1.7e-04     9.0e-09    +0.00  > 8.1e+05  > 5.3e+02
+  [ 2.5,  3.0)      718  0.00933  0.00933  +4.7e-09  9.2e-05     8.6e-09    +0.00  > 1.1e+06  > 1.5e+03
+  [ 3.0,  4.0)      578  0.00601  0.00601  +7.4e-08  6.3e-05     9.4e-09    +0.00  > 1.5e+06  > 2.6e+03
+  [ 4.0,  6.0)      205  0.00146  0.00146  -2.0e-09  2.3e-05     4.1e-09    -0.00  > 2.7e+06  > 1.3e+04
+  [ 3.0,  4.0)T     578  0.00600  0.00600  +7.5e-08  5.4e-05     4.9e-10    +0.00  > 2.1e+06  > 3.6e+03
+  [ 4.0,  6.0)T     205  0.00147  0.00147  -2.8e-09  1.3e-05     4.9e-10    -0.00  > 8.1e+06  > 3.9e+04
+  [ 6.0, 20.0)T       2  0.00001  0.00001  -2.2e-10  1.8e-07     8.9e-11    -0.00  >   3e+08  > 1.5e+08
+Traceback (most recent call last):
+  File "/home/user/pygptreeo/examples/amplification_demo.py", line 160, in <module>
+    main()
+    ~~~~^^
+  File "/home/user/pygptreeo/examples/amplification_demo.py", line 156, in main
+    json.dump(out, f, indent=1)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/json/__init__.py", line 181, in dump
+    for chunk in iterable:
+                 ^^^^^^^^
+  File "/usr/lib/python3.13/json/encoder.py", line 435, in _iterencode
+    yield from _iterencode_dict(o, _current_indent_level)
+  File "/usr/lib/python3.13/json/encoder.py", line 409, in _iterencode_dict
+    yield from chunks
+  File "/usr/lib/python3.13/json/encoder.py", line 409, in _iterencode_dict
+    yield from chunks
+  File "/usr/lib/python3.13/json/encoder.py", line 328, in _iterencode_list
+    yield from chunks
+  File "/usr/lib/python3.13/json/encoder.py", line 409, in _iterencode_dict
+    yield from chunks
+  File "/usr/lib/python3.13/json/encoder.py", line 442, in _iterencode
+    o = _default(o)
+  File "/usr/lib/python3.13/json/encoder.py", line 182, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+                    f'is not JSON serializable')
+TypeError: Object of type int64 is not JSON serializable
