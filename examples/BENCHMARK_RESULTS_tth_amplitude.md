@@ -179,6 +179,48 @@ paper reads its own numbers off a plateau rather than from that propagation. The
 KS-based "differential" variant is not reported: with a finite holdout it
 saturates at the holdout size.
 
+### 2.5 Learning during the run against pretraining
+
+`gated_integration_demo.py` with the paper's weights, 100 000 uniform Monte Carlo
+points, the 300-point tree on the invariants, tolerance 1 %. The online tree starts
+empty, calls the exact amplitude where its σ exceeds the tolerance and learns every
+call. The pretrained tree learns exactly as many exact uniform points before the run
+and is then frozen (`--pretrain N --frozen`), used either everywhere (ungated) or
+with the same gate, whose calls it does not learn from.
+
+| f1, 648 exact points for the online tree | exact calls, all / last 5000 | ε on the points used | integral shift | MC error |
+|---|---|---|---|---|
+| online, gated | 648 / 0.0 % | 4.2e-4 | −0.005 % | 0.28 % |
+| pretrained on 648, ungated | 648 / 0 | 4.3e-4 | −0.001 % | 0.28 % |
+| pretrained on 648, gated | 3909 / 2.6 % | 3.3e-4 | −0.001 % | 0.28 % |
+
+| f3, 6824 exact points for the online tree | exact calls, all / last 5000 | ε on the points used | integral shift | MC error |
+|---|---|---|---|---|
+| online, gated | 6824 / 2.9 % | 2.2e-3 | +0.014 % | 0.32 % |
+| pretrained on 6824, ungated | 6824 / 0 | 9.3e-3 | +0.23 % | 0.32 % |
+| pretrained on 6824, gated | 16 415 / 8.8 % | 8.2e-4 | −0.004 % | 0.32 % |
+
+* **At equal budget the pretrained tree is as good on f1 and four times worse on
+  f3.** f1 is easy enough that 648 uniform points are 648 points wherever they
+  come from. On f3 the online tree spent its 6824 evaluations where its σ was
+  large, the collinear regions, and answers only where it is sure; the pretrained
+  tree spent them uniformly and answers everywhere, with an integral shift of
+  0.23 %, seven tenths of the Monte Carlo error, against 0.014 %.
+* **With the same gate the frozen tree never stops calling.** Its call rate is
+  constant, 3.3 % on f1 and 9.6 % on f3, because the regions where it is unsure
+  stay unsure; the online tree's rate falls to zero on f1 after 10 000 points and
+  to 2.9 % and still falling on f3. Over this run the frozen tree spends 6 × (f1)
+  and 2.4 × (f3) the exact evaluations for the same error control, and the ratio
+  grows with the length of the run.
+* **What online learning buys, then, is not accuracy per point but the two
+  decisions a pretrained surrogate cannot make**: when enough has been learned,
+  and where the next evaluation should go. A pretrained tree with a cleverer
+  training set (Section 2.3's resample) would narrow the f3 gap at equal budget;
+  it would not change the second row of each table.
+* **Cost.** The online f3 run took 351 s against 8 s for the frozen tree on the
+  same points: the tree's updates, not its predictions, are the cost, negligible
+  against loop amplitudes and not against tree-level ones.
+
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 
 `eps_vs_points.png`; uniform-test ε, with the networks of the paper's Figure 13
@@ -283,11 +325,13 @@ the five-run averages of arXiv:2601.00950 as well. The 30–50 × deficit of the
 package defaults (Section 3) is a matter of representation, leaf size and
 sampling, not of the method. On top of that the tree family offers what the
 networks do not: learning from the evaluations as they are made with no
-retraining, a per-point calibrated uncertainty that can gate when the exact
-amplitude is needed (Section 5) and that is worth more than 10⁷ exact events in
-the tails (Section 2.4), the choice of which points to evaluate, which is what
-brings f3 onto the networks' curve (Section 2.3), and per-point noise in the
-training values (Section 4). The real two-loop case, where the evaluations are
+retraining, which at equal budget is worth a factor 4 on f3 and, with the gate,
+a call rate that falls to zero instead of staying constant (Section 2.5); a
+per-point calibrated uncertainty that can gate when the exact amplitude is needed
+(Sections 2.5 and 5) and that is worth more than 10⁷ exact events in the tails
+(Section 2.4); the choice of which points to evaluate, which is what brings f3
+onto the networks' curve (Section 2.3); and per-point noise in the training
+values (Section 4). The real two-loop case, where the evaluations are
 hours each and carry a QMC error, is in `BENCHMARK_RESULTS_hhgrid_amplitude.md`.
 
 ## Reproduce
@@ -303,13 +347,16 @@ python tth_amplitude_benchmark.py <full_domain_data_dir> --channels uu,gg --conf
 python tth_kde_stream.py <data_dir> gg <path to tth_driver> <kde_data_dir> --order interleaved
 python tth_amplitude_benchmark.py <kde_data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rbf --train unweighted --nbar 300 --tag sweep_kdeint300
 python amplification_demo.py <data_dir> gg --uniform <1e6 uniform points> --targeted <1e6 points with p_T(H) > 3 m_t> --checkpoints 16000,65536
+python gated_integration_demo.py <path to tth_driver> --inputs invariants --kernel rbf --nbar 300 --tol 0.01 --tag online_gg
+python gated_integration_demo.py <path to tth_driver> --inputs invariants --kernel rbf --nbar 300 --tol 0.01 --pretrain 6824 --frozen --tag frozen_gated_gg
+python gated_integration_demo.py <path to tth_driver> --inputs invariants --kernel rbf --nbar 300 --tol inf --pretrain 6824 --frozen --tag frozen_gg
 # Sections 3-7: the flat-flux weights (--no-rho)
 python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs tree,hybrid --no-rho --tag exact
 python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs acq --nmax 32768 --no-rho --tag acq
 python tth_amplitude_benchmark.py <data_dir> --channels uu --configs hybrid --nmax 32768 \
     --net hidden=256,depth=4,steps=600,polish_steps=10000 --tag bignet_uu
 python tth_amplitude_benchmark.py <data_dir> --channels uu --configs tree,hybrid --nmax 32768 --noise 0.003 --tag noise0.003_uu
-python gated_integration_demo.py <path to tth_driver> --config tree --tol 0.01 --npoints 100000
+python gated_integration_demo.py <path to tth_driver> --config tree --tol 0.01 --npoints 100000 --no-rho
 # Section 7: the variants (with --no-rho), e.g. the best plain tree and the best hybrid over the full stream
 python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs tree --inputs invariants --kernel rbf --train mixed --nbar 300 --tag sweep_finalTreeMix300
 python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs hybrid --inputs invariants --features invariants --train mixed \
