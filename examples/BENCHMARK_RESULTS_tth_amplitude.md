@@ -56,12 +56,14 @@ Networks: the MLP and L-GATr curves of the paper's Figure 13, read off the plot.
 | tree, package defaults (cube inputs, Matérn 3/2, Nbar 100, Sobol) | 8.09e-03 | 3.78e-03 | 1.75e-03 | 1.28e-03 | 3.88e-02 | 1.89e-02 | 9.17e-03 | 6.42e-03 |
 | tree on log invariants, RBF leaves, Nbar 300, mixed stream | 8.27e-05 | 2.12e-05 | 5.16e-06 | 2.77e-06 | 5.53e-03 | 2.32e-03 | 7.17e-04 | 3.92e-04 |
 | tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, mixed stream | 4.65e-05 | 1.19e-05 | 2.38e-06 | 1.32e-06 | 9.76e-03 | 4.20e-03 | 9.41e-04 | 6.29e-04 |
+| tree on log invariants, RBF leaves, Nbar 300, importance-sampled stream | 1.22e-04 | 3.07e-05 | 7.55e-06 | – | 6.44e-03 | 2.28e-03 | 7.34e-04 | – |
 | tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, importance-sampled stream | 6.87e-05 | 1.67e-05 | 4.33e-06 | – | 7.02e-03 | 3.05e-03 | 8.13e-04 | – |
 | tree on log invariants, RBF leaves, Nbar 300, chooses its points from the mixed pool | 4.33e-05 | 6.99e-06 | 2.78e-06 | – | 3.18e-03 | 7.56e-04 | 3.84e-04 | – |
 | tree on log invariants, RBF leaves, Nbar 300, importance-sampled stream with 20 % KDE-targeted points | – | – | – | – | 5.32e-03 | 1.76e-03 | 5.78e-04 | – |
 | the same stream with the KDE points after the first 16 384 | – | – | – | – | 6.44e-03 | 2.28e-03 | 6.10e-04 | – |
 | FULL DOMAIN: tree, package defaults | 1.63e-02 | 8.00e-03 | 3.52e-03 | 2.58e-03 | 7.29e-02 | 3.77e-02 | 1.87e-02 | 1.36e-02 |
 | FULL DOMAIN: tree on log invariants, RBF leaves, Nbar 300, mixed stream | 4.58e-04 | 1.12e-04 | 2.48e-05 | 1.28e-05 | 1.15e-02 | 4.97e-03 | 1.85e-03 | 1.09e-03 |
+| FULL DOMAIN: tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, mixed stream | 4.53e-04 | 1.08e-04 | 2.24e-05 | 8.07e-06 | 1.91e-02 | 5.90e-03 | 2.05e-03 | 1.09e-03 |
 | MLP / L-GATr of arXiv:2412.09534, Fig. 13 (read off the plot) | 3e-4 | 9e-5 | 8e-5 | 7e-5 | 7e-3 | 8e-4 | 4e-4 | 3e-4 |
 
 ### 2.1 Against the paper's networks
@@ -81,9 +83,10 @@ Networks: the MLP and L-GATr curves of the paper's Figure 13, read off the plot.
 * **The folding is worth a factor 3 to 5 at equal N** (1.3e-5 against 2.8e-6 on
   f1, 1.1e-3 against 3.9e-4 on f3 at 131 072), as four times the point density
   should give. On the full domain, which is what the networks were trained on, the
-  tree is 5 times below them on f1 and 3.6 times above them on f3 at 131 072
-  (PENDING_FULLSPLIT); the folding is an exact symmetry, so it is legitimate for
-  either side, but the two comparisons should be read with that in mind.
+  300-point tree is 5 times below them on f1 and 3.6 times above them on f3 at
+  131 072; 1000-point leaves bring f1 to 8.1e-6 and leave f3 at 1.1e-3. The
+  folding is an exact symmetry, so it is legitimate for either side, but the two
+  comparisons should be read with that in mind.
 * **The package defaults** (cube inputs, Matérn 3/2, 100-point leaves, Sobol) end
   at 1.3e-3 and 6.4e-3: the representation, the leaf size and the stream are what
   separate them from the rows above, not the method.
@@ -129,7 +132,7 @@ points there, each at 65 536 points with 300-point leaves:
 | f3, paper's weights | ε @16 000 | ε @65 536 |
 |---|---|---|
 | mixed stream (reference) | 2.3e-3 | 7.2e-4 |
-| LO-unweighted stream, nothing else | PENDING_RHOUNW300 |
+| LO-unweighted stream, nothing else | 2.3e-3 | 7.3e-4 |
 | LO-unweighted stream with 20 % KDE-targeted points, interleaved | 1.8e-3 | 5.8e-4 |
 | the same, the KDE points after the first 16 384 (the paper's two-step order) | 2.3e-3 | 6.1e-4 |
 | the tree choosing its points from the mixed pool by `w |M|² σ` | 7.6e-4 | 3.8e-4 |
@@ -137,15 +140,17 @@ points there, each at 65 536 points with 300-point leaves:
 * The KDE resample of arXiv:2601.00950, reproduced with `tth_kde_stream.py` (a
   tree trained on the first 16 384 stream points, its relative errors on the
   uniform test set as KDE weights, Scott's bandwidth on the effective sample size),
-  gives the tree the same factor 1.2–1.4 it gives their network. Interleaving the
-  points beats appending them, as an online learner would expect.
+  gives the tree the same factor 1.2–1.3 over its own stream that it gives their
+  network. Interleaving the points beats appending them, as an online learner
+  would expect.
 * The tree's own acquisition does what the resample does, continuously and with
   no second stage: a factor 1.9 at 65 536 and 3 at 16 000 over the mixed stream.
   It is the one lever that brings f3 onto the networks' curve at every N.
 * Under the paper's weights the pure LO-unweighted stream no longer helps (it
-  gave 2 × on the flat-flux metric): its points sit at low β² and leave the
-  collinear region to the Sobol half of the mixed stream. With 1000-point leaves
-  it gives 8.1e-4 at 65 536.
+  gave 2 × on the flat-flux metric): 7.3e-4 against the mixed stream's 7.2e-4 with
+  300-point leaves, 8.1e-4 with 1000-point ones, and on f1 it is worse (7.6e-6
+  against 5.2e-6). Its points sit at low β² and leave the rest of the cube to the
+  Sobol half of the mixed stream.
 
 ### 2.4 Statistical amplification
 
