@@ -4,6 +4,7 @@ result files of tth_amplitude_benchmark.py, with the networks of arXiv:2412.0953
 
 eps_vs_points.png: the package defaults (tree, tree choosing its points, hybrid, larger network).
 eps_vs_points_improved.png: log-invariant inputs, RBF leaves and f-weighted training points.
+eps_vs_points_paper_weights.png: the same with the paper's weights (flux and pseudo-PDF factor).
 
 Usage: python plot_tth_results.py [results_dir]
 """
@@ -38,7 +39,15 @@ FIGURES = {
         ("sweep_nbar1000split_{ch}", "tree", "same, 1000-point leaves, refit only at splits"),
         ("sweep_finalHybMixBig_{ch}", "hybrid", "hybrid on log invariants, half the points ~ f, 4 x 256 network"),
     ],
+    "eps_vs_points_paper_weights.png": [
+        ("sweep_rhoDefault_{ch}", "tree", "GPTree, package defaults"),
+        ("sweep_rhoMix300_{ch}", "tree", "GPTree on log invariants, RBF leaves, 300-point leaves, mixed stream"),
+        ("sweep_rhoSplit1000_{ch}", "tree", "same, 1000-point leaves, refit only at splits"),
+        ("sweep_rhoAcq300_{ch}", "acq", "same as the 300-point tree, choosing its points"),
+        ("sweep_fullMix300_{ch}", "tree", "300-point tree on the full polar-angle domain"),
+    ],
 }
+# The first two figures use the phase-space measure alone as the weight (no pseudo-PDF factor), the third the paper's f
 
 
 def rows_of(tag, ch, key):
