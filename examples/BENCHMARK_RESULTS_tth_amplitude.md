@@ -181,8 +181,9 @@ saturates at the holdout size.
 
 ### 2.5 Learning during the run against pretraining
 
-`gated_integration_demo.py` with the paper's weights, 100 000 uniform Monte Carlo
-points, the 300-point tree on the invariants, tolerance 1 %. The online tree starts
+`online_vs_pretrained.pdf` (`plot_online_vs_pretrained.py`); `gated_integration_demo.py`
+with the paper's weights, 100 000 uniform Monte Carlo points, the 300-point tree on
+the invariants, tolerance 1 %. The online tree starts
 empty, calls the exact amplitude where its σ exceeds the tolerance and learns every
 call. The pretrained tree learns exactly as many exact uniform points before the run
 and is then frozen (`--pretrain N --frozen`), used either everywhere (ungated) or
@@ -194,22 +195,23 @@ with the same gate, whose calls it does not learn from.
 | pretrained on 648, ungated | 648 / 0 | 4.3e-4 | −0.001 % | 0.28 % |
 | pretrained on 648, gated | 3909 / 2.6 % | 3.3e-4 | −0.001 % | 0.28 % |
 
-| f3, 6824 exact points for the online tree | exact calls, all / last 5000 | ε on the points used | integral shift | MC error |
+| f3, 6892 exact points for the online tree | exact calls, all / last 5000 | ε on the points used | integral shift | MC error |
 |---|---|---|---|---|
-| online, gated | 6824 / 2.9 % | 2.2e-3 | +0.014 % | 0.32 % |
-| pretrained on 6824, ungated | 6824 / 0 | 9.3e-3 | +0.23 % | 0.32 % |
-| pretrained on 6824, gated | 16 415 / 8.8 % | 8.2e-4 | −0.004 % | 0.32 % |
+| online, gated | 6892 / 2.7 % | 2.2e-3 | +0.014 % | 0.32 % |
+| pretrained on 6892, ungated | 6892 / 0 | 1.0e-2 | +0.29 % | 0.32 % |
+| pretrained on 6892, gated | 16 601 / 8.8 % | 7.9e-4 | −0.003 % | 0.32 % |
 
-* **At equal budget the pretrained tree is as good on f1 and four times worse on
-  f3.** f1 is easy enough that 648 uniform points are 648 points wherever they
-  come from. On f3 the online tree spent its 6824 evaluations where its σ was
+* **At equal budget the pretrained tree is as good on f1 and four to five times
+  worse on f3.** f1 is easy enough that 648 uniform points are 648 points wherever
+  they come from. On f3 the online tree spent its 6892 evaluations where its σ was
   large, the collinear regions, and answers only where it is sure; the pretrained
   tree spent them uniformly and answers everywhere, with an integral shift of
-  0.23 %, seven tenths of the Monte Carlo error, against 0.014 %.
+  0.29 %, nine tenths of the Monte Carlo error and growing relative to it as the
+  run goes on, against 0.014 %.
 * **With the same gate the frozen tree never stops calling.** Its call rate is
-  constant, 3.3 % on f1 and 9.6 % on f3, because the regions where it is unsure
+  constant, 3.3 % on f1 and 9.7 % on f3, because the regions where it is unsure
   stay unsure; the online tree's rate falls to zero on f1 after 10 000 points and
-  to 2.9 % and still falling on f3. Over this run the frozen tree spends 6 × (f1)
+  to 2.7 % and still falling on f3. Over this run the frozen tree spends 6 × (f1)
   and 2.4 × (f3) the exact evaluations for the same error control, and the ratio
   grows with the length of the run.
 * **What online learning buys, then, is not accuracy per point but the two
@@ -217,7 +219,7 @@ with the same gate, whose calls it does not learn from.
   and where the next evaluation should go. A pretrained tree with a cleverer
   training set (Section 2.3's resample) would narrow the f3 gap at equal budget;
   it would not change the second row of each table.
-* **Cost.** The online f3 run took 351 s against 8 s for the frozen tree on the
+* **Cost.** The online f3 run took 374 s against 8 s for the frozen tree on the
   same points: the tree's updates, not its predictions, are the cost, negligible
   against loop amplitudes and not against tree-level ones.
 
