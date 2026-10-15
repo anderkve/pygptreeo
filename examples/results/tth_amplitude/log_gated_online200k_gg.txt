@@ -1,0 +1,1 @@
+N=   2000  exact calls 46.1 % (last 5000: 46.1 %), 921 in all  eps on the points used 1.4e-03  gated/exact - 1 = -0.005 %  MC error 2.26 %  leaves 4  47 s
