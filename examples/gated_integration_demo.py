@@ -87,7 +87,8 @@ def main():
             for i in range(args.pretrain):
                 gpt.update_tree(Xp[i:i + 1], np.log(a_p[i:i + 1]).reshape(1, 1), sig_exact)
     f_used, f_exact, called = [], [], []
-    log = []
+    log, series = [], []
+    run = dict(n=0, calls=0, sum_true=0.0, sum_sur=0.0, sum_true2=0.0, sum_abs=0.0)   # running sums for the per-chunk record
     t0 = time.time()
     for start in range(0, args.npoints, args.chunk):
         X = rng.uniform(size=(args.chunk, 5))
@@ -110,6 +111,12 @@ def main():
         f_sur = w * np.where(gate, a, np.exp(mu))
         f_used.append(f_sur); f_exact.append(f_true); called.append(gate)
         n_seen = start + args.chunk
+        run["n"] = n_seen; run["calls"] += int(gate.sum()); run["sum_true"] += f_true.sum(); run["sum_sur"] += f_sur.sum()
+        run["sum_true2"] += (f_true ** 2).sum(); run["sum_abs"] += np.abs(f_sur - f_true).sum()
+        I_ex, I_su = run["sum_true"] / n_seen, run["sum_sur"] / n_seen
+        mc = np.sqrt(max(run["sum_true2"] / n_seen - I_ex ** 2, 0.0) / n_seen)
+        series.append(dict(N=n_seen, calls=int(gate.sum()), n_exact=run["calls"] + args.pretrain, shift=float((I_su - I_ex) / I_ex),
+                           shift_over_mc=float((I_su - I_ex) / mc), mc_rel_err=float(mc / I_ex), eps_used=float(run["sum_abs"] / run["sum_true"])))
         if n_seen in (2000, 5000, 10000, 20000, 50000, 100000, 200000) or n_seen == args.npoints:
             fu, fe, c = np.concatenate(f_used), np.concatenate(f_exact), np.concatenate(called)
             I_ex, I_su = fe.mean(), fu.mean()
@@ -126,7 +133,7 @@ def main():
     tag = args.tag or (f"{args.config}_{args.inputs}_{args.kernel}_nbar{args.nbar}_tol{args.tol:g}" +
                        (f"_pre{args.pretrain}" if args.pretrain else "") + ("_frozen" if args.frozen else ""))
     with open(os.path.join(OUT_DIR, f"gated_{tag}.json"), "w") as f:
-        json.dump(log, f, indent=1)
+        json.dump(dict(args=vars(args), channel=ch, checkpoints=log, series=series), f, indent=1)
 
 
 if __name__ == "__main__":
