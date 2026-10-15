@@ -219,6 +219,14 @@ with the same gate, whose calls it does not learn from.
   and where the next evaluation should go. A pretrained tree with a cleverer
   training set (Section 2.3's resample) would narrow the f3 gap at equal budget;
   it would not change the second row of each table.
+* **Over 200 000 points** (`online_vs_pretrained200k.pdf`, with a third row of the
+  absolute errors against the shrinking Monte Carlo error) the picture sharpens:
+  the online tree's calls end at 663 (f1) and 8670 (f3, 1.5 % of the last points
+  and falling), the gated frozen tree's at 8191 (12 ×) and 25 753 (3 ×); the
+  ungated frozen tree's f3 integral, biased by 0.32 %, leaves the Monte Carlo
+  error band at 150 000 points and is 1.4 Monte Carlo errors off at 200 000, while
+  the online tree's deviation falls from 0.014 % to 0.009 %, 0.04 Monte Carlo
+  errors.
 * **Cost.** The online f3 run took 374 s against 8 s for the frozen tree on the
   same points: the tree's updates, not its predictions, are the cost, negligible
   against loop amplitudes and not against tree-level ones.

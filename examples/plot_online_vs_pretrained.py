@@ -83,7 +83,7 @@ def main():
         top.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v / 1e3:g}k" if v >= 1e3 else f"{v:g}"))
         bot.axhspan(-1, 1, color="#898781", alpha=0.10, lw=0, zorder=0)
         bot.axhline(0, color="#c3c2b7", lw=0.6, zorder=1)
-        bot.set_ylim(-1.15, 1.15)
+        bot.set_ylim(-1.6, 1.6)
         axes[-1, j].set_xlabel("Monte Carlo points (thousands)")
         axes[-1, j].set_xticks(np.linspace(0, n_max, 5))
         if args.absolute:
@@ -100,7 +100,7 @@ def main():
         if j == 0:
             top.set_ylabel("exact amplitude evaluations")
             bot.set_ylabel("(integral $-$ exact) / MC error")
-            bot.text(0.02 * n_max, 0.95, "$\\pm$1 Monte Carlo error", fontsize=7, color=MUTED, va="top")
+            bot.text(0.02 * n_max, 0.93, "$\\pm$1 Monte Carlo error", fontsize=7, color=MUTED, va="top")
             if args.absolute:
                 axes[2, j].set_ylabel("|integral $-$ exact| / exact")
     handles, labels = axes[0, 0].get_legend_handles_labels()
