@@ -1,0 +1,1 @@
+gg tree   N=  1000  eps_uniform 1.54e-02  eps_unweighted 1.40e-02  median rel 5.56e-04  within 1 %: 78 %  cov68 0.69  40.2 ms/pt  leaves 4
