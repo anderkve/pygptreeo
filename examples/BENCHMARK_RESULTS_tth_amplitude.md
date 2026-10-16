@@ -48,47 +48,54 @@ takes the ten `log(p_i · p_j)` as inputs, RBF leaves of 300 or 1000 points, and
 
 ## 2. Results with the paper's weights
 
-`eps_vs_points_paper_weights.png`; ε on the uniform test set, seed 1, one run each.
-Networks: the MLP and L-GATr curves of the paper's Figure 13, read off the plot.
+`eps_vs_points_paper_weights.png`; the networks' metric, the mean relative error on
+LO-unweighted test points (their eq. 30), seed 1, one run each. Networks: the MLP(s)
+and L-GATr curves of the paper's Figure 16 (trained and tested on unweighted
+samples), read off the plot by pixel position; the two agree to 10–20 %, the mean is
+quoted. ε on uniform test points (their eq. 28) is within 20 % of these values for
+every row.
 
-| configuration (ε on the uniform test set, paper's weights) | f1 @4000 | f1 @16000 | f1 @65536 | f1 @131072 | f3 @4000 | f3 @16000 | f3 @65536 | f3 @131072 |
+| configuration (mean relative error on LO-unweighted test points, paper's weights) | f1 @4000 | f1 @16000 | f1 @65536 | f1 @131072 | f3 @4000 | f3 @16000 | f3 @65536 | f3 @131072 |
 |---|---|---|---|---|---|---|---|---|
-| tree, package defaults (cube inputs, Matérn 3/2, Nbar 100, Sobol) | 8.09e-03 | 3.78e-03 | 1.75e-03 | 1.28e-03 | 3.88e-02 | 1.89e-02 | 9.17e-03 | 6.42e-03 |
-| tree on log invariants, RBF leaves, Nbar 300, mixed stream | 8.27e-05 | 2.12e-05 | 5.16e-06 | 2.77e-06 | 5.53e-03 | 2.32e-03 | 7.17e-04 | 3.92e-04 |
-| tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, mixed stream | 4.65e-05 | 1.19e-05 | 2.38e-06 | 1.32e-06 | 9.76e-03 | 4.20e-03 | 9.41e-04 | 6.29e-04 |
-| tree on log invariants, RBF leaves, Nbar 300, importance-sampled stream | 1.22e-04 | 3.07e-05 | 7.55e-06 | – | 6.44e-03 | 2.28e-03 | 7.34e-04 | – |
-| tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, importance-sampled stream | 6.87e-05 | 1.67e-05 | 4.33e-06 | – | 7.02e-03 | 3.05e-03 | 8.13e-04 | – |
-| tree on log invariants, RBF leaves, Nbar 300, chooses its points from the mixed pool | 4.33e-05 | 6.99e-06 | 2.78e-06 | – | 3.18e-03 | 7.56e-04 | 3.84e-04 | – |
-| tree on log invariants, RBF leaves, Nbar 300, importance-sampled stream with 20 % KDE-targeted points | – | – | – | – | 5.32e-03 | 1.76e-03 | 5.78e-04 | – |
-| the same stream with the KDE points after the first 16 384 | – | – | – | – | 6.44e-03 | 2.28e-03 | 6.10e-04 | – |
-| FULL DOMAIN: tree, package defaults | 1.63e-02 | 8.00e-03 | 3.52e-03 | 2.58e-03 | 7.29e-02 | 3.77e-02 | 1.87e-02 | 1.36e-02 |
-| FULL DOMAIN: tree on log invariants, RBF leaves, Nbar 300, mixed stream | 4.58e-04 | 1.12e-04 | 2.48e-05 | 1.28e-05 | 1.15e-02 | 4.97e-03 | 1.85e-03 | 1.09e-03 |
-| FULL DOMAIN: tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, mixed stream | 4.53e-04 | 1.08e-04 | 2.24e-05 | 8.07e-06 | 1.91e-02 | 5.90e-03 | 2.05e-03 | 1.09e-03 |
-| MLP / L-GATr of arXiv:2412.09534, Fig. 13 (read off the plot) | 3e-4 | 9e-5 | 8e-5 | 7e-5 | 7e-3 | 8e-4 | 4e-4 | 3e-4 |
+| tree, package defaults (cube inputs, Matérn 3/2, Nbar 100, Sobol) | 8.19e-03 | 3.82e-03 | 1.70e-03 | 1.24e-03 | 3.84e-02 | 1.97e-02 | 9.52e-03 | 6.82e-03 |
+| tree on log invariants, RBF leaves, Nbar 300, mixed stream | 7.00e-05 | 2.24e-05 | 5.15e-06 | 3.18e-06 | 4.92e-03 | 2.24e-03 | 6.61e-04 | 3.51e-04 |
+| tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, mixed stream | 3.40e-05 | 1.30e-05 | 2.70e-06 | 1.26e-06 | 9.11e-03 | 3.37e-03 | 8.01e-04 | 4.46e-04 |
+| tree on log invariants, RBF leaves, Nbar 300, importance-sampled stream | 9.14e-05 | 2.10e-05 | 6.03e-06 | – | 5.33e-03 | 2.01e-03 | 6.13e-04 | – |
+| tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, importance-sampled stream | 5.56e-05 | 1.30e-05 | 2.97e-06 | – | 5.32e-03 | 2.32e-03 | 6.04e-04 | – |
+| tree on log invariants, RBF leaves, Nbar 300, chooses its points from the mixed pool | 4.37e-05 | 6.65e-06 | 2.65e-06 | – | 3.15e-03 | 6.94e-04 | 3.48e-04 | – |
+| tree on log invariants, RBF leaves, Nbar 300, importance-sampled stream with 20 % KDE-targeted points | – | – | – | – | 4.71e-03 | 1.72e-03 | 5.68e-04 | – |
+| the same stream with the KDE points after the first 16 384 | – | – | – | – | 5.33e-03 | 2.01e-03 | 5.38e-04 | – |
+| FULL DOMAIN: tree, package defaults | 1.57e-02 | 7.54e-03 | 3.44e-03 | 2.53e-03 | 6.94e-02 | 3.75e-02 | 1.79e-02 | 1.33e-02 |
+| FULL DOMAIN: tree on log invariants, RBF leaves, Nbar 300, mixed stream | 4.31e-04 | 1.02e-04 | 2.35e-05 | 1.04e-05 | 1.11e-02 | 5.08e-03 | 1.76e-03 | 1.04e-03 |
+| FULL DOMAIN: tree on log invariants, RBF leaves, Nbar 1000 refit only at splits, mixed stream | 3.75e-04 | 9.31e-05 | 2.04e-05 | 7.89e-06 | 1.97e-02 | 6.92e-03 | 2.23e-03 | 1.09e-03 |
+| MLP(s) / L-GATr of arXiv:2412.09534, Fig. 16 (read off the plot) | 6e-4 | 1.6e-4 | 6.8e-5 | 5.6e-5 | 5.5e-3 | 1.1e-3 | 2.7e-4 | 1.7e-4 |
 
 ### 2.1 Against the paper's networks
 
-* **f1 is won by 25 to 50 times.** The 300-point tree on the invariants reaches
-  2.8e-6 at 131 072 points (median relative error 4e-7, every test point within
-  1 %) against the networks' 7e-5 at 10⁵; the 1000-point tree refitted only at
-  splits reaches 1.3e-6, and both curves keep falling as N⁻¹ where the networks'
-  flatten. Choosing its points, the 300-point tree is at 7.0e-6 at 16 000, where
-  the networks are at 9e-5.
-* **f3 is level with the networks.** The 300-point tree on the mixed stream ends
-  at 3.9e-4 against their 3e-4 at 10⁵; choosing its points it follows their curve
-  from 16 000 on (7.6e-4 against 8e-4) and reaches 3.8e-4 at 65 536, where they
-  are near 4e-4. The 1000-point leaves that help f1 hurt f3 here (6.3e-4): under
-  the pseudo-PDF the error that counts sits at low β², near threshold, where the
-  amplitude varies fastest and the smaller, more often refitted leaves do better.
-* **The folding is worth a factor 3 to 5 at equal N** (1.3e-5 against 2.8e-6 on
-  f1, 1.1e-3 against 3.9e-4 on f3 at 131 072), as four times the point density
-  should give. On the full domain, which is what the networks were trained on, the
-  300-point tree is 5 times below them on f1 and 3.6 times above them on f3 at
-  131 072; 1000-point leaves bring f1 to 8.1e-6 and leave f3 at 1.1e-3. The
+* **f1 is far below the networks.** The 300-point tree on the mixed stream reaches
+  3.2e-6 at 131 072 points (median relative error 4e-7, every test point within
+  1 %) against the networks' 5.6e-5 at 1.3·10⁵, 18 times lower; the 1000-point
+  tree refitted only at splits reaches 1.3e-6, 44 times lower, and both curves
+  keep falling as N⁻¹ where the networks' flatten (5.6e-5 → 4.6e-5 from 10⁵ to
+  10⁶ points). Choosing its points, the 300-point tree is at 6.7e-6 at 16 000,
+  where the networks are at 1.6e-4.
+* **f3 is within a factor 2 of the networks.** The 300-point tree on the mixed
+  stream ends at 3.5e-4 against their 1.7e-4 at 1.3·10⁵; choosing its points it is
+  ahead of them at 16 000 (6.9e-4 against 1.1e-3) and 1.3 times behind at 65 536
+  (3.5e-4 against 2.7e-4). The 1000-point leaves that help f1 hurt f3 here
+  (4.5e-4): under the pseudo-PDF the error that counts sits at low β², near
+  threshold, where the amplitude varies fastest and the smaller, more often
+  refitted leaves do better. The networks' f3 curve also flattens (1.9e-4 at 10⁵,
+  1.1e-4 at 10⁶) while the tree's still falls as N⁻⁰·⁹.
+* **The folding is worth a factor 3 at equal N** (1.0e-5 against 3.2e-6 on f1,
+  1.0e-3 against 3.5e-4 on f3 at 131 072), as four times the point density should
+  give. On the full domain, which is what the networks were trained on, the
+  300-point tree is 5 times below them on f1 and 6 times above them on f3 at
+  131 072; 1000-point leaves bring f1 to 7.9e-6 and leave f3 at 1.1e-3. The
   folding is an exact symmetry, so it is legitimate for either side, but the two
   comparisons should be read with that in mind.
 * **The package defaults** (cube inputs, Matérn 3/2, 100-point leaves, Sobol) end
-  at 1.3e-3 and 6.4e-3: the representation, the leaf size and the stream are what
+  at 1.2e-3 and 6.8e-3: the representation, the leaf size and the stream are what
   separate them from the rows above, not the method.
 * **Cost.** 35–55 ms per update for the 300-point tree on the invariants on a
   shared four-core machine; the networks' cost is their training, which the paper
@@ -145,7 +152,8 @@ points there, each at 65 536 points with 300-point leaves:
   would expect.
 * The tree's own acquisition does what the resample does, continuously and with
   no second stage: a factor 1.9 at 65 536 and 3 at 16 000 over the mixed stream.
-  It is the one lever that brings f3 onto the networks' curve at every N.
+  It is the lever that brings f3 closest to the networks' curve: ahead of it at
+  16 000 points, 1.3 times behind at 65 536.
 * Under the paper's weights the pure LO-unweighted stream no longer helps (it
   gave 2 × on the flat-flux metric): 7.3e-4 against the mixed stream's 7.2e-4 with
   300-point leaves, 8.1e-4 with 1000-point ones, and on f1 it is worse (7.6e-6
@@ -233,19 +241,21 @@ with the same gate, whose calls it does not learn from.
 
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 
-`eps_vs_points.png`; uniform-test ε, with the networks of the paper's Figure 13
-(MLP and L-GATr, read off the plot) for reference.
+`eps_vs_points.png`; uniform-test ε with flat-flux weights, with the networks of the
+paper's Figure 16 (MLP(s) and L-GATr on LO-unweighted test points with the paper's
+weights, read off the plot) for reference. The network columns are on a different
+metric, so they are indicative only; Section 2 has the like-for-like comparison.
 
 | points | f1 tree | f1 acq | f1 hybrid | f1 hybrid, 4 × 256 | f1 paper's networks | f3 tree | f3 acq | f3 hybrid | f3 hybrid, 4 × 256 | f3 paper's networks |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1000 | 2.7e-2 | 2.7e-2 | 1.8e-2 | 1.5e-2 | 1e-3 | 0.19 | 0.19 | 0.18 | 0.20 | 1e-2 |
+| 1000 | 2.7e-2 | 2.7e-2 | 1.8e-2 | 1.5e-2 | 3.5e-3 | 0.19 | 0.19 | 0.18 | 0.20 | 2.5e-2 |
 | 2000 | 1.9e-2 | 1.7e-2 | 9.6e-3 | 6.6e-3 | | 0.15 | 0.10 | 0.12 | 9.8e-2 | |
-| 4000 | 1.4e-2 | 1.1e-2 | 6.5e-3 | 3.1e-3 | 3e-4 (3000) | 0.12 | 6.5e-2 | 6.8e-2 | 5.0e-2 | |
+| 4000 | 1.4e-2 | 1.1e-2 | 6.5e-3 | 3.1e-3 | 8e-4 (3000) | 0.12 | 6.5e-2 | 6.8e-2 | 5.0e-2 | 8e-3 (3000) |
 | 8000 | 9.6e-3 | 7.4e-3 | 4.2e-3 | 1.9e-3 | | 8.7e-2 | 4.6e-2 | 5.3e-2 | 3.2e-2 | |
-| 16 000 | 6.6e-3 | 5.0e-3 | 2.4e-3 | 1.3e-3 | 1e-4 (10⁴) | 6.4e-2 | 3.5e-2 | 4.2e-2 | 2.0e-2 | 1e-3 (10⁴) |
+| 16 000 | 6.6e-3 | 5.0e-3 | 2.4e-3 | 1.3e-3 | 2.2e-4 (10⁴) | 6.4e-2 | 3.5e-2 | 4.2e-2 | 2.0e-2 | 1.7e-3 (10⁴) |
 | 32 768 | 4.3e-3 | 3.5e-3 | 1.4e-3 | 8.3e-4 | | 4.4e-2 | 2.8e-2 | 2.9e-2 | 1.3e-2 | |
 | 65 536 | 3.0e-3 | | 8.2e-4 | | | 3.1e-2 | | 2.1e-2 | | |
-| 131 072 | 2.2e-3 | | 5.1e-4 | 7e-5 (10⁵) | | 2.3e-2 | | 1.5e-2 | | 3e-4 (10⁵) |
+| 131 072 | 2.2e-3 | | 5.1e-4 | | 6e-5 (10⁵) | 2.3e-2 | | 1.5e-2 | | 2e-4 (10⁵) |
 
 Unweighted-test ε is within 10 % of the uniform one for f1 and 10–20 % above it for
 f3 (the tails of f3 are where the error sits). Update cost: tree 2 ms per point,
@@ -265,8 +275,8 @@ Reading:
 * **Choosing the points by the expected error contribution saves about a third of
   them**: the tree with acquisition reaches at 8000 points what the Sobol order
   reaches at 12 000 (f1) and at 16 000 what Sobol reaches at 30 000 (f3).
-* **The paper's networks are far ahead of these default settings**: 30 to 50
-  times lower ε at 10⁴ points than the default hybrid, 10 to 20 times than the larger
+* **The paper's networks are far ahead of these default settings**: 10 to 25
+  times lower ε at 10⁴ points than the default hybrid, 6 to 12 times than the larger
   network. With the defaults the tree family sits with the paper's classical
   interpolants, which reach 1 % at 10⁴–10⁵ points in 5D. Section 7 shows what
   closes the gap: the inputs, the leaf kernel and size, and the sampling. Every
@@ -328,10 +338,10 @@ of are taken from it.
 ## 6. What this demonstrates
 
 On the paper's own metric (Section 2) the plain tree, given the log-invariants as
-inputs, RBF leaves and the stream an integrator produces, is 25–50 times below the
-paper's networks on f1 and level with them on f3 at 10⁵ points, with no network,
+inputs, RBF leaves and the stream an integrator produces, is 18–44 times below the
+paper's networks on f1 and within a factor 2 of them on f3 at 10⁵ points, with no network,
 learning online, and with its curves still falling where theirs flatten; it matches
-the five-run averages of arXiv:2601.00950 as well. The 30–50 × deficit of the
+the five-run averages of arXiv:2601.00950 as well. The 10–25 × deficit of the
 package defaults (Section 3) is a matter of representation, leaf size and
 sampling, not of the method. On top of that the tree family offers what the
 networks do not: learning from the evaluations as they are made with no
@@ -490,16 +500,16 @@ Reading:
 | tree on log invariants, RBF leaves, `Nbar = 1000`, refit only at splits | 3.4e-6 | 5.8e-4 | 50 ms |
 | hybrid on log invariants, Matérn 3/2 leaves | 9.4e-5 | 1.1e-3 | 11 ms |
 | hybrid on log invariants, 4 × 256 network (65 536 points) | 7.1e-5 | 9.4e-4 | 21 ms |
-| MLP / L-GATr of arXiv:2412.09534 at 10⁵ points (Figure 13) | 7e-5 | 3e-4 | |
+| MLP(s) / L-GATr of arXiv:2412.09534 at 10⁵ points (Figure 16, their metric, indicative) | 6e-5 | 2e-4 | |
 
 * **f1 is solved by the plain tree.** On the log-invariants with RBF leaves it
   matches the paper's networks at 131 072 points (7.5e-5 with Sobol points,
-  5.1e-5 with the mixed stream), and with 300-point leaves it is ten times below
+  5.1e-5 with the mixed stream), and with 300-point leaves it is eight times below
   them (7.4e-6, a median relative error of 4e-7, every test point within 1 %),
   online, at 16 ms per point, with no network. Its curve keeps falling as a power
   law where the networks' flattens.
-* **f3 closes to a factor 2.6.** The tree with 300-point leaves reaches 7.9e-4 and
-  the hybrids 9.4e-4 to 1.1e-3 against the networks' 3e-4, from 13 × worse at the
+* **f3 closes to a factor 4.** The tree with 300-point leaves reaches 7.9e-4 and
+  the hybrids 9.4e-4 to 1.1e-3 against the networks' 2e-4, from 100 × worse at the
   baseline, with no sign of a plateau; the mixed stream alone is worth 4 × on f3
   at 131 072 points (7.9e-3 with Sobol against 1.8e-3), because the error lives in
   the collinear peaks the importance-sampled points populate.
@@ -531,7 +541,7 @@ test set:
 <!-- /nbar1000 table -->
 
 * **f1 gains 2–3 ×** at every point count: 2.3e-5 at 16 000 and 3.4e-6 at
-  131 072 (a median relative error of 2e-7), twenty times below the paper's
+  131 072 (a median relative error of 2e-7), eighteen times below the paper's
   networks at 10⁵ points, and the curve still falls as N⁻¹·¹. With ten length
   scales a leaf is better determined by 1000 points than by 300, and the single
   fit at the split is as good as the 40 refits the smaller leaves get.
@@ -539,7 +549,7 @@ test set:
   16 000, 5.8e-4 against 7.9e-4 at 131 072): its error sits in the collinear
   peaks, where a larger leaf extends the same smooth extrapolation over more
   points rather than resolving the peak (next subsection). At 131 072 points
-  f3 is within a factor 2 of the paper's networks.
+  f3 is within a factor 3 of the paper's networks on this metric.
 * **The cost is 3–4 × per point** (50–80 ms against 16–20; all sweep runs share
   a four-core machine three at a time, so these are relative numbers), from the
   O(n³) factorisations of 1000-point leaves. Refitting such leaves every 250

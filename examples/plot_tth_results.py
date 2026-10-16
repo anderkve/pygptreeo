@@ -1,10 +1,11 @@
 """Figures for the 5D ttH benchmark: eps against the number of training points, from the
 result files of tth_amplitude_benchmark.py, with the networks of arXiv:2412.09534
-(values read off their Figure 13) as reference.
+(values read off their Figure 16, on LO-unweighted test points) as reference.
 
 eps_vs_points.png: the package defaults (tree, tree choosing its points, hybrid, larger network).
 eps_vs_points_improved.png: log-invariant inputs, RBF leaves and f-weighted training points.
-eps_vs_points_paper_weights.png: the same with the paper's weights (flux and pseudo-PDF factor).
+eps_vs_points_paper_weights.png: the same with the paper's weights (flux and pseudo-PDF factor), on
+the networks' metric, the mean relative error on LO-unweighted test points.
 
 Usage: python plot_tth_results.py [results_dir]
 """
@@ -19,9 +20,13 @@ import matplotlib.pyplot as plt
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "results", "tth_amplitude")
 NAMES = {"uu": r"$f_1$: $q\bar q \to t\bar t H$", "gg": r"$f_3$: $gg \to t\bar t H$"}
-# MLP and L-GATr of arXiv:2412.09534, Figure 13, read off the plot (uniform test sampling)
-REFERENCE = {"uu": [(10, 0.3), (100, 0.03), (300, 0.01), (1000, 1e-3), (3000, 3e-4), (1e4, 1e-4), (1e5, 7e-5)],
-             "gg": [(10, 0.5), (100, 0.1), (1000, 1e-2), (1e4, 1e-3), (1e5, 3e-4)]}
+# MLP(s) and L-GATr of arXiv:2412.09534, Figure 16: the mean relative error on LO-unweighted test points
+# (their eq. 30), read off the plot by pixel position; the two networks agree to 10-20 %, the mean is given
+REFERENCE = {"uu": [(1000, 3.5e-3), (3000, 8e-4), (1e4, 2.2e-4), (3e4, 9.5e-5), (1e5, 6e-5), (1e6, 5e-5)],
+             "gg": [(1000, 2.5e-2), (3000, 8e-3), (1e4, 1.7e-3), (3e4, 5e-4), (1e5, 2e-4), (1e6, 1.1e-4)]}
+# the metric each figure plots: the paper-weights figure uses the networks' metric
+METRIC = {"eps_vs_points_paper_weights.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points")}
+DEFAULT_METRIC = ("eps_uniform", r"$\epsilon = \sum|\tilde f - f| \,/\, \sum f$ (uniform test points)")
 COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100"]
 
 # (file tag, key suffix, label) per series; {ch} is the channel
@@ -59,18 +64,19 @@ def rows_of(tag, ch, key):
 
 
 for name, series in FIGURES.items():
+    metric, ylabel = METRIC.get(name, DEFAULT_METRIC)
     fig, axes = plt.subplots(1, 2, figsize=(10.5, 3.9))
     for ax, ch in zip(axes, ["uu", "gg"]):
         for (tag, key, label), color in zip(series, COLORS):
             rows = rows_of(tag, ch, key)
             if rows:
-                ax.plot([r["N"] for r in rows], [r["eps_uniform"] for r in rows], "-o", color=color, lw=2, ms=4, label=label)
+                ax.plot([r["N"] for r in rows], [r.get(metric, r["eps_uniform"]) for r in rows], "-o", color=color, lw=2, ms=4, label=label)
         ref = REFERENCE[ch]
         ax.plot([n for n, _ in ref], [e for _, e in ref], "--", color="#52514e", lw=1.2,
-                label="MLP / L-GATr of arXiv:2412.09534 (Fig. 13)")
+                label="MLP / L-GATr of arXiv:2412.09534 (Fig. 16, LO-unweighted test points)")
         ax.axhline(0.01, color="#52514e", lw=0.8, ls=":")
         ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(500, 2e5)
-        ax.set_xlabel("training points"); ax.set_ylabel(r"$\epsilon = \sum|\tilde f - f| \,/\, \sum f$")
+        ax.set_xlabel("training points"); ax.set_ylabel(ylabel)
         ax.set_title(NAMES[ch], fontsize=10); ax.grid(alpha=0.25)
     axes[0].legend(frameon=False, fontsize=7.5, loc="lower left")
     fig.tight_layout()
