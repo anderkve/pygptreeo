@@ -70,19 +70,59 @@ def load(data_dir, ch):
 
 NET_KWARGS = {}   # overrides for the hybrid's FeatureNetLearner, from --net
 OPTS = dict(kernel="matern32", nbar=100, train="sobol", inputs="cube", features="cube", split="min_lengthscale",
-            retrain=25, strategy="gradual", target="log", glob="none", rho=True)
+            retrain=25, strategy="gradual", target="log", glob="none", rho=True, scale=1.0)
 GLUON_TOP_PAIRS = [1, 2, 4, 5]   # columns of invariants(): (0,2), (0,3), (1,2), (1,3)
 
 
+TARGETS = ["log", "pole1", "pole2", "logs1", "logs2", "lin", "lins1", "lins2"]
+
+
+def log_shat(X_tree):
+    """log s-hat (m_t = 1) from the tree's inputs; s-hat = 2 p1.p2, and column 0 of
+    invariants() is log(p1.p2)."""
+    if OPTS["inputs"] == "cube":
+        return np.log((2 * MT + MH) ** 2 / (1 - (0.1 + 0.86 * X_tree[:, 0])))
+    return np.log(2.0) + X_tree[:, 5 if OPTS["inputs"] == "both" else 0]
+
+
 def target_shift(X_tree):
-    """What is added to log|M|^2 before learning: zero, or p * sum of the gluon-top
-    log invariants (``--target pole1``, ``pole2``), which flattens the t-channel
-    top propagators 1/(p_g . p_t)^p."""
-    if OPTS["target"] == "log":
-        return 0.0
-    p = {"pole1": 1.0, "pole2": 2.0}[OPTS["target"]]
-    inv = X_tree if OPTS["inputs"] == "invariants" else (X_tree[:, 5:] if OPTS["inputs"] == "both" else invariants(X_tree))
-    return p * inv[:, GLUON_TOP_PAIRS].sum(axis=1)
+    """log of the factor F(x) multiplying |M|^2 before learning: 1 (``log``, ``lin``),
+    the gluon-top invariants to the power p (``pole1``, ``pole2``, flattening the
+    t-channel top propagators 1/(p_g . p_t)^p), or s-hat^k (``logs1``, ``logs2``,
+    ``lins1``, ``lins2``)."""
+    t = OPTS["target"]
+    if t in ("log", "lin"):
+        return np.zeros(len(X_tree))
+    if t.startswith("pole"):
+        p = {"pole1": 1.0, "pole2": 2.0}[t]
+        inv = X_tree if OPTS["inputs"] == "invariants" else (X_tree[:, 5:] if OPTS["inputs"] == "both" else invariants(X_tree))
+        return p * inv[:, GLUON_TOP_PAIRS].sum(axis=1)
+    return float(t[-1]) * log_shat(X_tree)
+
+
+def linear_target():
+    return OPTS["target"].startswith("lin")
+
+
+def to_target(a, X_tree):
+    """What the tree learns: log(|M|^2 F) or, for the linear targets, |M|^2 F / scale."""
+    if linear_target():
+        return a * np.exp(target_shift(X_tree)) / OPTS["scale"]
+    return np.log(a) + target_shift(X_tree)
+
+
+def from_target(mu, sd, X_tree):
+    """The amplitude and its sigma from the tree's prediction."""
+    if linear_target():
+        f = np.exp(-target_shift(X_tree)) * OPTS["scale"]
+        return mu * f, sd * f
+    a = np.exp(mu - target_shift(X_tree))
+    return a, a * sd
+
+
+def set_scale(a, X_tree):
+    """Linear targets are learned in units of their median over the first 1000 points."""
+    OPTS["scale"] = float(np.median(a[:1000] * np.exp(target_shift(X_tree[:1000])))) if linear_target() else 1.0
 MT, MH = 1.0, np.sqrt(12.0 / 23.0)
 RHO_C = {"uu": (1.0132, 0.9943, 0.3506), "gg": (1.0134, 0.7344, 0.0987)}   # eq. (10) of arXiv:2412.09534
 THETA_MAX = 0.5 * np.pi   # theta_H and theta_t range: pi/2 on the folded domain, pi on the full one
@@ -161,18 +201,18 @@ def make(config, seed):
 def evaluate(gpt, te, tu):
     with contextlib.redirect_stdout(io.StringIO()):
         mu, sd = gpt.predict(te["X"], mode='loop')
-    mu, sd = mu.ravel() - target_shift(te["X"]), sd.ravel()
-    a_true = te["me"]; a_pred = np.exp(mu)
+    mu, sd = mu.ravel(), sd.ravel()
+    a_true = te["me"]; a_pred = from_target(mu, sd, te["X"])[0]
     f_true = te["w"] * a_true; f_pred = te["w"] * a_pred
     rel = np.abs(a_pred / a_true - 1.0)
-    pull = (mu - np.log(a_true)) / sd
+    pull = (mu - to_target(a_true, te["X"])) / sd
     out = dict(eps_uniform=float(np.sum(np.abs(f_pred - f_true)) / np.sum(f_true)),
                median_rel=float(np.median(rel)), within1pct=float(np.mean(rel < 0.01)),
                cov68=float(np.mean(np.abs(pull) < 1)), median_sigma=float(np.median(sd)))
     if tu is not None:
         with contextlib.redirect_stdout(io.StringIO()):
             mu_u, _ = gpt.predict(tu["X"], mode='loop')
-        out["eps_unweighted"] = float(np.mean(np.abs(np.exp(mu_u.ravel() - target_shift(tu["X"])) / tu["me"] - 1.0)))
+        out["eps_unweighted"] = float(np.mean(np.abs(from_target(mu_u.ravel(), mu_u.ravel(), tu["X"])[0] / tu["me"] - 1.0)))
     return out
 
 
@@ -180,8 +220,14 @@ def run(ch, config, data_dir, nmax, noise, seed, checkpoints):
     tr, te, tu = load(data_dir, ch)
     X = tr["X"][:nmax]; a = tr["me"][:nmax]
     rng = np.random.RandomState(seed)
-    y = np.log(a) + target_shift(X) + (rng.normal(0.0, noise, len(a)) if noise > 0 else 0.0)
+    set_scale(a, X)
+    y = to_target(a, X)
     sig = np.full(len(a), noise if noise > 0 else 1e-6)
+    if linear_target():   # relative noise on the amplitude is multiplicative here
+        sig = sig * np.abs(y)
+        y = y * (1.0 + rng.normal(0.0, noise, len(a))) if noise > 0 else y
+    elif noise > 0:
+        y = y + rng.normal(0.0, noise, len(a))
     gpt = make(config, seed)
     rows, done, t0 = [], 0, time.time()
     for N in checkpoints:
@@ -206,14 +252,16 @@ def run_acquisition(ch, data_dir, nmax, seed, checkpoints, batch=500, candidates
     the tree's own prediction."""
     tr, te, tu = load(data_dir, ch)
     X = tr["X"]; a = tr["me"]; w = tr["w"]
-    y = np.log(a) + target_shift(X); sig = 1e-6
+    set_scale(a, X)
+    y = to_target(a, X)
+    sig = 1e-6 * (np.abs(y) if linear_target() else np.ones(len(y)))
     rng = np.random.RandomState(seed)
     gpt = make("tree", seed)
     bought = list(range(checkpoints[0]))
     pool = np.arange(checkpoints[0], len(a))
     with contextlib.redirect_stdout(io.StringIO()):
         for i in bought:
-            gpt.update_tree(X[i:i + 1], y[i:i + 1].reshape(1, 1), sig)
+            gpt.update_tree(X[i:i + 1], y[i:i + 1].reshape(1, 1), sig[i])
     rows, t0 = [], time.time()
     for N in checkpoints:
         if N > nmax:
@@ -222,11 +270,12 @@ def run_acquisition(ch, data_dir, nmax, seed, checkpoints, batch=500, candidates
             cand = rng.choice(pool, size=min(candidates, len(pool)), replace=False)
             with contextlib.redirect_stdout(io.StringIO()):
                 mu, sd = gpt.predict(X[cand], mode='loop')
-            score = w[cand] * np.exp(mu.ravel()) * sd.ravel()
+            a_pred, sig_a = from_target(mu.ravel(), sd.ravel(), X[cand])
+            score = w[cand] * np.abs(a_pred) * sig_a
             take = cand[np.argsort(score)[::-1][:min(batch, N - len(bought))]]
             with contextlib.redirect_stdout(io.StringIO()):
                 for i in take:
-                    gpt.update_tree(X[i:i + 1], y[i:i + 1].reshape(1, 1), sig)
+                    gpt.update_tree(X[i:i + 1], y[i:i + 1].reshape(1, 1), sig[i])
             bought += list(take)
             pool = np.setdiff1d(pool, take, assume_unique=True)
         m = evaluate(gpt, te, tu); t_train = time.time() - t0
@@ -281,8 +330,9 @@ def main():
     ap.add_argument("--retrain", type=int, default=25,
                     help="retrain a leaf's GP every this many new points; a value above Nbar retrains only when the leaf splits")
     ap.add_argument("--strategy", default="gradual", choices=["gradual", "standard"], help="GPTree splitting_strategy")
-    ap.add_argument("--target", default="log", choices=["log", "pole1", "pole2"],
-                    help="learn log|M|^2, or log|M|^2 with the gluon-top propagator poles 1/(p_g.p_t)^p factored out")
+    ap.add_argument("--target", default="log", choices=TARGETS,
+                    help="learn log|M|^2; log|M|^2 with the gluon-top propagator poles 1/(p_g.p_t)^p factored out (pole1, pole2); "
+                         "log(|M|^2 s^k) (logs1, logs2); or |M|^2 s^k linearly, scaled to its median (lin, lins1, lins2)")
     ap.add_argument("--global", dest="glob", default="none", choices=["none", "additive"],
                     help="tree-wide global model whose residual the leaves fit (plain tree only)")
     ap.add_argument("--no-rho", dest="rho", action="store_false", help="weights without the flux and pseudo-PDF factor")
@@ -294,7 +344,7 @@ def main():
     OPTS.update(rho=args.rho, kernel=args.kernel, nbar=args.nbar, train=args.train, inputs=args.inputs, features=args.features,
                 split=args.split, retrain=args.retrain, strategy=args.strategy, target=args.target, glob=args.glob)
     os.makedirs(OUT_DIR, exist_ok=True)
-    checkpoints = [1000, 2000, 4000, 8000, 16000, 32768, 65536, 131072]
+    checkpoints = [1000, 2000, 4000, 8000, 16000, 32768, 65536, 131072, 262144, 524288]
     results = {}
     for ch in args.channels.split(","):
         for cfg in args.configs.split(","):
