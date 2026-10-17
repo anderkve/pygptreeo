@@ -85,7 +85,8 @@ every row.
   4·10⁵ points (1.0e-4 at 524 288, Section 2.6); choosing its points from a large
   enough pool it is ahead from 65 536 on (2.2e-4 against 2.7e-4; 1.1e-4 at
   131 072), and with the linear target of Section 2.7 it is three times below them
-  at 131 072 (5.2e-5). The 1000-point leaves that help f1 hurt f3 here (4.5e-4):
+  at 131 072 (5.2e-5) and four times below at 262 144 (3.4e-5). The 1000-point
+  leaves that help f1 hurt f3 here (4.5e-4):
   under the pseudo-PDF the error that counts sits at low β², near threshold, where
   the amplitude varies fastest and the smaller, more often refitted leaves do
   better. The networks' f3 curve flattens (1.9e-4 at 10⁵, 1.1e-4 at 10⁶) while the
@@ -258,7 +259,7 @@ LO-unweighted test points:
 | log target, choosing its points from a pool of 131 072 | 3.5e-4 | – | – | – |
 | log target, choosing its points from a pool of 524 288 | 2.2e-4 | 1.1e-4 | 9.2e-5 | – |
 | linear target (Section 2.7), mixed stream | 3.1e-4 | 1.4e-4 | 7.4e-5 | – |
-| linear target, choosing its points from a pool of 524 288 | 1.2e-4 | 5.2e-5 | TBD_LINACQ262 | – |
+| linear target, choosing its points from a pool of 524 288 | 1.2e-4 | 5.2e-5 | 3.4e-5 | – |
 | MLP(s) / L-GATr, Fig. 16 (1.1e-4 at 10⁶) | 2.7e-4 | 1.6e-4 | 1.4e-4 | 1.25e-4 |
 
 * **The plain stream crosses the networks' curve at about 4·10⁵ points.** The log
@@ -278,8 +279,9 @@ LO-unweighted test points:
   the tree's.
 * **With the linear target of Section 2.7 the tree is ahead at every N above
   65 536**: 1.4e-4 on the plain stream at 131 072 and 7.4e-5 at 262 144, and
-  5.2e-5 at 131 072 choosing its points, three times below the networks at that N
-  and half their value at a million points.
+  choosing its points 5.2e-5 at 131 072 (5.6e-5 in a repeat run) and 3.4e-5 at
+  262 144, four times below the networks at that N and a third of their value at
+  a million points, still falling as N⁻⁰·⁷ as the pool empties.
 
 ### 2.7 The target: log |M|², mass-scaled, or linear
 
