@@ -20,6 +20,7 @@ Usage: python tth_amplitude_benchmark.py <data_dir> [--channels gg,uu] [--config
            [--nmax 131072] [--noise 0] [--seed 1]
 ``acq`` is the plain tree choosing which pool points to learn from (the largest
 expected error contribution w |M|^2 sigma) instead of taking them in Sobol order.
+``hybacq`` is the same with the hybrid.
 ``leafacq`` (needs ``--driver``) lets the leaves decide: each leaf's expected error
 contribution is summed over a Sobol sample of candidate points routed to it, the leaf
 with the largest one gets a batch of fresh points, evaluated with the amplitude code.
@@ -41,7 +42,7 @@ from pygptreeo import GPTree
 warnings.filterwarnings("ignore")
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(HERE, "results", "tth_amplitude")
-COLORS = {"tree": "#2a78d6", "hybrid": "#eb6834", "acq": "#1baf7a", "leafacq": "#8e44ad"}
+COLORS = {"tree": "#2a78d6", "hybrid": "#eb6834", "acq": "#1baf7a", "leafacq": "#8e44ad", "hybacq": "#eda100"}
 CHANNEL_NAMES = {"uu": "f1: q qbar -> t tbar H", "gg": "f3: g g -> t tbar H"}
 
 
@@ -287,7 +288,7 @@ def run(ch, config, data_dir, nmax, noise, seed, checkpoints):
     return rows
 
 
-def run_acquisition(ch, data_dir, nmax, seed, checkpoints, batch=500, candidates=20000):
+def run_acquisition(ch, data_dir, nmax, seed, checkpoints, batch=500, candidates=20000, model="tree"):
     """The tree buys, from the Sobol pool, the points with the largest expected error
     contribution w * |M|^2 * sigma; the phase-space weight w is analytic, the amplitude
     the tree's own prediction."""
@@ -297,7 +298,7 @@ def run_acquisition(ch, data_dir, nmax, seed, checkpoints, batch=500, candidates
     y = to_target(a, X)
     sig = 1e-6 * (np.abs(y) if linear_target() else np.ones(len(y)))
     rng = np.random.RandomState(seed)
-    gpt = make("tree", seed)
+    gpt = make(model, seed)
     bought = list(range(checkpoints[0]))
     pool = np.arange(checkpoints[0], len(a))
     with contextlib.redirect_stdout(io.StringIO()):
@@ -322,7 +323,7 @@ def run_acquisition(ch, data_dir, nmax, seed, checkpoints, batch=500, candidates
         m = evaluate(gpt, te, tu); t_train = time.time() - t0
         m.update(N=N, train_s=t_train, ms_per_point=1e3 * t_train / N, leaves=len(gpt.root.leaves))
         rows.append(m)
-        print(f"{ch} acq    N={N:6d}  eps_uniform {m['eps_uniform']:.2e}  eps_unweighted {m.get('eps_unweighted', float('nan')):.2e}  "
+        print(f"{ch} {'acq' if model == 'tree' else 'hybacq':6s} N={N:6d}  eps_uniform {m['eps_uniform']:.2e}  eps_unweighted {m.get('eps_unweighted', float('nan')):.2e}  "
               f"median rel {m['median_rel']:.2e}  within 1 %: {100 * m['within1pct']:.0f} %  cov68 {m['cov68']:.2f}  "
               f"{m['ms_per_point']:.1f} ms/pt  leaves {m['leaves']}", flush=True)
     return rows
@@ -489,8 +490,9 @@ def main():
     results = {}
     for ch in args.channels.split(","):
         for cfg in args.configs.split(","):
-            if cfg == "acq":
-                results[(ch, cfg)] = run_acquisition(ch, args.data_dir, args.nmax, args.seed, checkpoints)
+            if cfg in ("acq", "hybacq"):
+                results[(ch, cfg)] = run_acquisition(ch, args.data_dir, args.nmax, args.seed, checkpoints,
+                                                     model="tree" if cfg == "acq" else "hybrid")
             elif cfg == "leafacq":
                 results[(ch, cfg)] = run_leafacq(ch, args.data_dir, args.nmax, args.seed, checkpoints, args.driver, args.leaf_pool,
                                                  args.leaf_batch, args.leaf_score, args.leaf_pick)
