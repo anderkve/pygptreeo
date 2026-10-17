@@ -1,0 +1,17 @@
+uu leafacq N=  1000  eps_uniform 2.76e-04  eps_unweighted 2.47e-04  median rel 1.33e-05  within 1 %: 99 %  cov68 0.66  0.6 ms/pt  leaves 4
+uu leafacq N=  2000  eps_uniform 1.28e-04  eps_unweighted 1.26e-04  median rel 6.15e-06  within 1 %: 100 %  cov68 0.69  52.7 ms/pt  leaves 11
+uu leafacq N=  4000  eps_uniform 6.22e-05  eps_unweighted 5.88e-05  median rel 3.64e-06  within 1 %: 100 %  cov68 0.44  72.4 ms/pt  leaves 22
+uu leafacq N=  8000  eps_uniform 2.71e-05  eps_unweighted 2.31e-05  median rel 2.11e-06  within 1 %: 100 %  cov68 0.48  68.4 ms/pt  leaves 45
+uu leafacq N= 16000  eps_uniform 1.33e-05  eps_unweighted 1.45e-05  median rel 1.40e-06  within 1 %: 100 %  cov68 0.43  60.9 ms/pt  leaves 93
+uu leafacq N= 32768  eps_uniform 6.78e-06  eps_unweighted 6.90e-06  median rel 7.85e-07  within 1 %: 100 %  cov68 0.58  56.1 ms/pt  leaves 197
+uu leafacq N= 65536  eps_uniform 3.87e-06  eps_unweighted 4.56e-06  median rel 5.56e-07  within 1 %: 100 %  cov68 0.60  49.9 ms/pt  leaves 380
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| uu | leafacq | 1000 | 2.76e-04 | 2.47e-04 | 1.33e-05 | 99 % | 0.66 | 0.6 |
+| uu | leafacq | 2000 | 1.28e-04 | 1.26e-04 | 6.15e-06 | 100 % | 0.69 | 52.7 |
+| uu | leafacq | 4000 | 6.22e-05 | 5.88e-05 | 3.64e-06 | 100 % | 0.44 | 72.4 |
+| uu | leafacq | 8000 | 2.71e-05 | 2.31e-05 | 2.11e-06 | 100 % | 0.48 | 68.4 |
+| uu | leafacq | 16000 | 1.33e-05 | 1.45e-05 | 1.40e-06 | 100 % | 0.43 | 60.9 |
+| uu | leafacq | 32768 | 6.78e-06 | 6.90e-06 | 7.85e-07 | 100 % | 0.58 | 56.1 |
+| uu | leafacq | 65536 | 3.87e-06 | 4.56e-06 | 5.56e-07 | 100 % | 0.60 | 49.9 |

@@ -1,0 +1,7 @@
+gg leafacq N=  1000  eps_uniform 2.17e-02  eps_unweighted 1.95e-02  median rel 7.22e-04  within 1 %: 75 %  cov68 0.68  0.6 ms/pt  leaves 4
+gg leafacq N=  2000  eps_uniform 9.11e-03  eps_unweighted 7.69e-03  median rel 4.75e-04  within 1 %: 84 %  cov68 0.64  57.4 ms/pt  leaves 10
+gg leafacq N=  4000  eps_uniform 5.04e-03  eps_unweighted 4.61e-03  median rel 2.50e-04  within 1 %: 88 %  cov68 0.68  68.3 ms/pt  leaves 23
+gg leafacq N=  8000  eps_uniform 1.97e-03  eps_unweighted 1.89e-03  median rel 1.10e-04  within 1 %: 93 %  cov68 0.66  68.5 ms/pt  leaves 48
+gg leafacq N= 16000  eps_uniform 9.37e-04  eps_unweighted 8.63e-04  median rel 5.40e-05  within 1 %: 96 %  cov68 0.67  63.5 ms/pt  leaves 95
+gg leafacq N= 32768  eps_uniform 3.58e-04  eps_unweighted 3.84e-04  median rel 2.56e-05  within 1 %: 98 %  cov68 0.62  57.2 ms/pt  leaves 188
+gg leafacq N= 65536  eps_uniform 1.63e-04  eps_unweighted 1.53e-04  median rel 9.50e-06  within 1 %: 99 %  cov68 0.58  49.4 ms/pt  leaves 377
