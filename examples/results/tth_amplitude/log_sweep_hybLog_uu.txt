@@ -1,0 +1,4 @@
+uu hybrid N=  1000  eps_uniform 4.55e-04  eps_unweighted 4.03e-04  median rel 2.02e-05  within 1 %: 98 %  cov68 0.80  102.8 ms/pt  leaves 4
+uu hybrid N=  2000  eps_uniform 3.14e-04  eps_unweighted 2.80e-04  median rel 1.09e-05  within 1 %: 99 %  cov68 0.88  109.7 ms/pt  leaves 8
+uu hybrid N=  4000  eps_uniform 1.46e-04  eps_unweighted 1.31e-04  median rel 4.77e-06  within 1 %: 100 %  cov68 0.87  112.5 ms/pt  leaves 16
+uu hybrid N=  8000  eps_uniform 7.01e-05  eps_unweighted 6.00e-05  median rel 2.31e-06  within 1 %: 100 %  cov68 0.88  108.9 ms/pt  leaves 32
