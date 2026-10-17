@@ -28,3 +28,8 @@ phi_t in [0, pi]) and m_H / m_t = sqrt(12/23).
    (and 5000 test points with another seed). For the full polar-angle domain
    (`--domain full`) pass `theta_max = pi` as the last argument of both generators and
    keep the files in a separate data directory.
+6. Larger gg sets for the runs beyond 131 072 points (Section 2.6 of the results):
+   `python gen_tth.py ./tth_driver gg_train_sobol.npz sobol 524288 1` (the first 131 072
+   points are the earlier set) and 262 144 ρ-unweighted points, e.g. the earlier 65 536
+   plus three blocks of 65 536 from `gen_unweighted.py` with seeds 21, 22, 23 and the same
+   fmax, concatenated into `gg_train_unweighted_rho.npz` in their own data directory.

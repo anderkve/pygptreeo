@@ -3,7 +3,7 @@
 `examples/tth_amplitude_benchmark.py`, `examples/gated_integration_demo.py`,
 `examples/tth_kde_stream.py`, `examples/amplification_demo.py`,
 `examples/plot_tth_results.py`; data as in `examples/tth_amplitude/README.md`; one
-CPU core per run, up to four runs in parallel; seed 1; 12–13 October 2026.
+CPU core per run, up to four runs in parallel; seed 1; 12–17 October 2026.
 
 ## 1. The benchmark
 
@@ -79,14 +79,17 @@ every row.
   keep falling as N⁻¹ where the networks' flatten (5.6e-5 → 4.6e-5 from 10⁵ to
   10⁶ points). Choosing its points, the 300-point tree is at 6.7e-6 at 16 000,
   where the networks are at 1.6e-4.
-* **f3 is within a factor 2 of the networks.** The 300-point tree on the mixed
-  stream ends at 3.5e-4 against their 1.7e-4 at 1.3·10⁵; choosing its points it is
-  ahead of them at 16 000 (6.9e-4 against 1.1e-3) and 1.3 times behind at 65 536
-  (3.5e-4 against 2.7e-4). The 1000-point leaves that help f1 hurt f3 here
-  (4.5e-4): under the pseudo-PDF the error that counts sits at low β², near
-  threshold, where the amplitude varies fastest and the smaller, more often
-  refitted leaves do better. The networks' f3 curve also flattens (1.9e-4 at 10⁵,
-  1.1e-4 at 10⁶) while the tree's still falls as N⁻⁰·⁹.
+* **f3 is within a factor 2 of the networks at 131 072 points on the plain
+  stream, and ahead of them beyond that.** The 300-point tree on the mixed stream
+  reaches 3.5e-4 at 131 072 against their 1.7e-4, and crosses their curve at about
+  4·10⁵ points (1.0e-4 at 524 288, Section 2.6); choosing its points from a large
+  enough pool it is ahead from 65 536 on (2.2e-4 against 2.7e-4; 1.1e-4 at
+  131 072), and with the linear target of Section 2.7 it is three times below them
+  at 131 072 (5.2e-5). The 1000-point leaves that help f1 hurt f3 here (4.5e-4):
+  under the pseudo-PDF the error that counts sits at low β², near threshold, where
+  the amplitude varies fastest and the smaller, more often refitted leaves do
+  better. The networks' f3 curve flattens (1.9e-4 at 10⁵, 1.1e-4 at 10⁶) while the
+  tree's still falls as N⁻⁰·⁹.
 * **The folding is worth a factor 3 at equal N** (1.0e-5 against 3.2e-6 on f1,
   1.0e-3 against 3.5e-4 on f3 at 131 072), as four times the point density should
   give. On the full domain, which is what the networks were trained on, the
@@ -152,8 +155,9 @@ points there, each at 65 536 points with 300-point leaves:
   would expect.
 * The tree's own acquisition does what the resample does, continuously and with
   no second stage: a factor 1.9 at 65 536 and 3 at 16 000 over the mixed stream.
-  It is the lever that brings f3 closest to the networks' curve: ahead of it at
-  16 000 points, 1.3 times behind at 65 536.
+  With a pool of 131 072 candidates it is ahead of the networks' curve at 16 000
+  points and 1.3 times behind at 65 536; with a pool of 524 288 it is ahead from
+  65 536 on (Section 2.6).
 * Under the paper's weights the pure LO-unweighted stream no longer helps (it
   gave 2 × on the flat-flux metric): 7.3e-4 against the mixed stream's 7.2e-4 with
   300-point leaves, 8.1e-4 with 1000-point ones, and on f1 it is worse (7.6e-6
@@ -238,6 +242,94 @@ with the same gate, whose calls it does not learn from.
 * **Cost.** The online f3 run took 374 s against 8 s for the frozen tree on the
   same points: the tree's updates, not its predictions, are the cost, negligible
   against loop amplitudes and not against tree-level ones.
+
+### 2.6 Beyond 131 072 points: does f3 cross the networks' curve?
+
+`eps_vs_points_targets.png`. The gg training sets were enlarged to 524 288 Sobol
+points and 262 144 LO-unweighted points (the first 65 536 of them the same as
+before, so the earlier checkpoints are reproduced), and the 300-point tree on the
+mixed stream was run to 524 288 points; the tree choosing its points now chooses
+from this pool of 524 288 candidates instead of 131 072. Mean relative error on the
+LO-unweighted test points:
+
+| f3 | 65 536 | 131 072 | 262 144 | 524 288 |
+|---|---|---|---|---|
+| log target, mixed stream | 6.6e-4 | 3.5e-4 | 2.0e-4 | 1.0e-4 |
+| log target, choosing its points from a pool of 131 072 | 3.5e-4 | – | – | – |
+| log target, choosing its points from a pool of 524 288 | 2.2e-4 | 1.1e-4 | 9.2e-5 | – |
+| linear target (Section 2.7), mixed stream | 3.1e-4 | 1.4e-4 | 7.4e-5 | – |
+| linear target, choosing its points from a pool of 524 288 | 1.2e-4 | 5.2e-5 | TBD_LINACQ262 | – |
+| MLP(s) / L-GATr, Fig. 16 (1.1e-4 at 10⁶) | 2.7e-4 | 1.6e-4 | 1.4e-4 | 1.25e-4 |
+
+* **The plain stream crosses the networks' curve at about 4·10⁵ points.** The log
+  target on the mixed stream falls as N⁻⁰·⁹ to N⁻¹ through every doubling (3.5e-4,
+  2.0e-4, 1.0e-4) while the networks' curve falls as N⁻⁰·²; at 524 288 the tree is
+  at 1.0e-4 against their 1.25e-4 there and 1.1e-4 at a million points. The cost
+  per learned point stays at 39–45 ms from 10³ to 5·10⁵ points: the leaf count
+  grows, the leaf size does not.
+* **The acquisition's pool size was the limit, not the acquisition.** With four
+  times as many candidates the tree choosing its points reaches 2.2e-4 at 65 536
+  against 3.5e-4 from the smaller pool, and is below the networks from 65 536 on:
+  1.1e-4 at 131 072 against their 1.6e-4, 9.2e-5 at 262 144, below their value at
+  a million points. The candidates are phase-space points with the analytic weight
+  and the tree's own prediction; no exact evaluation is spent on them, so the pool
+  is free. Its exhaustion shows in the last doubling (half the pool bought at
+  262 144, the slope flattens to N⁻⁰·³), so 9.2e-5 is a pool-limited number, not
+  the tree's.
+* **With the linear target of Section 2.7 the tree is ahead at every N above
+  65 536**: 1.4e-4 on the plain stream at 131 072 and 7.4e-5 at 262 144, and
+  5.2e-5 at 131 072 choosing its points, three times below the networks at that N
+  and half their value at a million points.
+
+### 2.7 The target: log |M|², mass-scaled, or linear
+
+The tree has learned log |M|² throughout. Two alternatives were tested with the same
+tree (log-invariant inputs, RBF leaves, 300-point leaves, mixed stream): a mass
+scale factored out, |M|² ŝ^k for k = 1, 2 (ŝ = 2 p₁·p₂, m_t = 1), in log space and in
+linear space; and the linear amplitude itself, |M|² in units of its median over the
+first 1000 points, with and without the ŝ factor; also the powers (|M|²)^½ and
+(|M|²)^¼ as a middle ground. `--target logs1|logs2|lin|lins1|lins2|pow0.5|pow0.25`.
+Mean relative error on the LO-unweighted test points:
+
+| target | f3 @16 000 | f3 @65 536 | f1 @16 000 | f1 @65 536 |
+|---|---|---|---|---|
+| log \|M\|² (reference) | 2.2e-3 | 6.6e-4 | 2.2e-5 | 5.2e-6 |
+| log(\|M\|² ŝ) | 2.3e-3 | 6.7e-4 | 2.3e-5 | – |
+| log(\|M\|² ŝ²) | 2.5e-3 | 7.0e-4 | – | – |
+| linear \|M\|² | 1.6e-3 | 3.1e-4 | 4.7e-5 | TBD_F1LIN65 |
+| linear \|M\|² ŝ | 3.0e-3 | 7.8e-4 | 4.3e-5 | – |
+| linear \|M\|² ŝ² | 4.8e-3 | 1.2e-3 | – | – |
+| (\|M\|²)^½ | 3.2e-3 | 8.6e-4 | 9.7e-5 | – |
+| (\|M\|²)^¼ | 2.5e-3 | 6.7e-4 | 4.2e-5 | – |
+
+* **A mass-scale factor does not help, in either space.** On the test set the
+  1–99 % range of |M|² spans 2.1 decades, of |M|² ŝ the same 2.1 and of |M|² ŝ² 2.6:
+  the variation of f3 is angular, the t-channel top poles 1/(p_g·p_t)², not the
+  overall energy dependence. In log space the factor adds k log ŝ, a linear function
+  of one input (log p₁·p₂), to a target the leaves fit with a constant prior mean;
+  it adds structure and costs 2–6 %. In linear space it steepens the energy
+  dependence and costs a factor 2.5–4 at 65 536 points.
+* **The linear amplitude itself is the better target for f3**: a factor 2.1 at
+  65 536 points, 2.5 at 131 072 and 2.7 at 262 144 (7.4e-5, Section 2.6) over
+  log |M|², with the same median relative error and the same fraction of test
+  points within 1 %. The metric is weighted by f, so it measures the absolute
+  accuracy where |M|² is large, and a GP in linear space puts its accuracy there;
+  in log space the error is relative and spent equally on the small values. The
+  tail of f3 is its peaks, which is where the linear target wins.
+* **On f1 the linear target is a factor 2 worse** (4.7e-5 against 2.2e-5 at
+  16 000): f1 has no poles, its log is close to a low-order rational function of
+  the invariants, and the log target reaches relative errors of 10⁻⁶, far below
+  anything an integration needs. The choice of target is a per-process one.
+* **The powers are no middle ground**: (|M|²)^½ is worse than both log and linear
+  on f3 and four times worse than log on f1; (|M|²)^¼ equals log on f3 and is
+  twice worse on f1.
+* **Side effects of the linear target.** The calibrated σ covers 0.60–0.64 of the
+  test residuals at 1σ against 0.65–0.68 for the log target, and a GP in linear
+  space can predict a negative amplitude where |M|² is tiny (none large enough to
+  show in ε here; the power targets are clipped before the root). The update cost
+  is 10–20 % lower (31–36 ms against 39–42 per point): the leaves' length scales
+  settle faster. For an unweighting a floor at zero, or the log tree as a fallback
+  where the linear prediction is within its σ of zero, would be needed.
 
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 
@@ -339,9 +431,12 @@ of are taken from it.
 
 On the paper's own metric (Section 2) the plain tree, given the log-invariants as
 inputs, RBF leaves and the stream an integrator produces, is 18–44 times below the
-paper's networks on f1 and within a factor 2 of them on f3 at 10⁵ points, with no network,
-learning online, and with its curves still falling where theirs flatten; it matches
-the five-run averages of arXiv:2601.00950 as well. The 10–25 × deficit of the
+paper's networks on f1 and within a factor 2 of them on f3 at 10⁵ points, crossing
+their curve at 4·10⁵ (Section 2.6), with no network, learning online, and with its
+curves still falling where theirs flatten; choosing its points from a large pool, or
+learning the linear amplitude instead of its log (Section 2.7), it is below them on
+f3 from 65 536 points on. It matches the five-run averages of arXiv:2601.00950 as
+well. The 10–25 × deficit of the
 package defaults (Section 3) is a matter of representation, leaf size and
 sampling, not of the method. On top of that the tree family offers what the
 networks do not: learning from the evaluations as they are made with no
@@ -350,8 +445,8 @@ a call rate that falls to zero instead of staying constant (Section 2.5); a
 per-point calibrated uncertainty that can gate when the exact amplitude is needed
 (Sections 2.5 and 5) and that is worth more than 10⁷ exact events in the tails
 (Section 2.4); the choice of which points to evaluate, which is what brings f3
-onto the networks' curve (Section 2.3); and per-point noise in the training
-values (Section 4). The real two-loop case, where the evaluations are
+below the networks' curve (Sections 2.3 and 2.6); and per-point noise in the
+training values (Section 4). The real two-loop case, where the evaluations are
 hours each and carry a QMC error, is in `BENCHMARK_RESULTS_hhgrid_amplitude.md`.
 
 ## Reproduce
@@ -364,6 +459,13 @@ python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs tree --i
 python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs tree --inputs invariants --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_rhoSplit1000
 python tth_amplitude_benchmark.py <data_dir> --channels uu,gg --configs acq --nmax 65536 --inputs invariants --kernel rbf --train mixed --nbar 300 --tag sweep_rhoAcq300
 python tth_amplitude_benchmark.py <full_domain_data_dir> --channels uu,gg --configs tree --inputs invariants --kernel rbf --train mixed --nbar 300 --domain full --tag sweep_fullMix300
+# Section 2.6: <big_data_dir> holds 524 288 Sobol and 262 144 LO-unweighted gg points (tth_amplitude/README.md, step 6)
+python tth_amplitude_benchmark.py <big_data_dir> --channels gg --configs tree --nmax 524288 --inputs invariants --kernel rbf --train mixed --nbar 300 --tag sweep_rhoMix300big
+python tth_amplitude_benchmark.py <big_data_dir> --channels gg --configs acq --nmax 262144 --inputs invariants --kernel rbf --train mixed --nbar 300 --tag sweep_rhoAcq300big
+python tth_amplitude_benchmark.py <big_data_dir> --channels gg --configs tree --nmax 262144 --inputs invariants --kernel rbf --train mixed --nbar 300 --target lin --tag sweep_scaleLinBig
+python tth_amplitude_benchmark.py <big_data_dir> --channels gg --configs acq --nmax 262144 --inputs invariants --kernel rbf --train mixed --nbar 300 --target lin --tag sweep_scaleLinAcqBig2
+# Section 2.7: the targets, e.g.
+python tth_amplitude_benchmark.py <data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rbf --train mixed --nbar 300 --target logs1 --tag sweep_scaleLogS1
 python tth_kde_stream.py <data_dir> gg <path to tth_driver> <kde_data_dir> --order interleaved
 python tth_amplitude_benchmark.py <kde_data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rbf --train unweighted --nbar 300 --tag sweep_kdeint300
 python amplification_demo.py <data_dir> gg --uniform <1e6 uniform points> --targeted <1e6 points with p_T(H) > 3 m_t> --checkpoints 16000,65536
