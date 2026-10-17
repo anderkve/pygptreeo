@@ -296,7 +296,7 @@ Mean relative error on the LO-unweighted test points:
 | log \|M\|² (reference) | 2.2e-3 | 6.6e-4 | 2.2e-5 | 5.2e-6 |
 | log(\|M\|² ŝ) | 2.3e-3 | 6.7e-4 | 2.3e-5 | – |
 | log(\|M\|² ŝ²) | 2.5e-3 | 7.0e-4 | – | – |
-| linear \|M\|² | 1.6e-3 | 3.1e-4 | 4.7e-5 | TBD_F1LIN65 |
+| linear \|M\|² | 1.6e-3 | 3.1e-4 | 4.7e-5 | 1.1e-5 |
 | linear \|M\|² ŝ | 3.0e-3 | 7.8e-4 | 4.3e-5 | – |
 | linear \|M\|² ŝ² | 4.8e-3 | 1.2e-3 | – | – |
 | (\|M\|²)^½ | 3.2e-3 | 8.6e-4 | 9.7e-5 | – |
@@ -317,7 +317,7 @@ Mean relative error on the LO-unweighted test points:
   in log space the error is relative and spent equally on the small values. The
   tail of f3 is its peaks, which is where the linear target wins.
 * **On f1 the linear target is a factor 2 worse** (4.7e-5 against 2.2e-5 at
-  16 000): f1 has no poles, its log is close to a low-order rational function of
+  16 000, 1.1e-5 against 5.2e-6 at 65 536): f1 has no poles, its log is close to a low-order rational function of
   the invariants, and the log target reaches relative errors of 10⁻⁶, far below
   anything an integration needs. The choice of target is a per-process one.
 * **The powers are no middle ground**: (|M|²)^½ is worse than both log and linear
