@@ -382,7 +382,7 @@ pre-evaluated points. Mean relative error on the LO-unweighted test points:
 | the same with the mean score | 2.3e-3 | 1.1e-3 | 2.4e-4 | – |
 | the same, the leaf's highest-scoring candidates | 1.5e-3 | 5.3e-4 | 1.9e-4 | – |
 | the same, batch 150 | 9.3e-4 | 3.9e-4 | 1.7e-4 | – |
-| leaves choose, log target | 1.2e-3 | 5.2e-4 | TBD_LEAFLOG | – |
+| leaves choose, log target | 1.2e-3 | 5.2e-4 | 2.5e-4 | – |
 
 | f1, log target | 16 000 | 32 768 | 65 536 |
 |---|---|---|---|
