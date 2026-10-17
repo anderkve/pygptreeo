@@ -6,8 +6,8 @@ eps_vs_points.png: the package defaults (tree, tree choosing its points, hybrid,
 eps_vs_points_improved.png: log-invariant inputs, RBF leaves and f-weighted training points.
 eps_vs_points_paper_weights.png: the same with the paper's weights (flux and pseudo-PDF factor), on
 the networks' metric, the mean relative error on LO-unweighted test points.
-eps_vs_points_targets.png: paper's weights, the log and the linear target, streamed to 524 288 points
-or choosing the points from a pool of 131 072 or 524 288 candidates.
+eps_vs_points_targets.png: paper's weights, the log and the linear target, streamed to 524 288 points,
+choosing the points from a pool of 131 072 or 524 288 candidates, or letting the leaves choose.
 
 Usage: python plot_tth_results.py [results_dir]
 """
@@ -31,7 +31,7 @@ METRIC = {"eps_vs_points_paper_weights.png": ("eps_unweighted", r"mean relative 
           "eps_vs_points_targets.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points")}
 XLIM = {"eps_vs_points_targets.png": (500, 1.5e6)}
 DEFAULT_METRIC = ("eps_uniform", r"$\epsilon = \sum|\tilde f - f| \,/\, \sum f$ (uniform test points)")
-COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100", "#5c6bc0"]
+COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100", "#5c6bc0", "#00897b"]
 
 # (file tag, key suffix, label) per series; {ch} is the channel, "a|b" tries a then b
 FIGURES = {
@@ -61,6 +61,7 @@ FIGURES = {
         ("sweep_rhoAcq300_{ch}", "acq", "log target, choosing its points from a pool of 131k"),
         ("sweep_rhoAcq300big_{ch}", "acq", "log target, choosing its points from a pool of 524k"),
         ("sweep_scaleLinAcqBig2_{ch}", "acq", "linear target, choosing its points from a pool of 524k"),
+        ("sweep_leafSum75_{ch}", "leafacq", "leaves choose, fresh points from the amplitude code (linear target on f3, log on f1)"),
     ],
 }
 # The first two figures use the phase-space measure alone as the weight (no pseudo-PDF factor), the third the paper's f

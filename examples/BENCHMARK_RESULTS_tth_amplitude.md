@@ -333,6 +333,89 @@ Mean relative error on the LO-unweighted test points:
   settle faster. For an unweighting a floor at zero, or the log tree as a fallback
   where the linear prediction is within its σ of zero, would be needed.
 
+### 2.8 The overlap between sibling leaves (theta)
+
+`theta` sets the overlap between two sibling leaves as a fraction of the split
+dimension's range; inside the overlap band a prediction is a linear blend of both
+leaves' GPs, with the mixture variance. The default 10⁻⁴ is a hard partition in
+practice (`theta = 0` is undefined, the routing probability divides by the overlap;
+10⁻⁸ reproduces the default). Same trees as above, 65 536 points, mixed stream:
+
+| theta | f3 (linear target) | f3 median rel. error | f3 coverage at 1σ | f1 (log target) | f1 coverage at 1σ |
+|---|---|---|---|---|---|
+| 10⁻⁴ (default) and 10⁻⁸ | 3.1e-4 | 5.1e-6 | 0.62 | 5.1e-6 | 0.73 |
+| 0.02 | 2.8e-4 | 4.9e-6 | 0.67 | 5.8e-6 | 0.77 |
+| 0.1 | 2.4e-4 | 7.7e-6 | 0.91 | 4.4e-6 | 0.92 |
+| 0.3 | 5.3e-4 | 3.0e-5 | 1.00 | 8.3e-6 | 1.00 |
+
+* **A moderate overlap buys 14–22 % on the mean error** (0.1 on both channels; 0.02
+  gains 8 % on f3 and loses 13 % on f1, within the seed spread) at no cost in time.
+  The gain is in the tail, where a leaf boundary cuts through a peak and the blend
+  of two leaves is better than either edge.
+* **It costs the median and the calibration.** At 0.1 the median relative error is
+  1.5 times worse on f3 (the blend is worse than the better leaf in the bulk) and
+  the blended σ covers 0.91–0.92 of the residuals instead of 0.68: the mixture
+  variance adds the squared difference of the two means on top of the leaves' own
+  σ. At 0.3 everything is worse. For a gated integration, which lives on the
+  calibrated σ, the default or 0.02 is the safer choice; for the accuracy metric
+  alone, 0.1.
+
+### 2.9 Letting the leaves choose where to evaluate
+
+`--configs leafacq --driver <tth_driver>`. Instead of ranking a fixed pool of
+pre-evaluated points (Sections 2.3 and 2.6), the leaves decide. A Sobol sample of
+2²⁰ candidate points in the cube is routed through the tree; each candidate carries
+its analytic phase-space weight times ρ (`phase_space_weight()`, equal to the
+driver's weight to 5·10⁻⁹), so scoring costs no amplitude evaluation. A leaf's
+expected error contribution is Σ w |M|²_pred σ over its candidates, from its own GP;
+the leaf with the largest one gets a batch of N̄/4 = 75 fresh points, drawn
+uniformly from its candidates, evaluated with the MadGraph driver and learned.
+Only that leaf is rescored; when it splits, its candidates are routed to the
+children. This is acquisition from the amplitude code itself, with no pool of
+pre-evaluated points. Mean relative error on the LO-unweighted test points:
+
+| f3, linear target | 16 000 | 32 768 | 65 536 | 131 072 |
+|---|---|---|---|---|
+| plain mixed stream | 1.6e-3 | 7.1e-4 | 3.1e-4 | 1.4e-4 |
+| choosing the highest-scoring points of a 524k pool (Section 2.6) | 0.8–1.0e-3 | 3.5e-4 | 1.2e-4 | 5.2–5.6e-5 |
+| leaves choose; sum score, uniform pick, batch 75 | 8.6e-4 | 3.8e-4 | 1.5e-4 | 6.7e-5 |
+| the same with the mean score | 2.3e-3 | 1.1e-3 | 2.4e-4 | – |
+| the same, the leaf's highest-scoring candidates | 1.5e-3 | 5.3e-4 | 1.9e-4 | – |
+| the same, batch 150 | 9.3e-4 | 3.9e-4 | 1.7e-4 | – |
+| leaves choose, log target | 1.2e-3 | 5.2e-4 | TBD_LEAFLOG | – |
+
+| f1, log target | 16 000 | 32 768 | 65 536 |
+|---|---|---|---|
+| plain mixed stream | 2.2e-5 | 1.1e-5 | 5.2e-6 |
+| choosing the highest-scoring points of the pool | 6.7e-6 | – | 2.7e-6 |
+| leaves choose; sum score, uniform pick, batch 75 | 1.5e-5 | 6.9e-6 | 4.6e-6 |
+
+* **The leaf-level decision gets most of the way.** On f3 it is a factor 2.1 below
+  the plain stream at 131 072 (6.7e-5, 2.4 times below the networks) and 25 %
+  behind the point-level acquisition from the pool; on f1 1.1–1.6 times below the
+  stream and 1.7 times behind the pool acquisition. The two differ in what is
+  ranked: a leaf's total, then uniform points inside it, against individual points
+  ranked over the whole space. The second puts every point at a peak; the first
+  spends part of each batch on the rest of the leaf.
+* **Uniform inside the leaf beats the leaf's own top scores** (1.5e-4 against
+  1.9e-4): a batch of 75 at one leaf's peak starves the rest of that leaf's GP. The
+  pool acquisition gets away with top scores because it rescores the whole space
+  after every 500 points and spreads them over many leaves.
+* **The sum is the right leaf score**; the mean favours small leaves with a sharp
+  peak over the large ones that hold most of the error (2.4e-4 against 1.5e-4).
+  Batches of 150 are slightly worse than 75: finer steps, better decisions.
+* **Cost and side effects.** 46–52 ms per learned point against 39–42 for the
+  stream, the rescoring; 350–420 leaves at 65 536 against 280, because the bought
+  points concentrate and leaves fill faster; σ coverage 0.58–0.65, a little below
+  the stream's, because a batch of same-leaf residuals enters the calibration
+  window together. The amplitude code is called on the fly in batches of 75 (15 µs
+  per point here, so its share is nil).
+* **What this is for.** No pre-evaluated pool is needed, only random phase-space
+  points and the analytic weight, which any generator has, so this is the form an
+  integrator can use directly. Scoring the candidates of the few leading leaves
+  jointly, or mixing a uniform and a top-score share inside a batch, would be the
+  next step towards the pool result.
+
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 
 `eps_vs_points.png`; uniform-test ε with flat-flux weights, with the networks of the
@@ -468,6 +551,10 @@ python tth_amplitude_benchmark.py <big_data_dir> --channels gg --configs tree --
 python tth_amplitude_benchmark.py <big_data_dir> --channels gg --configs acq --nmax 262144 --inputs invariants --kernel rbf --train mixed --nbar 300 --target lin --tag sweep_scaleLinAcqBig2
 # Section 2.7: the targets, e.g.
 python tth_amplitude_benchmark.py <data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rbf --train mixed --nbar 300 --target logs1 --tag sweep_scaleLogS1
+# Section 2.8: theta, e.g.
+python tth_amplitude_benchmark.py <data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rbf --train mixed --nbar 300 --target lin --theta 0.1 --tag sweep_theta0.1
+# Section 2.9: the leaves choose, fresh points from the driver
+python tth_amplitude_benchmark.py <data_dir> --channels gg --configs leafacq --driver <tth_driver> --nmax 131072 --inputs invariants --kernel rbf --train mixed --nbar 300 --target lin --tag sweep_leafSum75
 python tth_kde_stream.py <data_dir> gg <path to tth_driver> <kde_data_dir> --order interleaved
 python tth_amplitude_benchmark.py <kde_data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rbf --train unweighted --nbar 300 --tag sweep_kdeint300
 python amplification_demo.py <data_dir> gg --uniform <1e6 uniform points> --targeted <1e6 points with p_T(H) > 3 m_t> --checkpoints 16000,65536
