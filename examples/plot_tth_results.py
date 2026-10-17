@@ -6,6 +6,8 @@ eps_vs_points.png: the package defaults (tree, tree choosing its points, hybrid,
 eps_vs_points_improved.png: log-invariant inputs, RBF leaves and f-weighted training points.
 eps_vs_points_paper_weights.png: the same with the paper's weights (flux and pseudo-PDF factor), on
 the networks' metric, the mean relative error on LO-unweighted test points.
+eps_vs_points_targets.png: paper's weights, the log and the linear target, streamed to 524 288 points
+or choosing the points from a pool of 131 072 or 524 288 candidates.
 
 Usage: python plot_tth_results.py [results_dir]
 """
@@ -25,11 +27,13 @@ NAMES = {"uu": r"$f_1$: $q\bar q \to t\bar t H$", "gg": r"$f_3$: $gg \to t\bar t
 REFERENCE = {"uu": [(1000, 3.5e-3), (3000, 8e-4), (1e4, 2.2e-4), (3e4, 9.5e-5), (1e5, 6e-5), (1e6, 5e-5)],
              "gg": [(1000, 2.5e-2), (3000, 8e-3), (1e4, 1.7e-3), (3e4, 5e-4), (1e5, 2e-4), (1e6, 1.1e-4)]}
 # the metric each figure plots: the paper-weights figure uses the networks' metric
-METRIC = {"eps_vs_points_paper_weights.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points")}
+METRIC = {"eps_vs_points_paper_weights.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points"),
+          "eps_vs_points_targets.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points")}
+XLIM = {"eps_vs_points_targets.png": (500, 1.5e6)}
 DEFAULT_METRIC = ("eps_uniform", r"$\epsilon = \sum|\tilde f - f| \,/\, \sum f$ (uniform test points)")
-COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100"]
+COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100", "#5c6bc0"]
 
-# (file tag, key suffix, label) per series; {ch} is the channel
+# (file tag, key suffix, label) per series; {ch} is the channel, "a|b" tries a then b
 FIGURES = {
     "eps_vs_points.png": [
         ("exact_{ch}", "tree", "GPTree, Sobol order"),
@@ -51,34 +55,46 @@ FIGURES = {
         ("sweep_rhoAcq300_{ch}", "acq", "same as the 300-point tree, choosing its points"),
         ("sweep_fullMix300_{ch}", "tree", "300-point tree on the full polar-angle domain"),
     ],
+    "eps_vs_points_targets.png": [
+        ("sweep_rhoMix300big_{ch}|sweep_rhoMix300_{ch}", "tree", "log target, mixed stream"),
+        ("sweep_scaleLinBig_{ch}|sweep_scaleLin64k_{ch}", "tree", "linear target, mixed stream"),
+        ("sweep_rhoAcq300_{ch}", "acq", "log target, choosing its points from a pool of 131k"),
+        ("sweep_rhoAcq300big_{ch}", "acq", "log target, choosing its points from a pool of 524k"),
+        ("sweep_scaleLinAcqBig2_{ch}", "acq", "linear target, choosing its points from a pool of 524k"),
+    ],
 }
 # The first two figures use the phase-space measure alone as the weight (no pseudo-PDF factor), the third the paper's f
 
 
 def rows_of(tag, ch, key):
-    path = os.path.join(OUT_DIR, f"results_{tag.format(ch=ch)}.json")
-    if not os.path.exists(path):
-        return None
-    with open(path) as f:
-        return json.load(f).get(f"{ch}_{key}")
+    for t in tag.split("|"):
+        path = os.path.join(OUT_DIR, f"results_{t.format(ch=ch)}.json")
+        if os.path.exists(path):
+            with open(path) as f:
+                return json.load(f).get(f"{ch}_{key}")
+    return None
 
 
 for name, series in FIGURES.items():
     metric, ylabel = METRIC.get(name, DEFAULT_METRIC)
     fig, axes = plt.subplots(1, 2, figsize=(10.5, 3.9))
+    plotted = []
     for ax, ch in zip(axes, ["uu", "gg"]):
+        n = 0
         for (tag, key, label), color in zip(series, COLORS):
             rows = rows_of(tag, ch, key)
             if rows:
                 ax.plot([r["N"] for r in rows], [r.get(metric, r["eps_uniform"]) for r in rows], "-o", color=color, lw=2, ms=4, label=label)
+                n += 1
+        plotted.append(n)
         ref = REFERENCE[ch]
         ax.plot([n for n, _ in ref], [e for _, e in ref], "--", color="#52514e", lw=1.2,
                 label="MLP / L-GATr of arXiv:2412.09534 (Fig. 16, LO-unweighted test points)")
         ax.axhline(0.01, color="#52514e", lw=0.8, ls=":")
-        ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(500, 2e5)
+        ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(*XLIM.get(name, (500, 2e5)))
         ax.set_xlabel("training points"); ax.set_ylabel(ylabel)
         ax.set_title(NAMES[ch], fontsize=10); ax.grid(alpha=0.25)
-    axes[0].legend(frameon=False, fontsize=7.5, loc="lower left")
+    axes[0 if plotted[0] >= plotted[1] else 1].legend(frameon=False, fontsize=7.5, loc="lower left")
     fig.tight_layout()
     fig.savefig(os.path.join(OUT_DIR, name), dpi=150)
     plt.close(fig)
