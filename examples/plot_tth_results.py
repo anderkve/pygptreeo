@@ -30,6 +30,7 @@ REFERENCE = {"uu": [(1000, 3.5e-3), (3000, 8e-4), (1e4, 2.2e-4), (3e4, 9.5e-5), 
 METRIC = {"eps_vs_points_paper_weights.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points"),
           "eps_vs_points_targets.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points")}
 XLIM = {"eps_vs_points_targets.png": (500, 1.5e6)}
+LEGEND_LOC = {"eps_vs_points_targets.png": "upper right"}
 DEFAULT_METRIC = ("eps_uniform", r"$\epsilon = \sum|\tilde f - f| \,/\, \sum f$ (uniform test points)")
 COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100", "#5c6bc0", "#00897b"]
 
@@ -95,7 +96,7 @@ for name, series in FIGURES.items():
         ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(*XLIM.get(name, (500, 2e5)))
         ax.set_xlabel("training points"); ax.set_ylabel(ylabel)
         ax.set_title(NAMES[ch], fontsize=10); ax.grid(alpha=0.25)
-    axes[0 if plotted[0] >= plotted[1] else 1].legend(frameon=False, fontsize=7.5, loc="lower left")
+    axes[0 if plotted[0] >= plotted[1] else 1].legend(frameon=False, fontsize=7.5, loc=LEGEND_LOC.get(name, "lower left"))
     fig.tight_layout()
     fig.savefig(os.path.join(OUT_DIR, name), dpi=150)
     plt.close(fig)
