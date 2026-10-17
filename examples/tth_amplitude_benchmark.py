@@ -20,6 +20,9 @@ Usage: python tth_amplitude_benchmark.py <data_dir> [--channels gg,uu] [--config
            [--nmax 131072] [--noise 0] [--seed 1]
 ``acq`` is the plain tree choosing which pool points to learn from (the largest
 expected error contribution w |M|^2 sigma) instead of taking them in Sobol order.
+``leafacq`` (needs ``--driver``) lets the leaves decide: each leaf's expected error
+contribution is summed over a Sobol sample of candidate points routed to it, the leaf
+with the largest one gets a batch of fresh points, evaluated with the amplitude code.
 """
 import argparse
 import contextlib
@@ -38,7 +41,7 @@ from pygptreeo import GPTree
 warnings.filterwarnings("ignore")
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(HERE, "results", "tth_amplitude")
-COLORS = {"tree": "#2a78d6", "hybrid": "#eb6834", "acq": "#1baf7a"}
+COLORS = {"tree": "#2a78d6", "hybrid": "#eb6834", "acq": "#1baf7a", "leafacq": "#8e44ad"}
 CHANNEL_NAMES = {"uu": "f1: q qbar -> t tbar H", "gg": "f3: g g -> t tbar H"}
 
 
@@ -70,7 +73,7 @@ def load(data_dir, ch):
 
 NET_KWARGS = {}   # overrides for the hybrid's FeatureNetLearner, from --net
 OPTS = dict(kernel="matern32", nbar=100, train="sobol", inputs="cube", features="cube", split="min_lengthscale",
-            retrain=25, strategy="gradual", target="log", glob="none", rho=True, scale=1.0)
+            retrain=25, strategy="gradual", target="log", glob="none", rho=True, scale=1.0, theta=None)
 GLUON_TOP_PAIRS = [1, 2, 4, 5]   # columns of invariants(): (0,2), (0,3), (1,2), (1,3)
 
 
@@ -166,6 +169,31 @@ def momenta(X):
     return np.stack([q1, q2, boost_rot(t1), boost_rot(t2), qH], axis=1)
 
 
+def oracle(driver, X, theta_max=None):
+    """Phase-space weight and |M|^2 from the MadGraph driver at unit-cube points X (n, 5)."""
+    import subprocess
+    theta_max = THETA_MAX if theta_max is None else theta_max
+    P = np.column_stack([0.1 + 0.86 * X[:, 0], X[:, 1], theta_max * X[:, 2], theta_max * X[:, 3], np.pi * X[:, 4]])
+    inp = "\n".join(" ".join(f"{v:.17g}" for v in row) for row in P) + "\n"
+    out = subprocess.run([os.path.abspath(driver)], input=inp, capture_output=True, text=True, check=True,
+                         cwd=os.path.dirname(os.path.abspath(driver))).stdout   # the driver reads its card from its own directory
+    A = np.array([l.split() for l in out.splitlines() if len(l.split()) == 2], dtype=float)
+    return A[:, 0], A[:, 1]
+
+
+def phase_space_weight(X):
+    """The driver's phase-space weight |dPhi / d(frac, theta_H, theta_t, phi_t)| at unit-cube
+    points, m_t = 1: the s_tt Jacobian times the two two-body factors, in the driver's
+    normalisation (agrees with it to 5e-9)."""
+    b2 = 0.1 + 0.86 * X[:, 0]; frac = X[:, 1]; th = THETA_MAX * X[:, 2]; tt = THETA_MAX * X[:, 3]
+    s = (2 * MT + MH) ** 2 / (1 - b2); rs = np.sqrt(s)
+    jf = (rs - MH) ** 2 - 4 * MT ** 2
+    stt = 4 * MT ** 2 + frac * jf
+    qh = np.sqrt((stt - (rs + MH) ** 2) * (stt - (rs - MH) ** 2)) / (2 * rs)
+    pt = np.sqrt(stt / 4 - MT ** 2)
+    return 4.01015e-5 * jf * (qh / rs) * np.sin(th) * (pt / np.sqrt(stt)) * np.sin(tt)
+
+
 def invariants(X):
     """log(p_i . p_j) for the ten pairs of external momenta (the inputs of the
     networks of arXiv:2412.09534)."""
@@ -197,6 +225,8 @@ def make(config, seed):
     gpr = Default_GPR(kernel=kernels[OPTS["kernel"]])
     tree_kw = dict(Nbar=OPTS["nbar"], split_dimension_criteria=OPTS["split"], splitting_strategy=OPTS["strategy"],
                    retrain_every_n_points=OPTS["retrain"])
+    if OPTS["theta"] is not None:
+        tree_kw["theta"] = OPTS["theta"]
     if OPTS["glob"] == "additive":
         tree_kw["global_mean"] = "additive_gp"
     with contextlib.redirect_stdout(io.StringIO()):
@@ -298,6 +328,99 @@ def run_acquisition(ch, data_dir, nmax, seed, checkpoints, batch=500, candidates
     return rows
 
 
+def run_leafacq(ch, data_dir, nmax, seed, checkpoints, driver, pool_size=1 << 20, batch=None,
+                score_mode="sum", pick="uniform"):
+    """The leaves decide where to evaluate next. A Sobol sample of candidate cube points
+    is routed to the leaves; a leaf's expected error contribution is the sum (or mean) of
+    w |M|^2 sigma over its candidates, from its own GP. The leaf with the largest one gets
+    a batch of its candidates (uniform in the leaf, or its highest scores), evaluated with
+    the amplitude code; the affected leaves are rescored and re-routed after splits."""
+    from scipy.stats import qmc
+    tr, te, tu = load(data_dir, ch)
+    n0 = checkpoints[0]
+    X0, a0 = tr["X"][:n0], tr["me"][:n0]
+    set_scale(a0, X0)
+    batch = batch or max(1, OPTS["nbar"] // 4)
+    rng = np.random.RandomState(seed)
+
+    def learn(Xs, a):
+        y = to_target(a, Xs)
+        sig = 1e-6 * (np.abs(y) if linear_target() else np.ones(len(y)))
+        with contextlib.redirect_stdout(io.StringIO()):
+            for i in range(len(a)):
+                gpt.update_tree(Xs[i:i + 1], y[i:i + 1].reshape(1, 1), sig[i])
+
+    gpt = make("tree", seed)
+    learn(X0, a0)
+    C = qmc.Sobol(d=5, scramble=True, seed=seed + 100).random(pool_size)
+    Xc = tree_inputs(C)
+    wc = phase_space_weight(C) * (rho(ch, C) if OPTS["rho"] else 1.0)
+
+    def route(node, idx):
+        if node.children is None:
+            return {node.name: idx}
+        right = Xc[idx, node.split_index] > node.split_position
+        out = route(node.left, idx[~right])
+        out.update(route(node.right, idx[right]))
+        return out
+
+    def rescore(entry):
+        idx = entry["idx"]
+        if len(idx) == 0:
+            entry["scores"] = np.zeros(0); entry["total"] = -1.0
+            return
+        with contextlib.redirect_stdout(io.StringIO()):
+            mu, sd = entry["node"].predict(Xc[idx], return_std=True, use_calibrated_sigma=gpt.use_calibrated_sigma)
+        a_pred, sig_a = from_target(mu.ravel(), sd.ravel(), Xc[idx])
+        entry["scores"] = wc[idx] * np.abs(a_pred) * sig_a
+        entry["total"] = entry["scores"].sum() if score_mode == "sum" else entry["scores"].mean()
+
+    leaves = {}
+    for name, idx in route(gpt.root, np.arange(pool_size)).items():
+        leaves[name] = dict(node=next(l for l in gpt.root.leaves if l.name == name), idx=idx)
+        rescore(leaves[name])
+    bought, rows, t0, t_exact = n0, [], time.time(), 0.0
+    for N in checkpoints:
+        if N > nmax:
+            break
+        while bought < N:
+            name, entry = max(leaves.items(), key=lambda kv: kv[1]["total"])
+            idx = entry["idx"]
+            k = min(batch, N - bought, len(idx))
+            if pick == "top":
+                sel = idx[np.argsort(entry["scores"])[::-1][:k]]
+            else:
+                sel = rng.choice(idx, size=k, replace=False)
+            t1 = time.time()
+            w_exact, a_exact = oracle(driver, C[sel], THETA_MAX)
+            t_exact += time.time() - t1
+            if bought == n0:   # the analytic weight against the driver's, once
+                w_check = w_exact * (rho(ch, C[sel]) if OPTS["rho"] else 1.0)
+                assert np.allclose(w_check, wc[sel], rtol=1e-6), "phase_space_weight disagrees with the driver"
+            learn(Xc[sel], a_exact)
+            bought += k
+            entry["idx"] = np.setdiff1d(idx, sel, assume_unique=True)
+            current = {l.name: l for l in gpt.root.leaves}
+            changed = set()
+            for lname in list(leaves):
+                if lname not in current:   # this leaf split: route its candidates to the new leaves
+                    old = leaves.pop(lname)
+                    for cname, cidx in route(old["node"], old["idx"]).items():
+                        leaves[cname] = dict(node=current[cname], idx=cidx)
+                        changed.add(cname)
+            if name in leaves:
+                changed.add(name)
+            for cname in changed:
+                rescore(leaves[cname])
+        m = evaluate(gpt, te, tu); t_train = time.time() - t0 - t_exact
+        m.update(N=N, train_s=t_train, ms_per_point=1e3 * t_train / N, leaves=len(gpt.root.leaves))
+        rows.append(m)
+        print(f"{ch} leafacq N={N:6d}  eps_uniform {m['eps_uniform']:.2e}  eps_unweighted {m.get('eps_unweighted', float('nan')):.2e}  "
+              f"median rel {m['median_rel']:.2e}  within 1 %: {100 * m['within1pct']:.0f} %  cov68 {m['cov68']:.2f}  "
+              f"{m['ms_per_point']:.1f} ms/pt  leaves {m['leaves']}", flush=True)
+    return rows
+
+
 def plot(results, path):
     import matplotlib
     matplotlib.use("Agg")
@@ -349,12 +472,18 @@ def main():
                     help="tree-wide global model whose residual the leaves fit (plain tree only)")
     ap.add_argument("--no-rho", dest="rho", action="store_false", help="weights without the flux and pseudo-PDF factor")
     ap.add_argument("--domain", default="folded", choices=["folded", "full"], help="polar angles in [0, pi/2] or [0, pi]")
+    ap.add_argument("--theta", type=float, default=None, help="GPTree theta (overlap between sibling leaves as a fraction of the split range)")
+    ap.add_argument("--driver", default=None, help="the MadGraph driver, for the leafacq config")
+    ap.add_argument("--leaf-batch", type=int, default=None, help="points bought per leafacq step (default Nbar/4)")
+    ap.add_argument("--leaf-score", default="sum", choices=["sum", "mean"], help="a leaf's expected contribution: sum or mean over its candidates")
+    ap.add_argument("--leaf-pick", default="uniform", choices=["uniform", "top"], help="which of the chosen leaf's candidates to buy")
+    ap.add_argument("--leaf-pool", type=int, default=1 << 20, help="number of Sobol candidate points for leafacq")
     args = ap.parse_args()
     globals()["THETA_MAX"] = np.pi if args.domain == "full" else 0.5 * np.pi
     for item in filter(None, args.net.split(",")):
         k, v = item.split("="); NET_KWARGS[k] = None if v == "none" else int(v)
     OPTS.update(rho=args.rho, kernel=args.kernel, nbar=args.nbar, train=args.train, inputs=args.inputs, features=args.features,
-                split=args.split, retrain=args.retrain, strategy=args.strategy, target=args.target, glob=args.glob)
+                split=args.split, retrain=args.retrain, strategy=args.strategy, target=args.target, glob=args.glob, theta=args.theta)
     os.makedirs(OUT_DIR, exist_ok=True)
     checkpoints = [1000, 2000, 4000, 8000, 16000, 32768, 65536, 131072, 262144, 524288]
     results = {}
@@ -362,6 +491,9 @@ def main():
         for cfg in args.configs.split(","):
             if cfg == "acq":
                 results[(ch, cfg)] = run_acquisition(ch, args.data_dir, args.nmax, args.seed, checkpoints)
+            elif cfg == "leafacq":
+                results[(ch, cfg)] = run_leafacq(ch, args.data_dir, args.nmax, args.seed, checkpoints, args.driver, args.leaf_pool,
+                                                 args.leaf_batch, args.leaf_score, args.leaf_pick)
             else:
                 results[(ch, cfg)] = run(ch, cfg, args.data_dir, args.nmax, args.noise, args.seed, checkpoints)
     tag = args.tag or (f"noise{args.noise:g}" if args.noise > 0 else "exact")

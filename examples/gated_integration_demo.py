@@ -39,15 +39,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(HERE, "results", "tth_amplitude")
 
 
-def oracle(driver, X, theta_max=0.5 * np.pi):
-    """Phase-space measure and |M|^2 at unit-cube points X (n, 5); theta_max = pi/2 is the folded domain of f1/f3."""
-    P = np.column_stack([0.1 + 0.86 * X[:, 0], X[:, 1], theta_max * X[:, 2], theta_max * X[:, 3], np.pi * X[:, 4]])
-    inp = "\n".join(" ".join(f"{v:.17g}" for v in row) for row in P) + "\n"
-    # The driver reads its parameter card relative to its own directory
-    out = subprocess.run([os.path.abspath(driver)], input=inp, capture_output=True, text=True, check=True,
-                         cwd=os.path.dirname(os.path.abspath(driver))).stdout
-    A = np.array([l.split() for l in out.splitlines() if len(l.split()) == 2], dtype=float)
-    return A[:, 0], A[:, 1]
+oracle = bench.oracle
 
 
 def make(config, seed, inputs="cube", kernel="matern32", nbar=100):
