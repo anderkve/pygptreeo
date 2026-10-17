@@ -74,7 +74,7 @@ OPTS = dict(kernel="matern32", nbar=100, train="sobol", inputs="cube", features=
 GLUON_TOP_PAIRS = [1, 2, 4, 5]   # columns of invariants(): (0,2), (0,3), (1,2), (1,3)
 
 
-TARGETS = ["log", "pole1", "pole2", "logs1", "logs2", "lin", "lins1", "lins2"]
+TARGETS = ["log", "pole1", "pole2", "logs1", "logs2", "lin", "lins1", "lins2", "pow0.5", "pow0.25"]
 
 
 def log_shat(X_tree):
@@ -100,29 +100,40 @@ def target_shift(X_tree):
     return float(t[-1]) * log_shat(X_tree)
 
 
+def target_power():
+    """The power p of (|M|^2 F)^p the tree learns; None for the log targets."""
+    t = OPTS["target"]
+    return 1.0 if t.startswith("lin") else (float(t[3:]) if t.startswith("pow") else None)
+
+
 def linear_target():
-    return OPTS["target"].startswith("lin")
+    return target_power() is not None
 
 
 def to_target(a, X_tree):
-    """What the tree learns: log(|M|^2 F) or, for the linear targets, |M|^2 F / scale."""
-    if linear_target():
-        return a * np.exp(target_shift(X_tree)) / OPTS["scale"]
+    """What the tree learns: log(|M|^2 F), or (|M|^2 F)^p / scale."""
+    p = target_power()
+    if p is not None:
+        return (a * np.exp(target_shift(X_tree))) ** p / OPTS["scale"]
     return np.log(a) + target_shift(X_tree)
 
 
 def from_target(mu, sd, X_tree):
-    """The amplitude and its sigma from the tree's prediction."""
-    if linear_target():
-        f = np.exp(-target_shift(X_tree)) * OPTS["scale"]
-        return mu * f, sd * f
+    """The amplitude and its sigma from the tree's prediction (a power target is
+    clipped at a tiny positive value before the root)."""
+    p = target_power()
+    if p is not None:
+        y = np.maximum(mu * OPTS["scale"], 1e-300)
+        a = y ** (1.0 / p) * np.exp(-target_shift(X_tree))
+        return a, a * sd * OPTS["scale"] / (p * y)
     a = np.exp(mu - target_shift(X_tree))
     return a, a * sd
 
 
 def set_scale(a, X_tree):
-    """Linear targets are learned in units of their median over the first 1000 points."""
-    OPTS["scale"] = float(np.median(a[:1000] * np.exp(target_shift(X_tree[:1000])))) if linear_target() else 1.0
+    """Power targets are learned in units of their median over the first 1000 points."""
+    p = target_power()
+    OPTS["scale"] = float(np.median((a[:1000] * np.exp(target_shift(X_tree[:1000]))) ** p)) if p is not None else 1.0
 MT, MH = 1.0, np.sqrt(12.0 / 23.0)
 RHO_C = {"uu": (1.0132, 0.9943, 0.3506), "gg": (1.0134, 0.7344, 0.0987)}   # eq. (10) of arXiv:2412.09534
 THETA_MAX = 0.5 * np.pi   # theta_H and theta_t range: pi/2 on the folded domain, pi on the full one
@@ -332,7 +343,8 @@ def main():
     ap.add_argument("--strategy", default="gradual", choices=["gradual", "standard"], help="GPTree splitting_strategy")
     ap.add_argument("--target", default="log", choices=TARGETS,
                     help="learn log|M|^2; log|M|^2 with the gluon-top propagator poles 1/(p_g.p_t)^p factored out (pole1, pole2); "
-                         "log(|M|^2 s^k) (logs1, logs2); or |M|^2 s^k linearly, scaled to its median (lin, lins1, lins2)")
+                         "log(|M|^2 s^k) (logs1, logs2); |M|^2 s^k linearly, scaled to its median (lin, lins1, lins2); "
+                         "or (|M|^2)^p (pow0.5, pow0.25)")
     ap.add_argument("--global", dest="glob", default="none", choices=["none", "additive"],
                     help="tree-wide global model whose residual the leaves fit (plain tree only)")
     ap.add_argument("--no-rho", dest="rho", action="store_false", help="weights without the flux and pseudo-PDF factor")
