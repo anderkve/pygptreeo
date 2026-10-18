@@ -95,6 +95,7 @@ def main():
         w, a = oracle(args.driver, X)                    # exact values, for the record
         w = w * weight(X)
         Xt = to_tree(X)
+        t1 = time.time()
         if start == 0 and not args.pretrain:
             gate = np.ones(args.chunk, dtype=bool)        # nothing learned yet
             bench.set_scale(a, Xt)
@@ -104,9 +105,11 @@ def main():
                 mu, sd = gpt.predict(Xt, mode='loop')
             a_pred, sig_a = bench.from_target(mu.ravel(), sd.ravel(), Xt)
             gate = sig_a > args.tol * np.abs(a_pred)      # relative uncertainty above the tolerance
+        t_pred = time.time() - t1; t1 = time.time()
         if not args.frozen:
             idx = np.flatnonzero(gate)
             learn(Xt[idx], a[idx])
+        t_learn = time.time() - t1
         f_true = w * a
         f_sur = w * np.where(gate, a, a_pred)
         f_used.append(f_sur); f_exact.append(f_true); called.append(gate)
@@ -116,7 +119,8 @@ def main():
         I_ex, I_su = run["sum_true"] / n_seen, run["sum_sur"] / n_seen
         mc = np.sqrt(max(run["sum_true2"] / n_seen - I_ex ** 2, 0.0) / n_seen)
         series.append(dict(N=n_seen, calls=int(gate.sum()), n_exact=run["calls"] + args.pretrain, shift=float((I_su - I_ex) / I_ex),
-                           shift_over_mc=float((I_su - I_ex) / mc), mc_rel_err=float(mc / I_ex), eps_used=float(run["sum_abs"] / run["sum_true"])))
+                           shift_over_mc=float((I_su - I_ex) / mc), mc_rel_err=float(mc / I_ex), eps_used=float(run["sum_abs"] / run["sum_true"]),
+                           t_pred=round(t_pred, 3), t_learn=round(t_learn, 3), leaves=len(gpt.root.leaves)))
         if n_seen in (2000, 5000, 10000, 20000, 50000, 100000, 200000) or n_seen == args.npoints:
             fu, fe, c = np.concatenate(f_used), np.concatenate(f_exact), np.concatenate(called)
             I_ex, I_su = fe.mean(), fu.mean()

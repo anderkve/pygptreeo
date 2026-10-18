@@ -253,16 +253,23 @@ with the same gate, whose calls it does not learn from.
   200 000 points (3.9 %, 2.2 % of the last 5000) against 8670 for the 300-point
   log tree, its error on the points used is 9.5e-4 against 2.1e-3, and the
   integral deviates by −0.003 % (0.01 Monte Carlo errors) against +0.009 %. The
-  tree pretrained on the same 7815 points and frozen: TBD_FROZEN
-* **The large leaves cost in prediction what they save in learning.** The online
-  run with 1000-point leaves took 211 s to 100 000 points and 6250 s to 200 000,
-  against 531 s for the 300-point tree: once its eleven leaves hold 1000 own and up
-  to 1000 shared points, the posterior variance of a prediction costs
-  O(n<sub>leaf</sub>²) per point, about 50 ms against 0.1 ms for 300-point leaves. In a
-  gated integration every Monte Carlo point is predicted, so this, not the update,
-  is the cost that counts there: the best configuration for accuracy per training
-  point is not the best per Monte Carlo point, and 300–500-point leaves are the
-  compromise for a gated run on amplitudes below about 50 ms.
+  tree pretrained on the same 7815 points and frozen spends 26 790 calls with the
+  same gate (3.4 ×, a constant 9.3 % of the points) for 3.5e-4 on the points used;
+  ungated it is three times less accurate per point than the online tree (3.0e-3)
+  but, unlike the log-target frozen tree of the runs above, unbiased: the integral
+  deviates by +0.004 %, 0.02 Monte Carlo errors. In linear space the frozen tree's
+  errors at the leaf edges are of both signs and average out of the integral; in
+  log space they were a one-sided extrapolation and biased it by 0.32 %. The
+  argument for learning during the run rests, for this configuration, on the
+  calls the gate saves and the per-point error, not on a bias.
+* **An unexplained slowdown.** The online run with 1000-point leaves took 211 s to
+  100 000 points and 6250 s to 200 000, against 531 s for the 300-point tree. It is
+  not the predictions and not routine updates: the frozen trees of the same
+  configuration predict 200 000 points in 20 s, and a tree of twelve full
+  1000-point leaves takes 1 ms per added point and 45 µs per prediction in a
+  direct timing. The second half of the online run learned 2055 points and split
+  one leaf; what cost the time there is being traced with per-chunk timing
+  (`gated_online_best200k_t_gg.json`).
 
 ### 2.6 Beyond 131 072 points: does f3 cross the networks' curve?
 
