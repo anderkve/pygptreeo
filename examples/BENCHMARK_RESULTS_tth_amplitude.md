@@ -527,6 +527,12 @@ on the log target was the log target's), so differences above 5 % below are real
   at 65 536, 2.6e-5 at 131 072 and 1.5e-5 at 262 144, against 3.4e-5 for the
   300-point tree and 4, 6 and 10 times below the networks, at 16 ms per point.
   These are the best f3 numbers of this study (`eps_vs_points_targets.png`).
+  One caveat of refitting only at splits shows in that run: at 131 072 the mean
+  error rises to 2.0e-4 from 1.4e-4 at 65 536 while the median keeps falling; a
+  leaf whose hyperparameters were fitted badly at its split keeps them until its
+  next split, up to 1000 points later, and if it sits in a high-weight region the
+  mean error, which a few points dominate, shows it. Refitting every 100 points
+  removes the exposure at 5 times the cost.
 
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 

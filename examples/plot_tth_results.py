@@ -31,7 +31,7 @@ REFERENCE = {"uu": [(1000, 3.5e-3), (3000, 8e-4), (1e4, 2.2e-4), (3e4, 9.5e-5), 
 METRIC = {"eps_vs_points_paper_weights.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points"),
           "eps_vs_points_targets.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points")}
 XLIM = {"eps_vs_points_targets.png": (500, 1.5e6)}
-LEGEND_LOC = {"eps_vs_points_targets.png": "upper right"}
+LEGEND_LOC = {"eps_vs_points_targets.png": "below"}
 DEFAULT_METRIC = ("eps_uniform", r"$\epsilon = \sum|\tilde f - f| \,/\, \sum f$ (uniform test points)")
 COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100", "#5c6bc0", "#00897b", "#c0392b", "#7f8c8d"]
 
@@ -82,7 +82,8 @@ def rows_of(tag, ch, key):
 
 for name, series in FIGURES.items():
     metric, ylabel = METRIC.get(name, DEFAULT_METRIC)
-    fig, axes = plt.subplots(1, 2, figsize=(10.5, 3.9))
+    below = LEGEND_LOC.get(name) == "below"
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 5.6 if below else 3.9))
     plotted = []
     for ax, ch in zip(axes, ["uu", "gg"]):
         n = 0
@@ -99,8 +100,14 @@ for name, series in FIGURES.items():
         ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(*XLIM.get(name, (500, 2e5)))
         ax.set_xlabel("training points"); ax.set_ylabel(ylabel)
         ax.set_title(NAMES[ch], fontsize=10); ax.grid(alpha=0.25)
-    axes[0 if plotted[0] >= plotted[1] else 1].legend(frameon=False, fontsize=7.5, loc=LEGEND_LOC.get(name, "lower left"))
-    fig.tight_layout()
+    ax_leg = axes[0 if plotted[0] >= plotted[1] else 1]
+    if below:   # the legend under both panels, two columns
+        handles, labels = ax_leg.get_legend_handles_labels()
+        fig.legend(handles, labels, frameon=False, fontsize=7.5, loc="lower center", ncol=2)
+        fig.tight_layout(rect=(0, 0.26, 1, 1))
+    else:
+        ax_leg.legend(frameon=False, fontsize=7.5, loc=LEGEND_LOC.get(name, "lower left"))
+        fig.tight_layout()
     fig.savefig(os.path.join(OUT_DIR, name), dpi=150)
     plt.close(fig)
     print("wrote", os.path.join(OUT_DIR, name))
