@@ -216,12 +216,14 @@ def tree_inputs(X):
 
 
 def make(config, seed):
-    from pygptreeo import Default_GPR, AdditiveMaternKernel
-    from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
+    from pygptreeo import Default_GPR, AdditiveMaternKernel, AnisotropicRationalQuadratic
+    from sklearn.gaussian_process.kernels import ConstantKernel, DotProduct, Matern, RBF
     d = {"cube": 5, "invariants": 10, "both": 15}[OPTS["inputs"]]
     kernels = {"matern32": None,
                "matern52": ConstantKernel() * Matern(nu=2.5, length_scale=np.ones(d)),
                "rbf": ConstantKernel() * RBF(length_scale=np.ones(d)),
+               "rq": ConstantKernel() * AnisotropicRationalQuadratic(length_scale=np.ones(d)),
+               "rbflin": ConstantKernel() * RBF(length_scale=np.ones(d)) + ConstantKernel(0.1) * DotProduct(sigma_0=1.0),
                "additive": AdditiveMaternKernel(d=d, order=2, nu=1.5)}
     gpr = Default_GPR(kernel=kernels[OPTS["kernel"]])
     tree_kw = dict(Nbar=OPTS["nbar"], split_dimension_criteria=OPTS["split"], splitting_strategy=OPTS["strategy"],
@@ -455,7 +457,8 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--tag", default="")
     ap.add_argument("--net", default="", help="hybrid network settings, e.g. hidden=256,depth=4,steps=600,polish_steps=10000")
-    ap.add_argument("--kernel", default="matern32", choices=["matern32", "matern52", "rbf", "additive"], help="leaf kernel")
+    ap.add_argument("--kernel", default="matern32", choices=["matern32", "matern52", "rbf", "rq", "rbflin", "additive"],
+                    help="leaf kernel: Matern, RBF, anisotropic rational quadratic, RBF plus a linear kernel, or additive Matern")
     ap.add_argument("--nbar", type=int, default=100)
     ap.add_argument("--train", default="sobol", choices=["sobol", "unweighted", "mixed"],
                     help="training points: Sobol, drawn with probability proportional to w |M|^2, or alternating")
