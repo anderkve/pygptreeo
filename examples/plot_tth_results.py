@@ -7,7 +7,8 @@ eps_vs_points_improved.png: log-invariant inputs, RBF leaves and f-weighted trai
 eps_vs_points_paper_weights.png: the same with the paper's weights (flux and pseudo-PDF factor), on
 the networks' metric, the mean relative error on LO-unweighted test points.
 eps_vs_points_targets.png: paper's weights, the log and the linear target, streamed to 524 288 points,
-choosing the points from a pool of 131 072 or 524 288 candidates, or letting the leaves choose.
+choosing the points from a pool of 131 072 or 524 288 candidates, or letting the leaves choose; and the
+1000-point leaves refit only at splits.
 
 Usage: python plot_tth_results.py [results_dir]
 """
@@ -32,7 +33,7 @@ METRIC = {"eps_vs_points_paper_weights.png": ("eps_unweighted", r"mean relative 
 XLIM = {"eps_vs_points_targets.png": (500, 1.5e6)}
 LEGEND_LOC = {"eps_vs_points_targets.png": "upper right"}
 DEFAULT_METRIC = ("eps_uniform", r"$\epsilon = \sum|\tilde f - f| \,/\, \sum f$ (uniform test points)")
-COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100", "#5c6bc0", "#00897b"]
+COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100", "#5c6bc0", "#00897b", "#c0392b", "#7f8c8d"]
 
 # (file tag, key suffix, label) per series; {ch} is the channel, "a|b" tries a then b
 FIGURES = {
@@ -63,6 +64,8 @@ FIGURES = {
         ("sweep_rhoAcq300big_{ch}", "acq", "log target, choosing its points from a pool of 524k"),
         ("sweep_scaleLinAcqBig2_{ch}", "acq", "linear target, choosing its points from a pool of 524k"),
         ("sweep_leafSum75_{ch}", "leafacq", "leaves choose, fresh points from the amplitude code (linear target on f3, log on f1)"),
+        ("sweep_knNbar1000splitBig_{ch}|sweep_rhoSplit1000_{ch}", "tree", "1000-point leaves refit at splits, mixed stream (linear target on f3, log on f1)"),
+        ("sweep_knNbar1000splitAcq_{ch}", "acq", "1000-point leaves refit at splits, linear target, choosing its points from a pool of 524k"),
     ],
 }
 # The first two figures use the phase-space measure alone as the weight (no pseudo-PDF factor), the third the paper's f

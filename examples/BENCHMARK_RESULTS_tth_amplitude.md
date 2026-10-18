@@ -85,8 +85,10 @@ every row.
   4·10⁵ points (1.0e-4 at 524 288, Section 2.6); choosing its points from a large
   enough pool it is ahead from 65 536 on (2.2e-4 against 2.7e-4; 1.1e-4 at
   131 072), and with the linear target of Section 2.7 it is three times below them
-  at 131 072 (5.2e-5) and four times below at 262 144 (3.4e-5). The 1000-point
-  leaves that help f1 hurt f3 here (4.5e-4):
+  at 131 072 (5.2e-5) and four times below at 262 144 (3.4e-5); with 1000-point
+  leaves refit only at splits (Section 2.11) 2.6e-5 at 131 072 and 1.5e-5 at
+  262 144, ten times below. The 1000-point leaves that help f1 hurt f3 on the log
+  target (4.5e-4) and help it on the linear one:
   under the pseudo-PDF the error that counts sits at low β², near threshold, where
   the amplitude varies fastest and the smaller, more often refitted leaves do
   better. The networks' f3 curve flattens (1.9e-4 at 10⁵, 1.1e-4 at 10⁶) while the
@@ -491,7 +493,7 @@ on the log target was the log target's), so differences above 5 % below are real
 | 300 / every 25 points (reference) | 3.1e-4 | 5.1e-6 | 36–40 | 280 | 5.2e-6 | 50 |
 | 500 / every 25 points | 1.65e-4 | 2.3e-6 | 93 | 207 | – | |
 | 500 / only at splits | 2.3e-4 | 2.7e-6 | 9 | 210 | 4.6e-6 | 17 |
-| 1000 / every 100 points | TBD_1000R100 | | | | – | |
+| 1000 / every 100 points | 1.0e-4 | 1.0e-6 | 64 | 104 | – | |
 | 1000 / only at splits | 1.4e-4 | 1.2e-6 | 12 | 104 | 2.7e-6 | 37 |
 | 2000 / only at splits | 1.9e-4 | 6.7e-7 | 27 | 53 | – | |
 
@@ -515,10 +517,16 @@ on the log target was the log target's), so differences above 5 % below are real
   over the same leaves refitted at splits for 10 times the cost.
 * **Coverage** of the calibrated σ slips with leaf size on f3, 0.58–0.59 against
   0.62, within what the gated runs tolerate.
-* Follow-ups on the enlarged data set (Section 2.6): 1000-point leaves refit at
-  splits on the linear target to 262 144, 2.8e-5 against 7.4e-5 for the
-  300-point tree (and 1.4e-4 for the networks there, 1.1e-4 at a million); the same choosing its points from the 524k pool, TBD_BIGACQ
-  against 3.4e-5.
+* **Refitting the 1000-point leaves every 100 points** gains another 1.4 (1.0e-4)
+  for 5 times the cost; 2000-point leaves are 35 % worse than 1000, so the
+  optimum is near 1000 for this stream.
+* **To 262 144 points on the enlarged data set** (Section 2.6), 1000-point leaves
+  refit at splits, linear target: 2.8e-5 on the plain stream against 7.4e-5 for
+  the 300-point tree, 5 times below the networks there (1.4e-4) and 4 times below
+  their value at a million points; choosing its points from the 524k pool, 6.5e-5
+  at 65 536, 2.6e-5 at 131 072 and 1.5e-5 at 262 144, against 3.4e-5 for the
+  300-point tree and 4, 6 and 10 times below the networks, at 16 ms per point.
+  These are the best f3 numbers of this study (`eps_vs_points_targets.png`).
 
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 
@@ -624,7 +632,8 @@ paper's networks on f1 and within a factor 2 of them on f3 at 10⁵ points, cros
 their curve at 4·10⁵ (Section 2.6), with no network, learning online, and with its
 curves still falling where theirs flatten; choosing its points from a large pool, or
 learning the linear amplitude instead of its log (Section 2.7), it is below them on
-f3 from 65 536 points on. It matches the five-run averages of arXiv:2601.00950 as
+f3 from 65 536 points on; with the linear target, 1000-point leaves refit at splits
+and acquisition (Section 2.11) it is ten times below them at 262 144 points. It matches the five-run averages of arXiv:2601.00950 as
 well. The 10–25 × deficit of the
 package defaults (Section 3) is a matter of representation, leaf size and
 sampling, not of the method. On top of that the tree family offers what the
