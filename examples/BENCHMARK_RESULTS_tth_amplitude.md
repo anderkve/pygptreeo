@@ -247,6 +247,22 @@ with the same gate, whose calls it does not learn from.
 * **Cost.** The online f3 run took 374 s against 8 s for the frozen tree on the
   same points: the tree's updates, not its predictions, are the cost, negligible
   against loop amplitudes and not against tree-level ones.
+* **With the best f3 configuration of Section 2.11** (linear target, 1000-point
+  leaves refit only at splits; `online_vs_pretrained_best200k.pdf`, `--target lin
+  --nbar 1000 --retrain 1000000000`): the online tree needs 7815 exact calls over
+  200 000 points (3.9 %, 2.2 % of the last 5000) against 8670 for the 300-point
+  log tree, its error on the points used is 9.5e-4 against 2.1e-3, and the
+  integral deviates by −0.003 % (0.01 Monte Carlo errors) against +0.009 %. The
+  tree pretrained on the same 7815 points and frozen: TBD_FROZEN
+* **The large leaves cost in prediction what they save in learning.** The online
+  run with 1000-point leaves took 211 s to 100 000 points and 6250 s to 200 000,
+  against 531 s for the 300-point tree: once its eleven leaves hold 1000 own and up
+  to 1000 shared points, the posterior variance of a prediction costs
+  O(n<sub>leaf</sub>²) per point, about 50 ms against 0.1 ms for 300-point leaves. In a
+  gated integration every Monte Carlo point is predicted, so this, not the update,
+  is the cost that counts there: the best configuration for accuracy per training
+  point is not the best per Monte Carlo point, and 300–500-point leaves are the
+  compromise for a gated run on amplitudes below about 50 ms.
 
 ### 2.6 Beyond 131 072 points: does f3 cross the networks' curve?
 
