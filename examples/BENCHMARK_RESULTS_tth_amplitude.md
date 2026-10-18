@@ -78,7 +78,9 @@ every row.
   tree refitted only at splits reaches 1.3e-6, 44 times lower, and both curves
   keep falling as N⁻¹ where the networks' flatten (5.6e-5 → 4.6e-5 from 10⁵ to
   10⁶ points). Choosing its points, the 300-point tree is at 6.7e-6 at 16 000,
-  where the networks are at 1.6e-4.
+  where the networks are at 1.6e-4; with 1000-point leaves refit at splits it
+  reaches 7.1e-7 on the plain stream and 6.4e-7 choosing its points at 262 144,
+  80 times below the networks (Section 2.11).
 * **f3 is within a factor 2 of the networks at 131 072 points on the plain
   stream, and ahead of them beyond that.** The 300-point tree on the mixed stream
   reaches 3.5e-4 at 131 072 against their 1.7e-4, and crosses their curve at about
@@ -527,6 +529,23 @@ on the log target was the log target's), so differences above 5 % below are real
   at 65 536, 2.6e-5 at 131 072 and 1.5e-5 at 262 144, against 3.4e-5 for the
   300-point tree and 4, 6 and 10 times below the networks, at 16 ms per point.
   These are the best f3 numbers of this study (`eps_vs_points_targets.png`).
+* **The f1 counterpart** (log target, enlarged uu data set, 262 144 points):
+
+  | f1, log target | 65 536 | 131 072 | 262 144 | ms per point |
+  |---|---|---|---|---|
+  | 300-point leaves, mixed stream | 5.2e-6 | 3.2e-6 | – | 50 |
+  | 300-point leaves, choosing its points from a pool of 131k | 2.7e-6 | – | – | |
+  | 300-point leaves, choosing its points from a pool of 524k | 2.9e-6 | 2.0e-6 | 1.4e-6 | 50–54 |
+  | 1000-point leaves refit at splits, mixed stream | 2.6e-6 | 1.2e-6 | 7.1e-7 | 32–34 |
+  | 1000-point leaves refit at splits, choosing its points from a pool of 524k | 1.4e-6 | 1.1e-6 | 6.4e-7 | 34 |
+  | networks, Fig. 16 | 6.8e-5 | 5.6e-5 | 5.3e-5 | |
+
+  The 1000-point leaves give the same factor 2 over 300-point ones as on f3,
+  but the acquisition adds little on f1 and less with N (3 × over the stream at
+  16 000, 1.1 × at 131 072 and 262 144), and the larger pool brings nothing
+  (2.9e-6 against 2.7e-6 at 65 536): f1 has no narrow peaks for the point
+  selection to find, so once the leaves are large enough the plain stream is as
+  good. Both end 75–83 times below the networks at 262 144, at 34 ms per point.
   One caveat of refitting only at splits shows in that run: at 131 072 the mean
   error rises to 2.0e-4 from 1.4e-4 at 65 536 while the median keeps falling; a
   leaf whose hyperparameters were fitted badly at its split keeps them until its

@@ -65,7 +65,7 @@ FIGURES = {
         ("sweep_scaleLinAcqBig2_{ch}", "acq", "linear target, choosing its points from a pool of 524k"),
         ("sweep_leafSum75_{ch}", "leafacq", "leaves choose, fresh points from the amplitude code (linear target on f3, log on f1)"),
         ("sweep_knNbar1000splitBig_{ch}|sweep_rhoSplit1000_{ch}", "tree", "1000-point leaves refit at splits, mixed stream (linear target on f3, log on f1)"),
-        ("sweep_knNbar1000splitAcq_{ch}", "acq", "1000-point leaves refit at splits, linear target, choosing its points from a pool of 524k"),
+        ("sweep_knNbar1000splitAcq_{ch}", "acq", "1000-point leaves refit at splits, choosing its points from a pool of 524k (linear target on f3, log on f1)"),
     ],
 }
 # The first two figures use the phase-space measure alone as the weight (no pseudo-PDF factor), the third the paper's f
