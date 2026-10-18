@@ -1,0 +1,1 @@
+uu tree   N=  1000  eps_uniform 3.03e-04  eps_unweighted 2.84e-04  median rel 1.59e-05  within 1 %: 99 %  cov68 0.60  128.4 ms/pt  leaves 4
