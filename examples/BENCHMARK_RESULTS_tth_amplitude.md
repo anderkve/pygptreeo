@@ -436,7 +436,7 @@ LO-unweighted test points, with the plain tree of the same settings for referenc
 | f1, log target: tree | 2.2e-5 | 9.3e-6 | 5.2e-6 | 0.73 | 59 |
 | f1, log target: hybrid | 3.1e-5 | 1.5e-5 | 7.2e-6 | 0.95 | 110 |
 | f3, linear target, choosing its points from the 524k pool: tree | 1.0e-3 | 3.5e-4 | 1.2e-4 | 0.64 | 47 |
-| f3, linear target, choosing its points from the 524k pool: hybrid | TBD_HA16 | TBD_HA32 | TBD_HA65 | TBD_HACOV | TBD_HAMS |
+| f3, linear target, choosing its points from the 524k pool: hybrid | 3.3e-3 | 2.8e-3 | 2.5e-3 | 0.40 | 88–99 |
 
 * **The hybrid helps where the leaves are weakest and nowhere else.** With the log
   target on f3 it is 1.6 times below the tree at 65 536 (4.1e-4 against 6.6e-4) and
@@ -453,13 +453,19 @@ LO-unweighted test points, with the plain tree of the same settings for referenc
 * **Its σ is not usable for gating or acquisition as it stands.** On the streams
   the coverage is 0.88–0.95 instead of 0.68, because the network's error budget is
   added to every leaf's σ and the calibration leaves it in place; under acquisition
-  TBD_HACOVTEXT.
+  it collapses to 0.28–0.43, overconfident, and the acquisition built on it fails:
+  2.5e-3 at 65 536 against 1.2e-4 for the tree choosing its points and 3.6e-4 for
+  the hybrid on the plain stream, with the curve nearly flat from 16 000 on. The
+  score w |M|² σ ranks the candidates by a σ that the network's error budget
+  dominates wherever the leaves are young, so the batches go to the wrong places,
+  and every batch moves the global mean under all the other leaves again.
 * **Twice the cost per point** (99–110 ms against 46–59), three times for the
   larger network.
 * **Conclusion.** For these amplitudes, with the right inputs, the plain tree is
   the better and cheaper surrogate; the hybrid's one win, the log target on f3, is
-  smaller than what the linear target or the acquisition gives the plain tree. It
-  stays out of the amplitude results except as this table.
+  smaller than what the linear target or the acquisition gives the plain tree, and
+  its σ cannot drive an acquisition or a gate as it stands. It stays out of the
+  amplitude results except as this table.
 
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 
@@ -576,8 +582,11 @@ per-point calibrated uncertainty that can gate when the exact amplitude is neede
 (Sections 2.5 and 5) and that is worth more than 10⁷ exact events in the tails
 (Section 2.4); the choice of which points to evaluate, which is what brings f3
 below the networks' curve (Sections 2.3 and 2.6); and per-point noise in the
-training values (Section 4). The real two-loop case, where the evaluations are
-hours each and carry a QMC error, is in `BENCHMARK_RESULTS_hhgrid_amplitude.md`.
+training values (Section 4). The hybrid, a network as global model with GP leaves
+on its residual, does not improve on the plain tree here once the inputs are right,
+and its σ fails under acquisition (Section 2.10). The real two-loop case, where the
+evaluations are hours each and carry a QMC error, is in
+`BENCHMARK_RESULTS_hhgrid_amplitude.md`.
 
 ## Reproduce
 

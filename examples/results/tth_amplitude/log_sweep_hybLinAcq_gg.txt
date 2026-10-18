@@ -2,3 +2,16 @@ gg hybacq N=  1000  eps_uniform 1.48e-02  eps_unweighted 1.41e-02  median rel 1.
 gg hybacq N=  2000  eps_uniform 1.03e-02  eps_unweighted 9.31e-03  median rel 1.06e-03  within 1 %: 77 %  cov68 0.66  45.3 ms/pt  leaves 9
 gg hybacq N=  4000  eps_uniform 1.04e-02  eps_unweighted 9.15e-03  median rel 6.26e-04  within 1 %: 78 %  cov68 0.32  68.0 ms/pt  leaves 20
 gg hybacq N=  8000  eps_uniform 4.70e-03  eps_unweighted 4.02e-03  median rel 4.19e-04  within 1 %: 82 %  cov68 0.32  78.9 ms/pt  leaves 38
+gg hybacq N= 16000  eps_uniform 4.12e-03  eps_unweighted 3.27e-03  median rel 3.35e-04  within 1 %: 84 %  cov68 0.28  88.1 ms/pt  leaves 78
+gg hybacq N= 32768  eps_uniform 3.35e-03  eps_unweighted 2.81e-03  median rel 2.35e-04  within 1 %: 85 %  cov68 0.43  95.1 ms/pt  leaves 154
+gg hybacq N= 65536  eps_uniform 3.02e-03  eps_unweighted 2.48e-03  median rel 1.68e-04  within 1 %: 86 %  cov68 0.40  99.3 ms/pt  leaves 315
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| gg | hybacq | 1000 | 1.48e-02 | 1.41e-02 | 1.41e-03 | 75 % | 0.73 | 1.6 |
+| gg | hybacq | 2000 | 1.03e-02 | 9.31e-03 | 1.06e-03 | 77 % | 0.66 | 45.3 |
+| gg | hybacq | 4000 | 1.04e-02 | 9.15e-03 | 6.26e-04 | 78 % | 0.32 | 68.0 |
+| gg | hybacq | 8000 | 4.70e-03 | 4.02e-03 | 4.19e-04 | 82 % | 0.32 | 78.9 |
+| gg | hybacq | 16000 | 4.12e-03 | 3.27e-03 | 3.35e-04 | 84 % | 0.28 | 88.1 |
+| gg | hybacq | 32768 | 3.35e-03 | 2.81e-03 | 2.35e-04 | 85 % | 0.43 | 95.1 |
+| gg | hybacq | 65536 | 3.02e-03 | 2.48e-03 | 1.68e-04 | 86 % | 0.40 | 99.3 |
