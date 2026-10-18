@@ -487,7 +487,7 @@ on the log target was the log target's), so differences above 5 % below are real
 | leaf size / refit cadence, RBF | f3, linear target | f3 median | ms per point | leaves at 65 536 | f1, log target | ms per point |
 |---|---|---|---|---|---|---|
 | 150 / every 25 points | 9.4e-4 | 2.7e-5 | 14 | 578 | – | |
-| 200 / every 25 points | 5.8e-4 | 1.4e-5 | 21 | 488 | TBD_UU200 | |
+| 200 / every 25 points | 5.8e-4 | 1.4e-5 | 21 | 488 | 9.1e-6 | 20 |
 | 300 / every 25 points (reference) | 3.1e-4 | 5.1e-6 | 36–40 | 280 | 5.2e-6 | 50 |
 | 500 / every 25 points | 1.65e-4 | 2.3e-6 | 93 | 207 | – | |
 | 500 / only at splits | 2.3e-4 | 2.7e-6 | 9 | 210 | 4.6e-6 | 17 |
