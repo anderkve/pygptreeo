@@ -493,7 +493,7 @@ on the log target was the log target's), so differences above 5 % below are real
 | 500 / only at splits | 2.3e-4 | 2.7e-6 | 9 | 210 | 4.6e-6 | 17 |
 | 1000 / every 100 points | TBD_1000R100 | | | | – | |
 | 1000 / only at splits | 1.4e-4 | 1.2e-6 | 12 | 104 | 2.7e-6 | 37 |
-| 2000 / only at splits | TBD_2000 | | | | – | |
+| 2000 / only at splits | 1.9e-4 | 6.7e-7 | 27 | 53 | – | |
 
 * **The smoothest kernel wins on both targets, by a lot.** On the linear f3 target
   the order is RBF, rational quadratic (2 ×), Matérn 5/2 (3.4 ×), Matérn 3/2 (8.6 ×),
@@ -516,8 +516,8 @@ on the log target was the log target's), so differences above 5 % below are real
 * **Coverage** of the calibrated σ slips with leaf size on f3, 0.58–0.59 against
   0.62, within what the gated runs tolerate.
 * Follow-ups on the enlarged data set (Section 2.6): 1000-point leaves refit at
-  splits on the linear target to 262 144, TBD_BIG against 7.4e-5 for the
-  300-point tree; the same choosing its points from the 524k pool, TBD_BIGACQ
+  splits on the linear target to 262 144, 2.8e-5 against 7.4e-5 for the
+  300-point tree (and 1.4e-4 for the networks there, 1.1e-4 at a million); the same choosing its points from the 524k pool, TBD_BIGACQ
   against 3.4e-5.
 
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
