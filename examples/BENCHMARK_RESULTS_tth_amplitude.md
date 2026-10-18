@@ -262,14 +262,19 @@ with the same gate, whose calls it does not learn from.
   log space they were a one-sided extrapolation and biased it by 0.32 %. The
   argument for learning during the run rests, for this configuration, on the
   calls the gate saves and the per-point error, not on a bias.
-* **An unexplained slowdown.** The online run with 1000-point leaves took 211 s to
-  100 000 points and 6250 s to 200 000, against 531 s for the 300-point tree. It is
-  not the predictions and not routine updates: the frozen trees of the same
-  configuration predict 200 000 points in 20 s, and a tree of twelve full
-  1000-point leaves takes 1 ms per added point and 45 µs per prediction in a
-  direct timing. The second half of the online run learned 2055 points and split
-  one leaf; what cost the time there is being traced with per-chunk timing
-  (`gated_online_best200k_t_gg.json`).
+* **The slowdown is one split.** The online run with 1000-point leaves took 211 s
+  to 100 000 points and 6030 s to 200 000, against 531 s for the 300-point tree.
+  Per-chunk timing (`gated_online_best200k_t_gg.json`) puts 5815 s of it into a
+  single chunk at 133 000 points, where one leaf split and its children's
+  hyperparameters were fitted (L-BFGS, no restarts); the other nine splits of the
+  run took 2–40 s each, predictions 14 s in all, and routine updates 1 ms each. A
+  leaf of 1000 own and up to 1000 shared points makes every likelihood evaluation
+  a 2000-point Cholesky, and the gated points, which sit in the collinear peaks,
+  can leave the kernel matrix ill-conditioned and the optimiser wandering for
+  thousands of them. This is a pathology of the split-time fit with large leaves
+  and clustered data, not of the prediction or the update: a cap on the
+  optimiser's iterations or a fallback to the parent's hyperparameters when the
+  fit does not converge would remove it, and 300–500-point leaves do not show it.
 
 ### 2.6 Beyond 131 072 points: does f3 cross the networks' curve?
 
