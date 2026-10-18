@@ -104,9 +104,10 @@ def main():
             if args.absolute:
                 axes[2, j].set_ylabel("|integral $-$ exact| / exact")
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, handlelength=2.6, columnspacing=1.6,
+    ncol = 3 if len(chans) > 1 else 1   # one channel: stack the legend entries
+    fig.legend(handles, labels, loc="upper center", ncol=ncol, frameon=False, handlelength=2.6, columnspacing=1.6,
                handletextpad=0.6, bbox_to_anchor=(0.5, 1.0))
-    fig.tight_layout(h_pad=1.0, w_pad=1.2, rect=(0, 0, 1, 1 - 0.3 / fig.get_figheight()))
+    fig.tight_layout(h_pad=1.0, w_pad=1.2, rect=(0, 0, 1, 1 - (0.3 if ncol == 3 else 0.75) / fig.get_figheight()))
     for ext in ("pdf", "png"):
         path = os.path.join(args.results_dir, f"online_vs_pretrained{args.suffix}.{ext}")
         fig.savefig(path, dpi=300 if ext == "png" else None)
