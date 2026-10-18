@@ -416,6 +416,51 @@ pre-evaluated points. Mean relative error on the LO-unweighted test points:
   jointly, or mixing a uniform and a top-score share inside a batch, would be the
   next step towards the pool result.
 
+### 2.10 The hybrid under the paper's weights
+
+The hybrid (`global_mean='net'`: a feature network as tree-wide global model, the GP
+leaves on its residual, refits amortised at 8 steps per update) had only been run
+with the log target on the flat-flux metric (Sections 3 and 7). Here it gets the
+current best settings, log-invariant inputs and network features, RBF 300-point
+leaves, mixed stream, and the paper's weights; `--configs hybrid`, and `hybacq` for
+the hybrid choosing its points from the 524 288 pool. Mean relative error on the
+LO-unweighted test points, with the plain tree of the same settings for reference:
+
+| | 16 000 | 32 768 | 65 536 | σ coverage at 1σ, 65 536 | ms per point |
+|---|---|---|---|---|---|
+| f3, linear target: tree | 1.5e-3 | 7.1e-4 | 3.1e-4 | 0.62 | 46 |
+| f3, linear target: hybrid | 1.2e-3 | 6.9e-4 | 3.6e-4 | 0.89 | 104 |
+| f3, linear target: hybrid, 4 × 256 network | 1.7e-3 | 1.5e-3 | 9.0e-4 | 0.87 | 105–160 |
+| f3, log target: tree | 2.2e-3 | 1.1e-3 | 6.6e-4 | 0.66 | 59 |
+| f3, log target: hybrid | 1.1e-3 | 6.8e-4 | 4.1e-4 | 0.88 | 99 |
+| f1, log target: tree | 2.2e-5 | 9.3e-6 | 5.2e-6 | 0.73 | 59 |
+| f1, log target: hybrid | 3.1e-5 | 1.5e-5 | 7.2e-6 | 0.95 | 110 |
+| f3, linear target, choosing its points from the 524k pool: tree | 1.0e-3 | 3.5e-4 | 1.2e-4 | 0.64 | 47 |
+| f3, linear target, choosing its points from the 524k pool: hybrid | TBD_HA16 | TBD_HA32 | TBD_HA65 | TBD_HACOV | TBD_HAMS |
+
+* **The hybrid helps where the leaves are weakest and nowhere else.** With the log
+  target on f3 it is 1.6 times below the tree at 65 536 (4.1e-4 against 6.6e-4) and
+  twice below at 16 000: the network carries the large-scale shape of log |M|²
+  that 300-point leaves with a constant prior mean extrapolate badly at their
+  edges. With the linear target, where the tree is already 2 times better, the
+  hybrid is ahead by 20 % at 16 000, level at 32 768 and 15 % behind at 65 536: the
+  network's residual in the peaks is not smoother than the amplitude itself. On
+  f1 it is 1.4 times behind. The best f3 number on the plain stream stays the
+  linear tree's.
+* **The larger network makes it worse** (9.0e-4 against 3.6e-4 at 65 536): with the
+  amortised refits the 4 × 256 network's global mean keeps moving, the leaves'
+  residuals shift under them, and the longer polish does not catch up.
+* **Its σ is not usable for gating or acquisition as it stands.** On the streams
+  the coverage is 0.88–0.95 instead of 0.68, because the network's error budget is
+  added to every leaf's σ and the calibration leaves it in place; under acquisition
+  TBD_HACOVTEXT.
+* **Twice the cost per point** (99–110 ms against 46–59), three times for the
+  larger network.
+* **Conclusion.** For these amplitudes, with the right inputs, the plain tree is
+  the better and cheaper surrogate; the hybrid's one win, the log target on f3, is
+  smaller than what the linear target or the acquisition gives the plain tree. It
+  stays out of the amplitude results except as this table.
+
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 
 `eps_vs_points.png`; uniform-test ε with flat-flux weights, with the networks of the
@@ -553,6 +598,9 @@ python tth_amplitude_benchmark.py <big_data_dir> --channels gg --configs acq --n
 python tth_amplitude_benchmark.py <data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rbf --train mixed --nbar 300 --target logs1 --tag sweep_scaleLogS1
 # Section 2.8: theta, e.g.
 python tth_amplitude_benchmark.py <data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rbf --train mixed --nbar 300 --target lin --theta 0.1 --tag sweep_theta0.1
+# Section 2.10: the hybrid, e.g.
+python tth_amplitude_benchmark.py <data_dir> --channels gg --configs hybrid --nmax 65536 --inputs invariants --features invariants --kernel rbf --train mixed --nbar 300 --target lin --tag sweep_hybLin
+python tth_amplitude_benchmark.py <big_data_dir> --channels gg --configs hybacq --nmax 65536 --inputs invariants --features invariants --kernel rbf --train mixed --nbar 300 --target lin --tag sweep_hybLinAcq
 # Section 2.9: the leaves choose, fresh points from the driver
 python tth_amplitude_benchmark.py <data_dir> --channels gg --configs leafacq --driver <tth_driver> --nmax 131072 --inputs invariants --kernel rbf --train mixed --nbar 300 --target lin --tag sweep_leafSum75
 python tth_kde_stream.py <data_dir> gg <path to tth_driver> <kde_data_dir> --order interleaved
