@@ -14,8 +14,8 @@ before the run and not updated during it, used with the same gate (or ungated wi
 
 Usage: python gated_integration_demo.py <path to tth_driver> [--config tree|hybrid]
            [--tol 0.01] [--npoints 100000] [--chunk 500] [--seed 1] [--tag name]
-           [--inputs cube|invariants] [--kernel matern32|rbf|...] [--nbar 100]
-           [--channel uu|gg] [--no-rho] [--pretrain 0] [--frozen]
+           [--inputs cube|invariants] [--kernel matern32|rbf|...] [--nbar 100] [--retrain 25]
+           [--target log|lin] [--channel uu|gg] [--no-rho] [--pretrain 0] [--frozen]
 """
 import argparse
 import contextlib
@@ -42,9 +42,9 @@ OUT_DIR = os.path.join(HERE, "results", "tth_amplitude")
 oracle = bench.oracle
 
 
-def make(config, seed, inputs="cube", kernel="matern32", nbar=100):
-    """The surrogate; the tree's inputs, leaf kernel and leaf size as in tth_amplitude_benchmark.py."""
-    bench.OPTS.update(inputs=inputs, kernel=kernel, nbar=nbar, features=inputs)
+def make(config, seed, inputs="cube", kernel="matern32", nbar=100, retrain=25, target="log"):
+    """The surrogate; the tree's inputs, leaf kernel, leaf size, refit cadence and target as in tth_amplitude_benchmark.py."""
+    bench.OPTS.update(inputs=inputs, kernel=kernel, nbar=nbar, features=inputs, retrain=retrain, target=target)
     return bench.make(config, seed)
 
 
@@ -58,8 +58,10 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--tag", default="")
     ap.add_argument("--inputs", default="cube", choices=["cube", "invariants"], help="the tree's inputs")
-    ap.add_argument("--kernel", default="matern32", choices=["matern32", "matern52", "rbf", "additive"])
+    ap.add_argument("--kernel", default="matern32", choices=["matern32", "matern52", "rbf", "rq", "rbflin", "additive"])
     ap.add_argument("--nbar", type=int, default=100)
+    ap.add_argument("--retrain", type=int, default=25, help="refit a leaf every this many points; above Nbar, only at splits")
+    ap.add_argument("--target", default="log", choices=["log", "lin"], help="learn log |M|^2 or |M|^2 in units of its median")
     ap.add_argument("--channel", default="", choices=["", "uu", "gg"], help="inferred from the driver path if empty")
     ap.add_argument("--no-rho", dest="rho", action="store_false", help="weights without the flux and pseudo-PDF factor")
     ap.add_argument("--pretrain", type=int, default=0, help="exact uniform points the tree learns before the run")
@@ -69,15 +71,21 @@ def main():
     ch = args.channel or ("gg" if "gg_tth" in args.driver else "uu")
     weight = (lambda Z: bench.rho(ch, Z)) if args.rho else (lambda Z: 1.0)
     rng = np.random.RandomState(args.seed)
-    gpt = make(args.config, args.seed, args.inputs, args.kernel, args.nbar)
+    gpt = make(args.config, args.seed, args.inputs, args.kernel, args.nbar, args.retrain, args.target)
     to_tree = bench.invariants if args.inputs == "invariants" else (lambda Z: Z)
-    sig_exact = 1e-6
+
+    def learn(Xt, a):
+        y = bench.to_target(a, Xt)
+        sig = 1e-6 * (np.abs(y) if bench.linear_target() else np.ones(len(y)))
+        with contextlib.redirect_stdout(io.StringIO()):
+            for i in range(len(a)):
+                gpt.update_tree(Xt[i:i + 1], y[i:i + 1].reshape(1, 1), sig[i])
+
     if args.pretrain:
         Xp = np.random.RandomState(args.seed + 1000).uniform(size=(args.pretrain, 5))
         _, a_p = oracle(args.driver, Xp); Xp = to_tree(Xp)
-        with contextlib.redirect_stdout(io.StringIO()):
-            for i in range(args.pretrain):
-                gpt.update_tree(Xp[i:i + 1], np.log(a_p[i:i + 1]).reshape(1, 1), sig_exact)
+        bench.set_scale(a_p, Xp)
+        learn(Xp, a_p)
     f_used, f_exact, called = [], [], []
     log, series = [], []
     run = dict(n=0, calls=0, sum_true=0.0, sum_sur=0.0, sum_true2=0.0, sum_abs=0.0)   # running sums for the per-chunk record
@@ -89,18 +97,18 @@ def main():
         Xt = to_tree(X)
         if start == 0 and not args.pretrain:
             gate = np.ones(args.chunk, dtype=bool)        # nothing learned yet
-            mu = np.log(a)
+            bench.set_scale(a, Xt)
+            a_pred = a
         else:
             with contextlib.redirect_stdout(io.StringIO()):
                 mu, sd = gpt.predict(Xt, mode='loop')
-            mu, sd = mu.ravel(), sd.ravel()
-            gate = sd > args.tol
+            a_pred, sig_a = bench.from_target(mu.ravel(), sd.ravel(), Xt)
+            gate = sig_a > args.tol * np.abs(a_pred)      # relative uncertainty above the tolerance
         if not args.frozen:
-            with contextlib.redirect_stdout(io.StringIO()):
-                for i in np.flatnonzero(gate):
-                    gpt.update_tree(Xt[i:i + 1], np.log(a[i:i + 1]).reshape(1, 1), sig_exact)
+            idx = np.flatnonzero(gate)
+            learn(Xt[idx], a[idx])
         f_true = w * a
-        f_sur = w * np.where(gate, a, np.exp(mu))
+        f_sur = w * np.where(gate, a, a_pred)
         f_used.append(f_sur); f_exact.append(f_true); called.append(gate)
         n_seen = start + args.chunk
         run["n"] = n_seen; run["calls"] += int(gate.sum()); run["sum_true"] += f_true.sum(); run["sum_sur"] += f_sur.sum()
@@ -122,7 +130,7 @@ def main():
                   f"{rec['n_exact']} in all  eps on the points used {rec['eps_used']:.1e}  "
                   f"gated/exact - 1 = {100 * rec['surrogate_shift']:+.3f} %  MC error {100 * rec['mc_rel_err']:.2f} %  "
                   f"leaves {rec['leaves']}  {rec['elapsed']:.0f} s", flush=True)
-    tag = args.tag or (f"{args.config}_{args.inputs}_{args.kernel}_nbar{args.nbar}_tol{args.tol:g}" +
+    tag = args.tag or (f"{args.config}_{args.inputs}_{args.kernel}_nbar{args.nbar}_{args.target}_tol{args.tol:g}" +
                        (f"_pre{args.pretrain}" if args.pretrain else "") + ("_frozen" if args.frozen else ""))
     with open(os.path.join(OUT_DIR, f"gated_{tag}.json"), "w") as f:
         json.dump(dict(args=vars(args), channel=ch, checkpoints=log, series=series), f, indent=1)
