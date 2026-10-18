@@ -467,6 +467,59 @@ LO-unweighted test points, with the plain tree of the same settings for referenc
   its σ cannot drive an acquisition or a gate as it stands. It stays out of the
   amplitude results except as this table.
 
+### 2.11 Leaf kernels and leaf sizes, revisited for the linear target
+
+The RBF kernel and the 300-point leaves were chosen on the log target (Section 7).
+Both are retested here on the linear target for f3 and on the log target for f1,
+mixed stream, 65 536 points; `--kernel rq` is the anisotropic rational quadratic of
+`pygptreeo.kernels`, `rbflin` an RBF plus a linear (dot-product) component. Three
+seeds of the f3 baseline give 3.10, 3.12 and 3.17e-4, a 2 % spread (the 20 % seen
+on the log target was the log target's), so differences above 5 % below are real.
+
+| leaf kernel, N̄ = 300 | f3, linear target | f3 median rel. error | ms per point | f1, log target | f1 median | ms per point |
+|---|---|---|---|---|---|---|
+| RBF (reference) | 3.1e-4 | 5.1e-6 | 36–40 | 5.2e-6 | 5.1e-7 | 50 |
+| rational quadratic | 6.5e-4 | 9.5e-6 | 106 | 1.3e-5 | 5.7e-7 | 112 |
+| Matérn 5/2 | 1.05e-3 | 6.9e-5 | 83 | 1.6–1.8 × worse than RBF (Section 7) | | |
+| Matérn 3/2 | 2.7e-3 | 3.4e-4 | 81 | | | |
+| RBF + linear | 7.0e-4 on the log target (RBF: 6.6e-4) | | 63 | 5.0e-6 | 5.1e-7 | 68 |
+
+| leaf size / refit cadence, RBF | f3, linear target | f3 median | ms per point | leaves at 65 536 | f1, log target | ms per point |
+|---|---|---|---|---|---|---|
+| 150 / every 25 points | 9.4e-4 | 2.7e-5 | 14 | 578 | – | |
+| 200 / every 25 points | 5.8e-4 | 1.4e-5 | 21 | 488 | TBD_UU200 | |
+| 300 / every 25 points (reference) | 3.1e-4 | 5.1e-6 | 36–40 | 280 | 5.2e-6 | 50 |
+| 500 / every 25 points | 1.65e-4 | 2.3e-6 | 93 | 207 | – | |
+| 500 / only at splits | 2.3e-4 | 2.7e-6 | 9 | 210 | 4.6e-6 | 17 |
+| 1000 / every 100 points | TBD_1000R100 | | | | – | |
+| 1000 / only at splits | 1.4e-4 | 1.2e-6 | 12 | 104 | 2.7e-6 | 37 |
+| 2000 / only at splits | TBD_2000 | | | | – | |
+
+* **The smoothest kernel wins on both targets, by a lot.** On the linear f3 target
+  the order is RBF, rational quadratic (2 ×), Matérn 5/2 (3.4 ×), Matérn 3/2 (8.6 ×),
+  and the rational quadratic costs 3 times more per point for its extra
+  hyperparameter. On f1 it is 2.5 × worse than RBF. The linear component adds
+  nothing (f1 equal, f3 log target 6 % worse): the leaves' RBF with its long length
+  scales already carries the trend the component was meant to supply.
+* **On the linear target larger leaves are better, monotonically from 150 to 1000**,
+  the opposite of the log target on f3 (Section 2.1, where 1000-point leaves hurt).
+  In linear space the error is the peaks; a larger leaf sees more of each peak and
+  fits its ten length scales from more points, and the constant-mean extrapolation
+  that small leaves suffered from in log space is not the issue here.
+* **1000-point leaves refitted only at splits are the best and the cheapest
+  stream configuration for f3**: 1.4e-4 at 65 536 points, 2.2 times below the
+  300-point tree and 1.9 times below the networks on the plain stream, at 12 ms
+  per learned point against 36–40: the hyperparameters are fitted once per 1000
+  points, and a prediction from a 1000-point leaf is cheap. The refit cadence
+  matters less than the size: 500-point leaves refitted every 25 points gain 1.4
+  over the same leaves refitted at splits for 10 times the cost.
+* **Coverage** of the calibrated σ slips with leaf size on f3, 0.58–0.59 against
+  0.62, within what the gated runs tolerate.
+* Follow-ups on the enlarged data set (Section 2.6): 1000-point leaves refit at
+  splits on the linear target to 262 144, TBD_BIG against 7.4e-5 for the
+  300-point tree; the same choosing its points from the 524k pool, TBD_BIGACQ
+  against 3.4e-5.
+
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 
 `eps_vs_points.png`; uniform-test ε with flat-flux weights, with the networks of the
@@ -610,6 +663,9 @@ python tth_amplitude_benchmark.py <data_dir> --channels gg --configs tree --nmax
 # Section 2.10: the hybrid, e.g.
 python tth_amplitude_benchmark.py <data_dir> --channels gg --configs hybrid --nmax 65536 --inputs invariants --features invariants --kernel rbf --train mixed --nbar 300 --target lin --tag sweep_hybLin
 python tth_amplitude_benchmark.py <big_data_dir> --channels gg --configs hybacq --nmax 65536 --inputs invariants --features invariants --kernel rbf --train mixed --nbar 300 --target lin --tag sweep_hybLinAcq
+# Section 2.11: kernels and leaf sizes on the linear target, e.g.
+python tth_amplitude_benchmark.py <data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rq --train mixed --nbar 300 --target lin --tag sweep_knRQ
+python tth_amplitude_benchmark.py <data_dir> --channels gg --configs tree --nmax 65536 --inputs invariants --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --target lin --tag sweep_knNbar1000split
 # Section 2.9: the leaves choose, fresh points from the driver
 python tth_amplitude_benchmark.py <data_dir> --channels gg --configs leafacq --driver <tth_driver> --nmax 131072 --inputs invariants --kernel rbf --train mixed --nbar 300 --target lin --tag sweep_leafSum75
 python tth_kde_stream.py <data_dir> gg <path to tth_driver> <kde_data_dir> --order interleaved
