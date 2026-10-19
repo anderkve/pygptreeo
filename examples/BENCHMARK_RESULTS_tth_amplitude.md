@@ -253,15 +253,31 @@ with the same gate, whose calls it does not learn from.
   200 000 points (3.9 %, 2.2 % of the last 5000) against 8670 for the 300-point
   log tree, its error on the points used is 9.5e-4 against 2.1e-3, and the
   integral deviates by −0.003 % (0.01 Monte Carlo errors) against +0.009 %. The
-  tree pretrained on the same 7815 points and frozen spends 26 790 calls with the
+  tree pretrained on 7815 uniform points and frozen spends 26 790 calls with the
   same gate (3.4 ×, a constant 9.3 % of the points) for 3.5e-4 on the points used;
   ungated it is three times less accurate per point than the online tree (3.0e-3)
   but, unlike the log-target frozen tree of the runs above, unbiased: the integral
-  deviates by +0.004 %, 0.02 Monte Carlo errors. In linear space the frozen tree's
-  errors at the leaf edges are of both signs and average out of the integral; in
-  log space they were a one-sided extrapolation and biased it by 0.32 %. The
-  argument for learning during the run rests, for this configuration, on the
-  calls the gate saves and the per-point error, not on a bias.
+  deviates by +0.004 %, 0.02 Monte Carlo errors. The argument for learning during
+  the run rests, for this configuration, on the calls the gate saves and the
+  per-point error, not on a bias.
+* **The frozen log tree's bias is the convexity of the exponential**
+  (`frozen_bias.py`, `frozen_bias_*.json`: each configuration's frozen tree on the
+  200 000 points, its shift split by leaf and, for the log target, into the mean
+  log-space error and the mean of exp(δ) − 1 − δ). A two-sided error δ in log |M|²
+  enters the integrand as exp(δ) − 1, whose mean is +δ²/2 whatever the sign of δ,
+  so a frozen log tree's integral is high by half its mean squared error and the
+  bias never averages out. The 300-point log tree's +0.37 % is +0.02 % of mean
+  log-space error and +0.35 % of convexity, and all of it sits in one leaf (3 % of
+  the integral, relative errors of 9 %, mean +7 %); the log target with 1000-point
+  leaves refit only at splits gives +1.8 %, 7.7 Monte Carlo errors, again one leaf
+  (11 % of the integral, errors of 57 %). So the leaf size is not what changed:
+  the linear target's errors are two-sided in the integrand itself and cancel,
+  −0.06 % with 300-point leaves and +0.004 % with 1000. The online log tree is
+  protected by its gate, which only lets through predictions with σ below 1 %, so
+  δ²/2 is at most 5e-5: the +0.01 % it shows. The size of a frozen log tree's bias
+  is one draw of its hyperparameter fits: the same 300-point configuration gives
+  +0.37 % with the default BLAS threads and +0.04 % with one (ε 1.0e-2 against
+  7.5e-3), positive both times.
 * **The slowdown is one split.** The online run with 1000-point leaves took 211 s
   to 100 000 points and 6030 s to 200 000, against 531 s for the 300-point tree.
   Per-chunk timing (`gated_online_best200k_t_gg.json`) puts 5815 s of it into a
@@ -736,6 +752,9 @@ python amplification_demo.py <data_dir> gg --uniform <1e6 uniform points> --targ
 python gated_integration_demo.py <path to tth_driver> --inputs invariants --kernel rbf --nbar 300 --tol 0.01 --tag online_gg
 python gated_integration_demo.py <path to tth_driver> --inputs invariants --kernel rbf --nbar 300 --tol 0.01 --pretrain 6824 --frozen --tag frozen_gated_gg
 python gated_integration_demo.py <path to tth_driver> --inputs invariants --kernel rbf --nbar 300 --tol inf --pretrain 6824 --frozen --tag frozen_gg
+# Section 2.5: where a frozen tree's integral shift comes from (OMP_NUM_THREADS=1 for the _1thread files)
+python frozen_bias.py <path to tth_driver> log 300 25 8670 log300
+python frozen_bias.py <path to tth_driver> lin 1000 1000000000 7815 lin1000_1thread
 # Sections 3-7: the flat-flux weights (--no-rho)
 python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs tree,hybrid --no-rho --tag exact
 python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs acq --nmax 32768 --no-rho --tag acq
