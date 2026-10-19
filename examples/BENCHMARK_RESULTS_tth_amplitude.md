@@ -248,8 +248,9 @@ with the same gate, whose calls it does not learn from.
   same points: the tree's updates, not its predictions, are the cost, negligible
   against loop amplitudes and not against tree-level ones.
 * **With the best f3 configuration of Section 2.11** (linear target, 1000-point
-  leaves refit only at splits; `online_vs_pretrained_best200k.pdf`, `--target lin
-  --nbar 1000 --retrain 1000000000`): the online tree needs 7815 exact calls over
+  leaves refit only at splits; `online_vs_pretrained_best200k.pdf`, f1 with the
+  300-point log tree beside it, `--target lin --nbar 1000 --retrain 1000000000`):
+  the online tree needs 7815 exact calls over
   200 000 points (3.9 %, 2.2 % of the last 5000) against 8670 for the 300-point
   log tree, its error on the points used is 9.5e-4 against 2.1e-3, and the
   integral deviates by −0.003 % (0.01 Monte Carlo errors) against +0.009 %. The
@@ -266,18 +267,26 @@ with the same gate, whose calls it does not learn from.
   log-space error and the mean of exp(δ) − 1 − δ). A two-sided error δ in log |M|²
   enters the integrand as exp(δ) − 1, whose mean is +δ²/2 whatever the sign of δ,
   so a frozen log tree's integral is high by half its mean squared error and the
-  bias never averages out. The 300-point log tree's +0.37 % is +0.02 % of mean
-  log-space error and +0.35 % of convexity, and all of it sits in one leaf (3 % of
-  the integral, relative errors of 9 %, mean +7 %); the log target with 1000-point
-  leaves refit only at splits gives +1.8 %, 7.7 Monte Carlo errors, again one leaf
-  (11 % of the integral, errors of 57 %). So the leaf size is not what changed:
-  the linear target's errors are two-sided in the integrand itself and cancel,
-  −0.06 % with 300-point leaves and +0.004 % with 1000. The online log tree is
-  protected by its gate, which only lets through predictions with σ below 1 %, so
-  δ²/2 is at most 5e-5: the +0.01 % it shows. The size of a frozen log tree's bias
-  is one draw of its hyperparameter fits: the same 300-point configuration gives
-  +0.37 % with the default BLAS threads and +0.04 % with one (ε 1.0e-2 against
-  7.5e-3), positive both times.
+  bias never averages out. The 300-point log tree's +0.37 % (`log300_b`) is
+  +0.02 % of mean log-space error and +0.35 % of convexity, and all of it sits in
+  one leaf (3 % of the integral, relative errors of 9 %, mean +7 %); the log target
+  with 1000-point leaves refit only at splits gives +1.6 %, 6.9 Monte Carlo
+  errors, again one leaf (11 % of the integral, errors of 50 %). So the leaf size
+  is not what changed: the linear target's errors are two-sided in the integrand
+  itself and cancel, −0.06 % with 300-point leaves and +0.004 % with 1000. The
+  online log tree is protected by its gate, which only lets through predictions
+  with σ below 1 %, so δ²/2 is at most 5e-5: the +0.01 % it shows.
+* **The size of a frozen log tree's bias is one draw of its fits, and the Jensen
+  correction does not remove it.** The same 300-point configuration gave +0.32 %
+  (the run above), +0.37 % and +0.04 % in three runs (ε 1.0e-2 against 7.5e-3;
+  one leaf's hyperparameter fit lands differently), positive every time as the
+  mechanism requires. Replacing exp(μ) by exp(μ + σ²/2), the mean of exp(f) under
+  the GP posterior, makes it worse: +0.04 % becomes +0.2 % and the 1000-point
+  tree's +1.6 % becomes +14 %. The tree's σ is calibrated on average (rms σ 0.037
+  against rms log error 0.037) but not leaf by leaf: the leaf carrying the bias
+  under-covers its errors by 1.7 × while most leaves over-cover theirs by 2 ×, and
+  the correction is paid in the latter. The remedies are the linear target or the
+  gate.
 * **The slowdown is one split.** The online run with 1000-point leaves took 211 s
   to 100 000 points and 6030 s to 200 000, against 531 s for the 300-point tree.
   Per-chunk timing (`gated_online_best200k_t_gg.json`) puts 5815 s of it into a
@@ -755,6 +764,7 @@ python gated_integration_demo.py <path to tth_driver> --inputs invariants --kern
 # Section 2.5: where a frozen tree's integral shift comes from (OMP_NUM_THREADS=1 for the _1thread files)
 python frozen_bias.py <path to tth_driver> log 300 25 8670 log300
 python frozen_bias.py <path to tth_driver> lin 1000 1000000000 7815 lin1000_1thread
+python plot_online_vs_pretrained.py --suffix uu=200k,gg=_best200k --out _best200k --absolute --no-ratio
 # Sections 3-7: the flat-flux weights (--no-rho)
 python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs tree,hybrid --no-rho --tag exact
 python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs acq --nmax 32768 --no-rho --tag acq

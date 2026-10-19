@@ -5,7 +5,7 @@ run proceeds. Middle: the integral's deviation from the exact one in units of it
 Monte Carlo error. Bottom (``--absolute``): the same deviation and the Monte Carlo
 error themselves, both relative to the integral.
 
-Usage: python plot_online_vs_pretrained.py [results_dir] [--channels uu,gg] [--suffix 200k] [--absolute]
+Usage: python plot_online_vs_pretrained.py [results_dir] [--channels uu,gg] [--suffix 200k | uu=200k,gg=_best200k] [--out _best200k] [--absolute] [--no-ratio]
 """
 import argparse
 import json
@@ -40,21 +40,28 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("results_dir", nargs="?", default=os.path.join(HERE, "results", "tth_amplitude"))
     ap.add_argument("--channels", default="uu,gg")
-    ap.add_argument("--suffix", default="", help="file tag suffix of the runs, e.g. 200k")
+    ap.add_argument("--suffix", default="", help="file tag suffix of the runs, e.g. 200k, or per channel, e.g. uu=200k,gg=_best200k")
+    ap.add_argument("--out", default=None, help="suffix of the figure's file name (default: the run suffix)")
     ap.add_argument("--absolute", action="store_true", help="add the row of absolute errors")
+    ap.add_argument("--no-ratio", action="store_true", help="drop the row of the deviation in Monte Carlo errors")
     args = ap.parse_args()
     chans = args.channels.split(",")
-    nrows = 3 if args.absolute else 2
+    suffix = dict(s.split("=") for s in args.suffix.split(",")) if "=" in args.suffix else {ch: args.suffix for ch in chans}
+    out = args.suffix if args.out is None else args.out
+    rows = ["calls"] + ([] if args.no_ratio else ["ratio"]) + (["abs"] if args.absolute else [])
+    nrows = len(rows)
     plt.rcParams.update({"font.family": "sans-serif", "font.size": 8, "axes.linewidth": 0.6, "axes.edgecolor": MUTED,
                          "xtick.color": MUTED, "ytick.color": MUTED, "axes.labelcolor": INK, "xtick.direction": "out",
                          "ytick.direction": "out", "xtick.major.size": 2.5, "ytick.major.size": 2.5, "axes.titlesize": 8.5,
                          "legend.fontsize": 7.5, "pdf.fonttype": 42})
     fig, axes = plt.subplots(nrows, len(chans), figsize=(3.6 * len(chans), 2.2 * nrows), sharex="col", squeeze=False)
     for j, ch in enumerate(chans):
-        runs = {tag: load(args.results_dir, tag + args.suffix, ch) for tag, _, _, _ in SERIES}
+        runs = {tag: load(args.results_dir, tag + suffix[ch], ch) for tag, _, _, _ in SERIES}
         budget = runs["online"]["checkpoints"][-1]["n_exact"]
         n_max = runs["online"]["series"][-1]["N"] / 1e3
-        top, bot = axes[0, j], axes[1, j]
+        top = axes[0, j]
+        bot = axes[rows.index("ratio"), j] if "ratio" in rows else None
+        ab = axes[rows.index("abs"), j] if "abs" in rows else None
         for tag, label, color, ls in SERIES:
             s = runs[tag]["series"]
             N = np.array([r["N"] for r in s]) / 1e3
@@ -67,10 +74,10 @@ def main():
                 top.annotate(count(n_exact[-1]) + extra, (N[-1], n_exact[-1]), xytext=(4, 0), textcoords="offset points",
                              va="center", ha="left", fontsize=7, color=INK)
             m = N >= 2
-            bot.plot(N[m], np.array([r["shift_over_mc"] for r in s])[m], ls=ls, color=color, lw=1.6,
-                     solid_capstyle="round", dash_capstyle="round", zorder=3 if tag == "online" else 2)
-            if args.absolute:
-                ab = axes[2, j]
+            if bot is not None:
+                bot.plot(N[m], np.array([r["shift_over_mc"] for r in s])[m], ls=ls, color=color, lw=1.6,
+                         solid_capstyle="round", dash_capstyle="round", zorder=3 if tag == "online" else 2)
+            if ab is not None:
                 if tag == "online":      # the Monte Carlo error is the same for every strategy: the same points
                     mc = 100 * np.array([r["mc_rel_err"] for r in s])[m]
                     ab.fill_between(N[m], 1e-9, mc, color="#898781", alpha=0.10, lw=0, zorder=0)
@@ -81,13 +88,13 @@ def main():
         top.text(0.97 * n_max, budget * 1.04, f"pretrained on {count(budget)}", fontsize=7, color=MUTED, va="bottom", ha="right")
         top.set_ylim(0, None); top.set_xlim(0, 1.24 * n_max)
         top.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v / 1e3:g}k" if v >= 1e3 else f"{v:g}"))
-        bot.axhspan(-1, 1, color="#898781", alpha=0.10, lw=0, zorder=0)
-        bot.axhline(0, color="#c3c2b7", lw=0.6, zorder=1)
-        bot.set_ylim(-1.6, 1.6)
+        if bot is not None:
+            bot.axhspan(-1, 1, color="#898781", alpha=0.10, lw=0, zorder=0)
+            bot.axhline(0, color="#c3c2b7", lw=0.6, zorder=1)
+            bot.set_ylim(-1.6, 1.6)
         axes[-1, j].set_xlabel("Monte Carlo points (thousands)")
         axes[-1, j].set_xticks(np.linspace(0, n_max, 5))
-        if args.absolute:
-            ab = axes[2, j]
+        if ab is not None:
             ab.set_yscale("log"); ab.set_ylim(1e-3, 5)
             ab.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g} %"))
             k = len(runs["online"]["series"]) // 4
@@ -99,17 +106,18 @@ def main():
             ax.set_axisbelow(True)
         if j == 0:
             top.set_ylabel("exact amplitude evaluations")
-            bot.set_ylabel("(integral $-$ exact) / MC error")
-            bot.text(0.02 * n_max, 0.93, "$\\pm$1 Monte Carlo error", fontsize=7, color=MUTED, va="top")
-            if args.absolute:
-                axes[2, j].set_ylabel("|integral $-$ exact| / exact")
+            if bot is not None:
+                bot.set_ylabel("(integral $-$ exact) / MC error")
+                bot.text(0.02 * n_max, 0.93, "$\\pm$1 Monte Carlo error", fontsize=7, color=MUTED, va="top")
+            if ab is not None:
+                ab.set_ylabel("|integral $-$ exact| / exact")
     handles, labels = axes[0, 0].get_legend_handles_labels()
     ncol = 3 if len(chans) > 1 else 1   # one channel: stack the legend entries
     fig.legend(handles, labels, loc="upper center", ncol=ncol, frameon=False, handlelength=2.6, columnspacing=1.6,
                handletextpad=0.6, bbox_to_anchor=(0.5, 1.0))
     fig.tight_layout(h_pad=1.0, w_pad=1.2, rect=(0, 0, 1, 1 - (0.3 if ncol == 3 else 0.75) / fig.get_figheight()))
     for ext in ("pdf", "png"):
-        path = os.path.join(args.results_dir, f"online_vs_pretrained{args.suffix}.{ext}")
+        path = os.path.join(args.results_dir, f"online_vs_pretrained{out}.{ext}")
         fig.savefig(path, dpi=300 if ext == "png" else None)
         print("wrote", path)
 

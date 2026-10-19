@@ -41,7 +41,8 @@ w = w * bench.rho(ch, X)
 Xt = bench.invariants(X)
 with contextlib.redirect_stdout(io.StringIO()):
     mu, sd = gpt.predict(Xt, mode="loop")
-a_pred, _ = bench.from_target(mu.ravel(), sd.ravel(), Xt)
+mu, sd = mu.ravel(), sd.ravel()
+a_pred, _ = bench.from_target(mu, sd, Xt)
 f, d = w * a, w * (a_pred - a)
 shift, mc = d.mean() / f.mean(), f.std() / np.sqrt(npoints) / f.mean()
 rel = a_pred / a - 1.0
@@ -49,8 +50,12 @@ rel = a_pred / a - 1.0
 
 def part(m):
     """Share of the integral, contribution to the shift and relative errors of the points in m."""
-    return dict(n_pts=int(m.sum()), share_of_I=float(f[m].sum() / f.sum()), shift_contrib=float(d[m].sum() / f.sum()),
-                mean_rel=float(rel[m].mean()), mean_abs_rel=float(np.abs(rel[m]).mean()))
+    r = dict(n_pts=int(m.sum()), share_of_I=float(f[m].sum() / f.sum()), shift_contrib=float(d[m].sum() / f.sum()),
+             mean_rel=float(rel[m].mean()), mean_abs_rel=float(np.abs(rel[m]).mean()))
+    if target == "log":
+        lr = np.log(a_pred[m]) - np.log(a[m])
+        r.update(rms_log_err=float(np.sqrt(np.mean(lr ** 2))), rms_sd=float(np.sqrt(np.mean(sd[m] ** 2))))
+    return r
 
 
 q = np.quantile(f, np.linspace(0, 1, 11))
@@ -60,8 +65,11 @@ top = {str(p): part(f >= np.quantile(f, p)) for p in (0.99, 0.999)}
 sym = dict(frac_pos=float((rel > 0).mean()), wmean_rel=float((f * rel).sum() / f.sum()),
            wmean_abs_rel=float((f * np.abs(rel)).sum() / f.sum()), eps_used=float(np.abs(d).sum() / f.sum()))
 if target == "log":
+    # the shift with the Jensen correction exp(mu + sd^2/2), the mean of exp(f) under the GP posterior
     lr = np.log(a_pred) - np.log(a)
-    sym.update(log_wmean=float((f * lr).sum() / f.sum()), convexity_wmean=float((f * (np.exp(lr) - 1 - lr)).sum() / f.sum()))
+    sym.update(log_wmean=float((f * lr).sum() / f.sum()), convexity_wmean=float((f * (np.exp(lr) - 1 - lr)).sum() / f.sum()),
+               shift_jensen=float((w * (a_pred * np.exp(sd ** 2 / 2) - a)).sum() / f.sum()),
+               rms_log_err=float(np.sqrt(np.mean(lr ** 2))), rms_sd=float(np.sqrt(np.mean(sd ** 2))))
 
 leaves = gpt.root.leaves
 lab = np.empty(npoints, dtype=int)
@@ -86,4 +94,5 @@ os.makedirs(demo.OUT_DIR, exist_ok=True)
 with open(os.path.join(demo.OUT_DIR, f"frozen_bias_{tag}.json"), "w") as fh:
     json.dump(out, fh, indent=1)
 print(f"{tag}: target {target}, nbar {nbar}, retrain {retrain}, pretrained on {npre}: {len(leaves)} leaves, "
-      f"shift {100 * shift:+.3f} % = {shift / mc:+.2f} MC errors, eps {sym['eps_used']:.1e}, pretraining {t_pre:.0f} s")
+      f"shift {100 * shift:+.3f} % = {shift / mc:+.2f} MC errors, eps {sym['eps_used']:.1e}, pretraining {t_pre:.0f} s"
+      + (f"; with the Jensen correction {100 * sym['shift_jensen']:+.3f} %" if target == "log" else ""))
