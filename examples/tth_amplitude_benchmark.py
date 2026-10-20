@@ -100,7 +100,7 @@ def target_shift(X_tree):
     t-channel top propagators 1/(p_g . p_t)^p), or s-hat^k (``logs1``, ``logs2``,
     ``lins1``, ``lins2``)."""
     t = OPTS["target"]
-    if t in ("log", "lin"):
+    if t in ("log", "lin", "asinh"):
         return np.zeros(len(X_tree))
     if t.startswith("pole"):
         p = {"pole1": 1.0, "pole2": 2.0}[t]
