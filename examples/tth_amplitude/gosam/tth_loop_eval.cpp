@@ -20,6 +20,9 @@
 #define CAT2(a, b) a##b
 #define CAT(a, b) CAT2(a, b)
 #define OLP(name) CAT(PREFIX, name)
+#ifndef PREFIX_IS_GG
+#define PREFIX_IS_GG 0
+#endif
 
 extern "C" {
     void OLP(OLP_Start)(const char* contract_file_name, int* ierr);
@@ -45,7 +48,8 @@ static void option(const char* line) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 2) { fprintf(stderr, "usage: %s <contract file>\n", argv[0]); return 1; }
+    if (argc < 2) { fprintf(stderr, "usage: %s <contract file> [--cc-only]\n", argv[0]); return 1; }
+    int cc_only = argc > 2 && strcmp(argv[2], "--cc-only") == 0;
     option("nlo_prefactors=0");
     option("mT=1");
     option("mH=0.7223151185146152");
@@ -82,10 +86,12 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < 5; i++) { memcpy(&momenta[5 * i], legs[i], 4 * sizeof(double)); momenta[5 * i + 4] = masses[i]; }
         double mu = sqrt_s / 2, res[60] = {0}, cc[60] = {0}, acc = NAN, acc_cc = NAN;
         int label = 0;
-        OLP(OLP_EvalSubProcess2)(&label, momenta, &mu, res, &acc);
+        if (!cc_only) OLP(OLP_EvalSubProcess2)(&label, momenta, &mu, res, &acc);
         label = 1;
         OLP(OLP_EvalSubProcess2)(&label, momenta, &mu, cc, &acc_cc);
         // ccTree entries are ordered by pairs (i<j) with index (i-1) + (j-1)(j-2)/2; the tops are legs 4 and 5
+        if (cc_only)   // the Born from colour conservation on leg 1: sum_j T_1.T_j = -C_1 |M0|^2 (C_A for a gluon, C_F for a quark)
+            res[3] = -(cc[0] + cc[3] + cc[6]) / (PREFIX_IS_GG ? 3.0 : 4.0 / 3.0);
         fprintf(fout, "%.16e %.16e %.16e %.16e %.16e %.16e %.16e %.3e\n", weight, res[3], res[2], res[1], res[0], cc[9], beta_tt, acc);
         fflush(fout);
     }

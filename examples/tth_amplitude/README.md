@@ -34,36 +34,45 @@ phi_t in [0, pi]) and m_H / m_t = sqrt(12/23).
    plus three blocks of 65 536 from `gen_unweighted.py` with seeds 21, 22, 23 and the same
    fmax, concatenated into `gg_train_unweighted_rho.npz` in their own data directory.
 
-## One-loop test functions f2 and f4 (`gosam/`)
+## One-loop test functions f2 and f4 (`loop/`)
 
 The paper's f2 (q qbar) and f4 (g g) are the finite parts of 2 Re <M0|M1> with the
-Coulomb singularity subtracted (their eqs. 14 and 19), evaluated with GoSam. The files
-in `gosam/` reproduce them with GoSam 2.0.4 and its contrib libraries:
+Coulomb singularity subtracted (their eqs. 14 and 19), evaluated with GoSam. Here they
+are evaluated with MadLoop (MadGraph5_aMC@NLO 3.6.x, needs gfortran), cross-checked
+against OpenLoops 2.1.5 at test points; GoSam 2.0.4 built from source disagreed with
+both in the finite parts and was not used.
 
-1. Tools: gfortran, FORM (`apt install form`), QGRAF 3.4.2 (`gfortran -o qgraf qgraf-3.4.2.f`),
-   gosam-contrib 2.0 (`./configure --prefix=<prefix>`, FFLAGS `-O2 -fallow-argument-mismatch
-   -std=legacy`) and GoSam 2.0.4 (Python 2.7, `python setup.py install --prefix=<prefix>`),
-   both from gosam.hepforge.org/downloads. Link `<prefix>/share/gosam-contrib/gosam.conf` to
-   `$HOME/gosam.conf` and add `qgraf.bin`, `form.bin` and `python.bin` (Python 2.7) to it.
-2. Generate each process in OLP mode, with the paths in `tth.in` adjusted:
-   `gosam.py --olp --config=tth.in --destination=olp --ignore-unknown --name=tthqq tth_qq.lh`
-   (`tthgg`, `tth_gg.lh` for g g). The order file asks for the loop amplitude and the
-   colour-correlated Born (`ccTree`), couplings stripped off, DRED, model SMdiag with only
-   m_t and m_H non-zero. In `olp/Makefile.conf` add `-fallow-invalid-boz` to FCFLAGS, then
-   `make -j4` in `olp/`.
-3. GoSam's precision check compares the single pole with its own IR formula, which for these
-   processes differs from the amplitude by a constant times the Born (-40/3 for q qbar); add
-   `irp(2) = irp(2) - 40.0_ki / 3.0_ki * ampdef(1)` after the `call ir_subtraction` in
-   `samplitude` of `olp/<process>/matrix/matrix.f90` and rebuild that file, otherwise every
-   point is reported as imprecise. The double pole, the Coulomb cancellation and the Born
-   against the MadGraph driver are checked by `validate.py`.
-4. Build the evaluator against all objects of `olp/` and the contrib libraries:
-   `g++ -O2 -DPREFIX=tthqq_ -o tth_loop_eval_qq tth_loop_eval.cpp $(find olp -name '*.o') -Wl,--start-group <prefix>/lib/lib{avh_olo,qcdloop,ff,golem,ninja,samurai}.a -Wl,--end-group -lgfortran -lquadmath -lz`.
-   It reads the five variables per line and writes weight, Born, finite part, the two pole
-   coefficients, <M0|T_t.T_tbar|M0>, beta_ttbar and GoSam's accuracy, with m_t = 1,
-   mu_R = sqrt(s)/2 and no alpha_s/(2 pi) factor; about 5 ms (q qbar) per point.
-5. `python gen_loop.py tth_loop_eval_qq tth_qq.olc <tree-level file>.npz <out>.npz 4`
+1. `python bin/mg5_aMC loop/tth_loop_uu.mg5` (and `tth_loop_gg.mg5`): standalone MadLoop
+   output of `u u~ > t t~ h [virt=QCD]` and `g g > t t~ h [virt=QCD]` in the model
+   `loop_sm-no_b_mass` (five massless flavours). MadGraph compiles CutTools and Ninja
+   from its own tarballs. In each `Cards/param_card.dat` set `MT = 173`, `MH = 124.9605`,
+   `WT = 0`, `WH = 0`.
+2. In `SubProcesses/P0_*`, copy `loop/tth_ml_driver.f`, run `make check` once to build the
+   libraries, then compile and link the driver with the same command as `check` (take it
+   from `make -n check`, replacing `check_sa.o` by `tth_ml_driver.o`). The driver reads one
+   point per line (E px py pz of the five particles in GeV, process order) and prints
+   `RES`, Born, finite part, 1/eps and 1/eps^2 coefficients (without the alpha_s/(2 pi)
+   factor), MadLoop's accuracy estimate and return code, with mu_R = sqrt(s)/2. About
+   2 ms (q qbar) and 40 ms (g g) per point.
+3. `MG5=<MadGraph dir> python loop/gen_loop_ml.py <driver> <tree-level file>.npz <out>.npz 4`
    evaluates the loop amplitude at the points of an existing data file (same X, P and w)
-   and stores the paper's amplitude as `me` with the pieces it is made of; run it for the
-   Sobol, rho-unweighted, uniform-test and unweighted-test files of each channel into a
-   separate data directory. The benchmark learns `me / tree` with `--ratio`.
+   and stores the paper's amplitude as `me` with the pieces it is made of; the
+   colour-correlated Born of the Coulomb term is Born/6 for q qbar (colour octet) and
+   is taken from the full colour correlator for g g. Run it for the Sobol,
+   rho-unweighted, uniform-test and unweighted-test files of each channel into a
+   separate data directory; the benchmark learns `me / tree` with `--ratio`.
+4. `loop/tth_ol_eval.cpp` evaluates the same points with OpenLoops (`./openloops
+   libinstall pphtt`; `g++ tth_ol_eval.cpp -I<OL>/include -L<OL>/lib -lopenloops`) in the
+   same layout as the drivers above, for cross-checks.
+5. The g g colour correlator <M0|T_t.T_tbar|M0> / Born comes from GoSam's tree-level
+   `ccTree` amplitude type (`gosam/`): GoSam 2.0.4 with gosam-contrib 2.0, QGRAF 3.4.2
+   and FORM from gosam.hepforge.org and Spack's source mirror, Python 2.7; generate with
+   `gosam.py --olp --config=tth.in --destination=olp --ignore-unknown --name=tthgg tth_gg.lh`
+   (add `-fallow-invalid-boz` to FCFLAGS in `olp/Makefile.conf`, Python 2.7 as PYTHON),
+   `make -j4` in `olp/`, link `tth_loop_eval.cpp` with `-DPREFIX=tthgg_ -DPREFIX_IS_GG=1`
+   against all objects of `olp/` and the contrib libraries, then
+   `python gen_cc.py tth_loop_eval_gg tth_gg.olc <tree-level file>.npz <cc file>.npz`
+   (0.1 ms per point) and `python loop/fix_gg_cc.py <MadLoop g g file>.npz <cc file>.npz`,
+   or pass the cc file as the last argument of `gen_loop_ml.py`. GoSam's own one-loop
+   finite parts, from the same build, disagreed with MadLoop and OpenLoops and were
+   not used.

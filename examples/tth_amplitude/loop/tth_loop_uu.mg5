@@ -1,0 +1,4 @@
+set automatic_html_opening False
+import model loop_sm-no_b_mass
+generate u u~ > t t~ h [virt=QCD]
+output standalone PROC_loop_uu_tth
