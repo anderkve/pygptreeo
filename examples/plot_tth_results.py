@@ -10,6 +10,7 @@ eps_vs_points_targets.png: paper's weights, the log and the linear target, strea
 choosing the points from a pool of 131 072 or 524 288 candidates, or letting the leaves choose; and the
 1000-point leaves refit only at splits.
 
+eps_vs_points_loop.png: the one-loop test functions f2 and f4, learned as the ratio to the Born.
 Usage: python plot_tth_results.py [results_dir]
 """
 import json
@@ -27,11 +28,16 @@ NAMES = {"uu": r"$f_1$: $q\bar q \to t\bar t H$", "gg": r"$f_3$: $gg \to t\bar t
 # (their eq. 30), read off the plot by pixel position; the two networks agree to 10-20 %, the mean is given
 REFERENCE = {"uu": [(1000, 3.5e-3), (3000, 8e-4), (1e4, 2.2e-4), (3e4, 9.5e-5), (1e5, 6e-5), (1e6, 5e-5)],
              "gg": [(1000, 2.5e-2), (3000, 8e-3), (1e4, 1.7e-3), (3e4, 5e-4), (1e5, 2e-4), (1e6, 1.1e-4)]}
+# the one-loop test functions f2 (uu) and f4 (gg): the better of MLP(s) and L-GATr on a / a_LO, Figure 16
+REFERENCE_LOOP = {"uu": [(1000, 6e-3), (3000, 2.5e-3), (1e4, 7e-4), (3e4, 2.7e-4), (1e5, 1.6e-4), (1e6, 9.5e-5)],
+                  "gg": [(1000, 2.1e-2), (3000, 8e-3), (1e4, 2.3e-3), (3e4, 8e-4), (1e5, 3e-4), (1e6, 9e-5)]}
+NAMES_LOOP = {"uu": r"$f_2$: $q\bar q \to t\bar t H$, one loop", "gg": r"$f_4$: $gg \to t\bar t H$, one loop"}
 # the metric each figure plots: the paper-weights figure uses the networks' metric
 METRIC = {"eps_vs_points_paper_weights.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points"),
-          "eps_vs_points_targets.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points")}
-XLIM = {"eps_vs_points_targets.png": (500, 1.5e6)}
-LEGEND_LOC = {"eps_vs_points_targets.png": "below"}
+          "eps_vs_points_targets.png": ("eps_unweighted", r"mean relative error on LO-unweighted test points"),
+          "eps_vs_points_loop.png": ("eps_unweighted", r"$\epsilon$ on LO-unweighted test points, $\sum|\tilde r - r| / \sum |r|$, $r = a / a_{\rm LO}$")}
+XLIM = {"eps_vs_points_targets.png": (500, 1.5e6), "eps_vs_points_loop.png": (500, 1.5e6)}
+LEGEND_LOC = {"eps_vs_points_targets.png": "below", "eps_vs_points_loop.png": "below"}
 DEFAULT_METRIC = ("eps_uniform", r"$\epsilon = \sum|\tilde f - f| \,/\, \sum f$ (uniform test points)")
 COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100", "#5c6bc0", "#00897b", "#c0392b", "#7f8c8d"]
 
@@ -67,6 +73,12 @@ FIGURES = {
         ("sweep_knNbar1000splitBig_{ch}|sweep_rhoSplit1000_{ch}", "tree", "1000-point leaves refit at splits, mixed stream (linear target on f3, log on f1)"),
         ("sweep_knNbar1000splitAcq_{ch}", "acq", "1000-point leaves refit at splits, choosing its points from a pool of 524k (linear target on f3, log on f1)"),
     ],
+    "eps_vs_points_loop.png": [
+        ("sweep_loopMix300_{ch}", "tree", "300-point RBF leaves on the log invariants and the threshold velocity, mixed stream"),
+        ("sweep_loopSplit1000_{ch}", "tree", "1000-point leaves refit only at splits, mixed stream"),
+        ("sweep_loopInv1000_{ch}", "tree", "same, without the threshold velocity"),
+        ("sweep_loopAcq1000_{ch}", "acq", "1000-point leaves refit at splits, choosing its points from the 131k pool"),
+    ],
 }
 # The first two figures use the phase-space measure alone as the weight (no pseudo-PDF factor), the third the paper's f
 
@@ -93,13 +105,14 @@ for name, series in FIGURES.items():
                 ax.plot([r["N"] for r in rows], [r.get(metric, r["eps_uniform"]) for r in rows], "-o", color=color, lw=2, ms=4, label=label)
                 n += 1
         plotted.append(n)
-        ref = REFERENCE[ch]
+        loop = name == "eps_vs_points_loop.png"
+        ref = (REFERENCE_LOOP if loop else REFERENCE)[ch]
         ax.plot([n for n, _ in ref], [e for _, e in ref], "--", color="#52514e", lw=1.2,
                 label="MLP / L-GATr of arXiv:2412.09534 (Fig. 16, LO-unweighted test points)")
         ax.axhline(0.01, color="#52514e", lw=0.8, ls=":")
         ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(*XLIM.get(name, (500, 2e5)))
         ax.set_xlabel("training points"); ax.set_ylabel(ylabel)
-        ax.set_title(NAMES[ch], fontsize=10); ax.grid(alpha=0.25)
+        ax.set_title((NAMES_LOOP if loop else NAMES)[ch], fontsize=10); ax.grid(alpha=0.25)
     ax_leg = axes[0 if plotted[0] >= plotted[1] else 1]
     if below:   # the legend under both panels, two columns
         handles, labels = ax_leg.get_legend_handles_labels()

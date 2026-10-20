@@ -49,7 +49,12 @@ CHANNEL_NAMES = {"uu": "f1: q qbar -> t tbar H", "gg": "f3: g g -> t tbar H"}
 def load(data_dir, ch):
     def arrays(path):
         z = np.load(path)
-        return {k: z[k] for k in z.files}
+        d = {k: z[k] for k in z.files}
+        ok = np.isfinite(d["me"]) & (d["acc"] < 1e-5 if "acc" in d else True)   # one-loop points below precision
+        d = {k: v[ok] for k, v in d.items()}
+        if OPTS["ratio"]:        # the one-loop amplitude in units of the Born, the networks' target for f2 and f4
+            d["me"] = d["me"] / d["tree"]
+        return d
     tr = arrays(os.path.join(data_dir, f"{ch}_train_sobol.npz"))
     unw = "unweighted_rho" if OPTS["rho"] else "unweighted"     # points drawn with probability ~ f
     if OPTS["train"] in ("unweighted", "mixed"):
@@ -74,7 +79,7 @@ def load(data_dir, ch):
 
 NET_KWARGS = {}   # overrides for the hybrid's FeatureNetLearner, from --net
 OPTS = dict(kernel="matern32", nbar=100, train="sobol", inputs="cube", features="cube", split="min_lengthscale",
-            retrain=25, strategy="gradual", target="log", glob="none", rho=True, scale=1.0, theta=None)
+            retrain=25, strategy="gradual", target="log", glob="none", rho=True, scale=1.0, theta=None, ratio=False)
 GLUON_TOP_PAIRS = [1, 2, 4, 5]   # columns of invariants(): (0,2), (0,3), (1,2), (1,3)
 
 
@@ -99,7 +104,7 @@ def target_shift(X_tree):
         return np.zeros(len(X_tree))
     if t.startswith("pole"):
         p = {"pole1": 1.0, "pole2": 2.0}[t]
-        inv = X_tree if OPTS["inputs"] == "invariants" else (X_tree[:, 5:] if OPTS["inputs"] == "both" else invariants(X_tree))
+        inv = X_tree[:, :10] if OPTS["inputs"] in ("invariants", "invbeta") else (X_tree[:, 5:] if OPTS["inputs"] == "both" else invariants(X_tree))
         return p * inv[:, GLUON_TOP_PAIRS].sum(axis=1)
     return float(t[-1]) * log_shat(X_tree)
 
@@ -126,6 +131,9 @@ def from_target(mu, sd, X_tree):
     """The amplitude and its sigma from the tree's prediction (a power target is
     clipped at a tiny positive value before the root)."""
     p = target_power()
+    if p == 1.0:
+        f = OPTS["scale"] * np.exp(-target_shift(X_tree))
+        return mu * f, sd * f
     if p is not None:
         y = np.maximum(mu * OPTS["scale"], 1e-300)
         a = y ** (1.0 / p) * np.exp(-target_shift(X_tree))
@@ -137,7 +145,7 @@ def from_target(mu, sd, X_tree):
 def set_scale(a, X_tree):
     """Power targets are learned in units of their median over the first 1000 points."""
     p = target_power()
-    OPTS["scale"] = float(np.median((a[:1000] * np.exp(target_shift(X_tree[:1000]))) ** p)) if p is not None else 1.0
+    OPTS["scale"] = float(np.median(np.abs(a[:1000] * np.exp(target_shift(X_tree[:1000]))) ** p)) if p is not None else 1.0
 MT, MH = 1.0, np.sqrt(12.0 / 23.0)
 RHO_C = {"uu": (1.0132, 0.9943, 0.3506), "gg": (1.0134, 0.7344, 0.0987)}   # eq. (10) of arXiv:2412.09534
 THETA_MAX = 0.5 * np.pi   # theta_H and theta_t range: pi/2 on the folded domain, pi on the full one
@@ -207,9 +215,19 @@ def invariants(X):
     return np.column_stack(out)
 
 
+def beta_tt(X):
+    """Velocity of the tops in the t tbar rest frame, the threshold variable of the one-loop amplitudes."""
+    X = np.atleast_2d(X)
+    s = (2 * MT + MH) ** 2 / (1 - (0.1 + 0.86 * X[:, 0]))
+    stt = 4 * MT ** 2 + X[:, 1] * ((np.sqrt(s) - MH) ** 2 - 4 * MT ** 2)
+    return np.sqrt(1 - 4 * MT ** 2 / stt)
+
+
 def tree_inputs(X):
     if OPTS["inputs"] == "invariants":
         return invariants(X)
+    if OPTS["inputs"] == "invbeta":
+        return np.column_stack([invariants(X), beta_tt(X)])
     if OPTS["inputs"] == "both":
         return np.hstack([X, invariants(X)])
     return X
@@ -218,7 +236,7 @@ def tree_inputs(X):
 def make(config, seed):
     from pygptreeo import Default_GPR, AdditiveMaternKernel, AnisotropicRationalQuadratic
     from sklearn.gaussian_process.kernels import ConstantKernel, DotProduct, Matern, RBF
-    d = {"cube": 5, "invariants": 10, "both": 15}[OPTS["inputs"]]
+    d = {"cube": 5, "invariants": 10, "both": 15, "invbeta": 11}[OPTS["inputs"]]
     kernels = {"matern32": None,
                "matern52": ConstantKernel() * Matern(nu=2.5, length_scale=np.ones(d)),
                "rbf": ConstantKernel() * RBF(length_scale=np.ones(d)),
@@ -247,16 +265,22 @@ def evaluate(gpt, te, tu):
         mu, sd = gpt.predict(te["X"], mode='loop')
     mu, sd = mu.ravel(), sd.ravel()
     a_true = te["me"]; a_pred = from_target(mu, sd, te["X"])[0]
-    f_true = te["w"] * a_true; f_pred = te["w"] * a_pred
+    born = te["tree"] if OPTS["ratio"] else 1.0
+    f_true = te["w"] * a_true * born; f_pred = te["w"] * a_pred * born
     rel = np.abs(a_pred / a_true - 1.0)
     pull = (mu - to_target(a_true, te["X"])) / sd
-    out = dict(eps_uniform=float(np.sum(np.abs(f_pred - f_true)) / np.sum(f_true)),
+    out = dict(eps_uniform=float(np.sum(np.abs(f_pred - f_true)) / np.sum(np.abs(f_true))),
                median_rel=float(np.median(rel)), within1pct=float(np.mean(rel < 0.01)),
                cov68=float(np.mean(np.abs(pull) < 1)), median_sigma=float(np.median(sd)))
     if tu is not None:
         with contextlib.redirect_stdout(io.StringIO()):
             mu_u, _ = gpt.predict(tu["X"], mode='loop')
-        out["eps_unweighted"] = float(np.mean(np.abs(from_target(mu_u.ravel(), mu_u.ravel(), tu["X"])[0] / tu["me"] - 1.0)))
+        pred_u = from_target(mu_u.ravel(), mu_u.ravel(), tu["X"])[0]
+        if OPTS["ratio"]:   # eq. (30) of arXiv:2412.09534 for a one-loop amplitude: sum |r~ - r| / sum |r|, r = a / a_LO
+            out["eps_unweighted"] = float(np.sum(np.abs(pred_u - tu["me"])) / np.sum(np.abs(tu["me"])))
+            out["mean_rel_unweighted"] = float(np.mean(np.abs(pred_u / tu["me"] - 1.0)))
+        else:
+            out["eps_unweighted"] = float(np.mean(np.abs(pred_u / tu["me"] - 1.0)))
     return out
 
 
@@ -315,7 +339,7 @@ def run_acquisition(ch, data_dir, nmax, seed, checkpoints, batch=500, candidates
             with contextlib.redirect_stdout(io.StringIO()):
                 mu, sd = gpt.predict(X[cand], mode='loop')
             a_pred, sig_a = from_target(mu.ravel(), sd.ravel(), X[cand])
-            score = w[cand] * np.abs(a_pred) * sig_a
+            score = w[cand] * (tr["tree"][cand] if OPTS["ratio"] else np.abs(a_pred)) * sig_a
             take = cand[np.argsort(score)[::-1][:min(batch, N - len(bought))]]
             with contextlib.redirect_stdout(io.StringIO()):
                 for i in take:
@@ -462,7 +486,9 @@ def main():
     ap.add_argument("--nbar", type=int, default=100)
     ap.add_argument("--train", default="sobol", choices=["sobol", "unweighted", "mixed"],
                     help="training points: Sobol, drawn with probability proportional to w |M|^2, or alternating")
-    ap.add_argument("--inputs", default="cube", choices=["cube", "invariants", "both"], help="the tree's inputs")
+    ap.add_argument("--inputs", default="cube", choices=["cube", "invariants", "both", "invbeta"],
+                    help="the tree's inputs: cube variables, log invariants, both, or the invariants and the t tbar threshold velocity")
+    ap.add_argument("--ratio", action="store_true", help="learn me / tree, the one-loop amplitude in units of the Born (f2, f4)")
     ap.add_argument("--features", default="cube", choices=["cube", "invariants"], help="the hybrid network's inputs")
     ap.add_argument("--split", default="min_lengthscale", help="GPTree split_dimension_criteria")
     ap.add_argument("--retrain", type=int, default=25,
@@ -487,7 +513,8 @@ def main():
     for item in filter(None, args.net.split(",")):
         k, v = item.split("="); NET_KWARGS[k] = None if v == "none" else int(v)
     OPTS.update(rho=args.rho, kernel=args.kernel, nbar=args.nbar, train=args.train, inputs=args.inputs, features=args.features,
-                split=args.split, retrain=args.retrain, strategy=args.strategy, target=args.target, glob=args.glob, theta=args.theta)
+                split=args.split, retrain=args.retrain, strategy=args.strategy, target=args.target, glob=args.glob, theta=args.theta,
+                ratio=args.ratio)
     os.makedirs(OUT_DIR, exist_ok=True)
     checkpoints = [1000, 2000, 4000, 8000, 16000, 32768, 65536, 131072, 262144, 524288]
     results = {}

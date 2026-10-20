@@ -33,3 +33,37 @@ phi_t in [0, pi]) and m_H / m_t = sqrt(12/23).
    points are the earlier set) and 262 144 ρ-unweighted points, e.g. the earlier 65 536
    plus three blocks of 65 536 from `gen_unweighted.py` with seeds 21, 22, 23 and the same
    fmax, concatenated into `gg_train_unweighted_rho.npz` in their own data directory.
+
+## One-loop test functions f2 and f4 (`gosam/`)
+
+The paper's f2 (q qbar) and f4 (g g) are the finite parts of 2 Re <M0|M1> with the
+Coulomb singularity subtracted (their eqs. 14 and 19), evaluated with GoSam. The files
+in `gosam/` reproduce them with GoSam 2.0.4 and its contrib libraries:
+
+1. Tools: gfortran, FORM (`apt install form`), QGRAF 3.4.2 (`gfortran -o qgraf qgraf-3.4.2.f`),
+   gosam-contrib 2.0 (`./configure --prefix=<prefix>`, FFLAGS `-O2 -fallow-argument-mismatch
+   -std=legacy`) and GoSam 2.0.4 (Python 2.7, `python setup.py install --prefix=<prefix>`),
+   both from gosam.hepforge.org/downloads. Link `<prefix>/share/gosam-contrib/gosam.conf` to
+   `$HOME/gosam.conf` and add `qgraf.bin`, `form.bin` and `python.bin` (Python 2.7) to it.
+2. Generate each process in OLP mode, with the paths in `tth.in` adjusted:
+   `gosam.py --olp --config=tth.in --destination=olp --ignore-unknown --name=tthqq tth_qq.lh`
+   (`tthgg`, `tth_gg.lh` for g g). The order file asks for the loop amplitude and the
+   colour-correlated Born (`ccTree`), couplings stripped off, DRED, model SMdiag with only
+   m_t and m_H non-zero. In `olp/Makefile.conf` add `-fallow-invalid-boz` to FCFLAGS, then
+   `make -j4` in `olp/`.
+3. GoSam's precision check compares the single pole with its own IR formula, which for these
+   processes differs from the amplitude by a constant times the Born (-40/3 for q qbar); add
+   `irp(2) = irp(2) - 40.0_ki / 3.0_ki * ampdef(1)` after the `call ir_subtraction` in
+   `samplitude` of `olp/<process>/matrix/matrix.f90` and rebuild that file, otherwise every
+   point is reported as imprecise. The double pole, the Coulomb cancellation and the Born
+   against the MadGraph driver are checked by `validate.py`.
+4. Build the evaluator against all objects of `olp/` and the contrib libraries:
+   `g++ -O2 -DPREFIX=tthqq_ -o tth_loop_eval_qq tth_loop_eval.cpp $(find olp -name '*.o') -Wl,--start-group <prefix>/lib/lib{avh_olo,qcdloop,ff,golem,ninja,samurai}.a -Wl,--end-group -lgfortran -lquadmath -lz`.
+   It reads the five variables per line and writes weight, Born, finite part, the two pole
+   coefficients, <M0|T_t.T_tbar|M0>, beta_ttbar and GoSam's accuracy, with m_t = 1,
+   mu_R = sqrt(s)/2 and no alpha_s/(2 pi) factor; about 5 ms (q qbar) per point.
+5. `python gen_loop.py tth_loop_eval_qq tth_qq.olc <tree-level file>.npz <out>.npz 4`
+   evaluates the loop amplitude at the points of an existing data file (same X, P and w)
+   and stores the paper's amplitude as `me` with the pieces it is made of; run it for the
+   Sobol, rho-unweighted, uniform-test and unweighted-test files of each channel into a
+   separate data directory. The benchmark learns `me / tree` with `--ratio`.

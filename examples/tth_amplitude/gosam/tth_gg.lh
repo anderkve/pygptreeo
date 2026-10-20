@@ -1,0 +1,13 @@
+# order file: gg -> t tbar H, one-loop QCD, and the colour-correlated Born
+MatrixElementSquareType  CHsummed
+CorrectionType           QCD
+IRregularisation         DRED
+Model                    SMdiag
+AlphasPower              2
+AlphaPower               1
+OperationMode            CouplingsStrippedOff
+
+AmplitudeType Loop
+21 21 -> 25 6 -6
+AmplitudeType ccTree
+21 21 -> 25 6 -6
