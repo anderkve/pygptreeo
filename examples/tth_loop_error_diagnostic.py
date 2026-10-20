@@ -64,7 +64,11 @@ def breakdown(name, v, bins):
               f"{err[m].mean():.2e} / {np.median(np.abs(r[m])):6.2f} / {pull[m].std():.2f}   (n={m.sum()})")
 
 
-inv = bench.invariants(tu["X"]); beta = bench.beta_tt(tu["X"])
+# the loaded X are the tree's inputs; the breakdown variables come from the cube coordinates of the test file
+d = np.load(os.path.join(args.data_dir, f"{args.channel}_test_unweighted_rho.npz"))
+Xc = d["X"][np.isfinite(d["me"]) & (d["acc"] < 1e-5)]
+assert len(Xc) == len(r)
+inv = bench.invariants(Xc); beta = bench.beta_tt(Xc)
 breakdown("log(p1.p2), the energy", inv[:, 0], np.quantile(inv[:, 0], [0, .5, .8, .95, .99, 1.0]) * np.array([1, 1, 1, 1, 1, 1.0001]))
 breakdown("beta_ttbar", beta, np.array([0, 0.3, 0.6, 0.8, 0.9, 0.97, 1.0001]))
 q = np.quantile(np.abs(r), [0, .5, .9, .99, 1.0]); q[-1] *= 1.0001

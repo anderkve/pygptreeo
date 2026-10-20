@@ -1,3 +1,5 @@
 uu tree   N=  1000  eps_uniform 1.90e-02  eps_unweighted 1.83e-02  median rel 2.56e-05  within 1 %: 88 %  cov68 0.84  30.2 ms/pt  leaves 2
 uu tree   N=  2000  eps_uniform 5.70e-03  eps_unweighted 5.23e-03  median rel 1.62e-05  within 1 %: 93 %  cov68 0.62  49.0 ms/pt  leaves 3
 uu tree   N=  4000  eps_uniform 6.77e-03  eps_unweighted 6.13e-03  median rel 2.21e-05  within 1 %: 91 %  cov68 0.62  53.7 ms/pt  leaves 6
+uu tree   N=  8000  eps_uniform 1.09e-03  eps_unweighted 8.25e-04  median rel 7.11e-06  within 1 %: 97 %  cov68 0.58  63.4 ms/pt  leaves 12
+uu tree   N= 16000  eps_uniform 3.76e-04  eps_unweighted 3.11e-04  median rel 2.50e-06  within 1 %: 99 %  cov68 0.62  64.2 ms/pt  leaves 24

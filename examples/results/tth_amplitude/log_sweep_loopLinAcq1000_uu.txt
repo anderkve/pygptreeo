@@ -1,2 +1,5 @@
 uu acq    N=  1000  eps_uniform 1.90e-02  eps_unweighted 1.83e-02  median rel 2.56e-05  within 1 %: 88 %  cov68 0.84  11.8 ms/pt  leaves 2
 uu acq    N=  2000  eps_uniform 8.62e-04  eps_unweighted 7.19e-04  median rel 3.60e-05  within 1 %: 96 %  cov68 0.56  70.8 ms/pt  leaves 3
+uu acq    N=  4000  eps_uniform 3.26e-04  eps_unweighted 3.11e-04  median rel 4.00e-05  within 1 %: 98 %  cov68 0.62  162.8 ms/pt  leaves 7
+uu acq    N=  8000  eps_uniform 2.14e-04  eps_unweighted 1.96e-04  median rel 2.09e-05  within 1 %: 98 %  cov68 0.59  117.3 ms/pt  leaves 13
+uu acq    N= 16000  eps_uniform 7.66e-05  eps_unweighted 7.21e-05  median rel 8.64e-06  within 1 %: 99 %  cov68 0.60  99.1 ms/pt  leaves 25
