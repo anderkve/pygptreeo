@@ -5,3 +5,15 @@ uu leafacq N=  8000  eps_uniform 6.32e-05  eps_unweighted 6.16e-05  median rel 2
 uu leafacq N= 16000  eps_uniform 3.14e-05  eps_unweighted 2.73e-05  median rel 1.24e-06  within 1 %: 100 %  cov68 0.50  77.2 ms/pt  leaves 27  exact 236 s
 uu leafacq N= 32768  eps_uniform 9.91e-06  eps_unweighted 1.04e-05  median rel 8.02e-07  within 1 %: 100 %  cov68 0.47  60.4 ms/pt  leaves 60  exact 488 s
 uu leafacq N= 65536  eps_uniform 5.13e-06  eps_unweighted 5.40e-06  median rel 5.72e-07  within 1 %: 100 %  cov68 0.48  47.3 ms/pt  leaves 120  exact 986 s
+uu leafacq N=131072  eps_uniform 3.18e-06  eps_unweighted 3.78e-06  median rel 4.63e-07  within 1 %: 100 %  cov68 0.43  38.8 ms/pt  leaves 237  exact 1902 s
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| uu | leafacq | 1000 | 4.96e-04 | 4.17e-04 | 6.85e-06 | 98 % | 0.65 | 5.2 |
+| uu | leafacq | 2000 | 1.47e-04 | 1.23e-04 | 4.80e-06 | 100 % | 0.76 | 110.3 |
+| uu | leafacq | 4000 | 9.70e-05 | 9.53e-05 | 3.38e-06 | 100 % | 0.75 | 109.7 |
+| uu | leafacq | 8000 | 6.32e-05 | 6.16e-05 | 2.78e-06 | 100 % | 0.51 | 93.9 |
+| uu | leafacq | 16000 | 3.14e-05 | 2.73e-05 | 1.24e-06 | 100 % | 0.50 | 77.2 |
+| uu | leafacq | 32768 | 9.91e-06 | 1.04e-05 | 8.02e-07 | 100 % | 0.47 | 60.4 |
+| uu | leafacq | 65536 | 5.13e-06 | 5.40e-06 | 5.72e-07 | 100 % | 0.48 | 47.3 |
+| uu | leafacq | 131072 | 3.18e-06 | 3.78e-06 | 4.63e-07 | 100 % | 0.43 | 38.8 |
