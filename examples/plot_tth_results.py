@@ -78,6 +78,7 @@ FIGURES = {
         ("sweep_loopSplit1000_{ch}", "tree", "1000-point leaves refit only at splits, mixed stream"),
         ("sweep_loopInv1000_{ch}", "tree", "same, without the threshold velocity"),
         ("sweep_loopAcq1000_{ch}", "acq", "1000-point leaves refit at splits, choosing its points from the 131k pool"),
+        ("sweep_loopLinA1000_{ch}", "tree", "1000-point leaves refit at splits, learning the amplitude itself in linear space"),
     ],
 }
 # The first two figures use the phase-space measure alone as the weight (no pseudo-PDF factor), the third the paper's f
