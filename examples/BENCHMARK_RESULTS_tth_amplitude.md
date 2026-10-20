@@ -660,6 +660,7 @@ r = a/a_LO by a smooth function and leaves the learning problem the same.
 | ratio, choosing its points from the 131k pool | 4.1e-5 | 9.5e-6 | 5.9e-6 | 5.7e-6 | 25 |
 | amplitude, mixed stream | 8.3e-4 | 1.3e-4 | 5.3e-5 | 2.6e-5 | 41 (loaded) |
 | amplitude, choosing its points from the 131k pool | 2.0e-4 | 3.0e-5 | 1.9e-5 | 1.4e-5 | 43 (loaded) |
+| ratio, the leaves choose, fresh points from MadLoop, no pool | 6.2e-5 | 1.0e-5 | 5.4e-6 | 3.8e-6 | 39 + 15 for MadLoop |
 | networks (Fig. 16) | 7e-4 at 10⁴ | 2.7e-4 at 3·10⁴ | 1.6e-4 at 10⁵ | 9.5e-5 at 10⁶ (1.5e-4 at 1.3·10⁵) | |
 
 | f4, ε on LO-unweighted test points, 1000-point RBF leaves refit at splits unless stated | 8000 | 32 768 | 65 536 | 131 032 |
@@ -670,7 +671,10 @@ r = a/a_LO by a smooth function and leaves the learning problem the same.
 | ratio, choosing its points from the 131k pool | 6.7e-3 | 1.25e-3 | 9.3e-4 | 9.2e-4 |
 | amplitude, mixed stream | 5.8e-3 | 1.4e-3 | 7.8e-4 | 2.3e-4 |
 | amplitude, choosing its points from the 131k pool | 1.5e-3 | 2.2e-4 | 1.5e-4 | 1.5e-4 |
-| networks (Fig. 16) | 2.3e-3 at 10⁴ | 8e-4 at 3·10⁴ | 3e-4 at 10⁵ | 9e-5 at 10⁶ (2.6e-4 at 1.3·10⁵) |
+| amplitude, choosing its points from a 524k pool | 2.0e-3 | 3.6e-4 | 1.0e-4 | 5.3e-5 (3.4e-5 at 262 144) |
+| amplitude, mixed stream continued on the 524k set | 5.8e-3 | 1.4e-3 | 7.2e-4 | 2.1e-4 (1.1e-4 at 262 144) |
+| amplitude, the leaves choose, fresh points from MadLoop, no pool | 4.3e-3 | 5.4e-4 | 2.5e-4 | 1.6e-4 |
+| networks (Fig. 16) | 2.3e-3 at 10⁴ | 8e-4 at 3·10⁴ | 3e-4 at 10⁵ | 9e-5 at 10⁶ (2.6e-4 at 1.3·10⁵, 1.8e-4 at 2.6·10⁵) |
 
 * **f2.** The ratio tree is 8–26 times below the networks at every N from 8000 on:
   8.0e-6 on the stream and 5.7e-6 choosing its points at 131 072, against 1.5e-4
@@ -689,8 +693,23 @@ r = a/a_LO by a smooth function and leaves the learning problem the same.
   on the stream, 1.2 times below the networks at 131 072, and 1.5e-4 choosing its points
   from the pool, 1.8 times below (2.8 times at 65 536), from 4000 points on. Both
   acquisition runs flatten from 65 536 on, as the 131k-pool acquisition did on f3: the
-  pool has run out of useful candidates, and the 524k pool is the remedy there
-  (Section 2.9).
+  pool has run out of useful candidates. With a 524k pool (the first 262 144 Sobol and
+  262 144 LO-unweighted points of the big g g set of Section 2.6, evaluated with
+  MadLoop) the same configuration reaches 1.0e-4, 5.3e-5 and 3.4e-5 at 65 536, 131 072
+  and 262 144, 4–5 times below the networks (4.2e-4, 2.6e-4 and 1.8e-4 interpolated),
+  and the stream continued on that set reaches 1.1e-4 at 262 144, 1.6 times below.
+* **No pool.** The leaf-driven variant of Section 2.9, with MadLoop called for 75 fresh
+  points at a time through `tth_amplitude/loop/tth_loop_driver.py` (with the ratio
+  target the leaf score is w·a_LO·σ, the Born from the tree-level driver,
+  `--born-driver`). On f2, learning the ratio: 6.2e-5, 1.0e-5, 5.4e-6 and 3.8e-6 at
+  8000, 32 768, 65 536 and 131 072, as good as the 131k-pool acquisition or better
+  (5.7e-6 at 131 072) and 40 times below the networks. On f4, learning the amplitude:
+  4.3e-3, 5.4e-4, 2.5e-4 and 1.6e-4, between the stream (2.3e-4) and the 131k-pool
+  acquisition (1.5e-4) at 131 072, 1.6 times below the networks. The pool is a
+  convenience of the benchmark, not a source of information: the leaves find the
+  high-energy corner from their own σ. These runs are also the first cost test at a
+  realistic price: MadLoop took 1900 s (f2) and 4150 s (f4) for the 130 000 fresh
+  points, a process start per batch included, against 5100 and 4200 s of tree time.
 * **Where f4's error is** (`tth_loop_error_diagnostic.py`, 16 384 points, 1000-point
   leaves). With the ratio target, the 10 % of test points with the largest |r|
   (above 14.7) carry 78 % of the error sum with 20 % of Σ|r|, and the 20 % highest in
@@ -830,7 +849,8 @@ and acquisition (Section 2.11) it is ten times below them at 262 144 points. It 
 well. On the one-loop functions f2 and f4 (Section 2.12), evaluated with MadLoop at
 2 and 20 ms per point, it is 19–26 times below the networks on f2 learning the ratio
 to the Born, and on f4, where the ratio is the harder target, 1.8 times below them
-learning the amplitude itself and choosing its points. The 10–25 × deficit of the
+learning the amplitude itself and choosing its points from a 524k pool, and 1.6
+times below with no pool at all, the leaves asking MadLoop for fresh points. The 10–25 × deficit of the
 package defaults (Section 3) is a matter of representation, leaf size and
 sampling, not of the method. On top of that the tree family offers what the
 networks do not: learning from the evaluations as they are made with no
@@ -893,6 +913,12 @@ python tth_amplitude_benchmark.py <loop_data_dir> --channels gg --configs tree -
 python tth_amplitude_benchmark.py <loop_data_dir> --channels gg --configs acq --nmax 131072 --target lin --inputs invbeta --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_loopLinAcq1000_gg
 python tth_loop_error_diagnostic.py <loop_data_dir> gg --nmax 16384 --ratio
 python tth_loop_error_diagnostic.py <loop_data_dir> gg --nmax 16384
+# no pool: the leaves ask MadLoop for fresh points through loop/tth_loop_driver.py (tth_amplitude/README.md, step 6)
+python tth_amplitude_benchmark.py <loop_data_dir> --channels gg --configs leafacq --driver "python3 tth_amplitude/loop/tth_loop_driver.py gg <tth_ml_driver> --cc <tth_loop_eval_gg> <tth_gg.olc>" --nmax 131072 --target lin --inputs invbeta --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_loopLeaf1000_gg
+python tth_amplitude_benchmark.py <loop_data_dir> --channels uu --configs leafacq --ratio --born-driver <tree-level tth_driver> --driver "python3 tth_amplitude/loop/tth_loop_driver.py uu <tth_ml_driver> --ratio" --nmax 131072 --target lin --inputs invbeta --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_loopLeaf1000_uu
+# the 524k pool: <big_loop_data_dir> holds the first 262 144 Sobol and 262 144 LO-unweighted gg points of the big set, evaluated with MadLoop
+python tth_amplitude_benchmark.py <big_loop_data_dir> --channels gg --configs acq --nmax 262144 --target lin --inputs invbeta --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_loopLinAcq1000Big_gg
+python tth_amplitude_benchmark.py <big_loop_data_dir> --channels gg --configs tree --nmax 262144 --target lin --inputs invbeta --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_loopLinA1000Big_gg
 # Sections 3-7: the flat-flux weights (--no-rho)
 python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs tree,hybrid --no-rho --tag exact
 python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs acq --nmax 32768 --no-rho --tag acq

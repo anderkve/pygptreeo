@@ -76,3 +76,9 @@ both in the finite parts and was not used.
    or pass the cc file as the last argument of `gen_loop_ml.py`. GoSam's own one-loop
    finite parts, from the same build, disagreed with MadLoop and OpenLoops and were
    not used.
+6. `loop/tth_loop_driver.py <uu|gg> <tth_ml_driver> [--cc <tth_loop_eval_gg> <contract>] [--ratio]`
+   wraps the MadLoop driver (and the GoSam colour correlator for g g) in the tree-level
+   driver's interface, for the leaf-driven acquisition of the benchmark:
+   `tth_amplitude_benchmark.py --configs leafacq --driver "python3 loop/tth_loop_driver.py ..."`
+   asks it for 75 fresh points at a time. With `--ratio` it returns a / a_LO and the
+   benchmark needs `--born-driver <tree-level driver>` for the leaf score w a_LO sigma.
