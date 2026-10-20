@@ -39,7 +39,7 @@ METRIC = {"eps_vs_points_paper_weights.png": ("eps_unweighted", r"mean relative 
 XLIM = {"eps_vs_points_targets.png": (500, 1.5e6), "eps_vs_points_loop.png": (500, 1.5e6)}
 LEGEND_LOC = {"eps_vs_points_targets.png": "below", "eps_vs_points_loop.png": "below"}
 DEFAULT_METRIC = ("eps_uniform", r"$\epsilon = \sum|\tilde f - f| \,/\, \sum f$ (uniform test points)")
-COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100", "#5c6bc0", "#00897b", "#c0392b", "#7f8c8d"]
+COLORS = ["#2a78d6", "#1baf7a", "#eb6834", "#8e44ad", "#eda100", "#5c6bc0", "#000000", "#c0392b", "#7f8c8d"]
 
 # (file tag, key suffix, label) per series; {ch} is the channel, "a|b" tries a then b
 FIGURES = {
@@ -118,8 +118,13 @@ for name, series in FIGURES.items():
         ax.set_xlabel("training points"); ax.set_ylabel(ylabel)
         ax.set_title((NAMES_LOOP if loop else NAMES)[ch], fontsize=10); ax.grid(alpha=0.25)
     ax_leg = axes[0 if plotted[0] >= plotted[1] else 1]
-    if below:   # the legend under both panels, two columns
-        handles, labels = ax_leg.get_legend_handles_labels()
+    if below:   # the legend under both panels, two columns: every series of either panel, in the series' order
+        seen = {}
+        for ax in axes:
+            for h, l in zip(*ax.get_legend_handles_labels()):
+                seen.setdefault(l, h)
+        labels = [l for _, _, l in series if l in seen] + [l for l in seen if l not in {lab for _, _, lab in series}]
+        handles = [seen[l] for l in labels]
         fig.legend(handles, labels, frameon=False, fontsize=7.5, loc="lower center", ncol=2)
         fig.tight_layout(rect=(0, 0.26, 1, 1))
     else:
