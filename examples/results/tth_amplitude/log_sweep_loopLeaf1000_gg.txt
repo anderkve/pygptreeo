@@ -4,3 +4,4 @@ gg leafacq N=  4000  eps_uniform 1.27e-02  eps_unweighted 1.03e-02  median rel 1
 gg leafacq N=  8000  eps_uniform 5.09e-03  eps_unweighted 4.31e-03  median rel 6.03e-05  within 1 %: 93 %  cov68 0.61  100.8 ms/pt  leaves 14  exact 236 s
 gg leafacq N= 16000  eps_uniform 2.97e-03  eps_unweighted 2.89e-03  median rel 3.28e-05  within 1 %: 94 %  cov68 0.62  69.0 ms/pt  leaves 28  exact 500 s
 gg leafacq N= 32768  eps_uniform 1.13e-03  eps_unweighted 5.44e-04  median rel 1.23e-05  within 1 %: 98 %  cov68 0.65  52.9 ms/pt  leaves 59  exact 1044 s
+gg leafacq N= 65536  eps_uniform 2.77e-04  eps_unweighted 2.47e-04  median rel 7.93e-06  within 1 %: 99 %  cov68 0.62  39.2 ms/pt  leaves 115  exact 2117 s
