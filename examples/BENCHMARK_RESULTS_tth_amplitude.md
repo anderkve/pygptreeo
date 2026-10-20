@@ -606,6 +606,121 @@ on the log target was the log target's), so differences above 5 % below are real
   mean error, which a few points dominate, shows it. Refitting every 100 points
   removes the exposure at 5 times the cost.
 
+### 2.12 The one-loop test functions f2 and f4
+
+`eps_vs_points_loop.png` (`plot_tth_results.py`); `log_sweep_loop*_{uu,gg}.txt`,
+`results_sweep_loop*_{uu,gg}.json`, `loop_error_diagnostic_gg_*.txt`. The paper's f2
+(q q̄) and f4 (g g) are the finite parts of 2 Re ⟨M0|M1⟩ with the Coulomb singularity at
+the t t̄ threshold subtracted by the colour-correlated Born,
+a = finite + π²/β_tt̄ ⟨M0|T_t·T_t̄|M0⟩ (their eqs. 14 and 19), on the same five variables
+and with the same weights as f1 and f3. They are evaluated here with MadLoop
+(MadGraph5_aMC@NLO 3.6.7; `tth_amplitude/README.md`, `tth_amplitude/loop/`): five
+massless flavours, on-shell top mass and Yukawa coupling, μ_R = √ŝ/2, the 't
+Hooft–Veltman scheme, no α_s/(2π) factor. The colour correlator is Born/6 for q q̄ (the
+t t̄ pair is a colour octet) and GoSam's tree-level correlator for g g (between −0.26 and
++0.17 times the Born). The authors' GoSam conventions are not in their paper, so f2 and
+f4 here can differ from theirs by a term proportional to the Born, which shifts
+r = a/a_LO by a smooth function and leaves the learning problem the same.
+
+* **Checks.** OpenLoops 2.1.5 (`loop/tth_ol_eval.cpp`) agrees with MadLoop to all
+  printed digits at test points of both channels, finite part and both poles. The
+  double pole is −2 C_F and −2 C_A times the Born, MadLoop's accuracy estimate is below
+  1e-12 at the median point, and the π²/β term cancels the 1/β of the finite part as
+  frac_tt̄ → 0 (a/a_LO stays at −1.9 and +14.6 while finite/a_LO grows to −1370 and
+  +1640). GoSam 2.0.4 built from source, the first attempt, reproduces GoSam's own
+  q q̄ → t t̄ reference and the MadLoop poles on g g, but its finite parts differ from
+  MadLoop and OpenLoops by 3–11 times the Born on g g, kinematics-dependent, and its
+  q q̄ single pole is off by −40/3 times the Born, so only its colour correlator was
+  used.
+* **Cost and data.** 2 ms (q q̄) and 20 ms (g g) per point with MadLoop against 15 µs at
+  tree level: these are amplitudes at and above the break-even of the method. The loop
+  amplitude was evaluated at the phase-space points of the f1 and f3 data (Sobol,
+  ρ-unweighted, uniform and LO-unweighted test sets); points whose MadLoop accuracy
+  estimate is worse than 1e-5 are dropped (40 of the 131 072 Sobol points on q q̄,
+  603 on g g, 1 of the 5000 LO-unweighted test points on g g, none on q q̄), which
+  leaves the g g mixed stream 40 points short of 131 072.
+* **What is learned.** a changes sign, so the tree learns in linear space, in units of
+  the median |value| of the first 1000 points, with the ten log invariants and the
+  threshold velocity β_tt̄ as inputs ("+ β_tt̄" below; `--inputs invbeta`). Two targets:
+  the ratio r = a/a_LO, the networks' target (`--ratio`), and the amplitude a itself.
+  r runs from −8 to +19 on f2 and from −23 to +41 on f4 on the LO-unweighted test
+  points (−85 to +404 on f4's Sobol points: at high energy the g g Born is small where
+  the one-loop amplitude is not). The metric is the paper's eq. (30) on LO-unweighted
+  test points, ε = Σ|r̃ − r| / Σ|r| with r̃ = ã/a_LO, the quantity the networks'
+  Figure 16 curves for f2 and f4 report (legend "a/a_LO"); the networks' values are the
+  better of MLP(s) and L-GATr read off that figure. Cost per learned point is quoted
+  for the q q̄ runs, which had the machine to themselves; the g g runs shared it with
+  the MadLoop generation and each other.
+
+| f2, ε on LO-unweighted test points, 1000-point RBF leaves refit at splits unless stated | 8000 | 32 768 | 65 536 | 131 072 | ms per point |
+|---|---|---|---|---|---|
+| ratio, log invariants + β_tt̄, mixed stream | 1.1e-4 | 2.7e-5 | 1.8e-5 | 8.0e-6 | 21 |
+| ratio, without β_tt̄ | 9.4e-5 | 3.6e-5 | 1.3e-5 | 6.6e-6 | 27 |
+| ratio, 300-point leaves refit every 25 points | 1.6e-4 | 5.3e-5 | 3.0e-5 | 2.0e-5 | 48 |
+| ratio, choosing its points from the 131k pool | 4.1e-5 | 9.5e-6 | 5.9e-6 | 5.7e-6 | 25 |
+| amplitude, mixed stream | 8.3e-4 | 1.3e-4 | 5.3e-5 | 2.6e-5 | 41 (loaded) |
+| amplitude, choosing its points from the 131k pool | 2.0e-4 | 3.0e-5 | 1.9e-5 | 1.4e-5 | 43 (loaded) |
+| networks (Fig. 16) | 7e-4 at 10⁴ | 2.7e-4 at 3·10⁴ | 1.6e-4 at 10⁵ | 9.5e-5 at 10⁶ (1.5e-4 at 1.3·10⁵) | |
+
+| f4, ε on LO-unweighted test points, 1000-point RBF leaves refit at splits unless stated | 8000 | 32 768 | 65 536 | 131 032 |
+|---|---|---|---|---|
+| ratio, log invariants + β_tt̄, mixed stream | 1.1e-2 | 4.5e-3 | 3.1e-3 | 1.5e-3 |
+| ratio, without β_tt̄ (run to 65 536) | 1.25e-2 | 3.5e-3 | 2.7e-3 | – |
+| ratio, 300-point leaves refit every 25 points | 7.8e-3 | 3.3e-3 | 1.9e-3 | (running) |
+| ratio, choosing its points from the 131k pool | 6.7e-3 | 1.25e-3 | 9.3e-4 | 9.2e-4 |
+| amplitude, mixed stream | 5.8e-3 | 1.4e-3 | 7.8e-4 | 2.3e-4 |
+| amplitude, choosing its points from the 131k pool | 1.5e-3 | 2.2e-4 | 1.5e-4 | 1.5e-4 |
+| networks (Fig. 16) | 2.3e-3 at 10⁴ | 8e-4 at 3·10⁴ | 3e-4 at 10⁵ | 9e-5 at 10⁶ (2.6e-4 at 1.3·10⁵) |
+
+* **f2.** The ratio tree is 8–26 times below the networks at every N from 8000 on:
+  8.0e-6 on the stream and 5.7e-6 choosing its points at 131 072, against 1.5e-4
+  interpolated from their curve. The acquisition gains a factor 2.7 at 8000–32 768 and
+  1.4 at 131 072, as on f1 (nothing narrow to find). β_tt̄ as an input changes nothing
+  (6.6e-6 without it). The 300-point leaves refit every 25 points are 2.5 times worse
+  at twice the cost. Learning the amplitude itself is 3 times worse than the ratio
+  (2.6e-5; 1.4e-5 with acquisition): on q q̄ the Born is never small, r stays between
+  −8 and +19, and dividing by the Born removes most of the structure.
+* **f4.** The ratio on the stream ends at 1.5e-3, 5.6 times behind the networks'
+  2.6e-4 (interpolated), half of its last factor 2 gained between 65 536 and 131 032
+  (leaves refit only at splits keep a bad fit until the next split, Section 2.11); 300-point leaves refit every 25 points do
+  better here, (running) at 131 032; the acquisition
+  gains 3.6 at 32 768 and then flattens (9.3e-4 → 9.2e-4 from 65 536 to 131 072), 3.5
+  times behind. Learning the amplitude a itself instead of r turns this around: 2.3e-4
+  on the stream, 1.2 times below the networks at 131 072, and 1.5e-4 choosing its points
+  from the pool, 1.8 times below (2.8 times at 65 536), from 4000 points on. Both
+  acquisition runs flatten from 65 536 on, as the 131k-pool acquisition did on f3: the
+  pool has run out of useful candidates, and the 524k pool is the remedy there
+  (Section 2.9).
+* **Where f4's error is** (`tth_loop_error_diagnostic.py`, 16 384 points, 1000-point
+  leaves). With the ratio target, the 10 % of test points with the largest |r|
+  (above 14.7) carry 78 % of the error sum with 20 % of Σ|r|, and the 20 % highest in
+  energy (log(p1·p2) > 2.7) carry 82 % with 30 %; by β_tt̄, the 12 % above 0.9 carry
+  68 %. The Born breakdown is flat (the smallest 1 % of Born values carry 3 %), so this
+  is not a division by a small number at the test points: it is the high-energy,
+  high-β corner where the g g Born falls and the ratio grows and steepens (r reaches
+  400 on the Sobol points, against 41 on the LO-unweighted test points). The amplitude
+  target cuts the total by a factor 3 at 16 384 and concentrates what is left in the
+  same corner (the 1 % of points with the smallest Born carry 20 % of its error sum,
+  the top 1 % by |r̃ − r| 64 %): a is a smoother function than r there, and dividing
+  the prediction by a small Born afterwards costs less than learning the quotient. The
+  acquisition then does what it did on f3: its score w·|a|·σ (w·a_LO·σ for the ratio)
+  sends the evaluations into that corner. On f2 the ratio is smooth in the same corner.
+* **Not helpful.** The LO-unweighted stream alone (no Sobol points) did not improve the
+  ratio on f4; an asinh transform of the amplitude, tried as a middle ground between
+  the log and linear targets, was unstable and is not kept. β_tt̄ as an extra input,
+  meant for the threshold structure, makes no measurable difference on either function
+  (the Coulomb term is subtracted in a).
+* **Cost.** The f2 runs with the machine to themselves cost 21–27 ms per learned point
+  (48 for the 300-point leaves); the f4 and the amplitude-target runs shared the
+  machine with up to eight others and their timings are inflated. At 2 ms (f2) and
+  20 ms (f4) per exact point these functions sit at the break-even of the method; a
+  gated run on them is the next step.
+* **Caveats.** One seed per row; the networks' values are read off a plot (±10 %); our
+  f2 and f4 can differ from the authors' by a Born-proportional term (their GoSam
+  conventions are not stated), which shifts r smoothly and does not change the
+  difficulty; 40 and 603 Sobol points below MadLoop's accuracy threshold were dropped,
+  and 1 of the 5000 g g test points.
+
 ## 3. Exact amplitudes (flat-flux weights): ε against the number of training points
 
 `eps_vs_points.png`; uniform-test ε with flat-flux weights, with the networks of the
@@ -712,7 +827,10 @@ curves still falling where theirs flatten; choosing its points from a large pool
 learning the linear amplitude instead of its log (Section 2.7), it is below them on
 f3 from 65 536 points on; with the linear target, 1000-point leaves refit at splits
 and acquisition (Section 2.11) it is ten times below them at 262 144 points. It matches the five-run averages of arXiv:2601.00950 as
-well. The 10–25 × deficit of the
+well. On the one-loop functions f2 and f4 (Section 2.12), evaluated with MadLoop at
+2 and 20 ms per point, it is 19–26 times below the networks on f2 learning the ratio
+to the Born, and on f4, where the ratio is the harder target, 1.8 times below them
+learning the amplitude itself and choosing its points. The 10–25 × deficit of the
 package defaults (Section 3) is a matter of representation, leaf size and
 sampling, not of the method. On top of that the tree family offers what the
 networks do not: learning from the evaluations as they are made with no
@@ -765,6 +883,16 @@ python gated_integration_demo.py <path to tth_driver> --inputs invariants --kern
 python frozen_bias.py <path to tth_driver> log 300 25 8670 log300
 python frozen_bias.py <path to tth_driver> lin 1000 1000000000 7815 lin1000_1thread
 python plot_online_vs_pretrained.py --suffix uu=200k,gg=_best200k --out _best200k --absolute --no-ratio
+# Section 2.12: the one-loop functions, per channel (the figure script reads results_<tag>_<ch>.json);
+# <loop_data_dir> holds the MadLoop files (tth_amplitude/README.md, loop/); --ratio learns a / a_LO, without it the amplitude a
+python tth_amplitude_benchmark.py <loop_data_dir> --channels gg --configs tree --nmax 131072 --ratio --target lin --inputs invbeta --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_loopSplit1000_gg
+python tth_amplitude_benchmark.py <loop_data_dir> --channels gg --configs tree --nmax 131072 --ratio --target lin --inputs invariants --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_loopInv1000_gg
+python tth_amplitude_benchmark.py <loop_data_dir> --channels gg --configs tree --nmax 131072 --ratio --target lin --inputs invbeta --kernel rbf --train mixed --nbar 300 --tag sweep_loopMix300_gg
+python tth_amplitude_benchmark.py <loop_data_dir> --channels gg --configs acq --nmax 131072 --ratio --target lin --inputs invbeta --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_loopAcq1000_gg
+python tth_amplitude_benchmark.py <loop_data_dir> --channels gg --configs tree --nmax 131072 --target lin --inputs invbeta --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_loopLinA1000_gg
+python tth_amplitude_benchmark.py <loop_data_dir> --channels gg --configs acq --nmax 131072 --target lin --inputs invbeta --kernel rbf --train mixed --nbar 1000 --retrain 1000000000 --tag sweep_loopLinAcq1000_gg
+python tth_loop_error_diagnostic.py <loop_data_dir> gg --nmax 16384 --ratio
+python tth_loop_error_diagnostic.py <loop_data_dir> gg --nmax 16384
 # Sections 3-7: the flat-flux weights (--no-rho)
 python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs tree,hybrid --no-rho --tag exact
 python tth_amplitude_benchmark.py <data_dir> --channels gg,uu --configs acq --nmax 32768 --no-rho --tag acq
