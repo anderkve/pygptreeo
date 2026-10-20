@@ -53,7 +53,7 @@ both in the finite parts and was not used.
    point per line (E px py pz of the five particles in GeV, process order) and prints
    `RES`, Born, finite part, 1/eps and 1/eps^2 coefficients (without the alpha_s/(2 pi)
    factor), MadLoop's accuracy estimate and return code, with mu_R = sqrt(s)/2. About
-   2 ms (q qbar) and 40 ms (g g) per point.
+   2 ms (q qbar) and 20 ms (g g) per point.
 3. `MG5=<MadGraph dir> python loop/gen_loop_ml.py <driver> <tree-level file>.npz <out>.npz 4`
    evaluates the loop amplitude at the points of an existing data file (same X, P and w)
    and stores the paper's amplitude as `me` with the pieces it is made of; the

@@ -300,8 +300,9 @@ def run(ch, config, data_dir, nmax, noise, seed, checkpoints):
     gpt = make(config, seed)
     rows, done, t0 = [], 0, time.time()
     for N in checkpoints:
-        if N > nmax:
+        if N > nmax or done >= len(X):
             break
+        N = min(N, len(X))      # a stream shorter than the checkpoint (points dropped by the accuracy filter)
         with contextlib.redirect_stdout(io.StringIO()):
             for i in range(done, N):
                 gpt.update_tree(X[i:i + 1], y[i:i + 1].reshape(1, 1), sig[i])

@@ -1,0 +1,2 @@
+gg acq    N=  1000  eps_uniform 5.44e-02  eps_unweighted 4.17e-02  median rel 3.44e-04  within 1 %: 77 %  cov68 0.66  11.2 ms/pt  leaves 2
+gg acq    N=  2000  eps_uniform 1.58e-02  eps_unweighted 1.46e-02  median rel 4.85e-04  within 1 %: 80 %  cov68 0.66  77.6 ms/pt  leaves 3
