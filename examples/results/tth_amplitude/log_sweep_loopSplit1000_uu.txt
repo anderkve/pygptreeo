@@ -5,3 +5,15 @@ uu tree   N=  8000  eps_uniform 1.27e-04  eps_unweighted 1.09e-04  median rel 1.
 uu tree   N= 16000  eps_uniform 6.80e-05  eps_unweighted 7.00e-05  median rel 1.12e-06  within 1 %: 100 %  cov68 0.59  23.0 ms/pt  leaves 24
 uu tree   N= 32768  eps_uniform 3.17e-05  eps_unweighted 2.65e-05  median rel 8.43e-07  within 1 %: 100 %  cov68 0.60  20.8 ms/pt  leaves 53
 uu tree   N= 65536  eps_uniform 1.73e-05  eps_unweighted 1.75e-05  median rel 5.71e-07  within 1 %: 100 %  cov68 0.58  21.8 ms/pt  leaves 108
+uu tree   N=131072  eps_uniform 1.02e-05  eps_unweighted 8.00e-06  median rel 5.05e-07  within 1 %: 100 %  cov68 0.56  20.7 ms/pt  leaves 207
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| uu | tree | 1000 | 4.96e-04 | 4.17e-04 | 6.85e-06 | 98 % | 0.65 | 15.1 |
+| uu | tree | 2000 | 2.41e-04 | 2.02e-04 | 5.55e-06 | 99 % | 0.61 | 21.9 |
+| uu | tree | 4000 | 2.09e-04 | 1.70e-04 | 2.58e-06 | 99 % | 0.61 | 25.3 |
+| uu | tree | 8000 | 1.27e-04 | 1.09e-04 | 1.49e-06 | 100 % | 0.46 | 26.1 |
+| uu | tree | 16000 | 6.80e-05 | 7.00e-05 | 1.12e-06 | 100 % | 0.59 | 23.0 |
+| uu | tree | 32768 | 3.17e-05 | 2.65e-05 | 8.43e-07 | 100 % | 0.60 | 20.8 |
+| uu | tree | 65536 | 1.73e-05 | 1.75e-05 | 5.71e-07 | 100 % | 0.58 | 21.8 |
+| uu | tree | 131072 | 1.02e-05 | 8.00e-06 | 5.05e-07 | 100 % | 0.56 | 20.7 |
