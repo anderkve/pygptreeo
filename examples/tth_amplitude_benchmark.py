@@ -79,11 +79,11 @@ def load(data_dir, ch):
 
 NET_KWARGS = {}   # overrides for the hybrid's FeatureNetLearner, from --net
 OPTS = dict(kernel="matern32", nbar=100, train="sobol", inputs="cube", features="cube", split="min_lengthscale",
-            retrain=25, strategy="gradual", target="log", glob="none", rho=True, scale=1.0, theta=None, ratio=False)
+            retrain=25, strategy="gradual", target="log", glob="none", rho=True, scale=1.0, theta=None, ratio=False, asinh_scale=1e-2)
 GLUON_TOP_PAIRS = [1, 2, 4, 5]   # columns of invariants(): (0,2), (0,3), (1,2), (1,3)
 
 
-TARGETS = ["log", "pole1", "pole2", "logs1", "logs2", "lin", "lins1", "lins2", "pow0.5", "pow0.25"]
+TARGETS = ["log", "pole1", "pole2", "logs1", "logs2", "lin", "lins1", "lins2", "pow0.5", "pow0.25", "asinh"]
 
 
 def log_shat(X_tree):
@@ -116,11 +116,13 @@ def target_power():
 
 
 def linear_target():
-    return target_power() is not None
+    return target_power() is not None or OPTS["target"] == "asinh"
 
 
 def to_target(a, X_tree):
-    """What the tree learns: log(|M|^2 F), or (|M|^2 F)^p / scale."""
+    """What the tree learns: log(|M|^2 F), (|M|^2 F)^p / scale, or asinh(|M|^2 F / scale)."""
+    if OPTS["target"] == "asinh":
+        return np.arcsinh(a * np.exp(target_shift(X_tree)) / OPTS["scale"])
     p = target_power()
     if p is not None:
         return (a * np.exp(target_shift(X_tree))) ** p / OPTS["scale"]
@@ -131,6 +133,9 @@ def from_target(mu, sd, X_tree):
     """The amplitude and its sigma from the tree's prediction (a power target is
     clipped at a tiny positive value before the root)."""
     p = target_power()
+    if OPTS["target"] == "asinh":
+        f = OPTS["scale"] * np.exp(-target_shift(X_tree))
+        return np.sinh(mu) * f, np.cosh(mu) * sd * f
     if p == 1.0:
         f = OPTS["scale"] * np.exp(-target_shift(X_tree))
         return mu * f, sd * f
@@ -143,7 +148,11 @@ def from_target(mu, sd, X_tree):
 
 
 def set_scale(a, X_tree):
-    """Power targets are learned in units of their median over the first 1000 points."""
+    """Power targets are learned in units of their median over the first 1000 points,
+    the asinh target in units of a fraction (``asinh_scale``) of that median."""
+    if OPTS["target"] == "asinh":
+        OPTS["scale"] = OPTS["asinh_scale"] * float(np.median(np.abs(a[:1000] * np.exp(target_shift(X_tree[:1000])))))
+        return
     p = target_power()
     OPTS["scale"] = float(np.median(np.abs(a[:1000] * np.exp(target_shift(X_tree[:1000]))) ** p)) if p is not None else 1.0
 MT, MH = 1.0, np.sqrt(12.0 / 23.0)
@@ -490,6 +499,7 @@ def main():
     ap.add_argument("--inputs", default="cube", choices=["cube", "invariants", "both", "invbeta"],
                     help="the tree's inputs: cube variables, log invariants, both, or the invariants and the t tbar threshold velocity")
     ap.add_argument("--ratio", action="store_true", help="learn me / tree, the one-loop amplitude in units of the Born (f2, f4)")
+    ap.add_argument("--asinh-scale", type=float, default=1e-2, help="scale of the asinh target as a fraction of the median |amplitude|")
     ap.add_argument("--features", default="cube", choices=["cube", "invariants"], help="the hybrid network's inputs")
     ap.add_argument("--split", default="min_lengthscale", help="GPTree split_dimension_criteria")
     ap.add_argument("--retrain", type=int, default=25,
@@ -515,7 +525,7 @@ def main():
         k, v = item.split("="); NET_KWARGS[k] = None if v == "none" else int(v)
     OPTS.update(rho=args.rho, kernel=args.kernel, nbar=args.nbar, train=args.train, inputs=args.inputs, features=args.features,
                 split=args.split, retrain=args.retrain, strategy=args.strategy, target=args.target, glob=args.glob, theta=args.theta,
-                ratio=args.ratio)
+                ratio=args.ratio, asinh_scale=args.asinh_scale)
     os.makedirs(OUT_DIR, exist_ok=True)
     checkpoints = [1000, 2000, 4000, 8000, 16000, 32768, 65536, 131072, 262144, 524288]
     results = {}
