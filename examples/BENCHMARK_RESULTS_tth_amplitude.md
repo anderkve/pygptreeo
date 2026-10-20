@@ -666,7 +666,7 @@ r = a/a_LO by a smooth function and leaves the learning problem the same.
 |---|---|---|---|---|
 | ratio, log invariants + β_tt̄, mixed stream | 1.1e-2 | 4.5e-3 | 3.1e-3 | 1.5e-3 |
 | ratio, without β_tt̄ (run to 65 536) | 1.25e-2 | 3.5e-3 | 2.7e-3 | – |
-| ratio, 300-point leaves refit every 25 points | 7.8e-3 | 3.3e-3 | 1.9e-3 | (running) |
+| ratio, 300-point leaves refit every 25 points | 7.8e-3 | 3.3e-3 | 1.9e-3 | 1.1e-3 |
 | ratio, choosing its points from the 131k pool | 6.7e-3 | 1.25e-3 | 9.3e-4 | 9.2e-4 |
 | amplitude, mixed stream | 5.8e-3 | 1.4e-3 | 7.8e-4 | 2.3e-4 |
 | amplitude, choosing its points from the 131k pool | 1.5e-3 | 2.2e-4 | 1.5e-4 | 1.5e-4 |
@@ -683,7 +683,7 @@ r = a/a_LO by a smooth function and leaves the learning problem the same.
 * **f4.** The ratio on the stream ends at 1.5e-3, 5.6 times behind the networks'
   2.6e-4 (interpolated), half of its last factor 2 gained between 65 536 and 131 032
   (leaves refit only at splits keep a bad fit until the next split, Section 2.11); 300-point leaves refit every 25 points do
-  better here, (running) at 131 032; the acquisition
+  better here, 1.1e-3 at 131 032, 4.3 times behind; the acquisition
   gains 3.6 at 32 768 and then flattens (9.3e-4 → 9.2e-4 from 65 536 to 131 072), 3.5
   times behind. Learning the amplitude a itself instead of r turns this around: 2.3e-4
   on the stream, 1.2 times below the networks at 131 072, and 1.5e-4 choosing its points
