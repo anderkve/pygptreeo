@@ -5,3 +5,15 @@ uu acq    N=  8000  eps_uniform 2.14e-04  eps_unweighted 1.96e-04  median rel 2.
 uu acq    N= 16000  eps_uniform 7.66e-05  eps_unweighted 7.21e-05  median rel 8.64e-06  within 1 %: 99 %  cov68 0.60  99.1 ms/pt  leaves 25
 uu acq    N= 32768  eps_uniform 3.34e-05  eps_unweighted 3.01e-05  median rel 3.88e-06  within 1 %: 100 %  cov68 0.63  85.5 ms/pt  leaves 52
 uu acq    N= 65536  eps_uniform 1.88e-05  eps_unweighted 1.86e-05  median rel 1.62e-06  within 1 %: 100 %  cov68 0.56  63.9 ms/pt  leaves 101
+uu acq    N=131072  eps_uniform 1.39e-05  eps_unweighted 1.37e-05  median rel 7.35e-07  within 1 %: 100 %  cov68 0.62  42.6 ms/pt  leaves 192
+
+| channel | config | N | eps uniform | eps unweighted | median rel | within 1 % | cov68 | ms/pt |
+|---|---|---|---|---|---|---|---|---|
+| uu | acq | 1000 | 1.90e-02 | 1.83e-02 | 2.56e-05 | 88 % | 0.84 | 11.8 |
+| uu | acq | 2000 | 8.62e-04 | 7.19e-04 | 3.60e-05 | 96 % | 0.56 | 70.8 |
+| uu | acq | 4000 | 3.26e-04 | 3.11e-04 | 4.00e-05 | 98 % | 0.62 | 162.8 |
+| uu | acq | 8000 | 2.14e-04 | 1.96e-04 | 2.09e-05 | 98 % | 0.59 | 117.3 |
+| uu | acq | 16000 | 7.66e-05 | 7.21e-05 | 8.64e-06 | 99 % | 0.60 | 99.1 |
+| uu | acq | 32768 | 3.34e-05 | 3.01e-05 | 3.88e-06 | 100 % | 0.63 | 85.5 |
+| uu | acq | 65536 | 1.88e-05 | 1.86e-05 | 1.62e-06 | 100 % | 0.56 | 63.9 |
+| uu | acq | 131072 | 1.39e-05 | 1.37e-05 | 7.35e-07 | 100 % | 0.62 | 42.6 |
