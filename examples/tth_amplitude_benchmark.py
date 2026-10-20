@@ -179,13 +179,18 @@ def momenta(X):
 
 
 def oracle(driver, X, theta_max=None):
-    """Phase-space weight and |M|^2 from the MadGraph driver at unit-cube points X (n, 5)."""
+    """Phase-space weight and |M|^2 from the MadGraph driver at unit-cube points X (n, 5);
+    ``driver`` is the binary, or a command line such as tth_amplitude/loop/tth_loop_driver.py's."""
+    import shlex
     import subprocess
     theta_max = THETA_MAX if theta_max is None else theta_max
     P = np.column_stack([0.1 + 0.86 * X[:, 0], X[:, 1], theta_max * X[:, 2], theta_max * X[:, 3], np.pi * X[:, 4]])
     inp = "\n".join(" ".join(f"{v:.17g}" for v in row) for row in P) + "\n"
-    out = subprocess.run([os.path.abspath(driver)], input=inp, capture_output=True, text=True, check=True,
-                         cwd=os.path.dirname(os.path.abspath(driver))).stdout   # the driver reads its card from its own directory
+    cmd = shlex.split(driver)
+    cwd = None
+    if len(cmd) == 1:   # the MadGraph driver reads its card from its own directory
+        cmd = [os.path.abspath(cmd[0])]; cwd = os.path.dirname(cmd[0])
+    out = subprocess.run(cmd, input=inp, capture_output=True, text=True, check=True, cwd=cwd).stdout
     A = np.array([l.split() for l in out.splitlines() if len(l.split()) == 2], dtype=float)
     return A[:, 0], A[:, 1]
 
@@ -358,13 +363,16 @@ def run_acquisition(ch, data_dir, nmax, seed, checkpoints, batch=500, candidates
 
 
 def run_leafacq(ch, data_dir, nmax, seed, checkpoints, driver, pool_size=1 << 20, batch=None,
-                score_mode="sum", pick="uniform"):
+                score_mode="sum", pick="uniform", born_driver=None):
     """The leaves decide where to evaluate next. A Sobol sample of candidate cube points
     is routed to the leaves; a leaf's expected error contribution is the sum (or mean) of
     w |M|^2 sigma over its candidates, from its own GP. The leaf with the largest one gets
     a batch of its candidates (uniform in the leaf, or its highest scores), evaluated with
-    the amplitude code; the affected leaves are rescored and re-routed after splits."""
+    the amplitude code; the affected leaves are rescored and re-routed after splits.
+    With the ratio target the score is w a_LO sigma, with the Born from ``born_driver``."""
     from scipy.stats import qmc
+    if OPTS["ratio"] and born_driver is None:
+        raise SystemExit("--born-driver (the tree-level driver) is needed with --ratio: the score w a_LO sigma needs the Born at the candidates")
     tr, te, tu = load(data_dir, ch)
     n0 = checkpoints[0]
     X0, a0 = tr["X"][:n0], tr["me"][:n0]
@@ -373,6 +381,8 @@ def run_leafacq(ch, data_dir, nmax, seed, checkpoints, driver, pool_size=1 << 20
     rng = np.random.RandomState(seed)
 
     def learn(Xs, a):
+        ok = np.isfinite(a)          # the one-loop driver returns nan where MadLoop is below precision
+        Xs, a = Xs[ok], a[ok]
         y = to_target(a, Xs)
         sig = 1e-6 * (np.abs(y) if linear_target() else np.ones(len(y)))
         with contextlib.redirect_stdout(io.StringIO()):
@@ -384,6 +394,7 @@ def run_leafacq(ch, data_dir, nmax, seed, checkpoints, driver, pool_size=1 << 20
     C = qmc.Sobol(d=5, scramble=True, seed=seed + 100).random(pool_size)
     Xc = tree_inputs(C)
     wc = phase_space_weight(C) * (rho(ch, C) if OPTS["rho"] else 1.0)
+    born_c = np.concatenate([oracle(born_driver, c, THETA_MAX)[1] for c in np.array_split(C, 8)]) if OPTS["ratio"] else None
 
     def route(node, idx):
         if node.children is None:
@@ -398,10 +409,13 @@ def run_leafacq(ch, data_dir, nmax, seed, checkpoints, driver, pool_size=1 << 20
         if len(idx) == 0:
             entry["scores"] = np.zeros(0); entry["total"] = -1.0
             return
+        mu, sd = [], []
         with contextlib.redirect_stdout(io.StringIO()):
-            mu, sd = entry["node"].predict(Xc[idx], return_std=True, use_calibrated_sigma=gpt.use_calibrated_sigma)
-        a_pred, sig_a = from_target(mu.ravel(), sd.ravel(), Xc[idx])
-        entry["scores"] = wc[idx] * np.abs(a_pred) * sig_a
+            for j in range(0, len(idx), 20000):     # in chunks: a fresh leaf can hold most of the pool
+                m_, s_ = entry["node"].predict(Xc[idx[j:j + 20000]], return_std=True, use_calibrated_sigma=gpt.use_calibrated_sigma)
+                mu.append(m_.ravel()); sd.append(s_.ravel())
+        a_pred, sig_a = from_target(np.concatenate(mu), np.concatenate(sd), Xc[idx])
+        entry["scores"] = wc[idx] * (born_c[idx] if born_c is not None else np.abs(a_pred)) * sig_a
         entry["total"] = entry["scores"].sum() if score_mode == "sum" else entry["scores"].mean()
 
     leaves = {}
@@ -442,11 +456,11 @@ def run_leafacq(ch, data_dir, nmax, seed, checkpoints, driver, pool_size=1 << 20
             for cname in changed:
                 rescore(leaves[cname])
         m = evaluate(gpt, te, tu); t_train = time.time() - t0 - t_exact
-        m.update(N=N, train_s=t_train, ms_per_point=1e3 * t_train / N, leaves=len(gpt.root.leaves))
+        m.update(N=N, train_s=t_train, ms_per_point=1e3 * t_train / N, leaves=len(gpt.root.leaves), exact_s=t_exact)
         rows.append(m)
         print(f"{ch} leafacq N={N:6d}  eps_uniform {m['eps_uniform']:.2e}  eps_unweighted {m.get('eps_unweighted', float('nan')):.2e}  "
               f"median rel {m['median_rel']:.2e}  within 1 %: {100 * m['within1pct']:.0f} %  cov68 {m['cov68']:.2f}  "
-              f"{m['ms_per_point']:.1f} ms/pt  leaves {m['leaves']}", flush=True)
+              f"{m['ms_per_point']:.1f} ms/pt  leaves {m['leaves']}  exact {t_exact:.0f} s", flush=True)
     return rows
 
 
@@ -505,7 +519,8 @@ def main():
     ap.add_argument("--no-rho", dest="rho", action="store_false", help="weights without the flux and pseudo-PDF factor")
     ap.add_argument("--domain", default="folded", choices=["folded", "full"], help="polar angles in [0, pi/2] or [0, pi]")
     ap.add_argument("--theta", type=float, default=None, help="GPTree theta (overlap between sibling leaves as a fraction of the split range)")
-    ap.add_argument("--driver", default=None, help="the MadGraph driver, for the leafacq config")
+    ap.add_argument("--driver", default=None, help="the MadGraph driver (a binary or a command line), for the leafacq config")
+    ap.add_argument("--born-driver", default=None, help="the tree-level driver, for the leafacq score with --ratio")
     ap.add_argument("--leaf-batch", type=int, default=None, help="points bought per leafacq step (default Nbar/4)")
     ap.add_argument("--leaf-score", default="sum", choices=["sum", "mean"], help="a leaf's expected contribution: sum or mean over its candidates")
     ap.add_argument("--leaf-pick", default="uniform", choices=["uniform", "top"], help="which of the chosen leaf's candidates to buy")
@@ -527,7 +542,7 @@ def main():
                                                      model="tree" if cfg == "acq" else "hybrid")
             elif cfg == "leafacq":
                 results[(ch, cfg)] = run_leafacq(ch, args.data_dir, args.nmax, args.seed, checkpoints, args.driver, args.leaf_pool,
-                                                 args.leaf_batch, args.leaf_score, args.leaf_pick)
+                                                 args.leaf_batch, args.leaf_score, args.leaf_pick, args.born_driver)
             else:
                 results[(ch, cfg)] = run(ch, cfg, args.data_dir, args.nmax, args.noise, args.seed, checkpoints)
     tag = args.tag or (f"noise{args.noise:g}" if args.noise > 0 else "exact")

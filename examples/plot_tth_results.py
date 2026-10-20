@@ -78,8 +78,10 @@ FIGURES = {
         ("sweep_loopSplit1000_{ch}", "tree", "ratio: 1000-point leaves refit only at splits, mixed stream"),
         ("sweep_loopInv1000_{ch}", "tree", r"ratio: same, without $\beta_{t\bar t}$"),
         ("sweep_loopAcq1000_{ch}", "acq", "ratio: 1000-point leaves refit at splits, choosing its points from the 131k pool"),
-        ("sweep_loopLinA1000_{ch}", "tree", "amplitude $a$: 1000-point leaves refit at splits, mixed stream"),
+        ("sweep_loopLinA1000Big_{ch}|sweep_loopLinA1000_{ch}", "tree", "amplitude $a$: 1000-point leaves refit at splits, mixed stream"),
         ("sweep_loopLinAcq1000_{ch}", "acq", "amplitude: same, choosing its points from the 131k pool"),
+        ("sweep_loopLinAcq1000Big_{ch}", "acq", "amplitude: same, choosing its points from a 524k pool"),
+        ("sweep_loopLeaf1000_{ch}", "leafacq", "the leaves choose, fresh points from MadLoop, no pool (ratio on $f_2$, amplitude on $f_4$)"),
     ],
 }
 # The first two figures use the phase-space measure alone as the weight (no pseudo-PDF factor), the third the paper's f

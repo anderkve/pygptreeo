@@ -1,0 +1,2 @@
+uu leafacq N=  1000  eps_uniform 4.96e-04  eps_unweighted 4.17e-04  median rel 6.85e-06  within 1 %: 98 %  cov68 0.65  5.2 ms/pt  leaves 2  exact 0 s
+uu leafacq N=  2000  eps_uniform 1.47e-04  eps_unweighted 1.23e-04  median rel 4.80e-06  within 1 %: 100 %  cov68 0.76  110.3 ms/pt  leaves 4  exact 16 s
