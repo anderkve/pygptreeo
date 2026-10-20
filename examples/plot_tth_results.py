@@ -74,12 +74,12 @@ FIGURES = {
         ("sweep_knNbar1000splitAcq_{ch}", "acq", "1000-point leaves refit at splits, choosing its points from a pool of 524k (linear target on f3, log on f1)"),
     ],
     "eps_vs_points_loop.png": [
-        ("sweep_loopMix300_{ch}", "tree", "300-point RBF leaves on the log invariants and the threshold velocity, mixed stream"),
-        ("sweep_loopSplit1000_{ch}", "tree", "1000-point leaves refit only at splits, mixed stream"),
-        ("sweep_loopInv1000_{ch}", "tree", "same, without the threshold velocity"),
-        ("sweep_loopAcq1000_{ch}", "acq", "1000-point leaves refit at splits, choosing its points from the 131k pool"),
-        ("sweep_loopLinA1000_{ch}", "tree", "1000-point leaves refit at splits, learning the amplitude itself in linear space"),
-        ("sweep_loopLinAcq1000_{ch}", "acq", "same, choosing its points from the 131k pool"),
+        ("sweep_loopMix300_{ch}", "tree", r"ratio $a / a_{\rm LO}$: 300-point RBF leaves refit every 25 points, log invariants and $\beta_{t\bar t}$, mixed stream"),
+        ("sweep_loopSplit1000_{ch}", "tree", "ratio: 1000-point leaves refit only at splits, mixed stream"),
+        ("sweep_loopInv1000_{ch}", "tree", r"ratio: same, without $\beta_{t\bar t}$"),
+        ("sweep_loopAcq1000_{ch}", "acq", "ratio: 1000-point leaves refit at splits, choosing its points from the 131k pool"),
+        ("sweep_loopLinA1000_{ch}", "tree", "amplitude $a$: 1000-point leaves refit at splits, mixed stream"),
+        ("sweep_loopLinAcq1000_{ch}", "acq", "amplitude: same, choosing its points from the 131k pool"),
     ],
 }
 # The first two figures use the phase-space measure alone as the weight (no pseudo-PDF factor), the third the paper's f
@@ -110,7 +110,7 @@ for name, series in FIGURES.items():
         loop = name == "eps_vs_points_loop.png"
         ref = (REFERENCE_LOOP if loop else REFERENCE)[ch]
         ax.plot([n for n, _ in ref], [e for _, e in ref], "--", color="#52514e", lw=1.2,
-                label="MLP / L-GATr of arXiv:2412.09534 (Fig. 16, LO-unweighted test points)")
+                label=("the better of MLP(s) and L-GATr" if loop else "MLP / L-GATr") + " of arXiv:2412.09534 (Fig. 16, LO-unweighted test points)")
         ax.axhline(0.01, color="#52514e", lw=0.8, ls=":")
         ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(*XLIM.get(name, (500, 2e5)))
         ax.set_xlabel("training points"); ax.set_ylabel(ylabel)
