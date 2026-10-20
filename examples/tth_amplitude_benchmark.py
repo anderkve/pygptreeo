@@ -276,8 +276,9 @@ def evaluate(gpt, te, tu):
         with contextlib.redirect_stdout(io.StringIO()):
             mu_u, _ = gpt.predict(tu["X"], mode='loop')
         pred_u = from_target(mu_u.ravel(), mu_u.ravel(), tu["X"])[0]
-        if OPTS["ratio"]:   # eq. (30) of arXiv:2412.09534 for a one-loop amplitude: sum |r~ - r| / sum |r|, r = a / a_LO
-            out["eps_unweighted"] = float(np.sum(np.abs(pred_u - tu["me"])) / np.sum(np.abs(tu["me"])))
+        if "tree" in tu:    # one-loop data, eq. (30) of arXiv:2412.09534: sum |r~ - r| / sum |r| with r = a / a_LO
+            born = 1.0 if OPTS["ratio"] else tu["tree"]
+            out["eps_unweighted"] = float(np.sum(np.abs(pred_u - tu["me"]) / born) / np.sum(np.abs(tu["me"] / born)))
             out["mean_rel_unweighted"] = float(np.mean(np.abs(pred_u / tu["me"] - 1.0)))
         else:
             out["eps_unweighted"] = float(np.mean(np.abs(pred_u / tu["me"] - 1.0)))
