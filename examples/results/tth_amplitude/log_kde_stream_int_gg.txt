@@ -1,4 +1,0 @@
-gg: tree on 16384 points, mean |Delta| 7.65e-03, median 2.78e-05
-n_eff 280, bandwidth h 0.535
-KDE points: beta^2 > 0.8 for 66 %, phi_t > 0.8 pi for 22 % (stream: 15 %, 20 %)
-wrote /tmp/claude-0/-home-user-pygptreeo/c104b40a-aeba-5f56-9265-dbaae8b6a4eb/scratchpad/tth_data/../tth_data_kde_int/gg_train_unweighted_rho.npz: 81920 points (interleaved)

@@ -255,20 +255,6 @@ For more detailed demonstrations, see the example scripts in the `examples/` dir
     ```bash
     OMP_NUM_THREADS=1 python examples/performance_test.py
     ```
-*   `examples/hhgrid_amplitude_demo.py`: the tree on the public gg → HH two-loop virtual
-    amplitude grid (6320 numerically integrated points, each with its own error), against
-    the POWHEG-BOX grid pipeline; `examples/BENCHMARK_RESULTS_hhgrid_amplitude.md`.
-    ```bash
-    OMP_NUM_THREADS=1 python examples/hhgrid_amplitude_demo.py --hybrid
-    ```
-*   `examples/tth_amplitude_benchmark.py`, `examples/gated_integration_demo.py`,
-    `examples/tth_kde_stream.py` and `examples/amplification_demo.py`: the tree and the
-    hybrid on 5D tree-level tt̄H amplitudes (the test functions of arXiv:2412.09534,
-    generated with MadGraph as described in `examples/tth_amplitude/`), a Monte Carlo
-    integration that calls the exact amplitude only where the tree's calibrated
-    uncertainty exceeds a tolerance, a training stream aimed at the tree's low-accuracy
-    regions (arXiv:2601.00950), and the surrogate's statistical amplification
-    (arXiv:2608.06450). Results in `examples/BENCHMARK_RESULTS_tth_amplitude.md`.
 *   `examples/test_animated.py`: Provides an animated visualization of the `GPTree` learning process for 2D data.
     It requires command-line arguments:
     ```bash

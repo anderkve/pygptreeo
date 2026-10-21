@@ -1,6 +1,0 @@
-N=   2000  exact calls 26.8 % (last 5000: 26.8 %), 535 in all  eps on the points used 2.9e-04  gated/exact - 1 = +0.007 %  MC error 1.98 %  leaves 2  21 s
-N=   5000  exact calls 11.3 % (last 5000: 11.3 %), 563 in all  eps on the points used 3.7e-04  gated/exact - 1 = +0.002 %  MC error 1.25 %  leaves 3  24 s
-N=  10000  exact calls 5.9 % (last 5000: 0.5 %), 586 in all  eps on the points used 4.4e-04  gated/exact - 1 = +0.000 %  MC error 0.89 %  leaves 3  24 s
-N=  20000  exact calls 3.0 % (last 5000: 0.1 %), 600 in all  eps on the points used 4.5e-04  gated/exact - 1 = -0.002 %  MC error 0.63 %  leaves 3  26 s
-N=  50000  exact calls 1.2 % (last 5000: 0.0 %), 622 in all  eps on the points used 4.4e-04  gated/exact - 1 = -0.005 %  MC error 0.40 %  leaves 3  29 s
-N= 100000  exact calls 0.6 % (last 5000: 0.0 %), 648 in all  eps on the points used 4.2e-04  gated/exact - 1 = -0.005 %  MC error 0.28 %  leaves 3  32 s

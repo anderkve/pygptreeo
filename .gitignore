@@ -196,8 +196,3 @@ examples/results/compare_tree_vs_neural/*_neural.csv
 !examples/results/compare_tree_vs_neural/*_final.png
 !examples/results/compare_tree_vs_neural/*_neural.png
 !examples/results/compare_tree_vs_neural/*_batches.csv
-
-# Downloaded demo data
-examples/data/
-!examples/results/hhgrid_amplitude/*.png
-!examples/results/tth_amplitude/*.png
