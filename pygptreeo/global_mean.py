@@ -289,6 +289,57 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
                 f"n_seen={self.n_seen}, n_refits={self.n_refits}, current={self.current!r})")
 
 
+class FixedSnapshot(GlobalMeanSnapshot):
+    """A snapshot of a fixed model given as a callable ``predict(X) -> (n,) or (n, n_outputs)``."""
+
+    def __init__(self, predict_fn, n_outputs: int = 1, version: int = 1):
+        self.version = int(version)
+        self.predict_fn = predict_fn
+        self._n_outputs = int(n_outputs)
+        self.n_fit = 0
+
+    @property
+    def n_outputs(self) -> int:
+        return self._n_outputs
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        X = np.atleast_2d(X)
+        m = np.asarray(self.predict_fn(X), dtype=float).reshape(X.shape[0], -1)
+        if m.shape[1] != self._n_outputs:
+            m = np.tile(m[:, :1], (1, self._n_outputs))
+        return m
+
+    def __repr__(self) -> str:
+        return f"FixedSnapshot(version={self.version}, n_outputs={self._n_outputs})"
+
+
+class FixedGlobalMean(GlobalMeanLearner):
+    """A pretrained, frozen global model: the leaves model the residual of ``predict_fn``.
+
+    Parameters
+    ----------
+    predict_fn : callable
+        ``predict_fn(X) -> (n,) or (n, n_outputs)`` in the tree's input and target
+        space; must be picklable (a module-level function or class instance) for
+        ``GPTree.save``.
+    error_scale : float, array or None
+        Estimate of the model's own error (standard deviation per output), added
+        in quadrature to every leaf's sigma; None adds nothing and leaves it to the
+        sigma calibration.
+    n_outputs : int
+    """
+
+    def __init__(self, predict_fn, error_scale=None, n_outputs: int = 1):
+        self.current = FixedSnapshot(predict_fn, n_outputs=n_outputs)
+        self.error_scale = None if error_scale is None else np.broadcast_to(np.asarray(error_scale, dtype=float), (n_outputs,)).copy()
+
+    def observe(self, x, y, sigma) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return f"FixedGlobalMean({self.current.predict_fn!r})"
+
+
 def make_global_mean(spec: Union[None, str, GlobalMeanLearner], **kwargs) -> Optional[GlobalMeanLearner]:
     """Resolve the ``GPTree(global_mean=...)`` argument to a learner (or None)."""
     if spec is None:

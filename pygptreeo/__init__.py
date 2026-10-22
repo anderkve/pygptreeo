@@ -66,6 +66,7 @@ from pygptreeo.global_mean import (
     GlobalMeanLearner,
     GlobalMeanSnapshot,
     AdditiveGPGlobalMean,
+    FixedGlobalMean,
     CoverageReservoir,
 )
 
