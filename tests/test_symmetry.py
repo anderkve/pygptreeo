@@ -249,6 +249,25 @@ class TestGPTreeSymmetry(unittest.TestCase):
         a_asym = [l.my_GPR.get_kernel().alpha for l in gpt_a.root.leaves if l.my_GPR.is_trained()]
         self.assertLess(np.median(a_asym), 0.5)
 
+    def test_splits_cover_an_orbit(self):
+        """With tied length scales the split must still alternate between exchangeable inputs."""
+        rng = np.random.default_rng(7)
+        X = rng.uniform(size=(2500, 3))
+        y = np.sin(4 * np.pi * X[:, 0]) + np.sin(4 * np.pi * X[:, 1]) + 0.1 * X[:, 2]
+        gpt = _tree(Symmetry(permutations=[[1, 0, 2]]), 'mixed', Nbar=100)
+        self._stream(gpt, X, y)
+        counts = {0: 0, 1: 0, 2: 0}
+
+        def walk(node):
+            if node.is_leaf:
+                return
+            counts[int(node.split_index)] += 1
+            walk(node.left); walk(node.right)
+        walk(gpt.root)
+        self.assertGreater(counts[0], 0)
+        self.assertGreater(counts[1], 0)
+        self.assertLess(counts[2], counts[0] + counts[1])
+
     def test_warning_and_save(self):
         sym = Symmetry(generators=[flip1], n_features=3)
         kernel = SymmetrizedKernel(ConstantKernel(1.0) * RBF(length_scale=np.ones(3)), sym)

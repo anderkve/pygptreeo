@@ -1370,7 +1370,13 @@ class GPNode(Node):
                 # choice is scale-invariant. With standard scaling the GP frame
                 # already has std ~ 1 (no-op); without it, normalise by the raw
                 # per-dimension std so dimensions in different units stay comparable.
-                if not self.use_standard_scaling and Xs.shape[0] > 1:
+                # With a symmetry the GP frame is the orbit-tied standardization of
+                # the raw inputs, so the length scales are taken back to raw units
+                # and compared with the spread of the canonical coordinates split on.
+                if self.symmetry is not None and self.use_standard_scaling and self.X_scaler is not None:
+                    stds = np.std(Xs, axis=0)
+                    length_scales = length_scales * self.X_scaler.scale_ / np.where(stds > 0, stds, 1.0)
+                elif not self.use_standard_scaling and Xs.shape[0] > 1:
                     stds = np.std(Xs, axis=0)
                     length_scales = length_scales / np.where(stds > 0, stds, 1.0)
                 self.split_index = int(np.argmin(length_scales))
