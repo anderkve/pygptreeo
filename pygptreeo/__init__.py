@@ -20,6 +20,7 @@ Main components:
     - AdditivePeriodicMaternKernel: Shorthand for additive-periodic + catch-all leaf kernel
     - OutputBasis / OutputBasisLearner: Global PCA output basis for multi-output trees
     - AdditiveGPGlobalMean / GlobalMeanLearner: Tree-wide global model whose residual the leaves model
+    - Symmetry / SymmetrizedKernel: Prior symmetry of the target, used by GPTree(symmetry=...) and the leaf kernel
 
 Typical usage:
     from pygptreeo import GPTree
@@ -58,6 +59,7 @@ from pygptreeo.kernels import (
     AdditivePeriodicMaternKernel,
 )
 from pygptreeo.gp_interface import GPRegressorInterface
+from pygptreeo.symmetry import Symmetry, SymmetrizedKernel
 from pygptreeo.adapters import SklearnGPAdapter
 from pygptreeo.output_basis import OutputBasis, OutputBasisLearner
 from pygptreeo.global_mean import (

@@ -91,6 +91,7 @@ class GPNode(Node):
                  output_model: Optional[str] = 'independent',
                  output_basis: Optional[OutputBasisLearner] = None,
                  global_mean: Optional[GlobalMeanLearner] = None,
+                 symmetry=None,
                  my_GPRs: Optional[list] = None):
         """Initializes a GPNode.
 
@@ -199,6 +200,11 @@ class GPNode(Node):
         # the snapshot of it that this node's GPs were fitted against.
         self.global_mean = global_mean
         self._fitted_global = None
+
+        # The tree's Symmetry when it partitions in canonical coordinates (mode
+        # 'mixed'): the node splits on canonical(X) and standardizes exchangeable
+        # inputs alike, so that a SymmetrizedKernel stays invariant. None otherwise.
+        self.symmetry = symmetry
 
         # GP regressors: one per output ('independent'), one for all outputs
         # ('shared'), or one per basis score ('pca'; the list is sized at the
@@ -375,6 +381,7 @@ class GPNode(Node):
             'output_model': self.output_model,
             'output_basis': self.output_basis,
             'global_mean': self.global_mean,
+            'symmetry': self.symmetry,
         }
 
         # Each child gets its own clone of every parent GP (one per output / score)
@@ -552,11 +559,12 @@ class GPNode(Node):
     
     def split_training_data(self):
         """ Assign the training samples of a node to its child nodes. """
-        for x, y, sigma in zip(self.my_X_data, self.my_y_data, self.my_sigma_data):
+        probs = self.prob_func(self._split_coords())[:, 0]
+        for x, y, sigma, p in zip(self.my_X_data, self.my_y_data, self.my_sigma_data, probs):
             x = x.reshape((1, x.shape[0]))
             y = y.reshape((1, self.n_outputs))  # Multi-output support
             sigma = sigma.reshape((1, self.n_outputs))  # Multi-output support
-            child = self.children[int(np.random.binomial(1, self.prob_func(x)[0][0]))]
+            child = self.children[int(np.random.binomial(1, p))]
             child.store_point(x, y, sigma, increment_buffer=False)
 
         
@@ -806,6 +814,29 @@ class GPNode(Node):
         else:  # a bare scikit-learn GaussianProcessRegressor
             gpr.alpha = alpha
 
+    def _split_coords(self, X=None):
+        """The node's points (or ``X``) in the coordinates it splits in."""
+        X = self.my_X_data if X is None else X
+        return X if self.symmetry is None or X.shape[0] == 0 else self.symmetry.canonical(X)
+
+    def _fit_X_scaler(self, X: np.ndarray):
+        """Standardize the inputs; inputs exchangeable under the tree's symmetry get
+        one common shift and scale."""
+        self.X_scaler = StandardScaler().fit(X)
+        orbits = self.symmetry.orbits if self.symmetry is not None else None
+        for orbit in orbits or []:
+            if len(orbit) > 1:
+                self.X_scaler.mean_[orbit] = self.X_scaler.mean_[orbit].mean()
+                self.X_scaler.scale_[orbit] = self.X_scaler.scale_[orbit].mean()
+                self.X_scaler.var_[orbit] = self.X_scaler.scale_[orbit] ** 2
+        return self.X_scaler
+
+    def _set_input_transform(self):
+        """Hand the fitted input standardization to kernels that need it (SymmetrizedKernel)."""
+        for gpr in self.my_GPRs:
+            if hasattr(gpr, 'set_input_transform'):
+                gpr.set_input_transform(self.X_scaler.mean_, self.X_scaler.scale_)
+
     def _pooled_length_scales(self):
         """Per-dimension length scales pooled over all of this node's fitted GPs
         (elementwise minimum: the shortest scale in any output/score governs the
@@ -857,8 +888,7 @@ class GPNode(Node):
             - Zero variance in a dimension: sets scale=1 for that dimension
         """
         # Fit X scaler (per-feature standardization)
-        self.X_scaler = StandardScaler()
-        self.X_scaler.fit(X)
+        self._fit_X_scaler(X)
 
         # Fit y scalers (one per output)
         for i in range(self.n_outputs):
@@ -924,6 +954,7 @@ class GPNode(Node):
             # One GP per output, per-output standardisation of y
             if self.use_standard_scaling:
                 self._fit_scalers(X_train, y_train)
+                self._set_input_transform()
                 X_fit = self.X_scaler.transform(X_train)
                 for i in range(self.n_outputs):
                     y_scale_i = self.y_scalers[i].scale_[0]
@@ -942,7 +973,8 @@ class GPNode(Node):
             # are averaged over the outputs (exact when sigma is the same for all
             # outputs, given the common output scale).
             if self.use_standard_scaling:
-                self.X_scaler = StandardScaler().fit(X_train)
+                self._fit_X_scaler(X_train)
+                self._set_input_transform()
                 X_fit = self.X_scaler.transform(X_train)
                 mu, scale = self._fit_common_y_scaler(y_train)
                 y_fit = (y_train - mu) / scale
@@ -955,7 +987,8 @@ class GPNode(Node):
 
         else:  # 'pca'
             if self.use_standard_scaling:
-                self.X_scaler = StandardScaler().fit(X_train)
+                self._fit_X_scaler(X_train)
+                self._set_input_transform()
                 X_fit = self.X_scaler.transform(X_train)
             else:
                 X_fit = X_train
@@ -1070,7 +1103,8 @@ class GPNode(Node):
             float: Combined RMSE score (weighted average of left and right errors)
                    Returns np.inf if evaluation fails or insufficient data
         """
-        if self.my_X_data.shape[0] < 2 * self.split_eval_min_points:
+        Xs = self._split_coords()
+        if Xs.shape[0] < 2 * self.split_eval_min_points:
             # Not enough data to evaluate split
             return np.inf
 
@@ -1088,8 +1122,8 @@ class GPNode(Node):
             left_indices = []
             right_indices = []
 
-            for i in range(self.my_X_data.shape[0]):
-                x = self.my_X_data[i:i+1]
+            for i in range(Xs.shape[0]):
+                x = Xs[i:i+1]
                 prob_right = self.prob_func(x)[0][0]
                 # Deterministically assign based on probability
                 if prob_right < 0.5:
@@ -1172,7 +1206,8 @@ class GPNode(Node):
         Returns:
             tuple: (best_split_index, best_split_position) or (None, None) if evaluation fails
         """
-        if self.my_X_data.shape[0] < 2 * self.split_eval_min_points:
+        Xs = self._split_coords()
+        if Xs.shape[0] < 2 * self.split_eval_min_points:
             # Not enough data for evaluation
             return None, None
 
@@ -1180,19 +1215,19 @@ class GPNode(Node):
         candidates = []
 
         # Candidate 1: Max variance
-        if self.my_X_data.shape[0] > 1:
-            variances = np.var(self.my_X_data, axis=0)
+        if Xs.shape[0] > 1:
+            variances = np.var(Xs, axis=0)
             dim_max_var = np.argmax(variances)
             candidates.append(('max_variance', dim_max_var))
 
         # Candidate 2: Max spread
-        if self.my_X_data.shape[0] > 0:
-            spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
+        if Xs.shape[0] > 0:
+            spreads = np.max(Xs, axis=0) - np.min(Xs, axis=0)
             dim_max_spread = np.argmax(spreads)
             candidates.append(('max_spread', dim_max_spread))
 
         # Candidate 3: Max uncertainty (if GP is trained)
-        if self._is_fitted() and self.my_X_data.shape[0] > 1:
+        if self._is_fitted() and Xs.shape[0] > 1:
             uncertainty_scores = self._compute_dimensional_uncertainty()
             dim_max_unc = np.argmax(uncertainty_scores)
             candidates.append(('max_uncertainty', dim_max_unc))
@@ -1220,10 +1255,10 @@ class GPNode(Node):
 
         for name, split_index in unique_candidates:
             # Compute split position (use median)
-            split_position = np.median(self.my_X_data[:, split_index])
+            split_position = np.median(Xs[:, split_index])
 
             # Compute overlap
-            spread = np.max(self.my_X_data[:, split_index]) - np.min(self.my_X_data[:, split_index])
+            spread = np.max(Xs[:, split_index]) - np.min(Xs[:, split_index])
             overlap = theta * spread
 
             # Evaluate this candidate
@@ -1266,6 +1301,7 @@ class GPNode(Node):
                 the extent of the overlap. It's a fraction of the data range
                 in the chosen split dimension.
         """
+        Xs = self._split_coords()
 
         # If split evaluation is enabled, find best split by testing candidates
         if self.enable_split_evaluation:
@@ -1274,49 +1310,49 @@ class GPNode(Node):
                 self.split_index = best_index
                 self.split_position = best_position
                 # Compute overlap for the chosen dimension
-                current_dim_spread = np.max(self.my_X_data[:, self.split_index]) - np.min(self.my_X_data[:, self.split_index])
+                current_dim_spread = np.max(Xs[:, self.split_index]) - np.min(Xs[:, self.split_index])
                 self.overlap = theta * current_dim_spread
                 return  # Done - we have split_index, split_position, and overlap
             # If evaluation failed, fall through to use default criteria
 
         # Determine the split index based on the chosen criteria
         if self.split_dimension_criteria == 'max_spread':
-            if self.my_X_data.shape[0] > 0:
+            if Xs.shape[0] > 0:
                 w = np.empty(self.n_features)
                 for i in range(self.n_features):
-                    w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
+                    w[i] = np.max(Xs[:, i]) - np.min(Xs[:, i])
                 self.split_index = np.argmax(w)
             else:
                 self.split_index = 0 # Default to 0 if no data
         elif self.split_dimension_criteria == 'max_variance':
-            if self.my_X_data.shape[0] > 1:
-                variances = np.var(self.my_X_data, axis=0)
+            if Xs.shape[0] > 1:
+                variances = np.var(Xs, axis=0)
                 self.split_index = np.argmax(variances)
             else: # Fallback for single data point or no variance
-                if self.my_X_data.shape[0] > 0:
+                if Xs.shape[0] > 0:
                     w = np.empty(self.n_features)
                     for i in range(self.n_features):
-                        w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
+                        w[i] = np.max(Xs[:, i]) - np.min(Xs[:, i])
                     self.split_index = np.argmax(w)
                 else:
                     self.split_index = 0 # Default to 0 if no data
         elif self.split_dimension_criteria == 'max_uncertainty':
             # Split on the dimension where the GP is most uncertain
             # Strategy: compute marginal predictive uncertainty for each dimension
-            if self.my_X_data.shape[0] > 1 and self._is_fitted():
+            if Xs.shape[0] > 1 and self._is_fitted():
                 # Compute per-dimension uncertainty scores
                 # We'll use the GP's predictions on the training data to assess uncertainty
                 uncertainty_scores = self._compute_dimensional_uncertainty()
                 self.split_index = np.argmax(uncertainty_scores)
             else:
                 # Fallback to max_variance if GP not trained yet
-                if self.my_X_data.shape[0] > 1:
-                    variances = np.var(self.my_X_data, axis=0)
+                if Xs.shape[0] > 1:
+                    variances = np.var(Xs, axis=0)
                     self.split_index = np.argmax(variances)
-                elif self.my_X_data.shape[0] > 0:
+                elif Xs.shape[0] > 0:
                     w = np.empty(self.n_features)
                     for i in range(self.n_features):
-                        w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
+                        w[i] = np.max(Xs[:, i]) - np.min(Xs[:, i])
                     self.split_index = np.argmax(w)
                 else:
                     self.split_index = 0 # Default to 0 if no data
@@ -1327,19 +1363,19 @@ class GPNode(Node):
             # them is used. Falls back to max_spread if no per-dimension length
             # scales are available (GP untrained or kernel isotropic).
             length_scales = None
-            if self.my_X_data.shape[0] > 1:
+            if Xs.shape[0] > 1:
                 length_scales = self._pooled_length_scales()
             if length_scales is not None:
                 # Compare length scales in units of each dimension's std so the
                 # choice is scale-invariant. With standard scaling the GP frame
                 # already has std ~ 1 (no-op); without it, normalise by the raw
                 # per-dimension std so dimensions in different units stay comparable.
-                if not self.use_standard_scaling and self.my_X_data.shape[0] > 1:
-                    stds = np.std(self.my_X_data, axis=0)
+                if not self.use_standard_scaling and Xs.shape[0] > 1:
+                    stds = np.std(Xs, axis=0)
                     length_scales = length_scales / np.where(stds > 0, stds, 1.0)
                 self.split_index = int(np.argmin(length_scales))
-            elif self.my_X_data.shape[0] > 0:
-                spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
+            elif Xs.shape[0] > 0:
+                spreads = np.max(Xs, axis=0) - np.min(Xs, axis=0)
                 self.split_index = int(np.argmax(spreads))
             else:
                 self.split_index = 0
@@ -1353,28 +1389,28 @@ class GPNode(Node):
 
         # Calculate spread for the chosen split_index, used for overlap calculation
         # and potentially for split_position if data is scarce for other methods.
-        if self.my_X_data.shape[0] > 0:
-            current_dim_spread = np.max(self.my_X_data[:, self.split_index]) - np.min(self.my_X_data[:, self.split_index])
+        if Xs.shape[0] > 0:
+            current_dim_spread = np.max(Xs[:, self.split_index]) - np.min(Xs[:, self.split_index])
         else:
             current_dim_spread = 0.0 # Default if no data
 
         self.split_position = None
-        if self.my_X_data.shape[0] == 0: # No data, place split in the middle (0 if not scaled) or handle as error?
+        if Xs.shape[0] == 0: # No data, place split in the middle (0 if not scaled) or handle as error?
             self.split_position = 0.0
         elif self.split_position_method == 'median':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.median(self.my_X_data[:, self.split_index])
+            if Xs.shape[0] > 0:
+                self.split_position = np.median(Xs[:, self.split_index])
             else: # Should not happen if split_index logic is robust
                 self.split_position = 0.0
         elif self.split_position_method == 'mean':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.mean(self.my_X_data[:, self.split_index])
+            if Xs.shape[0] > 0:
+                self.split_position = np.mean(Xs[:, self.split_index])
             else: # Should not happen
                 self.split_position = 0.0
         elif self.split_position_method == 'random':
-            if self.my_X_data.shape[0] > 0:
-                min_val = np.min(self.my_X_data[:, self.split_index])
-                max_val = np.max(self.my_X_data[:, self.split_index])
+            if Xs.shape[0] > 0:
+                min_val = np.min(Xs[:, self.split_index])
+                max_val = np.max(Xs[:, self.split_index])
                 if min_val == max_val: # All points are the same
                     self.split_position = min_val
                 else:
@@ -1382,8 +1418,8 @@ class GPNode(Node):
             else: # Should not happen
                 self.split_position = 0.0
         elif self.split_position_method == 'randomchoice':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.random.choice(self.my_X_data[:, self.split_index])
+            if Xs.shape[0] > 0:
+                self.split_position = np.random.choice(Xs[:, self.split_index])
             else: # Should not happen
                 self.split_position = 0.0
         else:

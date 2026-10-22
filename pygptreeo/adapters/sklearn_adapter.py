@@ -207,6 +207,17 @@ class SklearnGPAdapter(GPRegressorInterface):
         # Otherwise, return the initial kernel
         return self._gpr.kernel
 
+    def set_input_transform(self, shift, scale) -> None:
+        """Hand the standardization of the inputs (``x_scaled = (x - shift) / scale``)
+        to kernels that take an ``input_transform`` (``SymmetrizedKernel``)."""
+        kernel = self._gpr.kernel
+        if kernel is None:
+            return
+        keys = [k for k in kernel.get_params(deep=True) if k.endswith('input_transform')]
+        if keys:
+            value = (np.asarray(shift, dtype=float), np.asarray(scale, dtype=float))
+            kernel.set_params(**{k: value for k in keys})
+
     def set_kernel(self, kernel) -> None:
         """
         Set the kernel object.

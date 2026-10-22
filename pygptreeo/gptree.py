@@ -20,6 +20,7 @@ from typing import Callable, Optional, Type, Union
 
 # Third-party imports
 import joblib
+import warnings
 import numpy as np
 from sklearn.utils import resample
 from tqdm import tqdm
@@ -27,6 +28,7 @@ from tqdm import tqdm
 # Local imports
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
+from pygptreeo.symmetry import Symmetry, contains_symmetrized_kernel
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
@@ -90,6 +92,8 @@ class GPTree:
                  output_basis_reservoir_size: int = 2000,
                  global_mean: Union[None, str, GlobalMeanLearner] = None,
                  global_mean_kwargs: Optional[dict] = None,
+                 symmetry: Optional[Symmetry] = None,
+                 symmetry_mode: str = 'mixed',
                  **kwargs):
         """Initializes the GPTree.
 
@@ -170,6 +174,15 @@ class GPTree:
             global_mean_kwargs (Optional[dict]): Keyword arguments for the built-in
                 learner when ``global_mean`` is given as a string (e.g.
                 ``dict(reservoir_size=300, n_restarts_optimizer=1)``).
+            symmetry (Optional[Symmetry]): A known (or approximate) symmetry of the
+                target function, see ``pygptreeo.symmetry``. Defaults to None.
+            symmetry_mode (str): How the symmetry is used. 'mixed' (default): the
+                tree is partitioned in the symmetry's canonical coordinates, so
+                that symmetric points share a leaf, while the leaves keep the raw
+                inputs; pair it with a ``SymmetrizedKernel`` in the leaves, whose
+                fitted ``alpha`` says how symmetric the target is. 'fold': every
+                input is mapped to its canonical image before it enters the tree,
+                which is the right choice for an exact symmetry and any kernel.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -206,10 +219,21 @@ class GPTree:
         # Tree-wide global model (None by default; shared by reference with every node)
         self.global_mean = make_global_mean(global_mean, **(global_mean_kwargs or {}))
 
+        if symmetry_mode not in ('mixed', 'fold'):
+            raise ValueError(f"Unknown symmetry_mode '{symmetry_mode}'. Use 'mixed' or 'fold'.")
+        self.symmetry = symmetry
+        self.symmetry_mode = symmetry_mode
+        self._fold = symmetry is not None and symmetry_mode == 'fold'
+        self._route_canonical = symmetry is not None and symmetry_mode == 'mixed'
+        if symmetry is None and hasattr(GPR, 'get_kernel') and contains_symmetrized_kernel(GPR.get_kernel()):
+            warnings.warn("The leaf kernel is a SymmetrizedKernel but the tree has no symmetry: pass the "
+                          "same Symmetry as GPTree(symmetry=...) so that symmetric points share a leaf.")
+
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
                           output_model=output_model, output_basis=self.output_basis,
                           global_mean=self.global_mean,
+                          symmetry=symmetry if self._route_canonical else None,
                           **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
@@ -224,6 +248,15 @@ class GPTree:
 
         self.first_point = True
 
+
+    def _route_coords(self, X: np.ndarray) -> np.ndarray:
+        """The coordinates the tree is partitioned in: the symmetry's canonical
+        coordinates in 'mixed' mode, else the inputs themselves."""
+        return self.symmetry.canonical(X) if self._route_canonical else X
+
+    def _fold_inputs(self, X: np.ndarray) -> np.ndarray:
+        """In 'fold' mode, the canonical image of the inputs; else the inputs."""
+        return self.symmetry.canonical(X) if self._fold else X
 
     def update_tree(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray], allow_training=True):
         """Updates the tree structure and node GPRs with a new data point (x, y, sigma).
@@ -255,6 +288,8 @@ class GPTree:
                 priority before a final training pass on all leaves.
         """
 
+        x = self._fold_inputs(x)
+
         # The first input point is used to determine self.n_features
         if self.first_point:
             self.n_features = x.size
@@ -271,8 +306,9 @@ class GPTree:
         # - Start from the root node
         # - For each level, pick a branch according node.prob_func(x), until a leaf node is reached
         node = self.root
+        x_route = self._route_coords(x)
         while not node.is_leaf:
-            node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
+            node = node.children[int(np.random.binomial(1, node.prob_func(x_route)[0][0]))]
 
         # Check if this point should be merged with a nearby point (updates existing point in-place)
         if node.should_merge_point(x, y, sigma):
@@ -321,13 +357,13 @@ class GPTree:
 
                 # Since we are doing gradual splitting, give
                 # each child a copy of the other child's data
-                order = node.children[1].my_X_data[:,node.split_index].argsort()
+                order = self._route_coords(node.children[1].my_X_data)[:, node.split_index].argsort()
                 node.children[0].shared_X_data = node.children[1].my_X_data[order]
                 node.children[0].shared_y_data = node.children[1].my_y_data[order]
                 node.children[0].shared_sigma_data = node.children[1].my_sigma_data[order]
                 node.children[0].n_shared_points = node.children[0].shared_X_data.shape[0]
 
-                order = node.children[0].my_X_data[:,node.split_index].argsort()[::-1]
+                order = self._route_coords(node.children[0].my_X_data)[:, node.split_index].argsort()[::-1]
                 node.children[1].shared_X_data = node.children[0].my_X_data[order]
                 node.children[1].shared_y_data = node.children[0].my_y_data[order]
                 node.children[1].shared_sigma_data = node.children[0].my_sigma_data[order]
@@ -503,6 +539,8 @@ class GPTree:
             return
         
 
+        X_test = self._fold_inputs(X_test)
+        X_route = self._route_coords(X_test)
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
         var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
 
@@ -515,7 +553,7 @@ class GPTree:
 
             leaves = []
             pred_leaf_probs = []
-            collect_leaves(x, self.root, 1.0)
+            collect_leaves(X_route[i:i + 1], self.root, 1.0)
 
             # Limit the number of leaves used?
             if self.max_n_pred_leaves:
@@ -607,12 +645,14 @@ class GPTree:
         std_DLGP: np.ndarray
             The posterior standard deviation used to quantify the uncertainty in the prediction. Has shape=(N_test, 1).
         """
+        X_test = self._fold_inputs(X_test)
+        X_route = self._route_coords(X_test)
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
         var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
 
         for leaf in tqdm(self.root.leaves, disable=not show_progress, desc="Predicting"):
 
-            ptilde = leaf.marg_prob(X_test)  # Shape: (n_test, 1)
+            ptilde = leaf.marg_prob(X_route)  # Shape: (n_test, 1)
 
             # A leaf predicts only at the points it can own, so the work per leaf is
             # its share of X_test and the total does not grow with the number of leaves.
@@ -635,8 +675,10 @@ class GPTree:
     def predict_each(self, X_test):
         """ Get the prediction of each leaf node individually.  """
         res = []
+        X_test = self._fold_inputs(X_test)
+        X_route = self._route_coords(X_test)
         for leaf in self.root.leaves:
-            ptilde = leaf.marg_prob(X_test)
+            ptilde = leaf.marg_prob(X_route)
             ptilde = ptilde.reshape(mean_DLGP.shape)
 
             mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
