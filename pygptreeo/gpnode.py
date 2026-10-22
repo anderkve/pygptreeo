@@ -837,6 +837,24 @@ class GPNode(Node):
             if hasattr(gpr, 'set_input_transform'):
                 gpr.set_input_transform(self.X_scaler.mean_, self.X_scaler.scale_)
 
+    def _fit_gpr(self, gpr, X, y, noise):
+        """Set the per-point noise variances and fit; if the kernel matrix is not
+        numerically positive definite, retry with a small jitter added to the noise."""
+        noise = np.asarray(noise, dtype=float).ravel()
+        jitters = (0.0, 1e-10, 1e-8, 1e-6, 1e-4)
+        for jitter in jitters:
+            self._set_noise(gpr, noise + jitter)
+            try:
+                gpr.fit(X, y)
+            except np.linalg.LinAlgError:
+                if jitter == jitters[-1]:
+                    raise
+                continue
+            if jitter > 0:
+                warnings.warn(f"Node {self.name}: kernel matrix not positive definite, fitted with a noise jitter of {jitter:g}",
+                              RuntimeWarning)
+            return
+
     def _pooled_length_scales(self):
         """Per-dimension length scales pooled over all of this node's fitted GPs
         (elementwise minimum: the shortest scale in any output/score governs the
@@ -960,12 +978,10 @@ class GPNode(Node):
                     y_scale_i = self.y_scalers[i].scale_[0]
                     y_fit_i = self.y_scalers[i].transform(y_train[:, i:i+1])
                     # Noise std in scaled units is sigma / y_scale; the GP takes variances
-                    self._set_noise(self.my_GPRs[i], (sigma_train[:, i] / y_scale_i) ** 2)
-                    self.my_GPRs[i].fit(X_fit, y_fit_i)
+                    self._fit_gpr(self.my_GPRs[i], X_fit, y_fit_i, (sigma_train[:, i] / y_scale_i) ** 2)
             else:
                 for i in range(self.n_outputs):
-                    self._set_noise(self.my_GPRs[i], sigma_train[:, i] ** 2)
-                    self.my_GPRs[i].fit(X_train, y_train[:, i:i+1])
+                    self._fit_gpr(self.my_GPRs[i], X_train, y_train[:, i:i+1], sigma_train[:, i] ** 2)
 
         elif self.output_model == 'shared':
             # One GP with one shared kernel for all outputs (2-D target). The backend
@@ -982,8 +998,7 @@ class GPNode(Node):
             else:
                 X_fit, y_fit = X_train, y_train
                 alpha = np.mean(sigma_train ** 2, axis=1)
-            self._set_noise(self.my_GPRs[0], alpha)
-            self.my_GPRs[0].fit(X_fit, y_fit)
+            self._fit_gpr(self.my_GPRs[0], X_fit, y_fit, alpha)
 
         else:  # 'pca'
             if self.use_standard_scaling:
@@ -1010,8 +1025,7 @@ class GPNode(Node):
                 self.my_GPRs.append(template.clone())
             del self.my_GPRs[k:]
             for j in range(k):
-                self._set_noise(self.my_GPRs[j], noise_z[:, j] / z_scale[j] ** 2)
-                self.my_GPRs[j].fit(X_fit, (Z[:, j:j+1] - z_shift[j]) / z_scale[j])
+                self._fit_gpr(self.my_GPRs[j], X_fit, (Z[:, j:j+1] - z_shift[j]) / z_scale[j], noise_z[:, j] / z_scale[j] ** 2)
             self._fitted_basis = basis
 
         self._fitted_global = snapshot
