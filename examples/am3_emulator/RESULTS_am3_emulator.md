@@ -230,3 +230,79 @@ Nbar 100, retrain every 10 points).
   this emulator: at chi^2 < 100 its chi^2 error is 8-12 units (section 3.1),
   which is what AM3 must still resolve.
 
+### 3.5 Carrying the emulator to a second source
+
+The use case is a series of scans. A second synthetic source
+(`theta_true = (-0.3, 16.5, 42.3, 2.1, 1.0, 4.5, delta = 12)`, 0.05 dex errors,
+chi^2 = 21.8 at the truth) was scanned twice with the gate of section 3.4: from
+an empty tree, and from the 1007-point tree saved by the first source's gated
+scan (`--load-tree`). Both ran concurrently with the reference run, so the wall
+times are inflated by the shared machine; the AM3-call counts are not.
+
+| run | AM3 calls after 100 / 500 / 1000 / 2000 evaluations | total AM3 calls | emulated | best chi^2 | final emulator error (median rms at data) |
+|---|---|---|---|---|---|
+| cold start | 90 / 239 / 379 / 647 | 998 | 2446 | 41.0 | 0.027 dex |
+| warm start (tree from source 1) | 18 / 110 / 250 / 524 | 945 | 2499 | 44.5 | 0.031 dex |
+
+* The inherited tree pays off in the global phase: 72 of the first 100
+  evaluations and 130 of the first 1000 were answered from what the first scan
+  had learned. After that the two scans need the same AM3 calls, because the
+  calls that remain are the ones near the new optimum, which the first scan
+  never visited. Over the whole scan the saving is 5 %.
+* The inherited tree was briefly overconfident on the new source (|err|/sigma
+  median 1.0 and a 90th-percentile maximum z of 11 in the first 420
+  evaluations, against 0.6 and 4.5 for the cold tree) before its per-leaf
+  calibration caught up; its error stayed slightly above the cold tree's for the
+  rest of the scan (0.031 against 0.027 dex at the end), presumably because its
+  leaves were shaped by the first source's stream. No emulated answer was
+  misranked in either run (0 of 275 and 0 of 278 verified).
+* Both DE runs stopped well above the chi^2 of the truth (41 and 44 against
+  22), as did the pure-AM3 reference on the first source: 40 generations of 84
+  are not enough for this seven-parameter SSC problem with its gamma_min /
+  Doppler degeneracy. That is a property of the optimiser budget, not of the
+  emulator.
+
+## 4. Conclusions
+
+* **Yes, with a qualification.** A `GPTree(output_model='pca')` learning the
+  comoving log-spectrum on AM3's log-energy grid from the scan's own AM3 calls
+  reaches a 0.02-0.03 dex (5-7 %) median error at the data energies after about
+  1000 concentrated AM3 calls, with a worst case of 0.1-0.3 dex and a
+  well-calibrated predicted uncertainty. That is not accurate enough to replace
+  AM3 at the points that decide the fit (a chi^2 error of 5-10 at chi^2 < 100
+  against the 22-point data set), but it is accurate enough to answer the bulk
+  of a global optimiser's evaluations, which are far from the optimum.
+* **The working recipe** is the gate of section 3.4: trust the emulator when
+  its propagated chi^2 uncertainty is below 10 + 20 % of chi^2 and the point is
+  at least 1.5 times worse than the best AM3 point so far; verify a tenth of the
+  emulated answers. On this model that replaced 71-79 % of the AM3 calls, cut the
+  wall time by a factor 3.5-4, and never misranked a candidate improvement.
+  The factor is bounded by the AM3 calls near the optimum that the gate
+  deliberately keeps; a real gain in that regime would need a 0.005 dex emulator.
+* **Costs**: 4 ms per prediction (60 times cheaper than this cheapest AM3
+  model) and 0.10-0.12 s per tree update at 16 components, i.e. a third of a
+  leptonic AM3 call and negligible against a hadronic one. The adaptive
+  ('noise') component rule keeps 50-70 components for this nearly noise-free
+  target and makes updates slower than AM3 itself; a fixed 16 components loses
+  nothing measurable in a scan (and 24-32 would be the next thing to try near
+  the end of a scan, where the 16-component truncation is of the same order as
+  the GP error). Nbar = 200 does not help.
+* **Transfer across sources** saves only the global phase (5 % of the AM3 calls
+  of the second scan here) because an optimiser's expensive calls are local. An
+  emulator meant to serve many sources would have to be trained on a
+  space-filling design of thousands of points first, or the scan should be a
+  sampler that keeps exploring (MCMC, nested sampling), where the local benefit
+  compounds.
+* **What AM3 made easy**: one `AM3()` instance and one kernel initialisation
+  serve every point (3 s once; a magnetic field change costs 2 ms), the leptonic
+  SSC model costs 0.25 s per spectrum, and the output is already on a
+  logarithmic energy grid. Learning the log-spectrum as a function of log energy
+  and log parameters is the natural representation and is what is used here;
+  the only extra ingredient is a soft floor for the self-absorbed and
+  pair-absorbed cliffs. The Doppler factor, redshift and distance stay analytic
+  and outside the emulator.
+* **Caveats**: one leptonic model, one synthetic data set per source, one
+  optimiser configuration, one seed. The worst-case errors (0.1-0.3 dex late in
+  a scan, several dex early) mean a gate is essential; the self-calibrated
+  uncertainty made the gate work here, but a hadronic model with sharper
+  features in theta should be checked the same way before trusting it.
