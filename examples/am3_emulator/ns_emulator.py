@@ -174,7 +174,11 @@ class EmulatedLogLike:
             both = np.isfinite(lt) & np.isfinite(le)
             d = np.abs(lt[both] - le[both])
             dv = np.abs(lt[both & v] - le[both & v])
-            print(f"[{self.n_calls:7d}] AM3 {self.n_am3:6d}, emulated {n_used:6d} ({n_used / self.n_calls:.0%}) | tree {self._n_points()} pts, "
+            live = getattr(self.sampler, 'live_logl', None)
+            it = getattr(self.sampler, 'it', 0)
+            lmin = float(np.min(live)) if live is not None and np.isfinite(live).all() else np.nan
+            print(f"[{self.n_calls:7d}] iter {it:6d} (eff {100.0 * it / max(self.n_calls, 1):.1f}%), logL_min {lmin:9.2f} | "
+                  f"AM3 {self.n_am3:6d}, emulated {n_used:6d} ({n_used / self.n_calls:.0%}) | tree {self._n_points()} pts, "
                   f"{len(self.tree.root.leaves)} leaves | recent |dlogL|: all-scored median {np.median(d) if d.size else np.nan:.2f}, "
                   f"verified median {np.median(dv) if dv.size else np.nan:.2f} max {dv.max() if dv.size else np.nan:.2f} | "
                   f"best chi2 {self.best_chi2_true:.1f} | t: am3 {self.t_am3:.0f}s pred {self.t_pred:.0f}s upd {self.t_update:.0f}s "
