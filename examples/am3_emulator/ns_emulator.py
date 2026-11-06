@@ -61,7 +61,7 @@ class EmulatedLogLike:
             if args.global_mean != 'none':
                 tree_kwargs['global_mean'] = args.global_mean
                 if args.global_mean == 'net':
-                    tree_kwargs['global_mean_kwargs'] = dict(steps_per_update=args.gm_steps_per_update, random_state=args.seed)
+                    tree_kwargs['global_mean_kwargs'] = dict(steps_per_update=args.gm_steps_per_update or None, random_state=args.seed)
             self.tree = GPTree(**tree_kwargs)
         self.rec = {k: [] for k in ('theta', 'logl_true', 'logl_emu', 'slogl', 'sdex_max', 'used', 'verified', 'n_points', 'it', 'lmin')}
         self.n_calls = self.n_am3 = 0
@@ -222,7 +222,7 @@ def main():
     ap.add_argument('--verify-frac', type=float, default=0.1)
     ap.add_argument('--global-mean', default='none', choices=['none', 'net', 'additive_gp'],
                     help="tree-wide global model whose residual the leaves learn ('net' needs PyTorch)")
-    ap.add_argument('--gm-steps-per-update', type=int, default=1, help="amortised refit steps per update for 'net'")
+    ap.add_argument('--gm-steps-per-update', type=int, default=1, help="amortised refit steps per update for 'net' (0: refit in full at once)")
     ap.add_argument('--print-every', type=int, default=2000)
     ap.add_argument('--validate', type=int, default=400, help='posterior samples to re-evaluate with AM3 (0: skip)')
     ap.add_argument('--save-tree', default=None)
