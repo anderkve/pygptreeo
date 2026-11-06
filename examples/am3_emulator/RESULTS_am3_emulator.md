@@ -5,6 +5,12 @@ Can a `GPTree` with `output_model='pca'` learn the photon spectra produced by
 enough to replace AM3 calls? This document records the setup and the measurements
 from the scripts in this directory.
 
+
+> **Status**: the measurements in sections 2 and 3 were made with an emulated
+> quantity that carried one spurious power of E (AM3's `get_photons` is a density
+> per unit ln E). The wrapper is fixed; the sections are being redone with the
+> corrected, physical SEDs and will replace the numbers below.
+
 ## 1. Setup
 
 ### AM3

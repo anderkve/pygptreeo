@@ -91,7 +91,8 @@ class AM3SSCModel:
 
     # ------------------------------------------------------------------ #
     def photon_density(self, theta):
-        """Comoving steady-state photon density n(E) [cm^-3] on ``self.E``."""
+        """Comoving steady-state photon density per unit ln E, ``E n(E)`` [cm^-3], on ``self.E``
+        (what AM3's ``get_photons`` returns)."""
         log_B, log_R, log_Le, p, log_gmin, log_gmax = [float(v) for v in theta]
         B, R, Le = 10.0 ** log_B, 10.0 ** log_R, 10.0 ** log_Le
         gmin, gmax = 10.0 ** log_gmin, 10.0 ** log_gmax
@@ -114,7 +115,7 @@ class AM3SSCModel:
 
     def comoving_sed(self, theta):
         """E^2 n(E) [eV cm^-3] on ``self.E``: the quantity the emulator learns (in log10)."""
-        return self.E ** 2 * self.photon_density(theta)
+        return self.E * self.photon_density(theta)
 
 
 # ---------------------------------------------------------------------- #
@@ -132,10 +133,9 @@ def luminosity_distance_cm(z, H0=70.0, Om=0.3):
 def observed_sed(E_comoving, e2n_comoving, log_R, doppler, z, d_L):
     """Map a comoving E^2 n(E) [eV cm^-3] to an observed nu F_nu [erg cm^-2 s^-1].
 
-    Returns the observed photon energies [eV] and nu F_nu on them. Photons leave
-    the sphere at a rate (density * 4 pi R^2 c / 3 ... ) -- here we use the
-    standard L = (4/3) pi R^3 (E^2 n) / t_esc with t_esc = R/c, i.e.
-    L_comoving = E^2 n(E) * 4 pi R^2 c / 3, boosted by delta^4.
+    Returns the observed photon energies [eV] and nu F_nu on them. The comoving
+    luminosity per ln E is E^2 n(E) V / t_esc with V = 4/3 pi R^3 and t_esc = R/c;
+    it is boosted by delta^4 and energies by delta / (1 + z).
     """
     R = 10.0 ** log_R
     L = e2n_comoving * EV_TO_ERG * 4.0 * np.pi * R ** 2 * C_CGS / 3.0        # erg/s per ln E
