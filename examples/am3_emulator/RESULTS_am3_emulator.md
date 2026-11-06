@@ -295,6 +295,41 @@ chi^2 error at the 56 points with true chi^2 < 100:
   many inputs; six smooth inputs is the regime where the plain tree already
   works.
 
+
+### 3.7 Would emulating the spectral parts separately help?
+
+With `set_process_parse_sed(1)` AM3 returns the photon spectrum per process. For
+this model the primary-electron synchrotron, primary-electron Compton and
+cascade-pair parts sum to the total to four digits at every visible bin (they
+are post-absorption). Synchrotron dominates half of the visible bins and
+Compton the other half; the pairs never exceed 20 %. PCA rank over 150
+whole-box spectra (`components_check.py`):
+
+| target, log10 with floor | components for 99 / 99.9 / 99.99 % | 16-component rms / max [dex] |
+|---|---|---|
+| total | 8 / 16 / 27 | 0.058 / 0.51 |
+| synchrotron part | 8 / 15 / 24 | 0.044 / 0.40 |
+| Compton part | 5 / 10 / 16 | 0.019 / 0.25 |
+| pair part | 4 / 10 / 18 | 0.039 / 0.35 |
+| total / injected energy density | 9 / 18 / 31 | 0.063 / 0.68 |
+| synchrotron part shifted by the analytic cutoff B gamma_max^2 | 9 / 19 / 44 | 0.104 / 1.26 |
+| synchrotron part shifted to a common peak bin | 8 / 19 / 42 | 0.074 / 1.19 |
+| Compton part shifted to a common peak bin | 19 / 56 / 88 | 0.284 / 4.12 |
+
+* The Compton hump alone is simpler (60 % of the rank for the same precision);
+  the synchrotron hump is nearly as hard as the total because its
+  self-absorption turnover, cooling break and cutoff move independently. Since
+  errors recombine in linear space weighted by each part's share, separate
+  emulators would be roughly 1.5 times more accurate at twice the GP cost,
+  about what eight more components on the total buy. Worth doing only if the
+  parts are wanted for their own sake.
+* Registration does not work, neither empirical (align the peaks) nor physical
+  (shift by B gamma_max^2, divide by L_e / R^2): the shapes are not
+  shift-invariant and the actual peak and cutoff sit 0.8 to 3.5 dex from the
+  analytic scalings depending on the cooling regime and Klein-Nishina effects.
+  The plain log-spectrum on the log-energy grid is the best representation of
+  those tried.
+
 ## 4. Conclusions
 
 * **Yes, with a qualification.** A `GPTree(output_model='pca')` learning the
