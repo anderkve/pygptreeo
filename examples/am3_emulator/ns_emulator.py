@@ -88,6 +88,8 @@ class EmulatedLogLike:
         return int(sum(leaf.n_points for leaf in self.tree.root.leaves))
 
     def _ready(self):
+        if self.args.no_tree:
+            return False
         return self.tree.output_basis.current is not None and self._n_points() >= self.args.min_train
 
     def _predict(self, theta):
@@ -166,7 +168,8 @@ class EmulatedLogLike:
             c2_true = se.chi2(log_f_true, self.log_f_obs, self.sig_obs)
             logl_true = -0.5 * c2_true
             self.best_chi2_true = min(self.best_chi2_true, c2_true)
-            self._update(theta, np.log10(e2n + self.floor))
+            if not self.args.no_tree:
+                self._update(theta, np.log10(e2n + self.floor))
             value = logl_true
         else:
             value = logl_emu
@@ -227,6 +230,7 @@ def main():
     ap.add_argument('--theta-true', default=None)
     ap.add_argument('--obs-seed', type=int, default=123)
     ap.add_argument('--max-calls', type=int, default=None, help='stop the run after this many likelihood calls')
+    ap.add_argument('--no-tree', action='store_true', help='pure AM3 run without a shadow tree (reference runs)')
     args = ap.parse_args()
     try:
         args.components = int(args.components)
