@@ -6,11 +6,6 @@ enough to replace AM3 calls? This document records the setup and the measurement
 from the scripts in this directory.
 
 
-> **Status**: the measurements in sections 2 and 3 were made with an emulated
-> quantity that carried one spurious power of E (AM3's `get_photons` is a density
-> per unit ln E). The wrapper is fixed; the sections are being redone with the
-> corrected, physical SEDs and will replace the numbers below.
-
 ## 1. Setup
 
 ### AM3
@@ -63,12 +58,14 @@ which makes emulation correspondingly more valuable there.
 
 ### The scan
 
-`scan_emulator.py` fits a synthetic SED: 22 points from 0.1 eV to 1 TeV (the far-IR
-and MeV gaps removed, radio points dropped as self-absorbed), generated from
+`scan_emulator.py` fits a synthetic SED: 23 points from 3e-4 eV (sub-mm) to
+300 GeV (the far-IR and MeV gaps removed, lower radio points dropped as
+self-absorbed), generated from
 `theta_true = (-0.7, 16.2, 41.8, 2.4, 1.3, 4.9, delta=20)` at z = 0.1 with 0.05 dex
-Gaussian errors; chi^2 in log flux. The optimiser is scipy's
-`differential_evolution` (popsize 12 x 7 = 84 per generation, 40 generations,
-3444 evaluations, no polishing, fixed seed).
+Gaussian errors; chi^2 in log flux. The source peaks at 1.1e-11 erg cm^-2 s^-1
+in the UV with a GeV flux of 2e-12, an ordinary bright BL Lac. The optimiser is
+scipy's `differential_evolution` (popsize 12 x 7 = 84 per generation, 40
+generations, 3444 evaluations, no polishing, fixed seed).
 
 A `GPTree(n_outputs=482, output_model='pca')` learns the log-spectrum from every
 AM3 call the scan makes (`sigma = 0.01 dex`). Two modes:
@@ -109,66 +106,69 @@ AM3 call the scan makes (`sigma = 0.01 dex`). Two modes:
 
 ## 3. Scan results
 
-All scans below share the same DE trajectory (same seed; in shadow mode the
-emulator never influences the optimiser, and the first active run replaced a
-single AM3 call), so the emulator settings are compared on identical point
-streams. The DE reaches chi^2 = 36.0 after 3444 evaluations (chi^2 = 33.1 at
-the true parameters) with the usual SSC degeneracies (gamma_min and the Doppler
-factor trade against each other). Timings are for one core with two scans
-running concurrently, which costs nothing compared with a solo run; four
-concurrent AM3 processes on this 4-core VM were 9 times slower per call, which
-is the steep first 200 evaluations of the AM3 time curve in
-`plots/scan_overview.png`.
+The reference is a shadow run (16 components, Nbar 100, retrain every 10
+points): AM3 at every evaluation, the emulator scored but never used. The DE
+reaches chi^2 = 56.8 after 3444 evaluations (chi^2 = 33.9 at the true
+parameters) with the usual SSC degeneracies (gamma_min and the Doppler factor
+trade against each other); 40 generations do not fully converge this
+seven-parameter problem, which is a property of the optimiser budget. Timings are
+for one core with two or three scans running concurrently (AM3 then costs 0.3-0.6
+s per call instead of 0.25 s); four concurrent AM3 processes on this 4-core VM
+were 9 times slower per call, so never do that.
 
-### 3.1 Learning curve along the scan (shadow run, 16 components, Nbar = 200)
+### 3.1 Learning curve along the scan (reference shadow run)
 
-Errors are of the emulated observed log-flux at the 22 data energies, i.e. what
-the likelihood sees; "visible" bins behave the same. Blocks of five generations
-(420 evaluations):
+Errors are of the emulated observed log-flux at the 23 data energies, i.e. what
+the likelihood sees. Blocks of five generations (420 evaluations):
 
 | evaluations | median rms [dex] | p90 rms [dex] | worst max [dex] | median \|dchi2\| | \|err\|/sigma median | best true chi2 |
 |---|---|---|---|---|---|---|
-| 0-420 | 0.106 | 0.265 | 3.39 | 865 | 0.66 | 486 |
-| 420-840 | 0.061 | 0.112 | 0.85 | 262 | 0.70 | 258 |
-| 840-1260 | 0.046 | 0.087 | 4.23 | 143 | 0.65 | 124 |
-| 1260-1680 | 0.037 | 0.055 | 0.82 | 66 | 0.69 | 134 |
-| 1680-2100 | 0.031 | 0.056 | 0.53 | 62 | 0.70 | 122 |
-| 2100-2520 | 0.026 | 0.044 | 0.31 | 51 | 0.68 | 65 |
-| 2520-2940 | 0.026 | 0.042 | 0.26 | 43 | 0.76 | 55 |
-| 2940-3360 | 0.025 | 0.039 | 0.18 | 31 | 0.75 | 36 |
-| 3360-3444 | 0.023 | 0.039 | 0.15 | 31 | 0.74 | 43 |
+| 0-420 | 0.103 | 0.261 | 10.5 | 931 | 0.65 | 468 |
+| 420-840 | 0.054 | 0.114 | 10.7 | 191 | 0.67 | 358 |
+| 840-1260 | 0.039 | 0.075 | 1.03 | 148 | 0.68 | 147 |
+| 1260-1680 | 0.032 | 0.059 | 1.17 | 84 | 0.70 | 105 |
+| 1680-2100 | 0.025 | 0.040 | 0.30 | 52 | 0.71 | 82 |
+| 2100-2520 | 0.023 | 0.033 | 0.57 | 39 | 0.69 | 74 |
+| 2520-2940 | 0.021 | 0.032 | 0.16 | 30 | 0.71 | 66 |
+| 2940-3360 | 0.020 | 0.028 | 0.19 | 28 | 0.71 | 57 |
+| 3360-3444 | 0.015 | 0.026 | 0.06 | 16 | 0.68 | 60 |
 
 * After about 1500 AM3 calls the emulator predicts the next spectrum the scan
-  asks for to 0.03 dex (7 %) rms at the data energies, and after 2500 calls to
-  0.025 dex with a worst case of 0.15-0.3 dex over hundreds of points; compare
-  the 0.05 dex data errors. Near the optimum it is slightly better: for the 35
-  points with true chi^2 < 100 the median rms is 0.022 dex.
+  asks for to 0.03 dex (7 %) rms at the data energies, after 2500 to 0.02 dex,
+  with a worst case of 0.2-0.6 dex over hundreds of points (several dex in the
+  first 1000, when the scan still jumps across the box); compare the 0.05 dex
+  data errors. Near the optimum it is slightly better: for the 56 points with
+  true chi^2 < 100 the median rms is 0.018 dex.
 * **The predicted uncertainty is well calibrated**: the median of |err|/sigma
-  is 0.65-0.76 throughout, and the 90th percentile of the per-spectrum maximum
-  z over 482 bins is about 4, consistent with Gaussian tails. This is what makes
-  a gate possible.
+  is 0.65-0.71 throughout, and the 90th percentile of the per-spectrum maximum
+  z over 482 bins is 3-4, consistent with Gaussian tails. This is what makes a
+  gate possible.
 * The chi^2 error scales with chi^2 itself: a spectrum error of e dex at the
   data points shifts chi^2 by up to 2 chi2 e / sigma_obs when the errors align
-  with the residuals, so 0.03 dex at chi^2 = 100 is worth tens of units. In
-  practice the relative error has a 90th percentile of 8-12 % wherever the gate
-  below applies, and |dchi2| is 5-9 (median) at the 35 points with chi^2 < 100.
+  with the residuals, so 0.02 dex at chi^2 = 100 is worth tens of units. In
+  practice the relative error has a 90th percentile of about 10 % wherever the
+  gates below apply, and |dchi2| at the 56 points with chi^2 < 100 has a median
+  of 3.5, a 90th percentile of 14 and a maximum of 23.
 * The propagated bound `sig_chi2` (absolute terms summed) is exceeded by the
-  actual |dchi2| in 10 % of the cases (ratio p90 0.78, p99 1.9, max 10), so it
-  is an uncertainty scale, not a hard bound.
+  actual |dchi2| in 10 % of the cases (ratio median 0.31, p90 0.90, p99 1.8,
+  max 3.2), so it is an uncertainty scale, not a hard bound.
 
-### 3.2 Tree settings (same trajectory)
+### 3.2 Tree settings
 
-| setting | median rms, last 1000 evals | update cost per AM3 call | predict |
-|---|---|---|---|
-| 16 components, Nbar 100, retrain every 10 | 0.026-0.027 dex | 0.12 s | 4.6 ms |
-| 16 components, Nbar 200, retrain every 20 | 0.023-0.026 dex | 0.17 s | 4.8 ms |
+Measured on the same trajectory with the uncorrected spectra (section 2's
+first version) and consistent with everything above: Nbar = 200 with retraining
+every 20 points gives the same accuracy as Nbar = 100 (0.023 against 0.026 dex
+late in the scan) at 40 % higher update cost; the adaptive `'noise'` component
+rule keeps 50-70 components for this nearly noise-free target and makes a tree
+update slower than an AM3 call (0.3-0.5 s), without a visible accuracy gain at
+the point where it was stopped. All scans below use 16 components, Nbar 100,
+retraining every 10 points: 0.11 s per update and 4 ms per prediction. With
+the 0.25 s AM3 call this leptonic model is about the cheapest thing AM3
+computes, so the tree update is a visible fraction of the budget (a third of
+the AM3 time); for hadronic runs it would be negligible. Prediction is 60 times
+cheaper than an AM3 call.
 
-The accuracy is the same; the larger leaves cost 40 % more per update. With the
-0.25 s AM3 call this leptonic model is about the cheapest thing AM3 computes, so
-the tree update is a visible fraction of the budget (a third); for hadronic runs
-it would be negligible. Prediction is 50 times cheaper than an AM3 call.
-
-### 3.3 What-if gate analysis (shadow run)
+### 3.3 What-if gate analysis (reference shadow run)
 
 For each candidate gate: the fraction of evaluations the emulator would have
 answered, the chi^2 error of those answers, and whether any point that improved
@@ -179,55 +179,57 @@ are emulated.
 
 | gate: sig_chi2 < abs + rel chi2 | far | emulated | rel. error p90 | improvements missed / false | emulated with chi2 < 60 (max \|dchi2\|) |
 |---|---|---|---|---|---|
-| 1 + 0.02 chi2 | - | 0.1 % | 0.5 % | 0 / 0 | 0 |
-| 5 + 0.10 chi2 | - | 42 % | 6 % | 0 / 0 | 0 |
-| 10 + 0.20 chi2 | - | 81 % | 8 % | 0 / 0 | 1 (2.0) |
-| 10 + 0.30 chi2 | - | 95 % | 10 % | 1 / 0 | 5 (19.6) |
-| 20 + 0.50 chi2 | - | 99 % | 10 % | 5 / 1 | 10 (19.6) |
-| 10 + 0.20 chi2 | 1.5 | 81 % | 8 % | 0 / 0 | 1 (2.0) |
-| 10 + 0.30 chi2 | 1.5 | 95 % | 10 % | 0 / 0 | 3 (19.6) |
-| none | 1.5 | 98 % | 10 % | 0 / 0 | 3 (19.6) |
-| none | 3.0 | 93 % | 10 % | 0 / 0 | 0 |
+| 1 + 0.02 chi2 | - | 0.1 % | 3 % | 0 / 0 | 0 |
+| 5 + 0.10 chi2 | - | 41 % | 7.5 % | 0 / 0 | 0 |
+| 10 + 0.20 chi2 | - | 86 % | 10 % | 0 / 1 | 2 (3.2) |
+| 10 + 0.30 chi2 | - | 97 % | 11 % | 0 / 3 | 3 (3.2) |
+| 20 + 0.50 chi2 | - | 99 % | 11 % | 0 / 7 | 3 (3.2) |
+| 10 + 0.20 chi2 | 1.5 | 85 % | 10 % | 0 / 0 | 0 |
+| 10 + 0.30 chi2 | 1.5 | 95 % | 11 % | 0 / 0 | 0 |
+| none | 1.5 | 98 % | 11 % | 0 / 0 | 0 |
+| none | 3.0 | 90 % | 11 % | 0 / 0 | 0 |
 
 The strict absolute gate that a "trust the emulator everywhere" strategy needs
 (|dchi2| below 1) is never satisfied: it would require about 0.002 dex
 precision at the data points. The useful regime is different: the emulator
-answers the bulk of the exploration (points well above the current best, where a
-10 % chi^2 error cannot change a DE decision) and AM3 is reserved for candidates
-near the optimum. With `10 + 0.2 chi2` and `far = 1.5`, 81 % of the evaluations
-would have been emulated with no misranked improvement, and only one emulated
-point had chi^2 below 60. Section 3.5 runs exactly that gate for real.
+answers the bulk of the exploration (points well above the current best, where
+a 10 % chi^2 error cannot change a DE decision) and AM3 is reserved for
+candidates near the optimum. Without the `far` criterion, loosening the gate
+starts to produce false improvements (emulated points ranked better than the
+best when they are not); with `far = 1.5` none occur at any looseness, and the
+uncertainty gate on top mainly protects against the early, badly predicted
+points. Section 3.4 runs `10 + 0.2 chi2` with `far = 1.5` for real.
 
 ### 3.4 Active mode with the calibrated gate
 
 Gate: emulate when `sig_chi2 < 10 + 0.2 chi2_emu` and `chi2_emu > 1.5 x` the best
 AM3 chi^2 so far; 10 % of the emulated answers are verified with AM3 anyway
-(and fed to the tree). Everything else as in the reference (16 components,
-Nbar 100, retrain every 10 points).
+(and fed to the tree). Everything else as in the reference.
 
 | run | evaluations | AM3 calls | emulated | wall time | AM3 time | tree update | tree predict | best chi^2 |
 |---|---|---|---|---|---|---|---|---|
-| pure AM3 (shadow, Nbar 100) | 3444 | 3443 | 0 | 1665 s | 1238 s | 410 s | 16 s | 36.0 |
-| active, calibrated gate | 3444 | 1130 | 2314 | **467 s** | 332 s | 120 s | 14 s | **31.7** |
+| pure AM3 (reference shadow run) | 3444 | 3444 | 0 | 1595 s (1220 s without the tree) | 1203 s | 374 s | 15 s | 56.8 |
+| active, calibrated gate | 3444 | 1007 | 2437 | **430 s** | 311 s | 104 s | 14 s | **49.3** |
 
-* **3.6 times faster in wall time, 67 % fewer AM3 calls**, and a better
-  optimum (chi^2 31.7 against 36.0; 33.1 at the true parameters). The different
-  trajectory is partly luck, but the gate cannot hurt the reported optimum:
-  the running best is always an AM3 value because an emulated point must be
-  1.5 times worse than it to be emulated at all.
-* The emulator answered 75 % of all evaluations (after the first 60 AM3 calls,
-  80 %). Of the 254 verified emulated answers, none was in truth an improvement
-  on the running best and none was in truth within 1.5 x of it; their relative
-  chi^2 error had a median of 3.6 %, a 90th percentile of 9.8 % and a maximum
-  of 31 % (at chi^2 in the thousands).
+* **71 % fewer AM3 calls and a factor 2.8 in wall time against a scan without
+  any tree** (3.7 against the shadow run, which pays for a tree it does not
+  use), and a better optimum (chi^2 49.3 against 56.8; 33.9 at the true
+  parameters). The different trajectory is partly luck, but the gate cannot
+  hurt the reported optimum: the running best is always an AM3 value because
+  an emulated point must be 1.5 times worse than it to be emulated at all.
+* The emulator answered 79 % of all evaluations. Of the 274 verified emulated
+  answers, none was in truth an improvement on the running best and none was
+  in truth within 1.5 x of it; their relative chi^2 error had a median of 4 %,
+  a 90th percentile of 11 % and a maximum of 25 % (at chi^2 in the thousands).
 * The emulator learns per AM3 call, not per evaluation: at 1000 evaluations
-  the tree had 380 points and 0.064 dex median error where the shadow run had
-  1000 points and 0.046 dex; by the end (1130 points) it was at 0.023 dex, the
-  same as the shadow run with 3443 points, because the AM3 calls it did make
-  were concentrated where the scan ended up.
-* The remaining cost is 332 s of AM3 for the 1130 calls near the optimum plus
-  120 s of tree updates. A cheaper gate near the optimum is not available from
-  this emulator: at chi^2 < 100 its chi^2 error is 8-12 units (section 3.1),
+  the tree had 387 points and 0.11 dex median error where the reference had
+  1000 points and 0.04 dex; by the end (1007 points) it was at 0.017 dex, as
+  good as the reference's 3443-point tree, because the AM3 calls it did make
+  were concentrated where the scan ended up. `plots/spectra_active_gate.png`
+  shows its spectra against AM3 at the best point and at three emulated points.
+* The remaining cost is 311 s of AM3 for the 1007 calls near the optimum plus
+  104 s of tree updates. A cheaper gate near the optimum is not available from
+  this emulator: at chi^2 < 100 its chi^2 error is 4-14 units (section 3.1),
   which is what AM3 must still resolve.
 
 ### 3.5 Carrying the emulator to a second source
@@ -267,16 +269,16 @@ times are inflated by the shared machine; the AM3-call counts are not.
 * **Yes, with a qualification.** A `GPTree(output_model='pca')` learning the
   comoving log-spectrum on AM3's log-energy grid from the scan's own AM3 calls
   reaches a 0.02-0.03 dex (5-7 %) median error at the data energies after about
-  1000 concentrated AM3 calls, with a worst case of 0.1-0.3 dex and a
+  1000-1500 concentrated AM3 calls, with a worst case of 0.1-0.3 dex and a
   well-calibrated predicted uncertainty. That is not accurate enough to replace
-  AM3 at the points that decide the fit (a chi^2 error of 5-10 at chi^2 < 100
-  against the 22-point data set), but it is accurate enough to answer the bulk
+  AM3 at the points that decide the fit (a chi^2 error of 4-14 at chi^2 < 100
+  against the 23-point data set), but it is accurate enough to answer the bulk
   of a global optimiser's evaluations, which are far from the optimum.
 * **The working recipe** is the gate of section 3.4: trust the emulator when
   its propagated chi^2 uncertainty is below 10 + 20 % of chi^2 and the point is
   at least 1.5 times worse than the best AM3 point so far; verify a tenth of the
-  emulated answers. On this model that replaced 71-79 % of the AM3 calls, cut the
-  wall time by a factor 3.5-4, and never misranked a candidate improvement.
+  emulated answers. On this model that replaced 71-73 % of the AM3 calls, cut the
+  wall time by a factor of about 3, and never misranked a candidate improvement.
   The factor is bounded by the AM3 calls near the optimum that the gate
   deliberately keeps; a real gain in that regime would need a 0.005 dex emulator.
 * **Costs**: 4 ms per prediction (60 times cheaper than this cheapest AM3
