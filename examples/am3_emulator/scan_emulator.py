@@ -86,6 +86,10 @@ class EmulatedObjective:
                            output_basis_components=args.components, retrain_every_n_points=args.retrain_every)
         if args.min_points is not None:
             tree_kwargs['output_basis_min_points'] = args.min_points
+        if args.global_mean != 'none':
+            tree_kwargs['global_mean'] = args.global_mean
+            if args.global_mean == 'net':
+                tree_kwargs['global_mean_kwargs'] = dict(steps_per_update=args.gm_steps_per_update, random_state=args.seed)
         if args.load_tree:
             import joblib
             self.tree = joblib.load(args.load_tree)
@@ -225,6 +229,9 @@ def main():
     ap.add_argument('--verify-frac', type=float, default=0.1)
     ap.add_argument('--far-from-best', type=float, default=0.0,
                     help='emulate only points whose emulated chi2 exceeds this factor times the best AM3 chi2')
+    ap.add_argument('--global-mean', default='none', choices=['none', 'net', 'additive_gp'],
+                    help="tree-wide global model whose residual the leaves learn ('net' needs PyTorch)")
+    ap.add_argument('--gm-steps-per-update', type=int, default=1, help="amortised refit steps per update for 'net'")
     ap.add_argument('--print-every', type=int, default=100)
     ap.add_argument('--save-tree', default=None, help='joblib file to save the trained GPTree to')
     ap.add_argument('--load-tree', default=None, help='start from a GPTree saved by an earlier scan')
