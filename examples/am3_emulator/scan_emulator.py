@@ -74,6 +74,16 @@ def chi2(log_f_model, log_f_obs, sig_obs):
 # ---------------------------------------------------------------------- #
 # The objective with the on-the-fly emulator
 # ---------------------------------------------------------------------- #
+def make_gpr(kernel, n_features):
+    """Leaf GP template: anisotropic Matern (default) or squared-exponential kernel."""
+    from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF
+    from pygptreeo import Default_GPR
+    if kernel == 'rbf':
+        return Default_GPR(kernel=ConstantKernel() * RBF(length_scale=np.ones(n_features)))
+    nu = {'matern15': 1.5, 'matern25': 2.5}[kernel]
+    return Default_GPR(kernel=ConstantKernel() * Matern(nu=nu, length_scale=np.ones(n_features)))
+
+
 class EmulatedObjective:
     def __init__(self, model, E_obs, log_f_obs, sig_obs, d_L, args):
         from pygptreeo import GPTree
@@ -83,7 +93,8 @@ class EmulatedObjective:
         self.sigma_train = args.sigma_train
         self.rng = np.random.RandomState(args.seed + 1)
         tree_kwargs = dict(Nbar=args.nbar, n_outputs=model.E.size, output_model=args.output_model,
-                           output_basis_components=args.components, retrain_every_n_points=args.retrain_every)
+                           output_basis_components=args.components, retrain_every_n_points=args.retrain_every,
+                           GPR=make_gpr(args.kernel, len(PARAM_NAMES)))
         if args.min_points is not None:
             tree_kwargs['output_basis_min_points'] = args.min_points
         if args.global_mean != 'none':
@@ -229,6 +240,8 @@ def main():
     ap.add_argument('--verify-frac', type=float, default=0.1)
     ap.add_argument('--far-from-best', type=float, default=0.0,
                     help='emulate only points whose emulated chi2 exceeds this factor times the best AM3 chi2')
+    ap.add_argument('--kernel', default='matern15', choices=['matern15', 'matern25', 'rbf'],
+                    help='leaf kernel: anisotropic Matern (nu 1.5 or 2.5) or squared exponential')
     ap.add_argument('--global-mean', default='none', choices=['none', 'net', 'additive_gp'],
                     help="tree-wide global model whose residual the leaves learn ('net' needs PyTorch)")
     ap.add_argument('--gm-steps-per-update', type=int, default=1, help="amortised refit steps per update for 'net' (0: refit in full at once)")

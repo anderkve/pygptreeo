@@ -57,7 +57,8 @@ class EmulatedLogLike:
             self.tree = joblib.load(args.load_tree)
         else:
             tree_kwargs = dict(Nbar=args.nbar, n_outputs=model.E.size, output_model='pca',
-                               output_basis_components=args.components, retrain_every_n_points=args.retrain_every)
+                               output_basis_components=args.components, retrain_every_n_points=args.retrain_every,
+                               GPR=se.make_gpr(args.kernel, 6))
             if args.global_mean != 'none':
                 tree_kwargs['global_mean'] = args.global_mean
                 if args.global_mean == 'net':
@@ -220,6 +221,8 @@ def main():
     ap.add_argument('--floor', type=float, default=1e-2)
     ap.add_argument('--sigma-train', type=float, default=1e-2)
     ap.add_argument('--verify-frac', type=float, default=0.1)
+    ap.add_argument('--kernel', default='matern15', choices=['matern15', 'matern25', 'rbf'],
+                    help='leaf kernel: anisotropic Matern (nu 1.5 or 2.5) or squared exponential')
     ap.add_argument('--global-mean', default='none', choices=['none', 'net', 'additive_gp'],
                     help="tree-wide global model whose residual the leaves learn ('net' needs PyTorch)")
     ap.add_argument('--gm-steps-per-update', type=int, default=1, help="amortised refit steps per update for 'net' (0: refit in full at once)")
