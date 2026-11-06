@@ -44,6 +44,16 @@ from am3_model import AM3SSCModel, luminosity_distance_cm  # noqa: E402
 warnings.filterwarnings('ignore')
 
 
+class UniformPrior:
+    """Picklable prior transform for a box (dynesty checkpoints pickle the sampler)."""
+
+    def __init__(self, lo, hi):
+        self.lo, self.hi = np.asarray(lo, float), np.asarray(hi, float)
+
+    def __call__(self, u):
+        return self.lo + u * (self.hi - self.lo)
+
+
 class EmulatedLogLike:
     def __init__(self, model, E_obs, log_f_obs, sig_obs, d_L, args):
         from pygptreeo import GPTree
@@ -69,6 +79,18 @@ class EmulatedLogLike:
         self.t_am3 = self.t_pred = self.t_update = 0.0
         self.best_chi2_true = np.inf
         self.sampler = None            # set by main() for the 'thr' gate
+        self.t_start = time.perf_counter()
+
+    def __getstate__(self):
+        # The AM3 handle is a C++ object and the sampler is re-attached after a restore.
+        d = self.__dict__.copy()
+        d['model'] = None
+        d['sampler'] = None
+        return d
+
+    def __setstate__(self, d):
+        self.__dict__.update(d)
+        self.model = AM3SSCModel()
         self.t_start = time.perf_counter()
 
     @staticmethod
@@ -234,6 +256,9 @@ def main():
     ap.add_argument('--obs-seed', type=int, default=123)
     ap.add_argument('--max-calls', type=int, default=None, help='stop the run after this many likelihood calls')
     ap.add_argument('--no-tree', action='store_true', help='pure AM3 run without a shadow tree (reference runs)')
+    ap.add_argument('--checkpoint', default=None, help='dynesty checkpoint file; resumes from it if it exists')
+    ap.add_argument('--checkpoint-every', type=float, default=600.0, help='seconds between checkpoints')
+    ap.add_argument('--maxiter', type=int, default=None, help='stop after this many iterations (tests)')
     args = ap.parse_args()
     try:
         args.components = int(args.components)
@@ -247,11 +272,17 @@ def main():
     d_L = luminosity_distance_cm(se.Z_SRC)
     E_obs, log_f_obs, sig_obs = se.make_observation(model, d_L, seed=args.obs_seed)
     lo, hi = np.array(se.SCAN_BOUNDS).T
-    prior_transform = lambda u: lo + u * (hi - lo)   # noqa: E731
-    ll = EmulatedLogLike(model, E_obs, log_f_obs, sig_obs, d_L, args)
-    print(f"AM3 ready; SED {E_obs.size} points; gate {args.gate}; nlive {args.nlive}, sample {args.sample}, dlogz {args.dlogz}", flush=True)
-    sampler = dynesty.NestedSampler(ll, prior_transform, len(lo), nlive=args.nlive, bound=args.bound, sample=args.sample,
-                                    rstate=np.random.default_rng(args.seed))
+    prior_transform = UniformPrior(lo, hi)
+    resume = args.checkpoint is not None and os.path.exists(args.checkpoint)
+    if resume:
+        sampler = dynesty.NestedSampler.restore(args.checkpoint)
+        ll = sampler.loglikelihood.loglikelihood.func      # dynesty's wrapper around our callable
+        print(f"resumed from {args.checkpoint}: {ll.n_calls} calls, {ll.n_am3} AM3 calls, iteration {sampler.it}", flush=True)
+    else:
+        ll = EmulatedLogLike(model, E_obs, log_f_obs, sig_obs, d_L, args)
+        print(f"AM3 ready; SED {E_obs.size} points; gate {args.gate}; nlive {args.nlive}, sample {args.sample}, dlogz {args.dlogz}", flush=True)
+        sampler = dynesty.NestedSampler(ll, prior_transform, len(lo), nlive=args.nlive, bound=args.bound, sample=args.sample,
+                                        rstate=np.random.default_rng(args.seed))
     ll.sampler = sampler
     t0 = time.perf_counter()
     if args.max_calls:
@@ -261,7 +292,12 @@ def main():
                 break
         sampler.add_live_points()
     else:
-        sampler.run_nested(dlogz=args.dlogz, print_progress=False)
+        run_kwargs = dict(dlogz=args.dlogz, print_progress=False)
+        if args.maxiter:
+            run_kwargs['maxiter'] = args.maxiter
+        if args.checkpoint:
+            run_kwargs.update(checkpoint_file=args.checkpoint, checkpoint_every=args.checkpoint_every, resume=resume)
+        sampler.run_nested(**run_kwargs)
     t_wall = time.perf_counter() - t0
     res = sampler.results
     mean, std, w = posterior_moments(res.samples, res.logwt)
