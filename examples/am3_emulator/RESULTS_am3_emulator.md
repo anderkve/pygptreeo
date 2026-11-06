@@ -190,3 +190,35 @@ near the optimum. With `10 + 0.2 chi2` and `far = 1.5`, 81 % of the evaluations
 would have been emulated with no misranked improvement, and only one emulated
 point had chi^2 below 60. Section 3.5 runs exactly that gate for real.
 
+### 3.4 Active mode with the calibrated gate
+
+Gate: emulate when `sig_chi2 < 10 + 0.2 chi2_emu` and `chi2_emu > 1.5 x` the best
+AM3 chi^2 so far; 10 % of the emulated answers are verified with AM3 anyway
+(and fed to the tree). Everything else as in the reference (16 components,
+Nbar 100, retrain every 10 points).
+
+| run | evaluations | AM3 calls | emulated | wall time | AM3 time | tree update | tree predict | best chi^2 |
+|---|---|---|---|---|---|---|---|---|
+| pure AM3 (shadow, Nbar 100) | 3444 | 3443 | 0 | 1665 s | 1238 s | 410 s | 16 s | 36.0 |
+| active, calibrated gate | 3444 | 1130 | 2314 | **467 s** | 332 s | 120 s | 14 s | **31.7** |
+
+* **3.6 times faster in wall time, 67 % fewer AM3 calls**, and a better
+  optimum (chi^2 31.7 against 36.0; 33.1 at the true parameters). The different
+  trajectory is partly luck, but the gate cannot hurt the reported optimum:
+  the running best is always an AM3 value because an emulated point must be
+  1.5 times worse than it to be emulated at all.
+* The emulator answered 75 % of all evaluations (after the first 60 AM3 calls,
+  80 %). Of the 254 verified emulated answers, none was in truth an improvement
+  on the running best and none was in truth within 1.5 x of it; their relative
+  chi^2 error had a median of 3.6 %, a 90th percentile of 9.8 % and a maximum
+  of 31 % (at chi^2 in the thousands).
+* The emulator learns per AM3 call, not per evaluation: at 1000 evaluations
+  the tree had 380 points and 0.064 dex median error where the shadow run had
+  1000 points and 0.046 dex; by the end (1130 points) it was at 0.023 dex, the
+  same as the shadow run with 3443 points, because the AM3 calls it did make
+  were concentrated where the scan ended up.
+* The remaining cost is 332 s of AM3 for the 1130 calls near the optimum plus
+  120 s of tree updates. A cheaper gate near the optimum is not available from
+  this emulator: at chi^2 < 100 its chi^2 error is 8-12 units (section 3.1),
+  which is what AM3 must still resolve.
+
