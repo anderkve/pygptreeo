@@ -63,7 +63,7 @@ class EmulatedLogLike:
                 if args.global_mean == 'net':
                     tree_kwargs['global_mean_kwargs'] = dict(steps_per_update=args.gm_steps_per_update, random_state=args.seed)
             self.tree = GPTree(**tree_kwargs)
-        self.rec = {k: [] for k in ('theta', 'logl_true', 'logl_emu', 'slogl', 'sdex_max', 'used', 'verified', 'n_points')}
+        self.rec = {k: [] for k in ('theta', 'logl_true', 'logl_emu', 'slogl', 'sdex_max', 'used', 'verified', 'n_points', 'it', 'lmin')}
         self.n_calls = self.n_am3 = 0
         self.t_am3 = self.t_pred = self.t_update = 0.0
         self.best_chi2_true = np.inf
@@ -170,8 +170,11 @@ class EmulatedLogLike:
             value = logl_true
         else:
             value = logl_emu
+        live = getattr(self.sampler, 'live_logl', None)
+        lmin_now = float(np.min(live)) if live is not None and np.isfinite(live).all() else np.nan
         for k, v in (('theta', theta.copy()), ('logl_true', logl_true), ('logl_emu', logl_emu), ('slogl', slogl),
-                     ('sdex_max', sdex_max), ('used', used), ('verified', verified), ('n_points', self._n_points())):
+                     ('sdex_max', sdex_max), ('used', used), ('verified', verified), ('n_points', self._n_points()),
+                     ('it', getattr(self.sampler, 'it', 0)), ('lmin', lmin_now)):
             self.rec[k].append(v)
         if self.n_calls % self.args.print_every == 0:
             n_used = int(np.sum(self.rec['used']))
