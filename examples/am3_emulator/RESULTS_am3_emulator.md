@@ -264,6 +264,37 @@ times are inflated by the shared machine; the AM3-call counts are not.
   Doppler degeneracy. That is a property of the optimiser budget, not of the
   emulator.
 
+
+### 3.6 Leaf kernel and the hybrid tree (same trajectory as the reference)
+
+Both measured as shadow runs on the reference's 3444 points (16 components,
+Nbar 100, retrain every 10). Median and 90th-percentile rms error of the
+emulated log-flux at the data energies per block of 420 evaluations, and the
+chi^2 error at the 56 points with true chi^2 < 100:
+
+| leaf model | blocks 1-3 median | blocks 7-9 median | blocks 7-9 p90 | \|dchi2\| at chi^2 < 100: median / max | update per AM3 call |
+|---|---|---|---|---|---|
+| Matern 3/2 (default) | 0.103 / 0.054 / 0.039 | 0.021 / 0.020 / 0.015 | 0.032 / 0.028 / 0.026 | 3.5 / 23 | 0.11 s |
+| squared exponential | 0.103 / 0.054 / 0.042 | 0.026 / 0.022 / 0.019 | 0.053 / 0.052 / 0.044 | 7.6 / 104 | 0.08 s |
+| hybrid (`global_mean='net'`, Matern leaves) | 0.146 / 0.130 / 0.127 | 0.137 / 0.145 / 0.163 | 0.150 / 0.164 / 0.180 | 224 / 408 | 0.13 s |
+
+* **The squared-exponential kernel is not better.** Its medians match the
+  Matern ones to within 20 %, but its tails are heavier (90th percentile 1.7
+  times worse late in the scan) and its chi^2 error near the optimum is twice
+  the Matern one with a far worse maximum. The log-spectra are smooth in theta
+  but not infinitely so: the floor transitions and the changes of cooling
+  regime are kinks that the infinitely smooth kernel overshoots around.
+* **The hybrid is a clear loss on this target.** Its error does not decrease
+  with the number of points at all (0.13 dex in the first blocks, 0.16 in the
+  last), so the leaves are not learning the network's residual. The likely
+  reason is structural: the leaves project the residual onto a PCA basis that
+  is fitted to the raw spectra, and the residual's structure falls outside the
+  16 kept components, which no amount of data repairs. The amortised refit
+  (one optimiser step per update) may add to it; the full-refit check was
+  stopped before completion. In any case the hybrid is meant for targets of
+  many inputs; six smooth inputs is the regime where the plain tree already
+  works.
+
 ## 4. Conclusions
 
 * **Yes, with a qualification.** A `GPTree(output_model='pca')` learning the
