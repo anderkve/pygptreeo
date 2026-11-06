@@ -11,6 +11,10 @@ with uniform priors over the scan box. Gates (``--gate``):
 * ``slogl:<tol>``: emulate when the propagated uncertainty of log L
   (first order, absolute terms summed) is below ``tol``.
 * ``tailored:<abs>,<rel>,<far>``: the DE-style gate of scan_emulator.py.
+* ``thr:<k>,<tol>``: nested-sampling aware: emulate when the propagated log L
+  uncertainty is below ``tol`` or when the emulated log L is more than ``k``
+  such uncertainties away from the sampler's current threshold (the lowest
+  live point), so that the accept/reject decision cannot change.
 
 A fraction ``--verify-frac`` of the gated calls is still sent to AM3 (and the
 true value returned). After the run, ``--validate N`` draws N equal-weight
@@ -56,6 +60,7 @@ class EmulatedLogLike:
         self.n_calls = self.n_am3 = 0
         self.t_am3 = self.t_pred = self.t_update = 0.0
         self.best_chi2_true = np.inf
+        self.sampler = None            # set by main() for the 'thr' gate
         self.t_start = time.perf_counter()
 
     @staticmethod
@@ -68,6 +73,8 @@ class EmulatedLogLike:
             return kind, vals[0]
         if kind == 'tailored':
             return kind, tuple(vals)   # abs, rel, far
+        if kind == 'thr':
+            return kind, tuple(vals)   # k, tol
         raise ValueError(f"unknown gate {spec!r}")
 
     def _n_points(self):
@@ -121,6 +128,15 @@ class EmulatedLogLike:
         if k == 'tailored':
             a, rel, far = p
             return sig_chi2 < a + rel * c2_emu and c2_emu > far * self.best_chi2_true
+        if k == 'thr':
+            kk, tol = p
+            slogl = 0.5 * sig_chi2
+            if slogl < tol:
+                return True
+            live = getattr(self.sampler, 'live_logl', None)
+            if live is None or not np.isfinite(live).all():
+                return False
+            return abs(-0.5 * c2_emu - float(np.min(live))) > kk * slogl
         return False
 
     def __call__(self, theta):
@@ -212,6 +228,7 @@ def main():
     print(f"AM3 ready; SED {E_obs.size} points; gate {args.gate}; nlive {args.nlive}, sample {args.sample}, dlogz {args.dlogz}", flush=True)
     sampler = dynesty.NestedSampler(ll, prior_transform, len(lo), nlive=args.nlive, bound=args.bound, sample=args.sample,
                                     rstate=np.random.default_rng(args.seed))
+    ll.sampler = sampler
     t0 = time.perf_counter()
     if args.max_calls:
         for _ in sampler.sample(dlogz=args.dlogz):
