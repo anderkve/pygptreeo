@@ -86,24 +86,26 @@ AM3 call the scan makes (`sigma = 0.01 dex`). Two modes:
 
 `characterise_spectra.py`; the AM3 sample took 97 s.
 
-* The peak of `E^2 n(E)` spans **17 decades** across the box (log10 peak from 4.3
-  to 21.7 eV cm^-3), peaking between 3e7 and 3e11 eV (comoving). Below the
-  self-absorption turnover and above the pair-production cutoff the log-spectrum
-  falls off a cliff; the soft floor keeps those regions finite and smooth in theta.
-* A global PCA of the log-spectra needs many components: 8 for 99 % of the
-  variance, 18 for 99.9 %, 32 for 99.99 %. Held-out reconstruction error on the
-  visible bins is 0.10 dex rms with 16 components, 0.03 dex with 32, 0.014 dex with
-  48. A "shape plus log-peak" representation does not reduce the rank. The
-  whole-box rank is therefore high; the point of the scan test is that a scan
-  concentrates, and the tree's reservoir basis follows the stream.
+* The peak of `E^2 n(E)` spans **10 decades** across the box (log10 peak from
+  2.4 to 12.4 eV cm^-3). Below the self-absorption turnover and above the
+  pair-production cutoff the log-spectrum falls off a cliff; the soft floor
+  keeps those regions finite and smooth in theta. At the true parameters of the
+  scan below, the floor corresponds to an observed 3e-21 erg cm^-2 s^-1.
+* A global PCA of the log-spectra needs many components: 7 for 99 % of the
+  variance, 16 for 99.9 %, 28 for 99.99 %. Held-out reconstruction error on the
+  visible bins is 0.065 dex rms with 16 components, 0.032 dex with 24, 0.018 dex
+  with 32 and 0.006 dex with 48. A "shape plus log-peak" representation does
+  not reduce the rank. The whole-box rank is therefore high; the point of the
+  scan test is that a scan concentrates, and the tree's reservoir basis follows
+  the stream.
 * **Batch baseline, 300 train / 100 test random points over the whole box**:
-  0.18-0.20 dex rms, 0.08-0.09 dex median error, worst 2 dex, for every PCA
-  setting from 16 to 73 components. The error is GP-limited (300 points in six
+  0.15-0.18 dex rms, 0.07-0.08 dex median error, worst 2 dex, for every PCA
+  setting from 16 to 56 components. The error is GP-limited (300 points in six
   dimensions), not basis-limited. `output_model='independent'` on every fourth
-  bin gives the same 0.20 dex rms at 8 times the prediction cost (36 vs 4 ms per
-  point) and 2-3 times the fit cost, so `'pca'` is the right leaf model here.
+  bin gives the same 0.18 dex rms at 8 times the prediction cost (32 vs 4 ms
+  per point) and 4 times the fit cost, so `'pca'` is the right leaf model here.
   The calibrated predicted sigma is very conservative at this stage
-  (|err|/sigma median 0.05).
+  (|err|/sigma median 0.07); in the scans it calibrates itself (section 3).
 
 ## 3. Scan results
 
