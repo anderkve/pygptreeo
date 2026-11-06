@@ -23,6 +23,14 @@ for how to build it):
   errors, calibration, a what-if gate analysis for shadow runs, and timings.
 * `plot_spectra.py results.npz tree.joblib out.png`: emulated against AM3 spectra
   at the best point and at late scan points.
+* `ns_emulator.py --gate none|sdex:<dex>|slogl:<tol>|thr:<k>,<tol>|tailored:... [...]`:
+  nested sampling (dynesty) of the same problem with the tree learning from
+  every AM3 call; the gate decides when the emulator answers a likelihood call,
+  and `--validate N` re-evaluates AM3 at N posterior samples and importance
+  reweights them.
+* `analyse_ns.py run.npz [...] [--reference ref.npz] [--plots dir]`: evidence,
+  posterior moments against a reference, validation summary, the emulator's
+  log L error along the run, and overlaid 1-D marginals.
 
 Reproduce the main runs with
 
