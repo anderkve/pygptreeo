@@ -11,10 +11,12 @@ with uniform priors over the scan box. Gates (``--gate``):
 * ``slogl:<tol>``: emulate when the propagated uncertainty of log L
   (first order, absolute terms summed) is below ``tol``.
 * ``tailored:<abs>,<rel>,<far>``: the DE-style gate of scan_emulator.py.
-* ``thr:<k>,<tol>``: nested-sampling aware: emulate when the propagated log L
-  uncertainty is below ``tol`` or when the emulated log L is more than ``k``
-  such uncertainties away from the sampler's current threshold (the lowest
-  live point), so that the accept/reject decision cannot change.
+* ``thr:<k>,<tol>``: nested-sampling aware, still a pure uncertainty gate:
+  emulate when the propagated log L uncertainty is below ``tol``, or when the
+  emulated log L is more than ``k`` such uncertainties *below* the sampler's
+  current threshold (the lowest live point), i.e. the proposal is rejected
+  whatever the exact value. Points that may be accepted always go to AM3, so
+  every live and dead point carries an AM3 likelihood unless its sigma < tol.
 
 A fraction ``--verify-frac`` of the gated calls is still sent to AM3 (and the
 true value returned). After the run, ``--validate N`` draws N equal-weight
@@ -136,7 +138,7 @@ class EmulatedLogLike:
             live = getattr(self.sampler, 'live_logl', None)
             if live is None or not np.isfinite(live).all():
                 return False
-            return abs(-0.5 * c2_emu - float(np.min(live))) > kk * slogl
+            return (-0.5 * c2_emu + kk * slogl) < float(np.min(live))
         return False
 
     def __call__(self, theta):
