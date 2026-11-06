@@ -63,20 +63,34 @@ def summarise(path):
         ratio = dchi2[m] / sig[m]
         print(f"|dchi2| / sig_chi2 (propagated, conservative): median {np.median(ratio):.3f}, p90 {np.percentile(ratio, 90):.3f}, "
               f"p99 {np.percentile(ratio, 99):.3f}, max {ratio.max():.2f}")
-    # What-if gate analysis (meaningful for shadow runs: every point has both values)
-    if str(d['mode']) == 'shadow' and both.sum() > 50:
-        print("what-if gate sig_chi2 < abs + rel*chi2_emu, over evaluations after the emulator was ready:")
-        print("   abs   rel  | emulated fraction | actual |dchi2| of emulated: p50   p90   p99    max | emulated with chi2_true<50: n, max|dchi2|")
-        for a, r in [(0.5, 0.01), (1.0, 0.02), (2.0, 0.05), (5.0, 0.05), (5.0, 0.1), (10.0, 0.1)]:
-            g = both & (sig < a + r * chi2_emu)
-            frac = g.sum() / both.sum()
-            dc = dchi2[g]
-            low = g & (chi2_true < 50)
+    # What-if gate analysis (meaningful for shadow runs: every point has both values).
+    # Gates: the propagated bound sig_chi2 < abs + rel * chi2_emu, optionally only for points
+    # whose emulated chi2 is above `far` times the best true chi2 seen so far (the emulator
+    # then serves the bulk of the exploration and AM3 refines the optimum). Decision quality:
+    # among emulated points that truly improved on the running best, those the emulator would
+    # have ranked as no improvement ("missed"), and emulated points it would have wrongly
+    # ranked as improvements ("false").
+    if str(d['mode']) == 'shadow' or both.sum() > 0.9 * n:
+        best_so_far = np.minimum.accumulate(np.where(np.isfinite(chi2_true), chi2_true, np.inf))
+        prev_best = np.concatenate([[np.inf], best_so_far[:-1]])
+        print("what-if gates over evaluations after the emulator was ready "
+              f"({both.sum()} points; best chi2 reached {np.nanmin(chi2_true):.1f}):")
+        print("   abs   rel   far | emulated | |dchi2| of emulated: p50   p90    max | rel err p90 | improvements: n  missed  false | emulated with chi2_true<60: n, max|dchi2|")
+        for a, r, far in [(1.0, 0.02, 0), (5.0, 0.1, 0), (10.0, 0.2, 0), (10.0, 0.3, 0), (20.0, 0.5, 0),
+                          (10.0, 0.2, 1.5), (10.0, 0.3, 1.5), (20.0, 0.5, 1.5), (10.0, 0.3, 3.0), (1e9, 1e9, 1.5), (1e9, 1e9, 3.0)]:
+            g = both & (sig < a + r * chi2_emu) & (chi2_emu > far * prev_best)
             if g.sum() == 0:
-                print(f"  {a:4.1f}  {r:4.2f} | {frac:16.1%} | -")
+                print(f"  {a:4.0f}  {r:4.2f}  {far:4.1f} | {0:7.1%} | -")
                 continue
-            print(f"  {a:4.1f}  {r:4.2f} | {frac:16.1%} | {np.median(dc):26.2f} {np.percentile(dc, 90):5.2f} {np.percentile(dc, 99):6.2f} {dc.max():6.1f} | "
-                  f"{low.sum():4d}, {dchi2[low].max() if low.sum() else float('nan'):.2f}")
+            dc = dchi2[g]
+            rel = dc / chi2_true[g]
+            imp = g & (chi2_true < prev_best)
+            missed = imp & ~(chi2_emu < prev_best)
+            false = g & ~(chi2_true < prev_best) & (chi2_emu < prev_best)
+            low = g & (chi2_true < 60)
+            print(f"  {a:4.0f}  {r:4.2f}  {far:4.1f} | {g.sum() / both.sum():7.1%} | {np.median(dc):21.1f} {np.percentile(dc, 90):6.1f} {dc.max():7.1f} | "
+                  f"{np.percentile(rel, 90):10.3f} | {imp.sum():13d} {missed.sum():6d} {false.sum():6d} | "
+                  f"{low.sum():4d}, {dchi2[low].max() if low.sum() else float('nan'):.1f}")
     if used.any():
         m = used & ver
         print(f"active mode: emulator used for {used.sum()} evaluations ({used.mean():.1%}); verified {m.sum()}: "

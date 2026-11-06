@@ -97,6 +97,7 @@ class EmulatedObjective:
         self.n_emulated = 0
         self.t_am3 = self.t_pred = self.t_update = 0.0
         self.best = np.inf
+        self.best_true = np.inf      # best chi2 among AM3-evaluated points
 
     # -- helpers ---------------------------------------------------------
     def _n_points(self):
@@ -156,7 +157,10 @@ class EmulatedObjective:
             rec.update(chi2_emu=c2_emu, sig_chi2=sig_chi2, sd_data_max=float(sd_at.max()))
         run_am3 = True
         if self.args.mode == 'active' and ready:
-            gate = sig_chi2 < self.args.chi2_tol_abs + self.args.chi2_tol_rel * c2_emu
+            # Emulate only when the propagated chi2 bound is small compared with chi2 itself and the
+            # point is clearly worse than the best AM3-evaluated point (far_from_best = 0 disables that).
+            gate = (sig_chi2 < self.args.chi2_tol_abs + self.args.chi2_tol_rel * c2_emu
+                    and c2_emu > self.args.far_from_best * self.best_true)
             if gate:
                 rec['used_emulator'] = True
                 run_am3 = self.rng.rand() < self.args.verify_frac
@@ -167,6 +171,7 @@ class EmulatedObjective:
             log_f_true = model_log_flux(e2n, self.model.E, theta, self.d_L, self.E_obs)
             c2_true = chi2(log_f_true, self.log_f_obs, self.sig_obs)
             rec['chi2_true'] = c2_true
+            self.best_true = min(self.best_true, c2_true)
             if ready:
                 vis = e2n > 100 * self.floor
                 err = mu - y
@@ -218,6 +223,8 @@ def main():
     ap.add_argument('--chi2-tol-abs', type=float, default=1.0)
     ap.add_argument('--chi2-tol-rel', type=float, default=0.02)
     ap.add_argument('--verify-frac', type=float, default=0.1)
+    ap.add_argument('--far-from-best', type=float, default=0.0,
+                    help='emulate only points whose emulated chi2 exceeds this factor times the best AM3 chi2')
     ap.add_argument('--print-every', type=int, default=100)
     ap.add_argument('--save-tree', default=None, help='joblib file to save the trained GPTree to')
     ap.add_argument('--load-tree', default=None, help='start from a GPTree saved by an earlier scan')
