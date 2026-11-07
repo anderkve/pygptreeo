@@ -330,6 +330,72 @@ whole-box spectra (`components_check.py`):
   The plain log-spectrum on the log-energy grid is the best representation of
   those tried.
 
+
+### 3.8 Nested sampling with the emulator (in progress)
+
+`ns_emulator.py` runs dynesty on the same problem (uniform priors over the
+box, log L = -chi^2 / 2, 24 components, otherwise the reference tree). The
+posterior occupies about 1e-8 of the prior box (17-20 nats of compression), so
+a run is 10^5 likelihood calls or more; a pure-AM3 run at 150 live points was
+abandoned at 16000 calls with its threshold still at chi^2 ~ 100, and a
+50-live-point one at 2 % sampler efficiency. The emulator is what makes such
+runs feasible, and the question is which gate.
+
+**A plain uncertainty gate does not work with a large population.** Trusting
+the emulator wherever its predicted flux uncertainty at every data energy is
+below a tolerance opened 0 times in 5000 calls at 0.01 dex and twice in 5000
+at 0.05 dex (1000 live points). For most of a nested-sampling run the live
+points span a volume far too large for the emulator to be precise everywhere,
+and the sampler does not need precision there.
+
+**A threshold-aware gate works and is exact where it matters.** Nested
+sampling only asks whether a proposal beats the lowest live point. The gate
+`thr:k,tol` answers a call from the emulator when the emulated log L plus k
+times its propagated uncertainty is still below the sampler's current
+threshold (a safe rejection), or when that uncertainty is below `tol` (never
+the case here); everything that might be accepted goes to AM3, so every live
+and dead point carries an AM3 likelihood and the only approximation is a
+possible false rejection, which a verified fraction of the emulated answers
+measures. Along a 250-live-point run (k = 3, 10 % verification) the emulated
+fraction rose from 67 % at 5000 calls to 89 % at 45000, with **0 false
+rejections among 2112 verified** emulated answers at 25000 calls.
+
+**How large a margin is needed.** From that run's checkpoint at 25492 calls
+(every AM3-checked call has the emulated value, its sigma and the threshold at
+the time):
+
+| margin k | utilisation | false rejections among the extra emulated calls | acceptances lost |
+|---|---|---|---|
+| 3 | 84.9 % | - | 0 |
+| 2 | 88.2 % | 0 of 831 | 0 |
+| 1.5 | 90.0 % | 0 of 1285 | 0 |
+| 1 | 92.2 % | 1 of 1851 | 0.1 % |
+| 0.5 | 93.1 % | 12 of 2076 | 0.9 % |
+| 0 | 93.7 % | 50 of 2241 | 3.8 % |
+
+The propagated sigma_logL is conservative (|dlogL| / sigma: median 0.34, p90
+0.91, p99 2.0 on 5701 AM3-checked points), so k = 1.5 costs nothing on this
+evidence. The AM3 calls at k = 3 split into 5.2 % acceptances (unavoidable),
+9.9 % rejections within the margin and 8.3 % verification; k = 1.5 and a 2 %
+verification together roughly halve the AM3 cost of a run.
+
+**Leaf size with retraining only at a split.** Two matched runs (same seed,
+gate and sampler path): Nbar 500 with `retrain_every_n_points=500` against the
+Nbar 100 / retrain 10 baseline. At every checkpoint the sampler was on the
+identical path (same iterations and threshold), and the large leaves needed
+7 % fewer AM3 calls (5455 against 5841 at 25000 calls, 87 % against 85 %
+emulated) at a slightly lower update cost per AM3 call (0.09 against 0.11 s;
+rare refits, but each fits 24 GPs on up to 500 points) and about twice the
+prediction cost (500-point leaves). Wall time 2321 against 2451 s at 25000
+calls. An Nbar 1000 variant is being run the same way.
+
+**Sampler caveat.** dynesty's uniform-in-ellipsoid proposal collapsed from
+30 % to 0.6 % efficiency along these runs as the posterior thinned into the
+curved delta-B-R-gamma_min degeneracy; at that point the 10 % verification was
+the dominant AM3 cost. The runs were restarted with the random-walk proposal
+(a fixed ~25 calls per accepted point) and 2 % verification; the leaf-size
+comparison above is from the uniform-proposal runs at matched checkpoints.
+
 ## 4. Conclusions
 
 * **Yes, with a qualification.** A `GPTree(output_model='pca')` learning the
