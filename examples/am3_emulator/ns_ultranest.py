@@ -158,6 +158,7 @@ def main():
     ap.add_argument('--validate', type=int, default=400)
     ap.add_argument('--max-ncalls', type=int, default=None)
     ap.add_argument('--improvement-loops', type=int, default=0, help="UltraNest's max_num_improvement_loops")
+    ap.add_argument('--frac-remain', type=float, default=0.01, help="UltraNest's frac_remain stopping criterion")
     ap.add_argument('--ndraw-min', type=int, default=128)
     ap.add_argument('--theta-true', default=None)
     ap.add_argument('--obs-seed', type=int, default=123)
@@ -196,8 +197,9 @@ def main():
     sampler = GatedSampler(se.SCAN_NAMES, ll, transform=transform, log_dir=args.log_dir, resume=args.resume,
                            vectorized=True, ndraw_min=args.ndraw_min)
     t0 = time.perf_counter()
-    res = sampler.run(min_num_live_points=args.nlive, dlogz=args.dlogz, max_num_improvement_loops=args.improvement_loops,
-                      max_ncalls=args.max_ncalls, show_status=False, viz_callback=None)
+    res = sampler.run(min_num_live_points=args.nlive, dlogz=args.dlogz, frac_remain=args.frac_remain,
+                      max_num_improvement_loops=args.improvement_loops, max_ncalls=args.max_ncalls,
+                      show_status=False, viz_callback=None)
     t_wall = time.perf_counter() - t0
     ws = res['weighted_samples']
     pts, w, logl = ws['points'], ws['weights'], ws['logl']
