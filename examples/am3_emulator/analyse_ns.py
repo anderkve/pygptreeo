@@ -16,7 +16,9 @@ NAMES = ['log10_B', 'log10_R', 'log10_Le', 'p', 'log10_gmin', 'log10_gmax', 'dop
 
 
 def load(path):
-    d = np.load(path, allow_pickle=True)
+    d = dict(np.load(path, allow_pickle=True))
+    if 'logwt' not in d:                      # UltraNest results carry weights, not log-weights
+        d['logwt'] = np.log(np.maximum(d['weights'], 1e-300)); d['logz'] = np.array([float(d['logz'])]); d['logzerr'] = np.array([float(d['logzerr'])])
     w = np.exp(d['logwt'] - d['logwt'].max()); w /= w.sum()
     return d, w
 
@@ -25,6 +27,8 @@ def summarise(path, ref=None):
     d, w = load(path)
     label = os.path.basename(path).replace('.npz', '')
     n_calls, n_am3 = int(d['ncall']), int(d['n_am3'])
+    if 'rec_it' not in d:
+        d['rec_it'] = np.zeros(n_calls)
     print(f"\n=== {label}: gate {d['gate']}, nlive {int(d['nlive'])}, {int(d['niter'])} iterations, {n_calls} likelihood calls, "
           f"AM3 calls {n_am3} ({n_am3 / n_calls:.1%}); wall {float(d['t_wall']):.0f}s = AM3 {float(d['t_am3']):.0f}s + "
           f"tree predict {float(d['t_pred']):.0f}s + update {float(d['t_update']):.0f}s (+ sampler)")

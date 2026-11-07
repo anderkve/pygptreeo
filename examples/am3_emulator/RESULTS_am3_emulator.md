@@ -507,6 +507,49 @@ dlogz 0.5. `plots/ns_posteriors.png` shows the marginals.
   predictions, and a first run is in progress.
 
 
+
+### 3.10 The same problem with UltraNest (MLFriends region, uniform draws)
+
+`ns_ultranest.py` runs UltraNest's `ReactiveNestedSampler` with the same gate
+(k = 1, 0.5 % verification), leaf size and components, predicting each batch of
+draws with the tree at once; a subclass hands the current threshold to the
+likelihood before every batch. 250 live points, no improvement loops; the run
+was stopped under UltraNest's default 1 % remaining-evidence rule after it had
+spent 10000 AM3 calls on the last nat of likelihood, and finished under a 30 %
+rule, comparable to dynesty's dlogz = 0.5. `plots/ns_posteriors.png` overlays
+the two posteriors.
+
+| | dynesty, ball bound | UltraNest, MLFriends |
+|---|---|---|
+| iterations / likelihood calls | 5971 / 466858 | 6195 / 774162 |
+| AM3 calls | 20654 | 35158 (6997 acceptances + 24394 inside the margin + 3767 verification) |
+| AM3 calls when the threshold passed chi^2 = 300 / 100 / 40 / 32 | 4185 / 7464 / 13528 / 18156 | 4699 / 8370 / 16224 / 22802 |
+| false rejections among verified | 0 of 2263 | 0 of 3767 |
+| log Z | -37.02 +- 0.49 | -37.44 +- 0.42 |
+| compute | 3.1 h | 5.4 h (AM3 2.3 h, predictions 1.7 h, updates 1.3 h) |
+| posterior means | | agree with dynesty's to within 0.1 posterior sigma on all seven parameters |
+
+* **Same answer, same safety.** The two samplers agree on the evidence within
+  their errors and on every marginal to better than a tenth of a posterior
+  standard deviation, both posteriors are built from AM3 likelihoods only, and
+  neither verified set contains a false rejection (6030 verified emulated
+  rejections in all, with |dlogL| / sigma at the 99th percentile of 1.3-1.4).
+* **MLFriends did not beat the ball bound here.** At every threshold UltraNest
+  had spent 10-25 % more AM3 calls than dynesty with `bound='balls'`, and its
+  proposals clustered just as closely around the threshold in the core. Its
+  advantage would have shown against dynesty's default ellipsoid bound, which
+  stalled below 0.5 % efficiency on this posterior; against the ball bound the
+  two are equivalent in sampler efficiency and UltraNest's cost difference is
+  its stopping rule. Batch predictions did not reduce the per-point cost of the
+  tree (about 8 ms either way with 500-point leaves).
+* **The core is where the AM3 calls go, for both.** Three quarters of all AM3
+  calls in either run are rejections inside the 1-sigma margin, almost all of
+  them in the last two nats of likelihood, where the emulator's 0.5-unit log L
+  error cannot separate proposals from the threshold. A more accurate emulator
+  in the core, or a looser stopping rule, are the two remaining levers; the
+  global phase costs 1.0-1.3 AM3 calls per iteration with either sampler.
+
+
 ## 4. Conclusions
 
 * **Yes, with a qualification.** A `GPTree(output_model='pca')` learning the
@@ -541,7 +584,10 @@ dlogz 0.5. `plots/ns_posteriors.png` shows the marginals.
   hours for the same run on AM3 alone, with the evidence and all seven
   parameters recovered. The sampler's proposal decides the saving: uniform
   draws in a region (dynesty's ball bound, UltraNest's MLFriends) produce the
-  cheap rejections the gate lives on, random walks and slice samplers do not.
+  cheap rejections the gate lives on, random walks and slice samplers do not;
+  dynesty's default ellipsoid bound stalled on this curved posterior. UltraNest
+  reproduced the dynesty posterior and evidence with the same gate at a
+  somewhat higher AM3 cost per threshold and a stricter default stopping rule.
 * **Transfer across sources** saves only the global phase (5 % of the AM3 calls
   of the second scan here) because an optimiser's expensive calls are local. An
   emulator meant to serve many sources would have to be trained on a
