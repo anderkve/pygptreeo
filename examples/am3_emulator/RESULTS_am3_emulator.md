@@ -421,6 +421,28 @@ predictions). Nbar 1000 with retraining only at a split matched the baseline's
 AM3 calls at two to three times its update and prediction cost and was stopped.
 The k = 1 runs with the uniform proposal are running to completion.
 
+**k = 1 with the uniform proposal, measured.** From the checkpoints of the k = 1
+runs (uniform proposal, 2 % verification; the Nbar 100 one stopped at 64769
+calls when its sampler stalled, the Nbar 500 one still running):
+
+| | AM3 calls per iteration | of which acceptances | verification | rejections inside the margin | emulated | false rejections among verified |
+|---|---|---|---|---|---|---|
+| k = 1, uniform, Nbar 100 (64769 calls, 1799 iterations) | 2.27 | 1.00 | 0.73 | 0.54 | 95.7 % | 0 of 1305 |
+| k = 1, random walk, Nbar 100 (13342 calls, 1082 iterations) | 4.37 | 3.44 | 0.16 | 0.77 | 65.9 % | 0 of 174 |
+| k = 1, random walk, Nbar 500 (13528 calls, 1090 iterations) | 4.38 | 3.51 | 0.16 | 0.71 | 66.0 % | 0 of 176 |
+| k = 3, uniform, Nbar 100 (25492 calls, 1324 iterations; 10 % verification) | 4.50 | 1.00 | 1.60 | 1.90 | 84.9 % | 0 of 2112 |
+
+With the uniform proposal and k = 1 the AM3 cost is 1.3 calls per iteration
+beyond the unavoidable acceptance, and a third of that is the diagnostic
+verification. No false rejection was found in 1655 verified emulated answers
+at k = 1; the one early path divergence of the Nbar 100 run is consistent with a
+single false rejection among the first few thousand emulated proposals, where
+the emulator's errors are largest and the posterior weight is nil. The
+propagated sigma stays conservative at k = 1 (|dlogL| / sigma median 0.3, p99
+2.1). The remaining cost of such a run is the sampler's own: when dynesty's
+ellipsoid bound degrades to below 1 % efficiency each iteration needs
+hundreds of proposals, which the emulator answers at about 6 ms each.
+
 ## 4. Conclusions
 
 * **Yes, with a qualification.** A `GPTree(output_model='pca')` learning the
