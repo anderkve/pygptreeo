@@ -451,6 +451,62 @@ gate lives on; its weakness is the bound, and the remaining lever is a bound
 that follows curved posteriors better than the ellipsoid decomposition (the
 `'balls'` bound) together with a verification fraction well below 1 %.
 
+
+### 3.9 A complete posterior: dynesty, uniform draws in a ball bound, k = 1
+
+Settings: 250 live points, `bound='balls'`, `sample='unif'`, gate `thr:1,0.3`,
+0.5 % verification, Nbar 500 with retraining only at splits, 24 components,
+dlogz 0.5. `plots/ns_posteriors.png` shows the marginals.
+
+| | |
+|---|---|
+| iterations / likelihood calls | 5971 / 466858 |
+| AM3 calls | 20654 (4.4 % of calls) = 5971 acceptances + 2263 verification + 12420 rejections inside the 1-sigma margin |
+| AM3 calls per iteration | 3.46 = 1.00 + 0.38 + 2.08 |
+| false rejections among verified | 0 of 2263 |
+| log Z | -37.02 +- 0.49 (H = 20.3 nats) |
+| posterior ESS | 1323 |
+| compute | 3.1 h: AM3 1.3 h, tree predictions 1.0 h, tree updates 0.7 h (the same calls with AM3 alone: 32 h) |
+| posterior against the truth | all seven parameters within 0.7 posterior sigma |
+
+| parameter | posterior mean +- std | true |
+|---|---|---|
+| log10 B | -0.690 +- 0.041 | -0.700 |
+| log10 R | 16.167 +- 0.046 | 16.200 |
+| log10 L_e | 41.870 +- 0.162 | 41.800 |
+| p | 2.390 +- 0.033 | 2.400 |
+| log10 gamma_min | 1.12 +- 0.37 | 1.30 |
+| log10 gamma_max | 4.873 +- 0.046 | 4.900 |
+| Doppler factor | 19.9 +- 1.6 | 20.0 |
+
+* **The posterior is built from AM3 likelihoods only.** At 343 distinct
+  posterior samples the stored and the re-evaluated AM3 log L agree exactly, so
+  the importance-reweighting check is trivially passed; the emulator never
+  supplied an accepted point's likelihood (its propagated sigma never fell
+  below the 0.3 tolerance). The only approximation left is a false rejection,
+  of which the 2263 verified emulated answers contain none, with the
+  propagated sigma conservative throughout (|dlogL| / sigma median 0.20, p99
+  1.4, max 4.4 over 20594 AM3-checked calls).
+* **Where the AM3 calls go.** Outside the posterior core the emulator answered
+  98-99 % of calls. In the core the proposals cluster near the threshold, the
+  emulator's log L error there is 0.6 (median, 2.4 at the 90th percentile; it
+  is a 0.02 dex emulator against a 0.05 dex data set), and 2 of the 3.5 AM3
+  calls per iteration are rejections the 1-sigma margin could not clear. That
+  is the irreducible part for this accuracy; a 0.005 dex emulator in the core
+  would remove most of it.
+* **What the tree cost.** Prediction time (1.0 h for 446000 emulated calls,
+  about 8 ms each with 500-point leaves) and the update time (0.7 h) together
+  exceeded the AM3 time. Smaller leaves predict faster, and the checkpoint of a
+  20000-point tree with 500-point leaves is 3 GB, so for runs of this length
+  the leaves' kernel matrices should not be pickled every ten minutes.
+* **The sampler is the remaining risk.** The ellipsoid bound stalled below
+  0.5 % efficiency on this posterior and had to be abandoned; the ball bound
+  finished at 1.3 %. UltraNest's MLFriends region (bootstrapped balls in
+  whitened coordinates, uniform draws in batches) is the natural next sampler
+  for this gate; `ns_ultranest.py` runs it with the same gate and batch
+  predictions, and a first run is in progress.
+
+
 ## 4. Conclusions
 
 * **Yes, with a qualification.** A `GPTree(output_model='pca')` learning the
@@ -476,6 +532,16 @@ that follows curved posteriors better than the ellipsoid decomposition (the
   nothing measurable in a scan (and 24-32 would be the next thing to try near
   the end of a scan, where the 16-component truncation is of the same order as
   the GP error). Nbar = 200 does not help.
+* **For posteriors, nested sampling with a threshold gate is the right pairing.**
+  A proposal whose emulated log L is one propagated sigma below the sampler's
+  threshold is a safe rejection; everything that might be accepted goes to
+  AM3. On the reference problem that gave an exact posterior (every stored
+  likelihood from AM3, no false rejection in 2263 verified cases) from 20654
+  AM3 calls for 466858 likelihood evaluations, 3 hours of compute against 32
+  hours for the same run on AM3 alone, with the evidence and all seven
+  parameters recovered. The sampler's proposal decides the saving: uniform
+  draws in a region (dynesty's ball bound, UltraNest's MLFriends) produce the
+  cheap rejections the gate lives on, random walks and slice samplers do not.
 * **Transfer across sources** saves only the global phase (5 % of the AM3 calls
   of the second scan here) because an optimiser's expensive calls are local. An
   emulator meant to serve many sources would have to be trained on a
