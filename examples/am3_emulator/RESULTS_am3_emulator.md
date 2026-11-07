@@ -443,6 +443,14 @@ propagated sigma stays conservative at k = 1 (|dlogL| / sigma median 0.3, p99
 ellipsoid bound degrades to below 1 % efficiency each iteration needs
 hundreds of proposals, which the emulator answers at about 6 ms each.
 
+Slice sampling (`rslice`) is no way out: it evaluates mostly inside the slice,
+i.e. above the threshold, so about 90 % of its calls cannot be emulated and it
+cost 33 AM3 calls per iteration here (gate open for 27 % of calls). Among
+dynesty's proposals only the uniform one produces the cheap rejections this
+gate lives on; its weakness is the bound, and the remaining lever is a bound
+that follows curved posteriors better than the ellipsoid decomposition (the
+`'balls'` bound) together with a verification fraction well below 1 %.
+
 ## 4. Conclusions
 
 * **Yes, with a qualification.** A `GPTree(output_model='pca')` learning the
