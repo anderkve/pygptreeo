@@ -389,12 +389,37 @@ rare refits, but each fits 24 GPs on up to 500 points) and about twice the
 prediction cost (500-point leaves). Wall time 2321 against 2451 s at 25000
 calls. An Nbar 1000 variant is being run the same way.
 
-**Sampler caveat.** dynesty's uniform-in-ellipsoid proposal collapsed from
-30 % to 0.6 % efficiency along these runs as the posterior thinned into the
-curved delta-B-R-gamma_min degeneracy; at that point the 10 % verification was
-the dominant AM3 cost. The runs were restarted with the random-walk proposal
-(a fixed ~25 calls per accepted point) and 2 % verification; the leaf-size
-comparison above is from the uniform-proposal runs at matched checkpoints.
+**The proposal matters more than the margin.** dynesty's uniform-in-ellipsoid
+proposal collapsed from 30 % to 0.6 % efficiency along these runs as the
+posterior thinned into the curved delta-B-R-gamma_min degeneracy, and the runs
+were switched to the random-walk proposal. That turned out to be the wrong
+move for this gate: the random walk tunes its step to a target acceptance of
+0.5, every accepted step is a likelihood above the threshold and must go to
+AM3, so its AM3 cost is about 12-15 calls per iteration whatever the margin or
+leaf size, and the emulated fraction fell to about a third once the walk took
+over (k = 1, both leaf sizes, 15000 calls). The uniform proposal makes one
+acceptance per iteration and otherwise only rejections, which the gate answers
+for free, so its AM3 cost per iteration was 4.5 with 10 % verification and is
+about 2 with 2 %, even at 1 % sampler efficiency, where the emulated proposals
+cost about a second of tree predictions per iteration. For a threshold gate
+the proposal should be the one with the cheapest rejections, which here is the
+uniform one with a small verification fraction; the random-walk runs are kept
+as checkpoints.
+
+Matched checkpoints under the random walk (same seed; first 10000 calls):
+
+| configuration | AM3 calls at 10000 | emulated | leaves | tree update |
+|---|---|---|---|---|
+| k = 3, Nbar 100 | 3487 | 67 % | 48 | 407 s |
+| k = 3, Nbar 500 | 3253 | 69 % | 9 | 291 s |
+| k = 1, Nbar 100 | 2458 | 77 % | 37 | 289 s |
+| k = 1, Nbar 500 | 2394 | 78 % | 7 | 237 s |
+
+The margin is the larger lever (k = 1 removes 26-30 % of the AM3 calls at
+either leaf size), Nbar 500 the smaller one (3-7 %, cheaper updates, dearer
+predictions). Nbar 1000 with retraining only at a split matched the baseline's
+AM3 calls at two to three times its update and prediction cost and was stopped.
+The k = 1 runs with the uniform proposal are running to completion.
 
 ## 4. Conclusions
 
