@@ -21,6 +21,11 @@ Short answer: yes, at six to eight times the run time of the plain tree at 4000 
 
 The numbers are from one seed and 4000 points per cell.
 
+![Error relative to the plain tree](results/state_mean/summary.png)
+
+`results/state_mean/` also has `streams.png` (every cell), `coverage.png` and
+`additive.png`; `plot_state_mean_results.py` draws them from the result lines.
+
 ## The model
 
 ### One prior for every order of interaction
