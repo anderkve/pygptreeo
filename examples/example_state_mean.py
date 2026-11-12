@@ -3,7 +3,7 @@
 Streams points of a 6D target into a plain GPTree and into a tree whose leaves
 model the residual of the state, predicting each point before it is added, and
 prints the prequential error, the 1-sigma coverage and the time per point of
-both, and how the fitted prior divides the target among the interaction orders.
+both.
 
     OMP_NUM_THREADS=1 python examples/example_state_mean.py
 """
@@ -41,6 +41,3 @@ for name, gpt in trees.items():
     nrmse = np.sqrt(np.mean(err ** 2)) / (y.max() - y.min())
     print(f"{name:8s} NRMSE {nrmse:.4f}  coverage {cover.mean():.2f}  {1e3 * (time.perf_counter() - t0) / N:.1f} ms per point  "
           f"{len(gpt.root.leaves)} leaves")
-
-shares = trees['state'].global_mean.order_shares()
-print("prior variance by interaction order: " + ", ".join(f"{k} {v:.2f}" for k, v in shares.items()))

@@ -212,6 +212,13 @@ network's own error variance. `steps=0` or `polish_steps=0` drops a phase;
 the following updates. `examples/example_hybrid.py` runs the hybrid against the
 plain tree.
 
+For noisy targets pass `holdout=0.2`: a fifth of the points is then never
+trained on, and each refit stops at, and publishes, the weights with the lowest
+loss on them. With noise of 0.2 standard deviations of the target this took
+the hybrid from 1.34 to 0.64 of the plain tree's error on the stream benchmark
+of `examples/BENCHMARK_RESULTS_state_mean.md`; without noise the two were
+level, so it is off by default.
+
 On ten 40 000-point streams the hybrid beat the plain tree by an order of
 magnitude or more on smooth targets with a global structure a network can
 learn (coupled valleys, rotated peaks, a function living on a hidden 2-plane
@@ -229,6 +236,63 @@ gradual splitting, the `GPTree` defaults (§3.3). `docs/neural_gptree_ideas.md`
 has the design and the alternatives considered, among them neural-linear
 leaves (a Bayesian linear regression on the network's features per leaf),
 which were measured and removed (§3.9).
+
+## Interaction-order state as global model (opt-in)
+
+`global_mean='state'` gives the tree a global model that measures how the target is
+structured instead of assuming it. It rests on one GP prior with a term for every order of
+interaction among the inputs,
+
+    k(x, x') = s1^2 / d * sum_j k_j  +  s2^2 / C(d,2) * sum_{i<j} k_i k_j  +  sf^2 * prod_j k_j
+
+with `k_j` an RBF kernel in input `j`: an additive term, a pairwise term and a term in
+which all inputs interact. The three weights, one length scale per input and a noise
+level maximise the exact marginal likelihood on a 1000-point coverage sample of the
+stream, so the data decide how much of the target is additive, pairwise or of full order.
+
+```python
+gpt = GPTree(Nbar=100, global_mean='state')
+# with the last hidden layer of a feature network among the features (needs PyTorch):
+gpt = GPTree(Nbar=100, global_mean='state', global_mean_kwargs=dict(net=True))
+
+gpt.global_mean.order_shares()   # e.g. {'additive': 0.97, 'pairwise': 0.02, 'full': 0.01}
+```
+
+The prior is then applied to every point the tree holds, as a Bayesian linear model
+(`StateGlobalMean`):
+
+* The additive term becomes a sine basis per input, whose coefficients have the kernel's
+  spectral density as prior variance. This part is exact up to the truncation of the
+  basis, and its cost does not depend on the number of points.
+* The smooth part of the pairwise and full-interaction terms is carried by kernel
+  functions centred on a second coverage sample (500 points).
+* What the centres leave of the prior is correlated only among the points of one leaf:
+  the tree's partition is used as the block structure of the approximation, and the
+  coefficients are solved in one pass over the leaves, again whenever the point count
+  has grown by a quarter.
+* With `net=True` a feature network is trained, with held-out stopping, on what the
+  additive part leaves, and its last hidden layer joins the features. The prior width of
+  its coefficients is chosen by the evidence on points the network was not trained on,
+  so the network enters only as far as it explains data it has not seen.
+
+The leaf GPs model the residual as for the other global models. A leaf takes up a new
+state by refitting with its hyperparameters kept, and its sigma adds the variance of the
+state's coefficients at the query, seen through the leaf's own GP, in place of the
+stream-wide `error_scale`: the reported uncertainty grows where the state has little
+data, not by the same amount everywhere.
+
+On two 6D targets that couple all inputs through a rotation, under uniform, focusing,
+sweeping and random-walk streams of 4000 points, the tree with the state had 0.29 of the
+plain tree's error without noise (0.16 with `net=True`; `global_mean='net'` 0.31) and 0.55
+with noise of 0.2 standard deviations of the target (`'net'` 1.34), and a lower error than
+the plain tree in all 48 cells. On Rosenbrock, Rastrigin and Levy, which are sums of terms
+in one or two inputs, it was two to four orders of magnitude below the plain tree without
+noise. One-sigma coverage away from the stream was 0.51 to 0.57 without noise, against
+0.30 to 0.37 for the other modes. The cost was six to eight times the run time of the
+plain tree at this length, two thirds of it in the fits of the prior, whose number grows
+with the logarithm of the stream. Single output only, and one seed per cell so far.
+`examples/BENCHMARK_RESULTS_state_mean.md` has the model in formulas, the tables and the
+limits; `examples/example_state_mean.py` runs it against the plain tree.
 
 ## Running examples
 For more detailed demonstrations, see the example scripts in the `examples/` directory:

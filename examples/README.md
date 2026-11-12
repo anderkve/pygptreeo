@@ -17,7 +17,7 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
   error, coverage and time per point. Needs PyTorch.
 - **`example_state_mean.py`**: The interaction-order state as global model
   (`GPTree(global_mean='state')`) against the plain tree on a 6D stream: prequential error,
-  coverage, time per point and the fitted division of the target among the interaction orders.
+  coverage and time per point.
 - **`performance_test.py`**: Comprehensive performance evaluation script
   - Tests GPTree on various benchmark functions (Eggholder, Himmelblau, etc.)
   - Tracks and plots multiple performance metrics over time:
@@ -124,6 +124,20 @@ Compares a plain GPTree with a GPTree that models the residual of a global GP
 refit when the reservoir turns over) under uniform, DE-like focusing, sweeping and
 MCMC-walker input streams. The residual mechanism is a prototype injected into
 `GPNode` by the script; see `BENCHMARK_RESULTS_global_mean_streams.md`.
+
+### Interaction-order state as global model
+
+```bash
+cd examples
+OMP_NUM_THREADS=1 python example_state_mean.py
+OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target rotated_rosenbrock --calibrate --noise 0.2 \
+    --streams uniform,focusing,sweeping,walker --configs tree,hybrid,hybrid_holdout,state,state_net
+python benchmark_global_mean_streams.py --summarize results/state_mean/streams_N4000_seed1.jsonl
+```
+
+`state` is `GPTree(global_mean='state')`, `state_net` adds the network features,
+`hybrid_holdout` is the feature network with held-out stopping; `--noise` adds noise in
+units of the standard deviation of the target. See `BENCHMARK_RESULTS_state_mean.md`.
 
 ### Animated Visualization
 
