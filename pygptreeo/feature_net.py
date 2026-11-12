@@ -5,6 +5,8 @@
 the GP leaves model. Requires PyTorch.
 """
 
+import copy
+import zlib
 from typing import Optional
 
 import numpy as np
@@ -48,6 +50,27 @@ class _GrowingStore:
         return True
 
 
+class _EarlyStop:
+    """Keeps the weights with the lowest loss on held-out points; ``check`` returns True
+    after ``patience`` checks without improvement."""
+
+    def __init__(self, Xh, Yh, Wh, patience: int):
+        self.Xh, self.Yh, self.Wh, self.patience = Xh, Yh, Wh, patience
+        self.best = np.inf; self.state = None; self.n_checks = 0; self.best_check = 0
+
+    def check(self, net) -> bool:
+        self.n_checks += 1
+        with torch.no_grad():
+            loss = float((((net(self.Xh) - self.Yh) ** 2) * self.Wh).mean())
+        if loss < self.best:
+            self.best, self.state, self.best_check = loss, copy.deepcopy(net.state_dict()), self.n_checks
+        return self.n_checks - self.best_check >= self.patience
+
+    def restore(self, net):
+        self.check(net)
+        net.load_state_dict(self.state)
+
+
 BATCH_SIZE = 128              # Adam minibatch size
 ERROR_WINDOW = 200            # observations the running estimate of the head's error remembers
 POLISH_STEPS_PER_UPDATE = 8   # Adam steps per L-BFGS iteration in an amortised refit's polish phase (about equal cost)
@@ -85,13 +108,29 @@ class FeatureNetLearner:
         it over the following observations, this many L-BFGS iterations (and
         ``POLISH_STEPS_PER_UPDATE`` times as many Adam steps) per call, on a copy
         of the network published when complete. The first fit always runs at once.
+    holdout : float, default=0.0
+        Fraction of the points that is never trained on. If positive, every refit
+        stops when the loss on these points has not improved for ``patience``
+        checks, and publishes the weights with the lowest loss there. Use it for
+        noisy targets: a refit continues from the current weights, and without
+        it early fits to few noisy points are carried along.
+    check_every : int, default=25
+        L-BFGS iterations between two checks of the held-out loss (ten times as
+        many Adam steps).
+    patience : int, default=3
+        Checks without improvement after which a refit stops (``n_early_stops``
+        counts the refits that did).
     random_state : int or None
     """
 
     def __init__(self, hidden: int = 128, depth: int = 3, steps: int = 300, polish_steps: int = 3000,
                  lr: float = 1e-3, min_points: int = 200, reservoir_size: Optional[int] = 5000,
-                 steps_per_update: Optional[int] = None, random_state: Optional[int] = None):
+                 steps_per_update: Optional[int] = None, holdout: float = 0.0, check_every: int = 25,
+                 patience: int = 3, random_state: Optional[int] = None):
         _require_torch()
+        if not (0.0 <= holdout < 1.0):
+            raise ValueError("holdout must be in [0, 1)")
+        self.holdout, self.check_every, self.patience = float(holdout), int(check_every), int(patience)
         if steps < 0 or polish_steps < 0:
             raise ValueError("steps and polish_steps must be non-negative")
         if steps == 0 and polish_steps == 0:
@@ -117,7 +156,7 @@ class FeatureNetLearner:
         self.x_mu = None; self.x_sd = None; self.y_mu = None; self.y_sd = None
         self.version = 0
         self.n_seen = 0; self.n_seen_at_fit = 0
-        self.n_refits = 0; self.fit_seconds = 0.0; self.n_seen_at_first_fit = 0
+        self.n_refits = 0; self.n_early_stops = 0; self.fit_seconds = 0.0; self.n_seen_at_first_fit = 0
         self.error_var = None; self.noise_var = None; self.error_scale = None
 
     # -- stream -------------------------------------------------------------------------
@@ -169,9 +208,21 @@ class FeatureNetLearner:
         self.fit(); return True
 
     # -- fitting ------------------------------------------------------------------------
+    def held_out(self, X: np.ndarray) -> np.ndarray:
+        """Boolean mask of the rows of ``X`` that are never trained on. A point's
+        membership depends only on its coordinates, so it is the same wherever the
+        point is stored."""
+        X = np.ascontiguousarray(np.atleast_2d(np.asarray(X, float)))
+        if self.holdout <= 0.0:
+            return np.zeros(X.shape[0], dtype=bool)
+        salt = 0 if self.random_state is None else int(self.random_state)
+        h = np.array([zlib.crc32(row.tobytes(), salt) for row in X], dtype=np.uint64)
+        return (h % 10000) < self.holdout * 10000
+
     def _training_set(self, source, scal=None):
-        """``source`` standardised as tensors, the per-point loss weights, and the
-        scaling ``(x_mu, x_sd, y_mu, y_sd)``; ``scal`` reuses a scaling."""
+        """``source`` standardised as tensors, the per-point loss weights, the
+        scaling ``(x_mu, x_sd, y_mu, y_sd)`` and the mask of held-out rows;
+        ``scal`` reuses a scaling."""
         if isinstance(source, _GrowingStore):
             source._flush()
         X = source.X; Y = source.y; S = source.sigma
@@ -189,7 +240,17 @@ class FeatureNetLearner:
         var = (S / y_sd) ** 2 + (0.0 if err is None else (err / y_sd) ** 2)
         w = 1.0 / np.maximum(var, 1e-4)
         Wt = torch.tensor(w / w.mean(axis=0), dtype=torch.float32)
-        return Xt, Yt, Wt, (x_mu, x_sd, y_mu, y_sd)
+        return Xt, Yt, Wt, (x_mu, x_sd, y_mu, y_sd), self.held_out(X)
+
+    def _split(self, Xt, Yt, Wt, hold, es):
+        """Training rows, and the early-stopping state (created from the held-out
+        rows if there is none yet)."""
+        if not hold.any() or hold.all():
+            return Xt, Yt, Wt, es
+        tr = torch.tensor(np.flatnonzero(~hold)); ho = torch.tensor(np.flatnonzero(hold))
+        if es is None:
+            es = _EarlyStop(Xt[ho], Yt[ho], Wt[ho], self.patience)
+        return Xt[tr], Yt[tr], Wt[tr], es
 
     def _new_net(self):
         torch.manual_seed(int(self.rng.randint(1 << 30)))
@@ -201,23 +262,25 @@ class FeatureNetLearner:
     def _lbfgs_phase(self, net):
         """The L-BFGS phase on the reservoir (None when off) and the scaling this
         refit publishes."""
-        Xt, Yt, Wt, scal = self._training_set(self.sample)
+        Xt, Yt, Wt, scal, hold = self._training_set(self.sample)
         if self.steps == 0:
             return None, scal
+        Xt, Yt, Wt, es = self._split(Xt, Yt, Wt, hold, None)
         # One iteration per step() call; max_eval's default of 1 would cut the line search.
         opt = torch.optim.LBFGS(net.parameters(), lr=1.0, max_iter=1, max_eval=25, history_size=20,
                                 line_search_fn='strong_wolfe', tolerance_grad=0.0, tolerance_change=0.0)
-        return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=None, state=None), scal
+        return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=None, state=None, es=es, it=0, stopped=False), scal
 
-    def _polish_phase(self, net, scal):
+    def _polish_phase(self, net, scal, es=None):
         """The Adam phase over every point, with this refit's scaling; None when off."""
         source = self.store if self.store is not None else self.sample
         if self.polish_steps == 0 or source.n < 2:
             return None
-        Xt, Yt, Wt, _ = self._training_set(source, scal)
+        Xt, Yt, Wt, _, hold = self._training_set(source, scal)
+        Xt, Yt, Wt, es = self._split(Xt, Yt, Wt, hold, es)
         opt = torch.optim.Adam(net.parameters(), lr=self.lr)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=self.polish_steps, eta_min=0.0)
-        return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=sched, state={'perm': None, 'pos': 0})
+        return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=sched, state={'perm': None, 'pos': 0}, es=es, it=0, stopped=False)
 
     @staticmethod
     def _loss(net, X, Y, W):
@@ -225,22 +288,36 @@ class FeatureNetLearner:
 
     def _train(self, net, ph, n_steps):
         """Run n_steps of a phase: full-batch L-BFGS iterations, or minibatch Adam
-        steps (``ph['state']`` carries the epoch permutation across calls)."""
+        steps (``ph['state']`` carries the epoch permutation across calls). With
+        held-out points the phase may end early; ``ph['stopped']`` then is True."""
         net.train(); done = 0
-        Xt, Yt, Wt, opt, sched, state = ph['Xt'], ph['Yt'], ph['Wt'], ph['opt'], ph['sched'], ph['state']
+        Xt, Yt, Wt, opt, sched, state, es = ph['Xt'], ph['Yt'], ph['Wt'], ph['opt'], ph['sched'], ph['state'], ph['es']
+        every = self.check_every if sched is None else 10 * self.check_every
+
+        def stop_now():
+            ph['it'] += 1
+            if es is None or ph['it'] % every:
+                return False
+            net.eval(); ph['stopped'] = es.check(net); net.train()
+            return ph['stopped']
+
         if sched is None:
             def closure():
                 opt.zero_grad(); loss = self._loss(net, Xt, Yt, Wt); loss.backward(); return loss
-            while done < n_steps:
+            while done < n_steps and not ph['stopped']:
                 opt.step(closure); done += 1
+                if stop_now():
+                    break
             net.eval(); return
         n = Xt.shape[0]; batch = int(min(BATCH_SIZE, max(2, n // 2)))
-        while done < n_steps:
+        while done < n_steps and not ph['stopped']:
             if state['perm'] is None or state['pos'] >= n:
                 state['perm'] = torch.randperm(n, generator=self.gen); state['pos'] = 0
             idx = state['perm'][state['pos']:state['pos'] + batch]; state['pos'] += batch
             loss = self._loss(net, Xt[idx], Yt[idx], Wt[idx])
             opt.zero_grad(); loss.backward(); opt.step(); sched.step(); done += 1
+            if stop_now():
+                break
         net.eval()
 
     def _publish(self, net, scal, t_spent):
@@ -259,16 +336,36 @@ class FeatureNetLearner:
         self._shadow = None
         net = self.net if self.net is not None else self._new_net()
         ph, scal = self._lbfgs_phase(net)
+        es = None; stopped = False
         if ph is not None:
-            self._train(net, ph, self.steps)
-        ph = self._polish_phase(net, scal)
-        if ph is not None:
-            self._train(net, ph, self.polish_steps)
+            self._train(net, ph, self.steps); es, stopped = ph['es'], ph['stopped']
+        if not stopped:
+            ph = self._polish_phase(net, scal, es)
+            if ph is not None:
+                self._train(net, ph, self.polish_steps); es, stopped = ph['es'], ph['stopped']
+        if es is not None:
+            es.restore(net); self.n_early_stops += bool(stopped)
         self._publish(net, scal, time.time() - t0)
+
+    def fit_on(self, X: np.ndarray, y: np.ndarray, sigma: Optional[np.ndarray] = None):
+        """(Re)fit on the given points in place of the observed stream; the targets
+        may change from call to call. The L-BFGS phase uses at most
+        ``reservoir_size`` of them, drawn at random."""
+        X = np.atleast_2d(np.asarray(X, float)); y = np.asarray(y, float).reshape(X.shape[0], -1)
+        sigma = np.zeros_like(y) if sigma is None else np.asarray(sigma, float).reshape(X.shape[0], -1)
+        self.n_features, self.n_outputs = X.shape[1], y.shape[1]
+        self.store = _GrowingStore(self.n_features, self.n_outputs)
+        self.store.X, self.store.y, self.store.sigma = X, y, sigma
+        self.sample = self.store
+        if self.reservoir_size is not None and X.shape[0] > self.reservoir_size:
+            idx = self.rng.choice(X.shape[0], self.reservoir_size, replace=False)
+            self.sample = _GrowingStore(self.n_features, self.n_outputs)
+            self.sample.X, self.sample.y, self.sample.sigma = X[idx], y[idx], sigma[idx]
+        self.n_seen = X.shape[0]
+        self.fit()
 
     def _start_shadow(self):
         """Begin an amortised refit on a copy of the network."""
-        import copy
         net = copy.deepcopy(self.net)
         ph, scal = self._lbfgs_phase(net)
         self._shadow = dict(net=net, scal=scal, lbfgs=ph, done=0, polish=None, polish_started=False, polish_done=0, t=0.0)
@@ -277,19 +374,26 @@ class FeatureNetLearner:
     def _advance_shadow(self) -> bool:
         import time
         t0 = time.time(); s = self._shadow
+        lb = s['lbfgs']
         if s['done'] < self.steps:
             k = min(self.steps_per_update, self.steps - s['done'])
-            self._train(s['net'], s['lbfgs'], k)
-            s['done'] += k
+            self._train(s['net'], lb, k)
+            s['done'] = self.steps if lb['stopped'] else s['done'] + k
         if s['done'] >= self.steps and not s['polish_started']:
-            s['polish'] = self._polish_phase(s['net'], s['scal'])   # on the store as it stands now
+            stopped = lb is not None and lb['stopped']
+            es = None if lb is None else lb['es']
+            s['polish'] = None if stopped else self._polish_phase(s['net'], s['scal'], es)   # on the store as it stands now
             s['polish_started'] = True
         if s['polish'] is not None and s['polish_done'] < self.polish_steps:
             k = min(POLISH_STEPS_PER_UPDATE * self.steps_per_update, self.polish_steps - s['polish_done'])
             self._train(s['net'], s['polish'], k)
-            s['polish_done'] += k
+            s['polish_done'] = self.polish_steps if s['polish']['stopped'] else s['polish_done'] + k
         s['t'] += time.time() - t0
         if s['done'] >= self.steps and (s['polish'] is None or s['polish_done'] >= self.polish_steps):
+            es = s['polish']['es'] if s['polish'] is not None else (None if lb is None else lb['es'])
+            if es is not None:
+                es.restore(s['net'])
+                self.n_early_stops += any(ph is not None and ph['stopped'] for ph in (lb, s['polish']))
             self._shadow = None
             self._publish(s['net'], s['scal'], s['t'])
             return True
@@ -311,7 +415,7 @@ class FeatureNetLearner:
 
     def __repr__(self) -> str:
         return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, steps={self.steps}, "
-                f"polish_steps={self.polish_steps}, reservoir_size={self.reservoir_size}, n_seen={self.n_seen}, "
+                f"polish_steps={self.polish_steps}, reservoir_size={self.reservoir_size}, holdout={self.holdout}, n_seen={self.n_seen}, "
                 f"n_refits={self.n_refits}, version={self.version})")
 
 

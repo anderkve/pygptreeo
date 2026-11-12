@@ -139,6 +139,59 @@ class TestFeatureNet(unittest.TestCase):
         self.assertFalse(learner.refit_in_progress)
         self.assertEqual(learner.version, 2)
 
+    def test_holdout_is_off_by_default(self):
+        learner = self._learner()
+        self.assertEqual(learner.holdout, 0.0)
+        self.assertFalse(learner.held_out(np.random.RandomState(0).rand(50, 3)).any())
+        with self.assertRaises(ValueError):
+            self._learner(holdout=1.0)
+
+    def test_held_out_points_depend_on_their_coordinates_only(self):
+        rng = np.random.RandomState(11)
+        X = rng.rand(2000, 3)
+        mask = self._learner(holdout=0.2).held_out(X)
+        self.assertAlmostEqual(mask.mean(), 0.2, delta=0.04)
+        perm = rng.permutation(2000)
+        np.testing.assert_array_equal(self._learner(holdout=0.2).held_out(X[perm]), mask[perm])
+
+    def test_holdout_stops_refits_on_noisy_targets(self):
+        rng = np.random.RandomState(12)
+        N = 600
+        X = rng.rand(N, 3); f = _target(X); noise = 0.5 * f.std(); y = f + noise * rng.randn(N)
+        Xt = rng.rand(500, 3); ft = _target(Xt)
+        err, learners = {}, {}
+        for holdout in (0.0, 0.2):
+            learner = self._learner(min_points=150, steps=300, polish_steps=1500, holdout=holdout)
+            for i in range(N):
+                learner.observe(X[i], y[i], noise)
+            err[holdout] = float(np.sqrt(np.mean((learner.head(Xt)[:, 0] - ft) ** 2)))
+            learners[holdout] = learner
+        self.assertEqual(learners[0.0].n_early_stops, 0)
+        self.assertGreaterEqual(learners[0.2].n_early_stops, 1)
+        self.assertLess(err[0.2], err[0.0])
+
+    def test_holdout_with_amortised_refits(self):
+        rng = np.random.RandomState(14)
+        N = 400
+        X = rng.rand(N, 3); f = _target(X); y = f + 0.5 * f.std() * rng.randn(N)
+        learner = self._learner(min_points=100, steps=100, polish_steps=200, steps_per_update=5, holdout=0.2)
+        for i in range(N):
+            learner.observe(X[i], y[i], 0.5 * f.std())
+        self.assertGreaterEqual(learner.n_refits, 2)
+        self.assertTrue(np.all(np.isfinite(learner.head(X))))
+
+    def test_fit_on_refits_on_given_targets(self):
+        rng = np.random.RandomState(15)
+        X = rng.rand(400, 3); Xt = rng.rand(200, 3)
+        learner = self._learner(steps=200, holdout=0.2)
+        learner.fit_on(X, _target(X))
+        e1 = np.sqrt(np.mean((learner.head(Xt)[:, 0] - _target(Xt)) ** 2))
+        self.assertLess(e1, 0.2 * _target(Xt).std())
+        learner.fit_on(X, -2 * _target(X))                    # other targets, from the current weights
+        e2 = np.sqrt(np.mean((learner.head(Xt)[:, 0] + 2 * _target(Xt)) ** 2))
+        self.assertLess(e2, 0.2 * 2 * _target(Xt).std())
+        self.assertEqual(learner.n_refits, 2)
+
     def test_hybrid_with_amortised_refits(self):
         from pygptreeo.default_gpr import Default_GPR
         rng = np.random.RandomState(10)
