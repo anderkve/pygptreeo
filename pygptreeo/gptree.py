@@ -154,8 +154,12 @@ class GPTree:
                 model whose *residual* the leaf GPs model. None (default): no
                 global model. 'additive_gp': an ``AdditiveGPGlobalMean`` (a GP with
                 a low-order additive + Matern kernel, fitted on a coverage reservoir
-                of the stream and refit when the reservoir turns over). Or any
-                ``GlobalMeanLearner`` instance. The global model captures smooth,
+                of the stream and refit when the reservoir turns over). 'net': a
+                ``NetGlobalMean`` (a feature network trained on the stream).
+                'state': a ``StateGlobalMean`` (a linear state for an
+                interaction-order prior, solved from the points in the leaves; it
+                gives its own variance at the query in place of ``error_scale``).
+                Or any ``GlobalMeanLearner`` instance. The global model captures smooth,
                 large-scale structure from all the data the tree has seen; the
                 leaves capture the rest and, at their edges, revert to it rather
                 than to a leaf constant. Each leaf remembers the snapshot it was
@@ -208,6 +212,8 @@ class GPTree:
                           output_model=output_model, output_basis=self.output_basis,
                           global_mean=self.global_mean,
                           **kwargs)  # Initialize root node of the GPTree
+        if self.global_mean is not None:
+            self.global_mean.attach(self)
 
         self.theta = theta
 

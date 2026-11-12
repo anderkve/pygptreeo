@@ -7,6 +7,7 @@ to conform to pygptreeo's GPRegressorInterface.
 
 from typing import Union, Tuple
 import numpy as np
+from scipy.linalg import cho_solve
 from copy import deepcopy
 
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -251,6 +252,32 @@ class SklearnGPAdapter(GPRegressorInterface):
         if not ls_arrays:
             return None
         return np.min(np.vstack(ls_arrays), axis=0)
+
+    def refit_fixed(self, X: np.ndarray, y: np.ndarray) -> bool:
+        """Fit with the fitted kernel kept (no hyperparameter optimisation)."""
+        sk = self._gpr
+        if not hasattr(sk, 'kernel_'):
+            return False
+        optimizer, kernel = sk.optimizer, sk.kernel
+        sk.optimizer, sk.kernel = None, sk.kernel_
+        try:
+            sk.fit(X, y)
+        finally:
+            sk.optimizer, sk.kernel = optimizer, kernel
+        return True
+
+    def mean_weights(self, X: np.ndarray):
+        """Weights of the training targets in the predictive mean, and the training inputs."""
+        sk = self._gpr
+        if not hasattr(sk, 'L_'):
+            return None
+        A = cho_solve((sk.L_, True), sk.kernel_(sk.X_train_, X))
+        if sk.normalize_y:
+            A = A + (1.0 - A.sum(axis=0)) / A.shape[0]
+        return A, sk.X_train_
+
+    def get_observation_noise(self):
+        return self._gpr.alpha
 
     # Provide access to the underlying scikit-learn GPR for advanced users
     @property

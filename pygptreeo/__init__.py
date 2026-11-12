@@ -20,6 +20,7 @@ Main components:
     - AdditivePeriodicMaternKernel: Shorthand for additive-periodic + catch-all leaf kernel
     - OutputBasis / OutputBasisLearner: Global PCA output basis for multi-output trees
     - AdditiveGPGlobalMean / GlobalMeanLearner: Tree-wide global model whose residual the leaves model
+    - StateGlobalMean: Global model with an interaction-order prior, solved from the tree's leaves
 
 Typical usage:
     from pygptreeo import GPTree
@@ -73,6 +74,8 @@ try:
     _GPYTORCH_AVAILABLE = True
 except ImportError:
     _GPYTORCH_AVAILABLE = False
+
+from pygptreeo.state_mean import StateGlobalMean, StateSnapshot, SineBasis, fit_interaction_prior
 
 # The feature network global model ('net'); the module imports without torch, the classes need it.
 from pygptreeo.feature_net import FeatureNetLearner, NetGlobalMean, TORCH_AVAILABLE as _TORCH_AVAILABLE

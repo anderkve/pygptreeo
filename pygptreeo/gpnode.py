@@ -982,6 +982,36 @@ class GPNode(Node):
         return True
 
 
+    def _refit_on_snapshot(self, snapshot):
+        """Refit the GPs on the residual of ``snapshot`` with their hyperparameters kept.
+
+        Used by global models that publish snapshots often (``cheap_leaf_refresh``).
+        The retrain buffer is left as is, so the hyperparameters are optimised on the
+        usual schedule. Returns False if this node or its GP backend cannot do it.
+        """
+        if self.output_model != 'independent' or not all(gpr.is_trained() for gpr in self.my_GPRs):
+            return False
+        X_train = np.vstack((self.my_X_data, self.shared_X_data))
+        if X_train.shape[0] == 0:
+            return False
+        y_train = np.vstack((self.my_y_data, self.shared_y_data)) - snapshot.predict(X_train)
+        sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))
+        if self.use_standard_scaling:
+            self._fit_scalers(X_train, y_train)
+            X_fit = self.X_scaler.transform(X_train)
+        for i in range(self.n_outputs):
+            if self.use_standard_scaling:
+                self._set_noise(self.my_GPRs[i], (sigma_train[:, i] / self.y_scalers[i].scale_[0]) ** 2)
+                done = self.my_GPRs[i].refit_fixed(X_fit, self.y_scalers[i].transform(y_train[:, i:i+1]))
+            else:
+                self._set_noise(self.my_GPRs[i], sigma_train[:, i] ** 2)
+                done = self.my_GPRs[i].refit_fixed(X_train, y_train[:, i:i+1])
+            if not done:
+                return False
+        self._fitted_global = snapshot
+        return True
+
+
     def _compute_dimensional_uncertainty(self):
         """Computes uncertainty scores for each dimension to guide splitting.
 
@@ -1453,7 +1483,9 @@ class GPNode(Node):
             current = self.global_mean.current
             if current is not None and (self._fitted_global is None
                                         or self._fitted_global.version < current.version):
-                self.fit_my_GPR(force_training=True)
+                if not (getattr(self.global_mean, 'cheap_leaf_refresh', False)
+                        and self._refit_on_snapshot(current)):
+                    self.fit_my_GPR(force_training=True)
 
         if self.output_model == 'independent':
             mu_pred, sigma_pred = self._predict_independent(x, return_std)
@@ -1463,11 +1495,16 @@ class GPNode(Node):
             mu_pred, sigma_pred = self._predict_pca(x)
 
         # Add back the snapshot the GPs were fitted against, and its estimated error:
-        # the residual GP cannot know how wrong the global model is at x.
+        # the residual GP cannot know how wrong the global model is at x. A snapshot
+        # with ``leaf_variance`` gives the combined variance at x itself.
         if self._fitted_global is not None:
             mu_pred = mu_pred + self._fitted_global.predict(x)
+            leaf_variance = getattr(self._fitted_global, 'leaf_variance', None)
             err_scale = getattr(self.global_mean, 'error_scale', None)
-            if err_scale is not None:
+            if leaf_variance is not None:
+                if return_std:
+                    sigma_pred = np.sqrt(leaf_variance(self, x, sigma_pred ** 2))
+            elif err_scale is not None:
                 sigma_pred = np.sqrt(sigma_pred ** 2 + np.asarray(err_scale, dtype=float).reshape(1, -1) ** 2)
 
         # Apply calibration if requested

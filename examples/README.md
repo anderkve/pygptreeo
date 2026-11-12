@@ -15,6 +15,9 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
 - **`example_hybrid.py`**: The hybrid tree (`GPTree(global_mean='net')`, GP leaves on the
   residual of a tree-wide feature network) against the plain tree on a 6D stream: prequential
   error, coverage and time per point. Needs PyTorch.
+- **`example_state_mean.py`**: The interaction-order state as global model
+  (`GPTree(global_mean='state')`) against the plain tree on a 6D stream: prequential error,
+  coverage, time per point and the fitted division of the target among the interaction orders.
 - **`performance_test.py`**: Comprehensive performance evaluation script
   - Tests GPTree on various benchmark functions (Eggholder, Himmelblau, etc.)
   - Tracks and plots multiple performance metrics over time:
@@ -186,7 +189,9 @@ Key parameters to experiment with:
 
 - `global_mean`: `None` (default) or `'additive_gp'` to let the leaves model the
   residual of a tree-wide global GP (see the README and
-  `BENCHMARK_RESULTS_global_mean_streams.md`); `global_mean_kwargs` tunes it.
+  `BENCHMARK_RESULTS_global_mean_streams.md`); `'net'` for a feature network and
+  `'state'` for the interaction-order state (`BENCHMARK_RESULTS_state_mean.md`) as
+  global model; `global_mean_kwargs` tunes it.
 
 ### Custom Kernel Configuration
 
