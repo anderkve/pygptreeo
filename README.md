@@ -215,7 +215,7 @@ plain tree.
 For noisy targets pass `holdout=0.2`: a fifth of the points is then never
 trained on, and each refit stops at, and publishes, the weights with the lowest
 loss on them. With noise of 0.2 standard deviations of the target this took
-the hybrid from 1.34 to 0.64 of the plain tree's error on the stream benchmark
+the hybrid from 1.44 to 0.66 of the plain tree's error on the stream benchmark
 of `examples/BENCHMARK_RESULTS_state_mean.md`; without noise the two were
 level, so it is off by default.
 
@@ -282,15 +282,16 @@ stream-wide `error_scale`: the reported uncertainty grows where the state has li
 data, not by the same amount everywhere.
 
 On two 6D targets that couple all inputs through a rotation, under uniform, focusing,
-sweeping and random-walk streams of 4000 points, the tree with the state had 0.29 of the
-plain tree's error without noise (0.16 with `net=True`; `global_mean='net'` 0.31) and 0.55
-with noise of 0.2 standard deviations of the target (`'net'` 1.34), and a lower error than
-the plain tree in all 48 cells. On Rosenbrock, Rastrigin and Levy, which are sums of terms
-in one or two inputs, it was two to four orders of magnitude below the plain tree without
-noise. One-sigma coverage away from the stream was 0.51 to 0.57 without noise, against
-0.30 to 0.37 for the other modes. The cost was six to eight times the run time of the
-plain tree at this length, two thirds of it in the fits of the prior, whose number grows
-with the logarithm of the stream. Single output only, and one seed per cell so far.
+sweeping and random-walk streams of 4000 points and for three seeds, the tree with the
+state had 0.29 of the plain tree's error without noise (0.15 with `net=True`;
+`global_mean='net'` 0.31) and 0.57 with noise of 0.2 standard deviations of the target
+(0.56 with `net=True`; `'net'` 1.44), and a lower error than the plain tree in 142 of the
+144 combinations of stream, test set and seed. On Rosenbrock, Rastrigin and Levy, which
+are sums of terms in one or two inputs, it was two to four orders of magnitude below the
+plain tree without noise (one seed). One-sigma coverage away from the stream was 0.50 to
+0.56 without noise, against 0.31 to 0.37 for the other modes. The cost was six to eight
+times the run time of the plain tree at this length, two thirds of it in the fits of the
+prior, whose number grows with the logarithm of the stream. Single output only.
 `examples/BENCHMARK_RESULTS_state_mean.md` has the model in formulas, the tables and the
 limits; `examples/example_state_mean.py` runs it against the plain tree.
 

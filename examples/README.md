@@ -132,7 +132,8 @@ cd examples
 OMP_NUM_THREADS=1 python example_state_mean.py
 OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target rotated_rosenbrock --calibrate --noise 0.2 \
     --streams uniform,focusing,sweeping,walker --configs tree,hybrid,hybrid_holdout,state,state_net
-python benchmark_global_mean_streams.py --summarize results/state_mean/streams_N4000_seed1.jsonl
+python benchmark_global_mean_streams.py --summarize results/state_mean/streams_N4000_seed*.jsonl
+python plot_state_mean_results.py
 ```
 
 `state` is `GPTree(global_mean='state')`, `state_net` adds the network features,

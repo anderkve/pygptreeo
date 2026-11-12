@@ -7,19 +7,20 @@ global model has data?
 
 Short answer: yes, at six to eight times the run time of the plain tree at 4000 points.
 
-* On two targets that couple all inputs, under four kinds of stream, the tree with the
-  state has 0.29 of the plain tree's error without noise and 0.55 with noise (geometric
-  mean over 24 cells each), and a lower error than the plain tree in all 48 cells. With
-  network features it has 0.16 and 0.55. `global_mean='net'` has 0.31 and 1.34.
-* On three targets with additive or pairwise structure it is two to four orders of
-  magnitude below the plain tree without noise and 3 to 16 times below with noise, and
+* On two targets that couple all inputs, under four kinds of stream and for three seeds,
+  the tree with the state has 0.29 of the plain tree's error without noise and 0.57 with
+  noise (geometric mean over 24 cells; 0.28 to 0.30 and 0.55 to 0.60 for the single
+  seeds), and a lower error than the plain tree in 142 of the 144 combinations of cell and
+  seed. With network features it has 0.15 and 0.56. `global_mean='net'` has 0.31 and 1.44.
+* On three targets with additive or pairwise structure (one seed) it is two to four orders
+  of magnitude below the plain tree without noise and 3 to 16 times below with noise, and
   below `'additive_gp'` in all six cases.
-* Away from the stream its one-sigma coverage is 0.51 to 0.57 without noise, where the
-  other modes have 0.30 to 0.37.
+* Away from the stream its one-sigma coverage is 0.50 to 0.56 without noise, where the
+  other modes have 0.31 to 0.37.
 * A by-product, usable on its own: held-out stopping for the feature network
-  (`holdout`), which takes `'net'` from 1.34 to 0.64 of the plain tree's error with noise.
+  (`holdout`), which takes `'net'` from 1.44 to 0.66 of the plain tree's error with noise.
 
-The numbers are from one seed and 4000 points per cell.
+All streams have 4000 points.
 
 ![Error relative to the plain tree](results/state_mean/summary.png)
 
@@ -117,8 +118,9 @@ Setup (`examples/benchmark_global_mean_streams.py`):
 * Targets `RotatedRosenbrock` and `GaussianPeaks` in 6 dimensions (every input coupled
   through a fixed rotation) under the four streams of
   `BENCHMARK_RESULTS_global_mean_streams.md` (uniform, focusing, sweeping, walker), 4000
-  points, seed 1. Also `Rosenbrock`, `Rastrigin` and `Levy` in 6 dimensions (sums of terms
-  in one or two coordinates) on the uniform stream.
+  points, seeds 1 to 3; the seed sets the stream, the noise, the tree's routing and the
+  optimiser restarts. Also `Rosenbrock`, `Rastrigin` and `Levy` in 6 dimensions (sums of
+  terms in one or two coordinates) on the uniform stream, seed 1.
 * Without noise (the benchmark's nominal sigma of `1e-3 |y|`) and with Gaussian noise of
   0.2 standard deviations of the target (`--noise 0.2`), declared to the tree.
 * Tree: `GPTree(Default_GPR(n_restarts_optimizer=1), Nbar=100, theta=1e-4,
@@ -129,125 +131,129 @@ Setup (`examples/benchmark_global_mean_streams.py`):
   range of the target; `prequential` on the stream after the first 666 points, `uniform
   test` on 3000 uniform points, `focus test` on 3000 points where the stream ended.
   Coverage is the fraction of errors within one predicted sigma (0.68 for a calibrated
-  Gaussian).
+  Gaussian). A cell of a table is the geometric mean over the seeds (the mean for
+  coverage and time).
 
 ### Without noise
 
-| | geometric-mean error relative to the tree | cells with lower error than the tree | than `net` | largest ratio to the tree |
+| | error relative to the tree: geometric mean (range over the seeds) | cells and seeds with lower error than the tree | than `net` | largest ratio to the tree in one run |
 |---|---|---|---|---|
-| tree | 1.00 |  | 2 of 24 |  |
-| `additive_gp` | 0.69 | 23 of 24 | 3 of 24 | 1.67 (rotated_rosenbrock, sweeping, focus test) |
-| `net` | 0.31 | 22 of 24 |  | 1.12 (gaussian_peaks, sweeping, focus test) |
-| `net`, held-out stopping | 0.31 | 23 of 24 | 8 of 24 | 1.21 (gaussian_peaks, sweeping, focus test) |
-| `state` | 0.29 | 24 of 24 | 15 of 24 | 0.84 (gaussian_peaks, uniform, focus test) |
-| `state`, `net=True` | 0.16 | 24 of 24 | 18 of 24 | 0.50 (gaussian_peaks, focusing, prequential) |
+| tree | 1 |  | 4 of 72 |  |
+| `additive_gp` | 0.72 (0.69 to 0.77) | 66 of 72 | 10 of 72 | 3.37 |
+| `net` | 0.31 (0.29 to 0.33) | 68 of 72 |  | 1.34 |
+| `net`, held-out stopping | 0.32 (0.31 to 0.33) | 70 of 72 | 25 of 72 | 1.21 |
+| `state` | 0.29 (0.28 to 0.30) | 72 of 72 | 43 of 72 | 0.86 |
+| `state`, `net=True` | 0.15 (0.14 to 0.17) | 72 of 72 | 61 of 72 | 0.78 |
 
 Prequential NRMSE (bold: lowest of the row)
 
 | target | stream | tree | `additive_gp` | `net` | `net`, held-out stopping | `state` | `state`, `net=True` |
 |---|---|---|---|---|---|---|---|
-| rotated_rosenbrock | uniform | 0.0187 | 0.0128 | 0.0037 | 0.0050 | 0.0019 | **0.0011** |
-| rotated_rosenbrock | focusing | 0.0061 | 0.0049 | 0.0019 | 0.0032 | 6.50e-04 | **4.76e-04** |
-| rotated_rosenbrock | sweeping | 0.0064 | 0.0057 | 0.0034 | 0.0052 | 0.0012 | **9.95e-04** |
-| rotated_rosenbrock | walker | 0.0061 | 0.0042 | 0.0021 | 0.0024 | 0.0014 | **9.88e-04** |
-| gaussian_peaks | uniform | 0.0162 | 0.0126 | **0.0056** | 0.0063 | 0.0123 | 0.0062 |
-| gaussian_peaks | focusing | 0.0076 | 0.0058 | 0.0046 | 0.0055 | 0.0050 | **0.0038** |
-| gaussian_peaks | sweeping | 0.0231 | 0.0121 | 0.0200 | 0.0171 | 0.0107 | **0.0098** |
-| gaussian_peaks | walker | 0.0100 | 0.0056 | **0.0043** | 0.0052 | 0.0068 | 0.0049 |
+| rotated_rosenbrock | uniform | 0.0152 | 0.0106 | 0.0029 | 0.0035 | 0.0016 | **8.61e-04** |
+| rotated_rosenbrock | focusing | 0.0069 | 0.0051 | 0.0020 | 0.0029 | 7.43e-04 | **5.33e-04** |
+| rotated_rosenbrock | sweeping | 0.0060 | 0.0064 | 0.0037 | 0.0044 | 0.0013 | **9.62e-04** |
+| rotated_rosenbrock | walker | 0.0062 | 0.0049 | 0.0026 | 0.0031 | 0.0016 | **0.0011** |
+| gaussian_peaks | uniform | 0.0168 | 0.0135 | 0.0061 | 0.0074 | 0.0128 | **0.0057** |
+| gaussian_peaks | focusing | 0.0073 | 0.0054 | 0.0037 | 0.0045 | 0.0049 | **0.0034** |
+| gaussian_peaks | sweeping | 0.0260 | 0.0129 | 0.0183 | 0.0171 | **0.0112** | 0.0125 |
+| gaussian_peaks | walker | 0.0111 | 0.0071 | **0.0047** | 0.0053 | 0.0077 | 0.0056 |
 
 Uniform-test NRMSE
 
 | target | stream | tree | `additive_gp` | `net` | `net`, held-out stopping | `state` | `state`, `net=True` |
 |---|---|---|---|---|---|---|---|
-| rotated_rosenbrock | uniform | 0.0141 | 0.0089 | 0.0013 | 0.0019 | 0.0013 | **5.96e-04** |
-| rotated_rosenbrock | focusing | 0.0308 | 0.0179 | 0.0037 | 0.0057 | 0.0032 | **0.0020** |
-| rotated_rosenbrock | sweeping | 0.0613 | 0.0477 | 0.0258 | 0.0197 | **0.0099** | 0.0119 |
-| rotated_rosenbrock | walker | 0.0921 | 0.0722 | 0.0446 | 0.0491 | **0.0279** | 0.0283 |
-| gaussian_peaks | uniform | 0.0129 | 0.0106 | 0.0023 | **0.0018** | 0.0104 | 0.0029 |
-| gaussian_peaks | focusing | 0.0213 | 0.0158 | **0.0051** | 0.0067 | 0.0164 | 0.0078 |
-| gaussian_peaks | sweeping | 0.0842 | 0.0422 | 0.0525 | 0.0559 | 0.0427 | **0.0308** |
-| gaussian_peaks | walker | 0.1056 | 0.0567 | 0.0277 | **0.0249** | 0.0789 | 0.0295 |
+| rotated_rosenbrock | uniform | 0.0106 | 0.0075 | 0.0012 | 0.0015 | 0.0012 | **5.16e-04** |
+| rotated_rosenbrock | focusing | 0.0301 | 0.0177 | 0.0038 | 0.0046 | 0.0034 | **0.0023** |
+| rotated_rosenbrock | sweeping | 0.0647 | 0.0527 | 0.0280 | 0.0275 | **0.0104** | 0.0130 |
+| rotated_rosenbrock | walker | 0.0922 | 0.0759 | 0.0441 | 0.0456 | **0.0268** | 0.0278 |
+| gaussian_peaks | uniform | 0.0138 | 0.0112 | 0.0029 | **0.0023** | 0.0109 | 0.0024 |
+| gaussian_peaks | focusing | 0.0231 | 0.0169 | **0.0065** | 0.0086 | 0.0177 | 0.0080 |
+| gaussian_peaks | sweeping | 0.0806 | 0.0423 | 0.0572 | 0.0514 | 0.0462 | **0.0317** |
+| gaussian_peaks | walker | 0.1063 | 0.0622 | 0.0320 | 0.0316 | 0.0811 | **0.0291** |
 
 Focus-test NRMSE
 
 | target | stream | tree | `additive_gp` | `net` | `net`, held-out stopping | `state` | `state`, `net=True` |
 |---|---|---|---|---|---|---|---|
-| rotated_rosenbrock | uniform | 0.0134 | 0.0097 | 0.0014 | 0.0020 | 0.0014 | **6.32e-04** |
-| rotated_rosenbrock | focusing | 4.07e-05 | 2.89e-05 | 8.37e-06 | 4.42e-06 | 3.38e-06 | **1.07e-06** |
-| rotated_rosenbrock | sweeping | 0.0048 | 0.0081 | 0.0052 | 0.0013 | 6.95e-04 | **3.83e-04** |
-| rotated_rosenbrock | walker | 0.0025 | 9.02e-04 | 3.02e-04 | 4.46e-04 | 2.28e-04 | **7.49e-05** |
-| gaussian_peaks | uniform | 0.0127 | 0.0109 | 0.0024 | **0.0018** | 0.0107 | 0.0028 |
-| gaussian_peaks | focusing | 1.24e-04 | 1.01e-04 | 2.92e-05 | **2.04e-05** | 8.40e-05 | 2.44e-05 |
-| gaussian_peaks | sweeping | 0.0085 | 0.0075 | 0.0095 | 0.0103 | 0.0056 | **0.0040** |
-| gaussian_peaks | walker | 0.0049 | 0.0016 | 0.0011 | 0.0011 | 0.0012 | **5.90e-04** |
+| rotated_rosenbrock | uniform | 0.0107 | 0.0073 | 0.0012 | 0.0015 | 0.0012 | **5.19e-04** |
+| rotated_rosenbrock | focusing | 3.55e-05 | 3.82e-05 | 4.44e-06 | 6.38e-06 | 3.25e-06 | **1.21e-06** |
+| rotated_rosenbrock | sweeping | 0.0052 | 0.0084 | 0.0049 | 0.0030 | 7.47e-04 | **4.08e-04** |
+| rotated_rosenbrock | walker | 0.0024 | 0.0011 | 3.09e-04 | 2.83e-04 | 1.65e-04 | **6.79e-05** |
+| gaussian_peaks | uniform | 0.0134 | 0.0112 | 0.0029 | **0.0023** | 0.0107 | 0.0023 |
+| gaussian_peaks | focusing | 1.21e-04 | 1.04e-04 | 2.55e-05 | 1.86e-05 | 5.74e-05 | **1.73e-05** |
+| gaussian_peaks | sweeping | 0.0115 | 0.0077 | 0.0123 | 0.0081 | 0.0067 | **0.0046** |
+| gaussian_peaks | walker | 0.0037 | 0.0013 | 8.12e-04 | 9.93e-04 | 0.0012 | **5.41e-04** |
 
 ### With noise of 0.2 sd
 
-| | geometric-mean error relative to the tree | cells with lower error than the tree | than `net` | largest ratio to the tree |
+| | error relative to the tree: geometric mean (range over the seeds) | cells and seeds with lower error than the tree | than `net` | largest ratio to the tree in one run |
 |---|---|---|---|---|
-| tree | 1.00 |  | 19 of 24 |  |
-| `additive_gp` | 0.81 | 20 of 24 | 21 of 24 | 1.16 (gaussian_peaks, sweeping, focus test) |
-| `net` | 1.34 | 5 of 24 |  | 4.40 (rotated_rosenbrock, walker, prequential) |
-| `net`, held-out stopping | 0.64 | 22 of 24 | 24 of 24 | 1.11 (rotated_rosenbrock, sweeping, focus test) |
-| `state` | 0.55 | 24 of 24 | 24 of 24 | 0.90 (gaussian_peaks, focusing, focus test) |
-| `state`, `net=True` | 0.55 | 23 of 24 | 24 of 24 | 1.01 (gaussian_peaks, focusing, focus test) |
+| tree | 1 |  | 64 of 72 |  |
+| `additive_gp` | 0.80 (0.78 to 0.81) | 64 of 72 | 67 of 72 | 1.46 |
+| `net` | 1.44 (1.34 to 1.50) | 8 of 72 |  | 4.66 |
+| `net`, held-out stopping | 0.66 (0.64 to 0.68) | 66 of 72 | 72 of 72 | 1.29 |
+| `state` | 0.57 (0.55 to 0.60) | 70 of 72 | 71 of 72 | 1.21 |
+| `state`, `net=True` | 0.56 (0.55 to 0.57) | 69 of 72 | 72 of 72 | 1.07 |
 
 Prequential NRMSE
 
 | target | stream | tree | `additive_gp` | `net` | `net`, held-out stopping | `state` | `state`, `net=True` |
 |---|---|---|---|---|---|---|---|
-| rotated_rosenbrock | uniform | 0.0317 | 0.0226 | 0.0345 | 0.0168 | **0.0127** | 0.0131 |
-| rotated_rosenbrock | focusing | 0.0138 | 0.0106 | 0.0199 | 0.0097 | **0.0082** | 0.0082 |
-| rotated_rosenbrock | sweeping | 0.0152 | 0.0153 | 0.0286 | 0.0137 | 0.0121 | **0.0113** |
-| rotated_rosenbrock | walker | 0.0140 | 0.0113 | 0.0614 | 0.0144 | **0.0096** | 0.0113 |
-| gaussian_peaks | uniform | 0.0277 | 0.0220 | 0.0362 | 0.0199 | 0.0180 | **0.0169** |
-| gaussian_peaks | focusing | 0.0150 | 0.0129 | 0.0239 | 0.0125 | **0.0098** | 0.0101 |
-| gaussian_peaks | sweeping | 0.0440 | 0.0282 | 0.0497 | 0.0252 | **0.0216** | 0.0219 |
-| gaussian_peaks | walker | 0.0293 | 0.0230 | 0.0746 | 0.0219 | **0.0156** | 0.0170 |
+| rotated_rosenbrock | uniform | 0.0249 | 0.0187 | 0.0283 | 0.0135 | **0.0103** | 0.0105 |
+| rotated_rosenbrock | focusing | 0.0135 | 0.0111 | 0.0196 | 0.0099 | **0.0080** | 0.0080 |
+| rotated_rosenbrock | sweeping | 0.0151 | 0.0158 | 0.0327 | 0.0150 | 0.0120 | **0.0112** |
+| rotated_rosenbrock | walker | 0.0147 | 0.0118 | 0.0670 | 0.0142 | **0.0105** | 0.0114 |
+| gaussian_peaks | uniform | 0.0292 | 0.0236 | 0.0400 | 0.0212 | 0.0192 | **0.0175** |
+| gaussian_peaks | focusing | 0.0159 | 0.0130 | 0.0240 | 0.0123 | 0.0105 | **0.0103** |
+| gaussian_peaks | sweeping | 0.0385 | 0.0263 | 0.0554 | 0.0270 | **0.0231** | 0.0233 |
+| gaussian_peaks | walker | 0.0296 | 0.0212 | 0.0728 | 0.0241 | **0.0160** | 0.0171 |
 
 Uniform-test NRMSE
 
 | target | stream | tree | `additive_gp` | `net` | `net`, held-out stopping | `state` | `state`, `net=True` |
 |---|---|---|---|---|---|---|---|
-| rotated_rosenbrock | uniform | 0.0267 | 0.0191 | 0.0278 | 0.0111 | **0.0094** | 0.0099 |
-| rotated_rosenbrock | focusing | 0.0465 | 0.0269 | 0.0478 | 0.0238 | **0.0176** | 0.0213 |
-| rotated_rosenbrock | sweeping | 0.0754 | 0.0565 | 0.0722 | 0.0434 | **0.0364** | 0.0381 |
-| rotated_rosenbrock | walker | 0.1339 | 0.1214 | 0.1078 | **0.0859** | 0.1058 | 0.0936 |
-| gaussian_peaks | uniform | 0.0247 | 0.0209 | 0.0320 | 0.0137 | 0.0153 | **0.0123** |
-| gaussian_peaks | focusing | 0.0373 | 0.0256 | 0.0454 | 0.0249 | 0.0237 | **0.0208** |
-| gaussian_peaks | sweeping | 0.1148 | 0.0765 | 0.1320 | 0.0603 | 0.0509 | **0.0459** |
-| gaussian_peaks | walker | 0.2005 | 0.1255 | 0.1478 | **0.0611** | 0.1145 | 0.0737 |
+| rotated_rosenbrock | uniform | 0.0207 | 0.0165 | 0.0238 | 0.0091 | **0.0075** | 0.0080 |
+| rotated_rosenbrock | focusing | 0.0439 | 0.0276 | 0.0485 | 0.0225 | **0.0176** | 0.0202 |
+| rotated_rosenbrock | sweeping | 0.0828 | 0.0698 | 0.0907 | 0.0463 | **0.0399** | 0.0427 |
+| rotated_rosenbrock | walker | 0.1380 | 0.1231 | 0.1237 | **0.0775** | 0.1061 | 0.0884 |
+| gaussian_peaks | uniform | 0.0262 | 0.0221 | 0.0338 | 0.0138 | 0.0167 | **0.0129** |
+| gaussian_peaks | focusing | 0.0382 | 0.0274 | 0.0502 | 0.0265 | 0.0244 | **0.0231** |
+| gaussian_peaks | sweeping | 0.1120 | 0.0649 | 0.1431 | 0.0573 | **0.0498** | 0.0514 |
+| gaussian_peaks | walker | 0.2101 | 0.1363 | 0.1550 | **0.0741** | 0.1164 | 0.0833 |
 
 Focus-test NRMSE
 
 | target | stream | tree | `additive_gp` | `net` | `net`, held-out stopping | `state` | `state`, `net=True` |
 |---|---|---|---|---|---|---|---|
-| rotated_rosenbrock | uniform | 0.0254 | 0.0203 | 0.0307 | 0.0118 | **0.0098** | 0.0103 |
-| rotated_rosenbrock | focusing | 0.0062 | 0.0062 | 0.0061 | 0.0060 | **0.0045** | 0.0061 |
-| rotated_rosenbrock | sweeping | 0.0175 | 0.0187 | 0.0241 | 0.0194 | **0.0092** | 0.0099 |
-| rotated_rosenbrock | walker | 0.0095 | 0.0080 | 0.0315 | 0.0073 | **0.0057** | 0.0062 |
-| gaussian_peaks | uniform | 0.0253 | 0.0214 | 0.0325 | 0.0138 | 0.0160 | **0.0129** |
-| gaussian_peaks | focusing | 0.0068 | 0.0073 | 0.0073 | **0.0060** | 0.0061 | 0.0069 |
-| gaussian_peaks | sweeping | 0.0405 | 0.0469 | 0.0362 | 0.0224 | 0.0183 | **0.0169** |
-| gaussian_peaks | walker | 0.0186 | 0.0136 | 0.0381 | 0.0102 | **0.0080** | 0.0091 |
+| rotated_rosenbrock | uniform | 0.0205 | 0.0165 | 0.0247 | 0.0095 | **0.0075** | 0.0081 |
+| rotated_rosenbrock | focusing | 0.0053 | 0.0060 | 0.0065 | 0.0055 | **0.0048** | 0.0050 |
+| rotated_rosenbrock | sweeping | 0.0164 | 0.0158 | 0.0247 | 0.0155 | **0.0081** | 0.0084 |
+| rotated_rosenbrock | walker | 0.0098 | 0.0078 | 0.0311 | 0.0070 | 0.0063 | **0.0063** |
+| gaussian_peaks | uniform | 0.0262 | 0.0217 | 0.0333 | 0.0139 | 0.0167 | **0.0131** |
+| gaussian_peaks | focusing | 0.0069 | 0.0069 | 0.0083 | 0.0066 | 0.0066 | **0.0066** |
+| gaussian_peaks | sweeping | 0.0328 | 0.0286 | 0.0387 | 0.0239 | 0.0179 | **0.0170** |
+| gaussian_peaks | walker | 0.0186 | 0.0125 | 0.0399 | 0.0109 | **0.0084** | 0.0092 |
 
 Reading:
 
 * **Without noise** the state alone is level with the feature network on average (0.29
   against 0.31 of the plain tree's error) but the two differ by target: on
-  `RotatedRosenbrock` the state is ahead in all 12 cells, on `GaussianPeaks` the
-  network is ahead in 9 of 12. With `net=True` the state has the lowest error of the six
-  configurations in 15 of 24 cells and is within a factor of 1.6 of the lowest in the
-  others; every other configuration is at least a factor of 6 from the lowest somewhere.
-* **With noise** `'net'` is worse than the plain tree in 19 of 24 cells. The state is
-  better than the plain tree in all 24 and better than `'net'` in all 24; `state` or
-  `state, net=True` has the lowest error in 21 of 24 cells. The network features change
-  nothing on average here (ratio 1.00, lower in 9 of 24 cells): their prior width is
-  chosen on held-out points, and with this much noise it is mostly chosen small.
-* **Against `'additive_gp'`**, the closest existing global model, the state has 0.41 of
-  its error without noise (lower in 20 of 24 cells) and 0.69 with noise (lower in 24 of
-  24), at the same run time. `'additive_gp'` fits its GP to 500 reservoir points; the
-  state uses the same kind of prior on every point.
+  `RotatedRosenbrock` the state is ahead in 11 of 12 cells, on `GaussianPeaks` the network
+  is ahead in 9 of 12. With `net=True` the state has the lowest error of the six
+  configurations in 17 of 24 cells and is within a factor of 1.25 of the lowest in the
+  others; every other configuration is at least a factor of 4.7 from the lowest somewhere.
+* **With noise** `'net'` is worse than the plain tree in 64 of the 72 combinations of cell
+  and seed. The state is better than the plain tree in 70 and better than `'net'` in 71;
+  `state` or `state, net=True` has the lowest error in 22 of 24 cells. The network
+  features change little on average here (ratio 0.98, lower in 33 of 72): their prior
+  width is chosen on held-out points, and with this much noise it is mostly chosen small.
+* **Against `'additive_gp'`**, the closest existing global model, the state has 0.40 of
+  its error without noise (lower in 60 of 72) and 0.72 with noise (lower in 70 of 72), at
+  a similar run time. `'additive_gp'` fits its GP to 500 reservoir points; the state uses
+  the same kind of prior on every point.
+* **Seeds.** The summary tables give the range of the geometric mean over the three seeds.
+  It is at most 0.05 wide for every configuration except `'additive_gp'` without noise
+  (0.69 to 0.77) and `'net'` with noise (1.34 to 1.50).
 
 ### Targets with additive or pairwise structure (uniform stream, uniform-test NRMSE)
 
@@ -290,42 +296,43 @@ Without noise
 
 | target | stream | tree | `additive_gp` | `net` | `net`, held-out stopping | `state` | `state`, `net=True` |
 |---|---|---|---|---|---|---|---|
-| rotated_rosenbrock | uniform | 0.68 / 0.67 / 0.66 | 0.69 / 0.65 / 0.64 | 0.64 / 0.61 / 0.61 | 0.66 / 0.63 / 0.62 | 0.67 / 0.71 / 0.69 | 0.68 / 0.72 / 0.72 |
-| rotated_rosenbrock | focusing | 0.70 / 0.30 / 0.59 | 0.73 / 0.36 / 0.68 | 0.70 / 0.08 / 0.60 | 0.70 / 0.08 / 0.57 | 0.75 / 0.48 / 0.62 | 0.75 / 0.48 / 0.75 |
-| rotated_rosenbrock | sweeping | 0.66 / 0.38 / 0.64 | 0.67 / 0.42 / 0.81 | 0.67 / 0.49 / 0.76 | 0.68 / 0.63 / 0.87 | 0.68 / 0.65 / 0.77 | 0.67 / 0.69 / 0.74 |
-| rotated_rosenbrock | walker | 0.66 / 0.26 / 0.77 | 0.66 / 0.27 / 0.98 | 0.68 / 0.34 / 0.97 | 0.67 / 0.35 / 0.96 | 0.66 / 0.40 / 0.75 | 0.67 / 0.44 / 0.79 |
-| gaussian_peaks | uniform | 0.68 / 0.68 / 0.68 | 0.68 / 0.68 / 0.68 | 0.66 / 0.67 / 0.68 | 0.66 / 0.76 / 0.76 | 0.67 / 0.66 / 0.66 | 0.69 / 0.77 / 0.79 |
-| gaussian_peaks | focusing | 0.70 / 0.60 / 0.66 | 0.74 / 0.36 / 0.67 | 0.71 / 0.17 / 0.66 | 0.71 / 0.17 / 0.75 | 0.73 / 0.51 / 0.72 | 0.76 / 0.68 / 0.75 |
-| gaussian_peaks | sweeping | 0.64 / 0.47 / 0.78 | 0.67 / 0.39 / 0.76 | 0.69 / 0.60 / 0.65 | 0.67 / 0.65 / 0.71 | 0.67 / 0.62 / 0.73 | 0.66 / 0.58 / 0.77 |
-| gaussian_peaks | walker | 0.68 / 0.18 / 0.73 | 0.66 / 0.13 / 0.85 | 0.66 / 0.15 / 0.77 | 0.68 / 0.15 / 0.78 | 0.68 / 0.41 / 0.80 | 0.70 / 0.54 / 0.85 |
-| **mean** | | 0.67 / 0.44 / 0.69 | 0.69 / 0.41 / 0.76 | 0.68 / 0.39 / 0.71 | 0.68 / 0.43 / 0.75 | 0.69 / 0.55 / 0.72 | 0.70 / 0.61 / 0.77 |
+| rotated_rosenbrock | uniform | 0.67 / 0.67 / 0.67 | 0.68 / 0.64 / 0.63 | 0.65 / 0.61 / 0.60 | 0.66 / 0.63 / 0.62 | 0.67 / 0.68 / 0.66 | 0.69 / 0.73 / 0.72 |
+| rotated_rosenbrock | focusing | 0.69 / 0.33 / 0.60 | 0.74 / 0.36 / 0.68 | 0.70 / 0.07 / 0.60 | 0.71 / 0.09 / 0.63 | 0.74 / 0.45 / 0.63 | 0.75 / 0.47 / 0.66 |
+| rotated_rosenbrock | sweeping | 0.66 / 0.39 / 0.68 | 0.67 / 0.41 / 0.76 | 0.67 / 0.52 / 0.73 | 0.67 / 0.56 / 0.81 | 0.67 / 0.63 / 0.75 | 0.67 / 0.66 / 0.74 |
+| rotated_rosenbrock | walker | 0.65 / 0.28 / 0.78 | 0.67 / 0.25 / 0.93 | 0.67 / 0.25 / 0.86 | 0.68 / 0.25 / 0.90 | 0.66 / 0.39 / 0.76 | 0.67 / 0.42 / 0.79 |
+| gaussian_peaks | uniform | 0.68 / 0.66 / 0.67 | 0.68 / 0.67 / 0.68 | 0.65 / 0.66 / 0.66 | 0.66 / 0.77 / 0.77 | 0.68 / 0.66 / 0.67 | 0.70 / 0.78 / 0.79 |
+| gaussian_peaks | focusing | 0.70 / 0.54 / 0.63 | 0.74 / 0.34 / 0.65 | 0.70 / 0.14 / 0.67 | 0.71 / 0.25 / 0.77 | 0.73 / 0.55 / 0.70 | 0.75 / 0.73 / 0.70 |
+| gaussian_peaks | sweeping | 0.65 / 0.50 / 0.77 | 0.67 / 0.42 / 0.73 | 0.68 / 0.69 / 0.71 | 0.68 / 0.66 / 0.74 | 0.67 / 0.62 / 0.76 | 0.67 / 0.57 / 0.76 |
+| gaussian_peaks | walker | 0.68 / 0.20 / 0.78 | 0.66 / 0.16 / 0.87 | 0.66 / 0.17 / 0.84 | 0.66 / 0.18 / 0.86 | 0.68 / 0.36 / 0.80 | 0.69 / 0.53 / 0.86 |
+| **mean** | | 0.67 / 0.45 / 0.70 | 0.69 / 0.41 / 0.74 | 0.67 / 0.39 / 0.71 | 0.68 / 0.42 / 0.76 | 0.69 / 0.54 / 0.72 | 0.70 / 0.61 / 0.75 |
 
 With noise of 0.2 sd
 
 | target | stream | tree | `additive_gp` | `net` | `net`, held-out stopping | `state` | `state`, `net=True` |
 |---|---|---|---|---|---|---|---|
-| rotated_rosenbrock | uniform | 0.84 / 0.85 / 0.85 | 0.88 / 0.90 / 0.89 | 0.78 / 0.88 / 0.84 | 0.91 / 0.92 / 0.91 | 0.97 / 0.98 / 0.98 | 0.98 / 0.97 / 0.97 |
-| rotated_rosenbrock | focusing | 0.95 / 0.78 / 0.99 | 0.97 / 0.63 / 1.00 | 0.90 / 0.03 / 0.98 | 0.96 / 0.44 / 0.99 | 0.99 / 0.99 / 1.00 | 0.99 / 0.97 / 1.00 |
-| rotated_rosenbrock | sweeping | 0.93 / 0.75 / 0.94 | 0.90 / 0.78 / 0.96 | 0.80 / 0.53 / 0.88 | 0.91 / 0.73 / 0.92 | 0.97 / 0.93 / 0.92 | 0.97 / 0.93 / 0.97 |
-| rotated_rosenbrock | walker | 0.93 / 0.40 / 0.96 | 0.95 / 0.56 / 1.00 | 0.69 / 0.46 / 0.83 | 0.92 / 0.70 / 1.00 | 0.98 / 0.59 / 1.00 | 0.96 / 0.65 / 0.99 |
-| gaussian_peaks | uniform | 0.83 / 0.86 / 0.84 | 0.88 / 0.91 / 0.89 | 0.77 / 0.85 / 0.84 | 0.89 / 0.92 / 0.92 | 0.92 / 0.94 / 0.93 | 0.93 / 0.97 / 0.96 |
-| gaussian_peaks | focusing | 0.96 / 0.85 / 1.00 | 0.97 / 0.65 / 1.00 | 0.90 / 0.01 / 0.95 | 0.96 / 0.29 / 0.92 | 0.98 / 0.94 / 1.00 | 0.98 / 0.92 / 1.00 |
-| gaussian_peaks | sweeping | 0.91 / 0.76 / 0.92 | 0.91 / 0.87 / 0.91 | 0.78 / 0.74 / 0.88 | 0.90 / 0.76 / 0.95 | 0.95 / 0.89 / 0.94 | 0.95 / 0.92 / 0.94 |
-| gaussian_peaks | walker | 0.86 / 0.31 / 0.93 | 0.89 / 0.34 / 0.93 | 0.71 / 0.44 / 0.88 | 0.89 / 0.55 / 0.98 | 0.96 / 0.74 / 0.99 | 0.95 / 0.93 / 0.98 |
-| **mean** | | 0.90 / 0.70 / 0.93 | 0.92 / 0.70 / 0.95 | 0.79 / 0.49 / 0.88 | 0.92 / 0.67 / 0.95 | 0.96 / 0.88 / 0.97 | 0.96 / 0.91 / 0.98 |
+| rotated_rosenbrock | uniform | 0.85 / 0.85 / 0.85 | 0.88 / 0.89 / 0.89 | 0.78 / 0.84 / 0.83 | 0.91 / 0.94 / 0.94 | 0.97 / 0.98 / 0.98 | 0.97 / 0.98 / 0.98 |
+| rotated_rosenbrock | focusing | 0.95 / 0.81 / 1.00 | 0.97 / 0.69 / 1.00 | 0.91 / 0.18 / 0.99 | 0.96 / 0.60 / 1.00 | 0.99 / 0.98 / 1.00 | 0.99 / 0.97 / 1.00 |
+| rotated_rosenbrock | sweeping | 0.92 / 0.72 / 0.92 | 0.90 / 0.67 / 0.93 | 0.78 / 0.64 / 0.86 | 0.91 / 0.70 / 0.88 | 0.97 / 0.91 / 0.96 | 0.97 / 0.92 / 0.96 |
+| rotated_rosenbrock | walker | 0.93 / 0.41 / 0.96 | 0.95 / 0.48 / 0.99 | 0.70 / 0.45 / 0.84 | 0.93 / 0.61 / 0.99 | 0.97 / 0.56 / 0.99 | 0.96 / 0.66 / 0.99 |
+| gaussian_peaks | uniform | 0.85 / 0.86 / 0.86 | 0.88 / 0.89 / 0.89 | 0.77 / 0.83 / 0.84 | 0.89 / 0.93 / 0.94 | 0.92 / 0.92 / 0.92 | 0.94 / 0.96 / 0.96 |
+| gaussian_peaks | focusing | 0.95 / 0.86 / 0.97 | 0.97 / 0.68 / 1.00 | 0.90 / 0.19 / 0.98 | 0.96 / 0.50 / 0.97 | 0.98 / 0.94 / 0.99 | 0.98 / 0.93 / 1.00 |
+| gaussian_peaks | sweeping | 0.90 / 0.77 / 0.92 | 0.92 / 0.80 / 0.91 | 0.78 / 0.69 / 0.88 | 0.89 / 0.70 / 0.88 | 0.95 / 0.92 / 0.95 | 0.95 / 0.93 / 0.96 |
+| gaussian_peaks | walker | 0.86 / 0.31 / 0.93 | 0.91 / 0.37 / 0.97 | 0.71 / 0.40 / 0.88 | 0.90 / 0.51 / 0.98 | 0.96 / 0.76 / 0.99 | 0.95 / 0.87 / 0.98 |
+| **mean** | | 0.90 / 0.70 / 0.93 | 0.92 / 0.68 / 0.95 | 0.79 / 0.53 / 0.89 | 0.92 / 0.69 / 0.95 | 0.96 / 0.87 / 0.97 | 0.96 / 0.90 / 0.98 |
 
 On the stream (first number) every configuration is calibrated by the per-leaf factor.
 The second number is the test of the variance itself: on the focusing, sweeping and walker
 streams the uniform test set lies mostly away from the stream. There the mean coverage
-without noise is 0.37 for the plain tree, 0.32 for `'additive_gp'`, 0.30 for `'net'`, 0.51
-for the state and 0.57 with network features: `error_scale` adds the same amount at every
+without noise is 0.37 for the plain tree, 0.32 for `'additive_gp'`, 0.31 for `'net'`, 0.50
+for the state and 0.56 with network features: `error_scale` adds the same amount at every
 `x`, the state's variance adds more where its coefficients are poorly determined. It is
-still below 0.68 on the walker and focusing streams (0.40 to 0.51 for the state, 0.44 to
-0.68 with network features), where the prior itself was fitted to a small part of the cube.
+still below 0.68 in most of these cells, lowest on the walker stream (0.36 to 0.39 for the
+state, 0.42 to 0.53 with network features), where the prior itself was fitted to a small
+part of the cube.
 
 With noise all configurations except `'net'` overcover the noise-free target on the stream
 (0.90 to 0.96): the per-leaf factor is fitted to errors against noisy observations. Away
-from the stream the state has 0.85 to 0.89, the plain tree 0.64, `'net'` 0.37.
+from the stream the state has 0.85 to 0.88, the plain tree 0.65, `'net'` 0.43.
 
 ### Held-out stopping for the feature network
 
@@ -336,14 +343,15 @@ checks without improvement and publishes the weights with the lowest held-out lo
 `global_mean='net', global_mean_kwargs=dict(holdout=0.2)` is the column `net`, held-out
 stopping in the tables above.
 
-* With noise it has 0.48 of the error of `'net'` (geometric mean; lower in 24 of 24 cells),
-  which moves the hybrid from 1.34 to 0.64 of the plain tree's error. Coverage away from
-  the stream rises from 0.37 to 0.58, and the network's training time falls from 24 to 7 s
-  per stream. A refit continues from the current weights; without held-out points the
-  early fits to a few hundred noisy points are carried through the stream.
-* Without noise the two are level on average (ratio 1.02) with a spread from 0.24 to 1.66
-  over the cells; held-out stopping is lower in 8 of 24. The network then gains from
-  training on every point to the end of its budget.
+* With noise it has 0.46 of the error of `'net'` (geometric mean; lower in all 72
+  combinations of cell and seed), which moves the hybrid from 1.44 to 0.66 of the plain
+  tree's error. Coverage away from the stream rises from 0.43 to 0.60, and the network's
+  training time falls from 23 to 7 s per stream. A refit continues from the current
+  weights; without held-out points the early fits to a few hundred noisy points are
+  carried through the stream.
+* Without noise the two are level on average (ratio 1.04) with a spread from 0.24 to 3.8
+  over the single runs; held-out stopping is lower in 25 of 72. The network then gains
+  from training on every point to the end of its budget.
 
 The default therefore stays off. `StateGlobalMean(net=True)` turns it on for its own
 network, which it needs in any case: the held-out points are also the ones on which the
@@ -351,14 +359,14 @@ prior width of the network features is chosen.
 
 ### Cost
 
-| | seconds per 4,000-point stream (mean over the 8 streams) | of which prior fits | state solves | network |
+| | seconds per 4,000-point stream (mean over the 8 streams and the seeds) | of which prior fits | state solves | network |
 |---|---|---|---|---|
-| tree | 21 |  |  |  |
-| `additive_gp` | 134 |  |  |  |
-| `net` | 56 |  |  | 24 |
-| `net`, held-out stopping | 51 |  |  | 17 |
-| `state` | 138 | 96 | 3 | 0 |
-| `state`, `net=True` | 165 | 95 | 4 | 20 |
+| tree | 20 |  |  |  |
+| `additive_gp` | 151 |  |  |  |
+| `net` | 55 |  |  | 24 |
+| `net`, held-out stopping | 49 |  |  | 16 |
+| `state` | 131 | 90 | 3 | 0 |
+| `state`, `net=True` | 156 | 90 | 3 | 19 |
 
 The runs shared four cores four at a time, so the absolute times are somewhat high. Two
 thirds of the state's time is the fit of the prior: one evaluation of the likelihood
@@ -366,18 +374,19 @@ factorises a 1000 x 1000 matrix, with up to 60 evaluations per start, at up to s
 per stream (60, 120, ..., 3840 points). The cost of a fit does not grow with the stream
 and the number of fits grows with its logarithm. The 25 solves of the coefficients take 3
 to 4 s together; the rest is the tree, the leaf refreshes and the features at prediction.
-With noise the network of `net=True` stops early and costs 6 s instead of 20.
+With noise the network of `net=True` stops early and costs 6 s instead of 19.
 
 ## Limits
 
 * Single output. `StateGlobalMean` raises on a multi-output tree.
-* One seed and 4000 points per cell. There are no runs at 40 000 points, where the
-  reference numbers of the hybrid are, and none in more than 6 dimensions.
+* Three seeds for the two rotated targets and one for the additive-type targets, all at
+  4000 points. There are no runs at 40 000 points, where the reference numbers of the
+  hybrid are, and none in more than 6 dimensions.
 * Six to eight times the run time of the plain tree at this stream length, most of it in
   the prior fits.
 * 500 kernel centres. Structure above order one that is finer than their spacing is left
   to the leaves, and with `net=True` to the network: on `GaussianPeaks` the state alone
-  gains little over the plain tree (0.76 to 0.84 of its error on the uniform stream).
+  gains little over the plain tree (0.77 to 0.80 of its error on the uniform stream).
 * The shares of `order_shares()` are not a variance decomposition (see above).
 * Away from a narrow stream the coverage is better than with `error_scale` but still below
   nominal.
@@ -395,14 +404,16 @@ cd examples
 for noise in 0 0.2; do
   for target in rotated_rosenbrock gaussian_peaks; do
     OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target $target --calibrate --noise $noise \
-        --streams uniform,focusing,sweeping,walker --configs tree,global_pkg,hybrid,hybrid_holdout,state,state_net
+        --seeds 1,2,3 --streams uniform,focusing,sweeping,walker \
+        --configs tree,global_pkg,hybrid,hybrid_holdout,state,state_net
   done
   for target in rosenbrock rastrigin levy; do
     OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target $target --calibrate --noise $noise \
         --streams uniform --configs tree,global_pkg,hybrid,hybrid_holdout,state,state_net
   done
 done
-python benchmark_global_mean_streams.py --summarize results/state_mean/streams_N4000_seed1.jsonl
+python benchmark_global_mean_streams.py --summarize results/state_mean/streams_N4000_seed*.jsonl
+python plot_state_mean_results.py
 ```
 
-The `RESULT` lines of the runs reported here are in `results/state_mean/streams_N4000_seed1.jsonl`.
+The `RESULT` lines of the runs reported here are in `results/state_mean/`, one file per seed.
