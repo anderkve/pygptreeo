@@ -5,7 +5,10 @@ fully coupled) without being told which one it faces, on streams that do not sam
 uniformly and on noisy data, and can it give the tree an uncertainty that knows where the
 global model has data?
 
-Short answer: yes, at six to eight times the run time of the plain tree at 4000 points.
+Short answer: yes on streams of a few thousand points, at six to eight times the run
+time of the plain tree. Long streams add two qualifications (last point): on targets of
+many inputs it needs its network features, and on smooth coupled targets the feature
+network alone ends ahead of it.
 
 * On two targets that couple all inputs, under four kinds of stream and for three seeds,
   the tree with the state has 0.29 of the plain tree's error without noise and 0.57 with
@@ -19,8 +22,13 @@ Short answer: yes, at six to eight times the run time of the plain tree at 4000 
   other modes have 0.31 to 0.37.
 * A by-product, usable on its own: held-out stopping for the feature network
   (`holdout`), which takes `'net'` from 1.44 to 0.66 of the plain tree's error with noise.
+* On ten streams of 40 000 points with 3 to 10 inputs (one seed) the state with network
+  features is better than the plain tree on all ten and better than `'net'` on six, by
+  factors of up to 350; on the other four it has 1.1 to 1.7 times the error of `'net'`.
+  The state without network features is not enough on targets of ten inputs that have no
+  additive structure. See "Long streams" below.
 
-All streams have 4000 points.
+The first four points are from streams of 4000 points.
 
 ![Error relative to the plain tree](results/state_mean/summary.png)
 
@@ -376,14 +384,150 @@ and the number of fits grows with its logarithm. The 25 solves of the coefficien
 to 4 s together; the rest is the tree, the leaf refreshes and the features at prediction.
 With noise the network of `net=True` stops early and costs 6 s instead of 19.
 
+## Long streams: the ten 40 000-point runs of the hybrid's reference table
+
+Setup (`examples/compare_tree_vs_hybrid.py`): the ten runs of
+`BENCHMARK_RESULTS_neural_linear.md` §3.8, 3 to 10 inputs, nine uniform streams and one
+walker, 40 000 points, seed 1, the tree settings of the benchmark above. The plain tree
+and `'net'` were rerun and reproduce that table to its printed digits; `'net'` has
+amortised refits as there (`steps_per_update=1`), the state's network is refitted in one
+go. The error is the NRMSE per batch of 2000 points (RMSE over the range of the batch),
+averaged over the last five batches, as in that table. Three runs were repeated with
+heteroscedastic noise (`--noise 1`: sigma of a point is the standard deviation of the
+target times 10^U(-1.5, 0)), there also with `holdout=0.2` for `'net'`; errors are
+against the noise-free target. The four configurations of a run shared four cores.
+
+![Error along the streams](results/state_mean/long_curves.png)
+
+NRMSE over the last 10 000 points (bold: lowest of the row)
+
+| run | tree | `net` (hybrid) | `state` | `state`, `net=True` |
+|---|---|---|---|---|
+| eggholder, d = 3 | 0.0404 | 0.0385 | 0.0387 | **0.0385** |
+| rotated_rosenbrock, d = 6 | 0.0045 | 2.77e-04 | 4.14e-04 | **2.27e-04** |
+| gaussian_peaks, d = 10 | 0.0377 | **0.0024** | 0.0293 | 0.0040 |
+| gaussian_peaks, d = 6, walker | 0.0146 | **0.0023** | 0.0082 | 0.0032 |
+| active_peaks, d = 10 | 0.0361 | **0.0018** | 0.0343 | 0.0028 |
+| step_ridge, d = 6 | 0.0434 | **0.0122** | 0.0405 | 0.0133 |
+| michalewicz, d = 5 | 0.100 | 0.0850 | 2.49e-04 | **2.43e-04** |
+| ackley, d = 6 | 0.0647 | 0.0595 | 0.0165 | **0.0148** |
+| griewank, d = 6 | 0.0986 | 0.103 | **0.0978** | 0.0982 |
+| chirp, d = 4 | 0.0875 | 0.0670 | 0.0585 | **0.0482** |
+
+NRMSE over points 2001 to 4000 of the same streams
+
+| run | tree | `net` (hybrid) | `state` | `state`, `net=True` |
+|---|---|---|---|---|
+| eggholder, d = 3 | 0.103 | 0.118 | 0.0878 | **0.0877** |
+| rotated_rosenbrock, d = 6 | 0.0126 | 0.0031 | 0.0013 | **7.14e-04** |
+| gaussian_peaks, d = 10 | 0.0630 | 0.0254 | 0.0451 | **0.0188** |
+| gaussian_peaks, d = 6, walker | 0.0384 | 0.0216 | 0.0248 | **0.0133** |
+| active_peaks, d = 10 | 0.0531 | 0.0055 | 0.0513 | **0.0040** |
+| step_ridge, d = 6 | 0.0523 | 0.0263 | 0.0448 | **0.0199** |
+| michalewicz, d = 5 | 0.141 | 0.201 | **3.38e-04** | 3.43e-04 |
+| ackley, d = 6 | 0.0844 | 0.104 | 0.0197 | **0.0165** |
+| griewank, d = 6 | 0.0935 | 0.131 | **0.0932** | 0.0955 |
+| chirp, d = 4 | 0.138 | 0.205 | 0.102 | **0.0973** |
+
+With noise: NRMSE over the last 10 000 points, then over points 2001 to 4000
+
+| run | tree | `net` (hybrid) | `net`, held-out stopping | `state` | `state`, `net=True` |
+|---|---|---|---|---|---|
+| rotated_rosenbrock, d = 6 | 0.0127 | 0.0038 | **0.0038** | 0.0045 | 0.0044 |
+| gaussian_peaks, d = 6, walker | 0.0293 | **0.0088** | 0.0091 | 0.0148 | 0.0115 |
+| gaussian_peaks, d = 10 | 0.0501 | 0.0163 | **0.0139** | 0.0352 | 0.0216 |
+
+| run | tree | `net` (hybrid) | `net`, held-out stopping | `state` | `state`, `net=True` |
+|---|---|---|---|---|---|
+| rotated_rosenbrock, d = 6 | 0.0243 | 0.0294 | 0.0118 | 0.0125 | **0.0112** |
+| gaussian_peaks, d = 6, walker | 0.0617 | 0.113 | 0.0322 | 0.0319 | **0.0265** |
+| gaussian_peaks, d = 10 | 0.0793 | 0.0867 | **0.0369** | 0.0501 | 0.0395 |
+
+Mean update time per point (ms), then the longest single update (s)
+
+| run | tree | `net` (hybrid) | `state` | `state`, `net=True` |
+|---|---|---|---|---|
+| eggholder, d = 3 | 3.3 | 5.3 | 7.1 | 8.4 |
+| rotated_rosenbrock, d = 6 | 3.7 | 5.6 | 8.1 | 9.9 |
+| gaussian_peaks, d = 10 | 4.6 | 8.1 | 11.4 | 13.3 |
+| gaussian_peaks, d = 6, walker | 4.1 | 5.9 | 8.0 | 9.7 |
+| active_peaks, d = 10 | 4.5 | 8.0 | 12.0 | 13.7 |
+| step_ridge, d = 6 | 4.0 | 6.8 | 9.0 | 10.3 |
+| michalewicz, d = 5 | 4.7 | 6.7 | 7.1 | 8.0 |
+| ackley, d = 6 | 4.1 | 7.1 | 9.1 | 10.5 |
+| griewank, d = 6 | 5.4 | 7.1 | 11.5 | 12.7 |
+| chirp, d = 4 | 3.7 | 5.4 | 7.7 | 9.2 |
+
+| run | tree | `net` (hybrid) | `state` | `state`, `net=True` |
+|---|---|---|---|---|
+| eggholder, d = 3 | 0.2 | 5.5 | 22.6 | 24.3 |
+| rotated_rosenbrock, d = 6 | 0.3 | 5.4 | 37.3 | 41.1 |
+| gaussian_peaks, d = 10 | 0.5 | 5.0 | 44.9 | 54.4 |
+| gaussian_peaks, d = 6, walker | 0.5 | 4.7 | 27.1 | 31.4 |
+| active_peaks, d = 10 | 0.5 | 5.4 | 44.4 | 44.8 |
+| step_ridge, d = 6 | 0.6 | 5.1 | 33.3 | 34.1 |
+| michalewicz, d = 5 | 0.4 | 5.6 | 27.6 | 25.8 |
+| ackley, d = 6 | 0.4 | 5.2 | 30.4 | 29.4 |
+| griewank, d = 6 | 0.5 | 5.5 | 48.6 | 44.1 |
+| chirp, d = 4 | 0.3 | 4.8 | 34.9 | 34.8 |
+
+Reading:
+
+* **With network features** the state is better than the plain tree on all ten runs
+  (geometric mean 0.16 of its error; `'net'` 0.30, better on nine) and better than `'net'`
+  on six. Where it is ahead, it is by a factor of 350 (`michalewicz`, a sum of one-input
+  terms), 4 (`ackley`), 1.4 (`chirp`), 1.2 (`rotated_rosenbrock`) and by 5% or less on
+  `eggholder` and `griewank`, which no configuration resolves. Where `'net'` is ahead
+  (both `gaussian_peaks` runs, `active_peaks`, `step_ridge`), the state has 1.1 to 1.7
+  times its error.
+* **Without network features** the state is still better than the plain tree on all ten,
+  but on the two 10D targets and the step ridge only by 5 to 22%, where the network gains
+  a factor of 3.5 to 20. These targets have no additive part, and 500 kernel centres do not
+  carry a function of ten inputs. For targets of many inputs, use `net=True`.
+* **Early in the stream** (points 2001 to 4000) `'net'` is worse than the plain tree on
+  five of the ten runs, by 14 to 49%. The state is better than the plain tree on all ten,
+  with network features on nine (2% worse on `griewank`), and the state with network
+  features is better than `'net'` on all ten (geometric mean 0.29 of its error).
+* **The lead over `'net'` shrinks with the stream** on smooth coupled targets: from the
+  early window to the end the ratio of the errors goes from 0.23 to 0.82 on
+  `rotated_rosenbrock`, from 0.61 to 1.4 on the walker and from 0.74 to 1.7 on the 10D
+  peaks. The network keeps improving with data; what the state can represent above order
+  one, apart from its own network features, is fixed by its 500 centres.
+* **With noise** the long streams end with `'net'` ahead: the state with network features
+  has 1.15 to 1.33 times its error, and held-out stopping changes little (0.85 to 1.02).
+  Early in the same streams the picture is that of the 4000-point benchmark: `'net'` is
+  1.1 to 1.8 times worse than the plain tree, held-out stopping brings it to 0.29 to 0.43
+  of that, and the state with network features is level with the latter (0.82 to 1.07).
+  The noise here varies from point to point over a factor of 30, and the network's loss
+  weights the points by it; most points carry little noise.
+* **Coverage** on the stream is 0.65 to 0.73 for every configuration without noise.
+* **Cost.** Mean update time per point is 7 to 12 ms for the state and 8 to 14 ms with
+  network features, against 3.3 to 5.4 ms for the plain tree and 5.3 to 8.1 ms for `'net'`;
+  prediction takes 2.7 to 4.6 ms against 0.65 ms and 2.3 to 3.9 ms. A whole run takes
+  2.1 to 3.0 times (3.5 with network features) as long as the plain tree's, `'net'` 1.8 to
+  2.3 times. The longest single update is 23 to 54 s (a fit of the prior with the solve
+  and the network refit that follow it), against 5 s for `'net'` and 0.2 to 0.6 s for the
+  plain tree: these steps are not amortised.
+
+The per-batch records are `results/compare_tree_vs_neural/*_state_batches.csv`;
+`results/state_mean/long_summary.png` shows the final errors and the update times.
+
 ## Limits
 
 * Single output. `StateGlobalMean` raises on a multi-output tree.
-* Three seeds for the two rotated targets and one for the additive-type targets, all at
-  4000 points. There are no runs at 40 000 points, where the reference numbers of the
-  hybrid are, and none in more than 6 dimensions.
-* Six to eight times the run time of the plain tree at this stream length, most of it in
-  the prior fits.
+* Three seeds for the two rotated targets at 4000 points; one seed for the additive-type
+  targets and for the streams of 40 000 points.
+* Run time: six to eight times the plain tree's at 4000 points, two to three and a half
+  times at 40 000.
+* Latency. A fit of the prior, the solve that follows and a refit of the state's network
+  happen inside one update. The longest single update of a 40 000-point stream took 23 to
+  54 s, against 5 s for `'net'` with its amortised refits and half a second for the plain
+  tree.
+* Without network features the state gains little on targets of many inputs that have no
+  additive structure (0.78 to 0.95 of the plain tree's error on the two 10D targets and
+  the step ridge at 40 000 points).
+* On smooth coupled targets the lead over `'net'` shrinks as the stream grows, and with
+  noise at 40 000 points `'net'` is ahead (see "Long streams").
 * 500 kernel centres. Structure above order one that is finer than their spacing is left
   to the leaves, and with `net=True` to the network: on `GaussianPeaks` the state alone
   gains little over the plain tree (0.77 to 0.80 of its error on the uniform stream).
@@ -413,6 +557,13 @@ for noise in 0 0.2; do
   done
 done
 python benchmark_global_mean_streams.py --summarize results/state_mean/streams_N4000_seed*.jsonl
+
+# a long stream: one process per configuration, then the per-batch record and the figures
+for config in tree hybrid state state_net; do
+  OMP_NUM_THREADS=1 python compare_tree_vs_hybrid.py --target michalewicz --d 5 --N 40000 --config $config
+done
+python compare_tree_vs_hybrid.py --target michalewicz --d 5 --N 40000 --plot \
+    --overlay tree,hybrid,state,state_net --overlay-name state
 python plot_state_mean_results.py
 ```
 

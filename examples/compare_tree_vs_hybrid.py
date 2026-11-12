@@ -13,8 +13,10 @@ the number of leaves.
     python examples/compare_tree_vs_hybrid.py --target eggholder --d 3 --N 40000 --plot
 
 Configurations: ``tree`` (ARD Matern leaves), ``hybrid`` (GP leaves on the
-residual of the feature network) and ``global_gp``
-(GP leaves on the residual of the additive global GP); ``Nbar = 100``,
+residual of the feature network), ``global_gp`` (GP leaves on the residual of
+the additive global GP), ``state`` (GP leaves on the residual of the
+interaction-order state) and ``state_net`` (the same with network features);
+``Nbar = 100``,
 ``theta = 1e-4``, a retrain every 25 points, gradual splitting and calibrated
 sigma unless ``--Nbar``, ``--retrain``, ``--splitting`` or ``--kernel`` say
 otherwise. ``--net key=value ...`` passes arguments to the ``FeatureNetLearner``.
@@ -146,6 +148,10 @@ def run(a):
         gpt = GPTree(GPR=Default_GPR(n_restarts_optimizer=1),
                      global_mean=AdditiveGPGlobalMean(reservoir_size=500, min_points=200, min_turnover=0.25,
                                                       n_restarts_optimizer=2, random_state=a.seed), **common)
+    elif a.config in ('state', 'state_net'):
+        from pygptreeo import StateGlobalMean
+        gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1),
+                     global_mean=StateGlobalMean(net=a.config == 'state_net', random_state=a.seed), **common)
     else:
         raise ValueError(a.config)
     os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -276,7 +282,7 @@ def main():
     ap.add_argument('--target', default='eggholder'); ap.add_argument('--d', type=int, default=3)
     ap.add_argument('--stream', default='uniform'); ap.add_argument('--N', type=int, default=40000)
     ap.add_argument('--seed', type=int, default=1)
-    ap.add_argument('--config', default='tree', help='tree, hybrid or global_gp')
+    ap.add_argument('--config', default='tree', help='tree, hybrid, global_gp, state or state_net')
     ap.add_argument('--kernel', default='matern15', choices=KERNELS, help='leaf kernel of tree and hybrid')
     ap.add_argument('--plot', action='store_true', help='draw the figure from the CSV files of both configurations')
     ap.add_argument('--kernels', action='store_true', help="with --plot: the hybrid's kernel variants")

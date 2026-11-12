@@ -291,7 +291,16 @@ are sums of terms in one or two inputs, it was two to four orders of magnitude b
 plain tree without noise (one seed). One-sigma coverage away from the stream was 0.50 to
 0.56 without noise, against 0.31 to 0.37 for the other modes. The cost was six to eight
 times the run time of the plain tree at this length, two thirds of it in the fits of the
-prior, whose number grows with the logarithm of the stream. Single output only.
+prior, whose number grows with the logarithm of the stream.
+
+On ten streams of 40 000 points with 3 to 10 inputs (the reference runs of the hybrid, one
+seed) the state with `net=True` was better than the plain tree on all ten and better than
+`'net'` on six, by a factor of 350 on a target that is a sum of one-input terms; on the
+other four it had 1.1 to 1.7 times the error of `'net'`. Without network features the
+state gained little on the 10D targets, which have no additive part: for targets of many
+inputs use `net=True`. At this length a run took two to three and a half times as long as
+the plain tree's. The fits of the prior are not amortised: the longest single update took
+23 to 54 s. Single output only.
 `examples/BENCHMARK_RESULTS_state_mean.md` has the model in formulas, the tables and the
 limits; `examples/example_state_mean.py` runs it against the plain tree.
 
