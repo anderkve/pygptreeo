@@ -206,9 +206,10 @@ so far. Single-output targets only.
 
 Use it where the target is known or suspected to be close to a sum of functions of single
 inputs: on the 6D Rastrigin and Levy functions it takes the error from a tenth of the
-range to a millionth at 4000 points, at 1.25 times the plain tree's run time. On targets
+range to a millionth at 4000 points, at 1.25 times the plain tree's run time, and on ten
+40 000-point streams it has half the plain tree's error and is never above it. On targets
 without additive structure it gives no gain and can make the tree worse, by a large
-factor where the plain tree is already very accurate.
+factor where a focusing stream has made the plain tree very accurate.
 `examples/BENCHMARK_RESULTS_additive_sums.md` has the design and the measurements.
 
 ## Feature network as global model (opt-in, needs PyTorch)
@@ -243,7 +244,9 @@ alone, as it was before the additive model existed and without held-out points u
 
 On two fully coupled 6D targets under four kinds of stream the network beside the
 additive model has 0.31 of the plain tree's error without noise, as the network alone,
-and 0.70 with noise, where the network alone has 1.44
+and 0.70 with noise, where the network alone has 1.44. On ten 40 000-point streams it has
+0.16 of the plain tree's error and 0.55 of the network alone's, at 1.5 times the plain
+tree's run time where the network alone takes 2.0 times
 (`examples/BENCHMARK_RESULTS_additive_sums.md`). On eleven targets with the structure of
 particle-physics computations (cross-sections with thresholds and resonances, a relic
 density, an oscillation probability, a likelihood with nuisance parameters) it has half
