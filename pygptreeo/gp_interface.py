@@ -181,3 +181,20 @@ class GPRegressorInterface(ABC):
         falls back to data spread). The returned array has shape (n_features,).
         """
         return None
+
+    def refit_fixed(self, X: np.ndarray, y: np.ndarray) -> bool:
+        """Fit to ``(X, y)`` with the hyperparameters of the last fit kept.
+
+        Optional capability used by global models that publish often
+        (``cheap_leaf_refresh``). Returns False if the backend cannot, in which
+        case the caller does a full fit.
+        """
+        return False
+
+    def mean_weights(self, X: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """Return ``(A, X_train)`` with the predictive mean at the rows of ``X``
+        equal to ``A.T @ y_train``, ``A`` of shape (n_train, n_samples), or None.
+
+        Optional capability used by ``AdditiveGlobalMean`` for its variance.
+        """
+        return None

@@ -142,6 +142,9 @@ class GlobalMeanLearner:
 
     current: Optional[GlobalMeanSnapshot] = None
     error_scale: Optional[np.ndarray] = None
+    # True: a leaf takes up a new snapshot by refitting its GP with the hyperparameters
+    # kept (where the GP backend can) instead of optimising them again.
+    cheap_leaf_refresh: bool = False
 
     def observe(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray) -> bool:
         """Register one observation; return True if a new snapshot was published."""
@@ -305,5 +308,8 @@ def make_global_mean(spec: Union[None, str, GlobalMeanLearner], **kwargs) -> Opt
         if spec == 'net':
             from pygptreeo.feature_net import NetGlobalMean
             return NetGlobalMean(**kwargs)
-        raise ValueError(f"Unknown global_mean '{spec}'. Use None, 'additive_gp', 'net' or a GlobalMeanLearner instance.")
+        if spec == 'additive':
+            from pygptreeo.additive_sums import AdditiveGlobalMean
+            return AdditiveGlobalMean(**kwargs)
+        raise ValueError(f"Unknown global_mean '{spec}'. Use None, 'additive', 'additive_gp', 'net' or a GlobalMeanLearner instance.")
     raise TypeError("global_mean must be None, a string or a GlobalMeanLearner instance")

@@ -20,6 +20,7 @@ Main components:
     - AdditivePeriodicMaternKernel: Shorthand for additive-periodic + catch-all leaf kernel
     - OutputBasis / OutputBasisLearner: Global PCA output basis for multi-output trees
     - AdditiveGPGlobalMean / GlobalMeanLearner: Tree-wide global model whose residual the leaves model
+    - AdditiveGlobalMean: Additive global model computed from running sums
 
 Typical usage:
     from pygptreeo import GPTree
@@ -66,6 +67,8 @@ from pygptreeo.global_mean import (
     AdditiveGPGlobalMean,
     CoverageReservoir,
 )
+
+from pygptreeo.additive_sums import AdditiveGlobalMean, AdditiveSnapshot
 
 # Conditionally import GPyTorch adapter if available
 try:
