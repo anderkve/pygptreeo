@@ -1,0 +1,16 @@
+{"run": "gaussian_peaks, uniform, 4000 points", "config": "tree", "seconds": 17.6}
+{"run": "gaussian_peaks, uniform, 4000 points", "config": "hybrid_no_holdout", "seconds": 63.3}
+{"run": "gaussian_peaks, uniform, 4000 points", "config": "hybrid_full_refit", "seconds": 58.5}
+{"run": "gaussian_peaks, uniform, 4000 points", "config": "hybrid", "seconds": 51.7}
+{"run": "rotated_rosenbrock, walker, 4000 points", "config": "tree", "seconds": 22.1}
+{"run": "rotated_rosenbrock, walker, 4000 points", "config": "hybrid_no_holdout", "seconds": 58.4}
+{"run": "rotated_rosenbrock, walker, 4000 points", "config": "hybrid_full_refit", "seconds": 55.4}
+{"run": "rotated_rosenbrock, walker, 4000 points", "config": "hybrid", "seconds": 48.8}
+{"run": "rotated_rosenbrock, 6D, 40 000 points", "config": "tree", "seconds": 207.5, "longest_update": 0.45}
+{"run": "rotated_rosenbrock, 6D, 40 000 points", "config": "hybrid_no_holdout", "seconds": 393.3, "longest_update": 5.91}
+{"run": "rotated_rosenbrock, 6D, 40 000 points", "config": "hybrid_full_refit", "seconds": 372.4, "longest_update": 5.14}
+{"run": "rotated_rosenbrock, 6D, 40 000 points", "config": "hybrid", "seconds": 308.1, "longest_update": 4.8}
+{"run": "gaussian_peaks, 10D, 40 000 points", "config": "tree", "seconds": 253.4, "longest_update": 0.66}
+{"run": "gaussian_peaks, 10D, 40 000 points", "config": "hybrid_no_holdout", "seconds": 542.4, "longest_update": 6.14}
+{"run": "gaussian_peaks, 10D, 40 000 points", "config": "hybrid_full_refit", "seconds": 536.9, "longest_update": 6.84}
+{"run": "gaussian_peaks, 10D, 40 000 points", "config": "hybrid", "seconds": 398.4, "longest_update": 5.71}

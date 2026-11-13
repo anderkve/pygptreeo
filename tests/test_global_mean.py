@@ -239,6 +239,62 @@ class TestNodeResidual(unittest.TestCase):
             node.predict(X[:3])
         self.assertEqual(len(fits), 2)             # and not again
 
+    def test_cheap_leaf_refresh_keeps_the_hyperparameters(self):
+        for cheap in (True, False):
+            learner = FakeLearner()
+            learner.cheap_leaf_refresh = cheap
+            learner.publish(1, lambda X: 5.0 + 2.0 * X[:, 0])
+            node, X, y = self._node(learner)
+            with contextlib.redirect_stdout(io.StringIO()):
+                node.fit_my_GPR(force_training=True)
+            gpr = node.my_GPRs[0]
+            theta = gpr.get_kernel().theta.copy()
+            calls = []
+            fit, refit_fixed = gpr.fit, gpr.refit_fixed
+            gpr.fit = lambda *a: (calls.append('fit'), fit(*a))[1]
+            gpr.refit_fixed = lambda *a: (calls.append('fixed'), refit_fixed(*a))[1]
+            learner.publish(2, lambda X: 4.0 + 2.0 * X[:, 0] + 0.5 * np.sin(6 * X[:, 0]))
+            with contextlib.redirect_stdout(io.StringIO()):
+                mu, _ = node.predict(X[:10])
+            self.assertEqual(node._fitted_global.version, 2)
+            self.assertLess(np.sqrt(np.mean((mu[:, 0] - y[:10]) ** 2)), 0.02)
+            self.assertEqual(calls, ['fixed'] if cheap else ['fit'])
+            if cheap:
+                np.testing.assert_allclose(gpr.get_kernel().theta, theta)
+
+    def test_cheap_leaf_refresh_falls_back_to_a_full_fit(self):
+        learner = FakeLearner()
+        learner.cheap_leaf_refresh = True
+        learner.publish(1, lambda X: 5.0 + 2.0 * X[:, 0])
+        node, X, y = self._node(learner)
+        with contextlib.redirect_stdout(io.StringIO()):
+            node.fit_my_GPR(force_training=True)
+        gpr = node.my_GPRs[0]
+        calls = []
+        fit = gpr.fit
+        gpr.fit = lambda *a: (calls.append('fit'), fit(*a))[1]
+        gpr.refit_fixed = lambda *a: False                     # a backend without the capability
+        learner.publish(2, lambda X: 4.0 + 2.0 * X[:, 0])
+        with contextlib.redirect_stdout(io.StringIO()):
+            mu, _ = node.predict(X[:10])
+        self.assertEqual(calls, ['fit'])
+        self.assertEqual(node._fitted_global.version, 2)
+        self.assertLess(np.sqrt(np.mean((mu[:, 0] - y[:10]) ** 2)), 0.02)
+
+    def test_refit_fixed_of_the_sklearn_backend(self):
+        rng = np.random.RandomState(10)
+        X = rng.rand(30, 2); y = np.sin(3 * X[:, :1]) + 2.0
+        for normalize_y in (False, True):
+            gpr = Default_GPR(n_restarts_optimizer=0, normalize_y=normalize_y)
+            self.assertFalse(gpr.refit_fixed(X, y))                # not fitted yet
+            gpr.set_observation_noise(np.full(30, 1e-4)); gpr.fit(X, y)
+            theta = gpr.get_kernel().theta.copy()
+            Xq = rng.rand(7, 2); before = np.ravel(gpr.predict(Xq))
+            self.assertTrue(gpr.refit_fixed(X, 3 * y))
+            np.testing.assert_allclose(gpr.get_kernel().theta, theta)
+            np.testing.assert_allclose(np.ravel(gpr.predict(Xq)), 3 * before, atol=1e-6)
+            self.assertIsNotNone(gpr.sklearn_gpr.optimizer)        # the optimiser is back in place
+
     def test_global_error_scale_enters_sigma(self):
         learner = FakeLearner()
         learner.publish(1, lambda X: 5.0 + 2.0 * X[:, 0])

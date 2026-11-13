@@ -252,6 +252,19 @@ class SklearnGPAdapter(GPRegressorInterface):
             return None
         return np.min(np.vstack(ls_arrays), axis=0)
 
+    def refit_fixed(self, X: np.ndarray, y: np.ndarray) -> bool:
+        """Fit with the fitted kernel kept (no hyperparameter optimisation)."""
+        sk = self._gpr
+        if not hasattr(sk, 'kernel_'):
+            return False
+        optimizer, kernel = sk.optimizer, sk.kernel
+        sk.optimizer, sk.kernel = None, sk.kernel_
+        try:
+            sk.fit(X, y)
+        finally:
+            sk.optimizer, sk.kernel = optimizer, kernel
+        return True
+
     # Provide access to the underlying scikit-learn GPR for advanced users
     @property
     def sklearn_gpr(self) -> GaussianProcessRegressor:

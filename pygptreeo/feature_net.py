@@ -5,6 +5,8 @@
 the GP leaves model. Requires PyTorch.
 """
 
+import copy
+import zlib
 from typing import Optional
 
 import numpy as np
@@ -48,7 +50,27 @@ class _GrowingStore:
         return True
 
 
+class _HeldOutBest:
+    """The weights with the lowest loss on the held-out points of a refit."""
+
+    def __init__(self, Xh, Yh, Wh):
+        self.Xh, self.Yh, self.Wh = Xh, Yh, Wh
+        self.best = np.inf; self.state = None
+
+    def check(self, net):
+        with torch.no_grad():
+            loss = float((((net(self.Xh) - self.Yh) ** 2) * self.Wh).mean())
+        if loss < self.best:
+            self.best, self.state = loss, copy.deepcopy(net.state_dict())
+
+    def restore(self, net):
+        self.check(net)
+        if self.state is not None:
+            net.load_state_dict(self.state)
+
+
 BATCH_SIZE = 128              # Adam minibatch size
+HOLDOUT_CHECK_EVERY = 25      # L-BFGS iterations between two checks of the held-out loss (ten times as many Adam steps)
 ERROR_WINDOW = 200            # observations the running estimate of the head's error remembers
 POLISH_STEPS_PER_UPDATE = 8   # Adam steps per L-BFGS iteration in an amortised refit's polish phase (about equal cost)
 
@@ -62,7 +84,9 @@ class FeatureNetLearner:
     the stream, then Adam minibatch steps over every point seen. The loss weights
     each point by ``1 / (sigma^2 + s^2)``, ``s`` the head's prequential error
     with the observation noise subtracted (``error_scale``). A refit is due when
-    the observation count has doubled since the last one.
+    the observation count has doubled since the last one. A fraction ``holdout``
+    of the points is never trained on, and a refit publishes the weights that had
+    the lowest loss on them.
 
     Parameters
     ----------
@@ -85,13 +109,22 @@ class FeatureNetLearner:
         it over the following observations, this many L-BFGS iterations (and
         ``POLISH_STEPS_PER_UPDATE`` times as many Adam steps) per call, on a copy
         of the network published when complete. The first fit always runs at once.
+    holdout : float, default=0.2
+        Fraction of the points that is never trained on; a refit publishes the
+        weights with the lowest loss on them. A refit continues from the current
+        weights, so without held-out points a fit to few or noisy points is carried
+        along. 0 trains on every point and publishes the last weights.
     random_state : int or None
     """
 
     def __init__(self, hidden: int = 128, depth: int = 3, steps: int = 300, polish_steps: int = 3000,
                  lr: float = 1e-3, min_points: int = 200, reservoir_size: Optional[int] = 5000,
-                 steps_per_update: Optional[int] = None, random_state: Optional[int] = None):
+                 steps_per_update: Optional[int] = None, holdout: float = 0.2,
+                 random_state: Optional[int] = None):
         _require_torch()
+        if not (0.0 <= holdout < 1.0):
+            raise ValueError("holdout must be in [0, 1)")
+        self.holdout = float(holdout)
         if steps < 0 or polish_steps < 0:
             raise ValueError("steps and polish_steps must be non-negative")
         if steps == 0 and polish_steps == 0:
@@ -169,9 +202,21 @@ class FeatureNetLearner:
         self.fit(); return True
 
     # -- fitting ------------------------------------------------------------------------
+    def held_out(self, X: np.ndarray) -> np.ndarray:
+        """Boolean mask of the rows of ``X`` that are never trained on. A point's
+        membership depends only on its coordinates, so it is the same wherever the
+        point is stored."""
+        X = np.ascontiguousarray(np.atleast_2d(np.asarray(X, float)))
+        if self.holdout <= 0.0:
+            return np.zeros(X.shape[0], dtype=bool)
+        salt = 0 if self.random_state is None else int(self.random_state)
+        h = np.array([zlib.crc32(row.tobytes(), salt) for row in X], dtype=np.uint64)
+        return (h % 10000) < self.holdout * 10000
+
     def _training_set(self, source, scal=None):
-        """``source`` standardised as tensors, the per-point loss weights, and the
-        scaling ``(x_mu, x_sd, y_mu, y_sd)``; ``scal`` reuses a scaling."""
+        """``source`` standardised as tensors, the per-point loss weights, the
+        scaling ``(x_mu, x_sd, y_mu, y_sd)`` and the mask of held-out rows;
+        ``scal`` reuses a scaling."""
         if isinstance(source, _GrowingStore):
             source._flush()
         X = source.X; Y = source.y; S = source.sigma
@@ -189,7 +234,17 @@ class FeatureNetLearner:
         var = (S / y_sd) ** 2 + (0.0 if err is None else (err / y_sd) ** 2)
         w = 1.0 / np.maximum(var, 1e-4)
         Wt = torch.tensor(w / w.mean(axis=0), dtype=torch.float32)
-        return Xt, Yt, Wt, (x_mu, x_sd, y_mu, y_sd)
+        return Xt, Yt, Wt, (x_mu, x_sd, y_mu, y_sd), self.held_out(X)
+
+    def _split(self, Xt, Yt, Wt, hold, best):
+        """Training rows, and the record of the best weights (created from the
+        held-out rows if there is none yet)."""
+        if not hold.any() or hold.all():
+            return Xt, Yt, Wt, best
+        tr = torch.tensor(np.flatnonzero(~hold)); ho = torch.tensor(np.flatnonzero(hold))
+        if best is None:
+            best = _HeldOutBest(Xt[ho], Yt[ho], Wt[ho])
+        return Xt[tr], Yt[tr], Wt[tr], best
 
     def _new_net(self):
         torch.manual_seed(int(self.rng.randint(1 << 30)))
@@ -201,23 +256,25 @@ class FeatureNetLearner:
     def _lbfgs_phase(self, net):
         """The L-BFGS phase on the reservoir (None when off) and the scaling this
         refit publishes."""
-        Xt, Yt, Wt, scal = self._training_set(self.sample)
+        Xt, Yt, Wt, scal, hold = self._training_set(self.sample)
         if self.steps == 0:
             return None, scal
+        Xt, Yt, Wt, best = self._split(Xt, Yt, Wt, hold, None)
         # One iteration per step() call; max_eval's default of 1 would cut the line search.
         opt = torch.optim.LBFGS(net.parameters(), lr=1.0, max_iter=1, max_eval=25, history_size=20,
                                 line_search_fn='strong_wolfe', tolerance_grad=0.0, tolerance_change=0.0)
-        return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=None, state=None), scal
+        return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=None, state=None, best=best, it=0), scal
 
-    def _polish_phase(self, net, scal):
+    def _polish_phase(self, net, scal, best=None):
         """The Adam phase over every point, with this refit's scaling; None when off."""
         source = self.store if self.store is not None else self.sample
         if self.polish_steps == 0 or source.n < 2:
             return None
-        Xt, Yt, Wt, _ = self._training_set(source, scal)
+        Xt, Yt, Wt, _, hold = self._training_set(source, scal)
+        Xt, Yt, Wt, best = self._split(Xt, Yt, Wt, hold, best)
         opt = torch.optim.Adam(net.parameters(), lr=self.lr)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=self.polish_steps, eta_min=0.0)
-        return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=sched, state={'perm': None, 'pos': 0})
+        return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=sched, state={'perm': None, 'pos': 0}, best=best, it=0)
 
     @staticmethod
     def _loss(net, X, Y, W):
@@ -225,14 +282,23 @@ class FeatureNetLearner:
 
     def _train(self, net, ph, n_steps):
         """Run n_steps of a phase: full-batch L-BFGS iterations, or minibatch Adam
-        steps (``ph['state']`` carries the epoch permutation across calls)."""
+        steps (``ph['state']`` carries the epoch permutation across calls). With
+        held-out points their loss is checked at regular intervals."""
         net.train(); done = 0
-        Xt, Yt, Wt, opt, sched, state = ph['Xt'], ph['Yt'], ph['Wt'], ph['opt'], ph['sched'], ph['state']
+        Xt, Yt, Wt, opt, sched, state, best = ph['Xt'], ph['Yt'], ph['Wt'], ph['opt'], ph['sched'], ph['state'], ph['best']
+        every = HOLDOUT_CHECK_EVERY if sched is None else 10 * HOLDOUT_CHECK_EVERY
+
+        def check():
+            ph['it'] += 1
+            if best is not None and ph['it'] % every == 0:
+                net.eval(); best.check(net); net.train()
+
         if sched is None:
             def closure():
                 opt.zero_grad(); loss = self._loss(net, Xt, Yt, Wt); loss.backward(); return loss
             while done < n_steps:
                 opt.step(closure); done += 1
+                check()
             net.eval(); return
         n = Xt.shape[0]; batch = int(min(BATCH_SIZE, max(2, n // 2)))
         while done < n_steps:
@@ -241,6 +307,7 @@ class FeatureNetLearner:
             idx = state['perm'][state['pos']:state['pos'] + batch]; state['pos'] += batch
             loss = self._loss(net, Xt[idx], Yt[idx], Wt[idx])
             opt.zero_grad(); loss.backward(); opt.step(); sched.step(); done += 1
+            check()
         net.eval()
 
     def _publish(self, net, scal, t_spent):
@@ -259,16 +326,18 @@ class FeatureNetLearner:
         self._shadow = None
         net = self.net if self.net is not None else self._new_net()
         ph, scal = self._lbfgs_phase(net)
+        best = None
         if ph is not None:
-            self._train(net, ph, self.steps)
-        ph = self._polish_phase(net, scal)
+            self._train(net, ph, self.steps); best = ph['best']
+        ph = self._polish_phase(net, scal, best)
         if ph is not None:
-            self._train(net, ph, self.polish_steps)
+            self._train(net, ph, self.polish_steps); best = ph['best']
+        if best is not None:
+            best.restore(net)
         self._publish(net, scal, time.time() - t0)
 
     def _start_shadow(self):
         """Begin an amortised refit on a copy of the network."""
-        import copy
         net = copy.deepcopy(self.net)
         ph, scal = self._lbfgs_phase(net)
         self._shadow = dict(net=net, scal=scal, lbfgs=ph, done=0, polish=None, polish_started=False, polish_done=0, t=0.0)
@@ -282,7 +351,8 @@ class FeatureNetLearner:
             self._train(s['net'], s['lbfgs'], k)
             s['done'] += k
         if s['done'] >= self.steps and not s['polish_started']:
-            s['polish'] = self._polish_phase(s['net'], s['scal'])   # on the store as it stands now
+            best = None if s['lbfgs'] is None else s['lbfgs']['best']
+            s['polish'] = self._polish_phase(s['net'], s['scal'], best)   # on the store as it stands now
             s['polish_started'] = True
         if s['polish'] is not None and s['polish_done'] < self.polish_steps:
             k = min(POLISH_STEPS_PER_UPDATE * self.steps_per_update, self.polish_steps - s['polish_done'])
@@ -290,6 +360,9 @@ class FeatureNetLearner:
             s['polish_done'] += k
         s['t'] += time.time() - t0
         if s['done'] >= self.steps and (s['polish'] is None or s['polish_done'] >= self.polish_steps):
+            last = s['polish'] if s['polish'] is not None else s['lbfgs']
+            if last is not None and last['best'] is not None:
+                last['best'].restore(s['net'])
             self._shadow = None
             self._publish(s['net'], s['scal'], s['t'])
             return True
@@ -311,7 +384,7 @@ class FeatureNetLearner:
 
     def __repr__(self) -> str:
         return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, steps={self.steps}, "
-                f"polish_steps={self.polish_steps}, reservoir_size={self.reservoir_size}, n_seen={self.n_seen}, "
+                f"polish_steps={self.polish_steps}, reservoir_size={self.reservoir_size}, holdout={self.holdout}, n_seen={self.n_seen}, "
                 f"n_refits={self.n_refits}, version={self.version})")
 
 
@@ -337,9 +410,13 @@ class NetGlobalMean(GlobalMeanLearner):
     """A feature network as the tree's global model: GP leaves on the residual of its head.
 
     Wraps a :class:`FeatureNetLearner` (built from the keyword arguments) as a
-    :class:`GlobalMeanLearner`. Each published network version is a new snapshot
-    the leaves refit against on first use; ``error_scale`` is the learner's.
+    :class:`GlobalMeanLearner`. Each published network version is a new snapshot.
+    A leaf takes it up on first use by refitting its GP on the new residual with
+    the kernel hyperparameters kept (``cheap_leaf_refresh``); ``error_scale`` is
+    the learner's.
     """
+
+    cheap_leaf_refresh = True
 
     def __init__(self, **learner_kwargs):
         _require_torch()

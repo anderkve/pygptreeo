@@ -30,6 +30,14 @@ Configurations:
                   on the reservoir, length scale 1x / 0.5x / 2x the reservoir
                   spacing)
     *_lin         leaf kernel with an added linear-trend term
+    hybrid        ``GPTree(global_mean='net')``, the feature network as global model
+    hybrid_full_refit   ``hybrid`` whose leaves optimise their kernel hyperparameters
+                  again for every new version of the network
+    hybrid_no_holdout   ``hybrid_full_refit`` with a network trained on every point
+                  (``holdout=0``)
+
+``--noise g`` adds Gaussian noise of ``g`` times the standard deviation of the
+target and declares it to the tree; errors are always against the noise-free target.
 
 Global-model design shared by the prototype and the package:
     * a coverage reservoir (maximin design, 500 points) rather than a
@@ -324,13 +332,15 @@ GPNode.generate_children = _children_with_residual
 
 
 # --------------------------------------------------------------------------- #
-def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
+def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False, noise=0.0):
     target = TARGETS[target_name]
     rng = np.random.RandomState(seed)
     X, X_focus = make_stream(stream, target, d, N, rng)
-    y = target(X.T); sig = np.maximum(1e-3 * np.abs(y), 1e-6)
+    f = target(X.T); y = f; sig = np.maximum(1e-3 * np.abs(f), 1e-6)
     X_uni = rng.rand(3000, d); y_uni = target(X_uni.T); y_focus = target(X_focus.T)
     yrange = y_uni.max() - y_uni.min()
+    if noise > 0:
+        sig = np.full(N, noise * y_uni.std()); y = f + sig * rng.randn(N)
     warmup = max(500, N // 6)
 
     model = None
@@ -353,10 +363,12 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
         model = GlobalMeanModel(d, seed, damping_scale=0.5)
     elif config == 'global_damped_wide':     # 2 x spacing: mild damping
         model = GlobalMeanModel(d, seed, damping_scale=2.0)
-    elif config == 'hybrid':
+    elif config in ('hybrid', 'hybrid_full_refit', 'hybrid_no_holdout'):
         # GP leaves on the residual of the feature network's head (the network as global model)
         from pygptreeo import NetGlobalMean
-        package_learner = NetGlobalMean(steps_per_update=8, random_state=seed)
+        net = dict(holdout=0.0) if config == 'hybrid_no_holdout' else {}
+        package_learner = NetGlobalMean(steps_per_update=8, random_state=seed, **net)
+        package_learner.cheap_leaf_refresh = config == 'hybrid'
     elif config not in ('tree', 'global_pkg'):
         raise ValueError(config)
     _ACTIVE['model'] = model
@@ -379,7 +391,7 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
             if model is not None:
                 model.observe(xi, y[i])
             mu, sd = gpt.predict(xi)
-            errs[i] = mu[0, 0] - y[i]; sds[i] = sd[0, 0]
+            errs[i] = mu[0, 0] - f[i]; sds[i] = sd[0, 0]
             gpt.update_tree(xi, np.array([[y[i]]]), np.array([[sig[i]]]))
         P_uni, S_uni = gpt.predict(X_uni, mode='loop')
         P_focus, S_focus = gpt.predict(X_focus, mode='loop')
@@ -387,7 +399,7 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
     e_uni = P_uni[:, 0] - y_uni; e_focus = P_focus[:, 0] - y_focus
     out = {
         'target': target_name, 'stream': stream, 'config': config + ('_fresh' if refresh else '') + ('_lin' if linear else ''),
-        'seed': seed, 'd': d, 'N': N, 'calibrated': bool(calibrate),
+        'seed': seed, 'd': d, 'N': N, 'calibrated': bool(calibrate), 'noise': noise,
         'prequential_nrmse': float(np.sqrt(np.mean(errs[warmup:] ** 2)) / yrange),
         'uniform_nrmse': float(np.sqrt(np.mean(e_uni ** 2)) / yrange),
         'focus_nrmse': float(np.sqrt(np.mean(e_focus ** 2)) / yrange),
@@ -400,7 +412,7 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
         'sigma_over_rmse_focus': float(np.sqrt(np.mean(S_focus[:, 0] ** 2)) / np.sqrt(np.mean(e_focus ** 2))),
         'leaves': len(gpt.root.leaves), 'seconds': round(elapsed, 1),
     }
-    if config == 'hybrid':
+    if config in ('hybrid', 'hybrid_full_refit', 'hybrid_no_holdout'):
         out.update(refits=package_learner.learner.n_refits, fit_seconds=round(package_learner.learner.fit_seconds, 1))
     elif package_learner is not None:
         out.update(refits=package_learner.n_refits, refits_skipped=package_learner.n_skipped,
@@ -428,7 +440,8 @@ def summarize(lines):
         if not line.startswith('RESULT '):
             continue
         r = json.loads(line[len('RESULT '):])
-        rows.setdefault((r['target'], r['stream'], r['config']), []).append(r)
+        cfg = r['config'] + (f" (noise {r['noise']:g})" if r.get('noise') else '')
+        rows.setdefault((r['target'], r['stream'], cfg), []).append(r)
     with_cov = any('coverage_prequential' in r for rs in rows.values() for r in rs)
     if with_cov:
         out = ["| target | stream | config | prequential NRMSE | uniform-test NRMSE | focus-test NRMSE | "
@@ -475,6 +488,8 @@ def main():
     ap.add_argument('--nbar', type=int, default=100)
     ap.add_argument('--calibrate', action='store_true',
                     help='use_calibrated_sigma=True and report 1-sigma coverage and sigma/RMSE ratios')
+    ap.add_argument('--noise', type=float, default=0.0,
+                    help='noise standard deviation in units of the standard deviation of the target (default: none)')
     ap.add_argument('--summarize', nargs='*', help='aggregate RESULT lines from these files (or stdin) into a table')
     args = ap.parse_args()
 
@@ -488,7 +503,8 @@ def main():
     for seed in [int(s) for s in args.seeds.split(',')]:
         for stream in args.streams.split(','):
             for config in args.configs.split(','):
-                r = run_one(args.target, stream, config, seed, args.d, args.N, args.nbar, calibrate=args.calibrate)
+                r = run_one(args.target, stream, config, seed, args.d, args.N, args.nbar, calibrate=args.calibrate,
+                            noise=args.noise)
                 print("RESULT " + json.dumps(r), flush=True)
 
 

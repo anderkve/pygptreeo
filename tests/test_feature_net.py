@@ -6,11 +6,13 @@ import os
 import sys
 import unittest
 import warnings
+from unittest import mock
 
 import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from pygptreeo import feature_net
 from pygptreeo.gptree import GPTree
 from pygptreeo.feature_net import TORCH_AVAILABLE, FeatureNetLearner, NetGlobalMean
 
@@ -139,6 +141,82 @@ class TestFeatureNet(unittest.TestCase):
         self.assertFalse(learner.refit_in_progress)
         self.assertEqual(learner.version, 2)
 
+    def test_holdout_argument(self):
+        self.assertEqual(FeatureNetLearner().holdout, 0.2)
+        X = np.random.RandomState(0).rand(50, 3)
+        self.assertFalse(self._learner(holdout=0.0).held_out(X).any())
+        for bad in (-0.1, 1.0):
+            with self.assertRaises(ValueError):
+                self._learner(holdout=bad)
+
+    def test_held_out_points_depend_on_their_coordinates_only(self):
+        rng = np.random.RandomState(11)
+        X = rng.rand(2000, 3)
+        mask = self._learner().held_out(X)
+        self.assertAlmostEqual(mask.mean(), 0.2, delta=0.04)
+        perm = rng.permutation(2000)
+        np.testing.assert_array_equal(self._learner().held_out(X[perm]), mask[perm])
+
+    def test_held_out_points_are_not_trained_on(self):
+        rng = np.random.RandomState(12)
+        X = rng.rand(300, 3); y = _target(X)
+        learner = self._learner(polish_steps=200, reservoir_size=100)
+        for i in range(300):
+            learner.observe(X[i], y[i], 1e-3)
+        n_held = int(learner.held_out(learner.sample.X).sum())
+        ph, scal = learner._lbfgs_phase(learner.net)
+        self.assertEqual(ph['Xt'].shape[0], learner.sample.X.shape[0] - n_held)
+        self.assertEqual(ph['best'].Xh.shape[0], n_held)
+        polish = learner._polish_phase(learner.net, scal, ph['best'])
+        self.assertEqual(polish['Xt'].shape[0], 300 - int(learner.held_out(X).sum()))
+        self.assertIs(polish['best'], ph['best'])
+        everything = self._learner(holdout=0.0)
+        for i in range(100):
+            everything.observe(X[i], y[i], 1e-3)
+        ph, _ = everything._lbfgs_phase(everything.net)
+        self.assertEqual(ph['Xt'].shape[0], 100)
+        self.assertIsNone(ph['best'])
+
+    def test_refit_publishes_the_weights_with_the_lowest_held_out_loss(self):
+        rng = np.random.RandomState(16)
+        N = 300
+        X = rng.rand(N, 3); f = _target(X); y = f + 0.5 * f.std() * rng.randn(N)
+        seen = {'losses': []}
+        check = feature_net._HeldOutBest.check
+
+        def recording(best, net):
+            check(best, net)
+            with feature_net.torch.no_grad():
+                seen['losses'].append(float((((net(best.Xh) - best.Yh) ** 2) * best.Wh).mean()))
+            seen['best'] = best
+
+        for steps_per_update in (None, 5):
+            seen['losses'] = []
+            with mock.patch.object(feature_net._HeldOutBest, 'check', recording):
+                learner = self._learner(min_points=N, steps=100, polish_steps=600, steps_per_update=steps_per_update)
+                for i in range(N):
+                    learner.observe(X[i], y[i], 0.5 * f.std())
+            self.assertEqual(learner.n_refits, 1)
+            self.assertGreater(len(seen['losses']), 4)
+            best = seen['best']
+            with feature_net.torch.no_grad():
+                published = float((((learner.net(best.Xh) - best.Yh) ** 2) * best.Wh).mean())
+            self.assertAlmostEqual(published, min(seen['losses']), places=6)
+            self.assertLess(published, seen['losses'][-1])        # the last weights are not the best ones here
+
+    def test_holdout_lowers_the_error_on_noisy_targets(self):
+        rng = np.random.RandomState(12)
+        N = 600
+        X = rng.rand(N, 3); f = _target(X); noise = 0.5 * f.std(); y = f + noise * rng.randn(N)
+        Xt = rng.rand(500, 3); ft = _target(Xt)
+        err = {}
+        for holdout in (0.0, 0.2):
+            learner = self._learner(min_points=150, steps=300, polish_steps=1500, holdout=holdout)
+            for i in range(N):
+                learner.observe(X[i], y[i], noise)
+            err[holdout] = float(np.sqrt(np.mean((learner.head(Xt)[:, 0] - ft) ** 2)))
+        self.assertLess(err[0.2], 0.8 * err[0.0])
+
     def test_hybrid_with_amortised_refits(self):
         from pygptreeo.default_gpr import Default_GPR
         rng = np.random.RandomState(10)
@@ -172,6 +250,43 @@ class TestFeatureNet(unittest.TestCase):
         self.assertTrue(np.all(Sd > 0))
         for leaf in gpt.root.leaves:                          # every leaf fitted against the current snapshot
             self.assertEqual(leaf._fitted_global.version, gm.current.version)
+
+    def test_hybrid_defaults(self):
+        gm = GPTree(global_mean='net').global_mean
+        self.assertTrue(gm.cheap_leaf_refresh)
+        self.assertEqual(gm.learner.holdout, 0.2)
+        self.assertEqual(GPTree(global_mean='net', global_mean_kwargs=dict(holdout=0.0)).global_mean.learner.holdout, 0.0)
+
+    def test_leaves_take_up_a_new_version_with_their_hyperparameters_kept(self):
+        from pygptreeo.default_gpr import Default_GPR
+        rng = np.random.RandomState(17)
+        N = 260
+        X = rng.rand(N, 3); Y = _target(X)[:, None]; S = np.full((N, 1), 1e-3)
+        counts = {}
+        for cheap in (True, False):
+            gm = NetGlobalMean(steps=100, polish_steps=0, min_points=60, random_state=0)
+            gm.cheap_leaf_refresh = cheap
+            gpt = GPTree(GPR=Default_GPR(), Nbar=1000, retrain_every_n_points=1000, global_mean=gm)
+            _stream(gpt, X[:230], Y[:230], S[:230])
+            leaf = gpt.root
+            with contextlib.redirect_stdout(io.StringIO()):
+                gpt.predict(X[:5])
+            gpr = leaf.my_GPRs[0]; theta = gpr.get_kernel().theta.copy(); version = gm.current.version
+            calls = []
+            fit, refit_fixed = gpr.fit, gpr.refit_fixed
+            gpr.fit = lambda *a: (calls.append('fit'), fit(*a))[1]
+            gpr.refit_fixed = lambda *a: (calls.append('fixed'), refit_fixed(*a))[1]
+            _stream(gpt, X[230:], Y[230:], S[230:])            # the count doubles at 240: a new version
+            self.assertGreater(gm.current.version, version)
+            with contextlib.redirect_stdout(io.StringIO()):
+                P, _ = gpt.predict(X)
+            self.assertEqual(leaf._fitted_global.version, gm.current.version)
+            self.assertLess(np.abs(P[:, 0] - Y[:, 0]).max(), 0.05)
+            counts[cheap] = calls
+            if cheap:
+                np.testing.assert_allclose(gpr.get_kernel().theta, theta)
+        self.assertEqual(counts[True], ['fixed'])
+        self.assertEqual(counts[False], ['fit'])
 
 
 if __name__ == '__main__':

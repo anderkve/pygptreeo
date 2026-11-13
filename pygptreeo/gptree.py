@@ -154,12 +154,15 @@ class GPTree:
                 model whose *residual* the leaf GPs model. None (default): no
                 global model. 'additive_gp': an ``AdditiveGPGlobalMean`` (a GP with
                 a low-order additive + Matern kernel, fitted on a coverage reservoir
-                of the stream and refit when the reservoir turns over). Or any
+                of the stream and refit when the reservoir turns over). 'net': a
+                ``NetGlobalMean`` (a feature network trained on the stream; needs
+                PyTorch). Or any
                 ``GlobalMeanLearner`` instance. The global model captures smooth,
                 large-scale structure from all the data the tree has seen; the
                 leaves capture the rest and, at their edges, revert to it rather
                 than to a leaf constant. Each leaf remembers the snapshot it was
-                fitted against and refits before predicting if a newer one exists.
+                fitted against and refits before predicting if a newer one exists
+                (for 'net' with its kernel hyperparameters kept).
                 The predicted sigma combines the residual GP's uncertainty with the
                 learner's estimate of the global model's own error
                 (``error_scale``) and remains the uncertainty of the estimate of

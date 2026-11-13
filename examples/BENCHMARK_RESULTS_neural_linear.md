@@ -4,8 +4,9 @@ Option and class names in the measurement sections are those of the code at
 the time. What remains in the package is the feature network as GPTree's
 global model (`pygptreeo/feature_net.py`: `FeatureNetLearner` with the options
 `hidden`, `depth`, `steps`, `polish_steps`, `lr`, `min_points`,
-`reservoir_size`, `steps_per_update` and `random_state`, and `NetGlobalMean`,
-`GPTree(global_mean='net')`), the "hybrid" of the sections below. The
+`reservoir_size`, `steps_per_update`, `holdout` and `random_state`, and
+`NetGlobalMean`, `GPTree(global_mean='net')`), the "hybrid" of the sections
+below. Its defaults are those of §3.8 with the two changes of §3.10. The
 neural-linear leaves (`NeuralLinearGPR`, the "neural" configuration) were
 removed after the measurements of §3.9; the records of the other removed
 options are where they were measured.
@@ -1156,6 +1157,100 @@ whose one advantage is cost and which can emit unbounded predictions was not
 worth keeping; the fix (shrinking the leaf's correction toward the head where
 the features are far from the leaf's cloud) would need its own measurements.
 
+### 3.10 Held-out selection of the weights and the cheap leaf refit
+
+Two changes to the hybrid's defaults, measured one after the other on the
+stream benchmark of §1 and on the ten comparison runs, with the network of
+§3.8.
+
+* **Held-out selection** (`holdout=0.2`). A fifth of the points, chosen by a
+  hash of their coordinates, is never trained on, and a refit publishes the
+  weights that had the lowest loss on them (checked every 25 L-BFGS iterations
+  and every 250 Adam steps). A refit continues from the current weights, so
+  without held-out points a fit to few or noisy points is carried along.
+* **The cheap leaf refit** (`NetGlobalMean.cheap_leaf_refresh`). A leaf that
+  meets a new version of the network refits its GP on the new residual with
+  its kernel hyperparameters kept, where it optimised them again before. The
+  hyperparameters are still optimised on the leaf's own schedule
+  (`retrain_every_n_points`).
+
+Three configurations: `hybrid_no_holdout` (every point trained on, full leaf
+refit: the hybrid of the sections above), `hybrid_full_refit` (held-out
+selection, full leaf refit) and `hybrid` (both, the default).
+
+**Stream benchmark** (two 6D targets, four streams, three seeds, 4000 points;
+again with Gaussian noise of 0.2 standard deviations of the target, declared
+to the tree). Error relative to the plain tree over the 72 combinations of
+run and test set (prequential, uniform test, focus test):
+
+| error / error of the plain tree | every point trained on, full leaf refit | held-out selection, full leaf refit | **held-out selection, cheap leaf refit (default)** |
+|---|---|---|---|
+| no noise: geometric mean | 0.31 | 0.34 | 0.34 |
+| no noise: lower than the plain tree in | 68 of 72 | 69 of 72 | 69 of 72 |
+| no noise: range | 0.09 to 1.34 | 0.07 to 1.16 | 0.07 to 1.16 |
+| noise: geometric mean | 1.44 | 0.75 | 0.75 |
+| noise: lower than the plain tree in | 8 of 72 | 58 of 72 | 58 of 72 |
+| noise: range | 0.66 to 4.66 | 0.32 to 1.78 | 0.32 to 1.79 |
+
+**Comparison runs** (40 000 points, one seed; three of them again with
+`--noise 1`). RMSE over the range, last 10 000 points:
+
+| run | tree | every point trained on, full leaf refit | held-out selection, full leaf refit | **held-out selection, cheap leaf refit (default)** |
+|---|---|---|---|---|
+| eggholder, d = 3 | 0.0404 | **0.0385** | 0.0405 | 0.0402 |
+| rotated_rosenbrock, d = 6 | 0.0045 | **2.8e-04** | 2.9e-04 | 2.8e-04 |
+| gaussian_peaks, d = 10 | 0.0377 | **0.0024** | 0.0027 | 0.0027 |
+| gaussian_peaks, d = 6, walker | 0.0146 | 0.0023 | **0.0020** | 0.0021 |
+| active_peaks, d = 10 | 0.0361 | 0.0018 | **0.0017** | 0.0018 |
+| step_ridge, d = 6 | 0.0434 | 0.0122 | **0.0119** | 0.0119 |
+| michalewicz, d = 5 | 0.100 | **0.0850** | 0.0865 | 0.0863 |
+| ackley, d = 6 | 0.0647 | 0.0595 | 0.0543 | **0.0542** |
+| griewank, d = 6 | **0.0986** | 0.103 | 0.0996 | 0.0990 |
+| chirp, d = 4 | 0.0875 | **0.0670** | 0.0708 | 0.0699 |
+| rotated_rosenbrock, d = 6, noise | 0.0127 | 0.0038 | **0.0030** | 0.0031 |
+| gaussian_peaks, d = 6, walker, noise | 0.0293 | 0.0088 | **0.0083** | 0.0083 |
+| gaussian_peaks, d = 10, noise | 0.0501 | 0.0163 | **0.0106** | 0.0107 |
+
+**Run time.** Seconds for four runs in which the configurations ran side by
+side under the same load:
+
+| run | tree | every point trained on, full leaf refit | held-out selection, full leaf refit | **held-out selection, cheap leaf refit (default)** |
+|---|---|---|---|---|
+| gaussian_peaks, uniform, 4000 points | 18 | 63 | 58 | 52 |
+| rotated_rosenbrock, walker, 4000 points | 22 | 58 | 55 | 49 |
+| rotated_rosenbrock, 6D, 40 000 points | 208 | 393 | 372 | 308 |
+| gaussian_peaks, 10D, 40 000 points | 253 | 542 | 537 | 398 |
+
+Reading:
+
+* Held-out selection is what makes the hybrid safe on noisy targets. With
+  noise on the stream benchmark the network trained on every point is worse
+  than the plain tree (1.44 times its error, ahead in 8 of 72 cases); with
+  held-out selection it has 0.75 of the plain tree's error and is ahead in 58
+  of 72. On the three noisy comparison runs it has 0.78 of the error without
+  it. The one-sigma coverage on the uniform test set of the noisy streams
+  goes from 0.53 to 0.75 (plain tree 0.70).
+* Without noise it costs 9% at 4000 points, where the network trains on four
+  fifths of few points, and nothing at 40 000 (1.00 in the geometric mean
+  over the ten runs, 0.90 to 1.13 from run to run).
+* It also helps where the network cannot fit the target. On the 6D Rastrigin
+  and Levy functions (uniform stream, 4000 points) the hybrid trained on
+  every point is worse than the plain tree (0.151 against 0.117 of the range,
+  0.137 against 0.106) and with held-out selection it is better (0.097,
+  0.081).
+* The cheap leaf refit leaves the error where it was: 1.00 and 0.99 of the
+  error with the full refit on the stream benchmark without and with noise
+  (0.80 to 1.17 from case to case), 1.00 and 1.01 on the comparison runs. It
+  takes 12 to 26% off the run time, and the mean prediction time on the
+  comparison runs falls from 2.6 to 4.4 ms to 1.1 to 1.2 ms, because the
+  refit that a new version triggers runs inside the leaf's next prediction.
+* With both, the hybrid takes 1.5 to 1.6 times the plain tree's run time on
+  the two long runs above, where it took 1.9 to 2.1 times.
+
+The records are `results/neural_linear_streams_holdout/*.jsonl` (the stream
+benchmark, with `timing_same_load.jsonl` for the run times) and
+`results/compare_tree_vs_neural/*_holdout_batches.csv`.
+
 ## Reproduce
 
 ```bash
@@ -1172,6 +1267,14 @@ for k in matern05 matern25 rbf rq additive; do
 done
 python compare_tree_vs_hybrid.py --target eggholder --d 3 --N 40000 --plot --kernels
 # (the "neural" configuration of sections 1 to 3.9 is no longer in the script)
+# held-out selection and the cheap leaf refit (section 3.10); add --noise 0.2 for the noisy streams:
+OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target gaussian_peaks --seeds 1 --streams uniform,focusing,sweeping,walker \
+    --configs tree,hybrid_no_holdout,hybrid_full_refit,hybrid --N 4000 --d 6 --calibrate
+python benchmark_global_mean_streams.py --summarize results/neural_linear_streams_holdout/*_seed*.jsonl
+for c in tree hybrid_no_holdout hybrid_full_refit hybrid; do
+  OMP_NUM_THREADS=1 python compare_tree_vs_hybrid.py --target michalewicz --d 5 --N 40000 --config $c
+done
+python compare_tree_vs_hybrid.py --target michalewicz --d 5 --plot --overlay tree,hybrid_no_holdout,hybrid_full_refit,hybrid --overlay-name holdout
 # the final default on the ten runs (section 3.8): run the hybrid with no --net option, then
 python compare_tree_vs_hybrid.py --target michalewicz --d 5 --plot --overlay tree,hybrid_adam,hybrid_nopolish,hybrid --overlay-name final
 # the two-phase refit (section 3.7):
