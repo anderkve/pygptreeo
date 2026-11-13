@@ -224,6 +224,12 @@ times the plain tree's run time (`examples/BENCHMARK_RESULTS_neural_linear.md`
 §3.10 is the reference table). The held-out points are what keep it ahead of
 the plain tree on noisy targets: on 4000-point streams with noise it has 0.75
 of the plain tree's error, where a network trained on every point has 1.44.
+On eleven targets with the structure of particle-physics computations
+(cross-sections with thresholds and resonances, a relic density, an oscillation
+probability, a likelihood with nuisance parameters) it has half the plain
+tree's error on average, at 10 000 and at 40 000 points; on two of them the
+gain appears only between 10 000 and 40 000 points
+(`examples/BENCHMARK_RESULTS_particle_physics.md`).
 Its leaves keep the default Matérn 3/2 kernel:
 Matérn 5/2 was level with it, RBF failed on the rough residual of the 3D
 target, and the additive kernel gained only where the target has low-order

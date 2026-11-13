@@ -63,6 +63,15 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
     valleys, ripples on a bowl, an all-order interaction, a jump across a hyperplane,
     a length scale that varies across the box); `BENCHMARK_RESULTS_neural_linear.md` §3.4.
 
+- **`particle_physics_targets.py`**: Eleven cheap test targets with the structure of
+  quantities emulated in particle physics (cross-sections and spectra over many orders
+  of magnitude, thresholds, resonances, an oscillation probability, a branching ratio, a
+  loop-induced width, a relic density, a mass from a mixing matrix, an EFT signal
+  strength, a signal yield with Monte Carlo noise, a likelihood with nuisance
+  parameters). `benchmark_particle_physics.py` runs the tree with and without the
+  feature network on them and `plot_particle_physics.py` draws the figures;
+  `BENCHMARK_RESULTS_particle_physics.md` has the results.
+
 - **`plot_performance_metrics.py`**: Post-processing script for performance analysis
   - Reads results from CSV files
   - Generates detailed performance plots
@@ -121,6 +130,21 @@ Compares a plain GPTree with a GPTree that models the residual of a global GP
 refit when the reservoir turns over) under uniform, DE-like focusing, sweeping and
 MCMC-walker input streams. The residual mechanism is a prototype injected into
 `GPNode` by the script; see `BENCHMARK_RESULTS_global_mean_streams.md`.
+
+### Particle-physics-style targets
+
+```bash
+cd examples
+OMP_NUM_THREADS=1 python benchmark_particle_physics.py --targets relic_density --configs tree,net --seeds 1
+OMP_NUM_THREADS=1 python benchmark_particle_physics.py --targets global_fit_loglike --stream sampler --configs tree,net
+python benchmark_particle_physics.py --summarize results/particle_physics/uniform_N10000_seed*.jsonl
+python plot_particle_physics.py
+```
+
+Streams 10 000 points of each target (`--N` for other lengths) into a plain tree and
+into a tree with the feature network as global model, on a uniform scan or (for the
+likelihood) on the proposals of a Metropolis walk; see
+`BENCHMARK_RESULTS_particle_physics.md`.
 
 ### Animated Visualization
 

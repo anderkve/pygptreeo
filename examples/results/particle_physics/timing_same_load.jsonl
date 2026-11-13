@@ -1,0 +1,8 @@
+{"run": "relic_density", "config": "tree", "seconds": 75.4}
+{"run": "relic_density", "config": "net_no_holdout", "seconds": 145.2}
+{"run": "relic_density", "config": "net_full_refit", "seconds": 136.6}
+{"run": "relic_density", "config": "net", "seconds": 112.9}
+{"run": "global_fit_loglike", "config": "tree", "seconds": 62.8}
+{"run": "global_fit_loglike", "config": "net_no_holdout", "seconds": 178.1}
+{"run": "global_fit_loglike", "config": "net_full_refit", "seconds": 167.1}
+{"run": "global_fit_loglike", "config": "net", "seconds": 126.8}
