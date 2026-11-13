@@ -182,6 +182,35 @@ several times the run time. `examples/BENCHMARK_RESULTS_global_mean_streams.md` 
 measurements under uniform, focusing, sweeping and random-walk input streams. Leave
 `global_mean=None` (the default) to run the tree exactly as before.
 
+## Additive model from running sums (opt-in)
+
+`global_mean='additive'` gives the tree a global model of the form
+`c + g_1(x_1) + ... + g_d(x_d)`: per input a cubic trend plus a GP with an RBF kernel,
+written in a fixed sine basis. With fixed basis functions the model needs the stream only
+through running sums, so a new point costs one update of the sums, the coefficients are
+one linear solve that uses every point seen, and the hyperparameters (a length scale per
+input, an amplitude, and a noise level that also absorbs whatever is not additive)
+maximise a marginal likelihood computed from the sums: the cost of a fit does not grow
+with the stream.
+
+```python
+gpt = GPTree(Nbar=100, global_mean='additive')
+```
+
+The hyperparameters are fitted when the point count has doubled, and the coefficients are
+solved again when it has grown by a quarter. A leaf that meets a newer solution refits on
+the new residual with its kernel hyperparameters kept. The predicted sigma of a leaf adds
+the uncertainty of the coefficients as that leaf sees it, small among the leaf's points
+and growing away from them, and the prior variance where an input leaves the range seen
+so far. Single-output targets only.
+
+Use it where the target is known or suspected to be close to a sum of functions of single
+inputs: on the 6D Rastrigin and Levy functions it takes the error from a tenth of the
+range to a millionth at 4000 points, at 1.25 times the plain tree's run time. On targets
+without additive structure it gives no gain and can make the tree worse, by a large
+factor where the plain tree is already very accurate.
+`examples/BENCHMARK_RESULTS_additive_sums.md` has the design and the measurements.
+
 ## Feature network as global model (opt-in, needs PyTorch)
 
 For targets of many inputs the leaf GPs run out of points: a hundred-point leaf
@@ -199,7 +228,27 @@ from pygptreeo import GPTree
 gpt = GPTree(Nbar=100, global_mean='net')
 # or, with the learner's arguments, e.g. refits spread over the stream instead of a latency spike:
 gpt = GPTree(Nbar=100, global_mean='net', global_mean_kwargs=dict(steps_per_update=1))
+# the network alone, without the additive model beside it:
+gpt = GPTree(Nbar=100, global_mean='net', global_mean_kwargs=dict(additive=False))
 ```
+
+For a single output the network runs beside the additive model of the previous section,
+and the leaves model the residual of a weighted sum of the two. A fifth of the points is
+held out from both models (`holdout=0.2`). The network publishes the weights with the
+lowest error on them, which protects it on noisy targets, and the weights of the sum are
+a least-squares fit on them, so a target that one model explains goes to that model and a
+network that has learned nothing gets no weight. `additive=False` gives the network
+alone, as it was before the additive model existed and without held-out points unless
+`holdout` is set; with several outputs the network always runs alone.
+
+On two fully coupled 6D targets under four kinds of stream the network beside the
+additive model has 0.31 of the plain tree's error without noise, as the network alone,
+and 0.70 with noise, where the network alone has 1.44
+(`examples/BENCHMARK_RESULTS_additive_sums.md`). On eleven targets with the structure of
+particle-physics computations (cross-sections with thresholds and resonances, a relic
+density, an oscillation probability, a likelihood with nuisance parameters) it has half
+the plain tree's error on average and no gain on two of them
+(`examples/BENCHMARK_RESULTS_particle_physics.md`).
 
 The network (`FeatureNetLearner`) is a 3 x 128 SiLU MLP refit when the point
 count has doubled, in two phases: full-batch L-BFGS (`steps`, 300) on a
@@ -212,7 +261,8 @@ network's own error variance. `steps=0` or `polish_steps=0` drops a phase;
 the following updates. `examples/example_hybrid.py` runs the hybrid against the
 plain tree.
 
-On ten 40 000-point streams the hybrid beat the plain tree by an order of
+The rest of this section describes the network and its reference runs, which were made
+with the network alone. On ten 40 000-point streams the hybrid beat the plain tree by an order of
 magnitude or more on smooth targets with a global structure a network can
 learn (coupled valleys, rotated peaks, a function living on a hidden 2-plane
 of ten inputs, a sharp step), by 10 to 30% on rough oscillatory targets, and

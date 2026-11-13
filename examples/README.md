@@ -63,6 +63,15 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
     valleys, ripples on a bowl, an all-order interaction, a jump across a hyperplane,
     a length scale that varies across the box); `BENCHMARK_RESULTS_neural_linear.md` §3.4.
 
+- **`particle_physics_targets.py`**: Eleven cheap test targets with the structure of
+  quantities emulated in particle physics (cross-sections and spectra over many orders
+  of magnitude, thresholds, resonances, an oscillation probability, a branching ratio, a
+  loop-induced width, a relic density, a mass from a mixing matrix, an EFT signal
+  strength, a signal yield with Monte Carlo noise, a likelihood with nuisance
+  parameters). `benchmark_particle_physics.py` runs the tree with and without a global
+  model on them and `plot_particle_physics.py` draws the figures;
+  `BENCHMARK_RESULTS_particle_physics.md` has the results.
+
 - **`plot_performance_metrics.py`**: Post-processing script for performance analysis
   - Reads results from CSV files
   - Generates detailed performance plots
@@ -121,6 +130,34 @@ Compares a plain GPTree with a GPTree that models the residual of a global GP
 refit when the reservoir turns over) under uniform, DE-like focusing, sweeping and
 MCMC-walker input streams. The residual mechanism is a prototype injected into
 `GPNode` by the script; see `BENCHMARK_RESULTS_global_mean_streams.md`.
+
+### Additive model from running sums, and the network beside it
+
+```bash
+cd examples
+OMP_NUM_THREADS=1 python benchmark_global_mean_streams.py --target rotated_rosenbrock \
+    --streams uniform,focusing,sweeping,walker --configs tree,additive,combined,hybrid --seeds 1 --calibrate
+OMP_NUM_THREADS=1 python compare_tree_vs_hybrid.py --target michalewicz --d 5 --N 40000 --config combined
+python plot_additive_sums_results.py
+```
+
+`additive` is `GPTree(global_mean='additive')`, `combined` is `global_mean='net'` (the
+feature network beside the additive model) and `hybrid` the network alone
+(`additive=False`); see `BENCHMARK_RESULTS_additive_sums.md`.
+
+### Particle-physics-style targets
+
+```bash
+cd examples
+OMP_NUM_THREADS=1 python benchmark_particle_physics.py --targets relic_density --configs tree,additive,net --seeds 1
+OMP_NUM_THREADS=1 python benchmark_particle_physics.py --targets global_fit_loglike --stream sampler --configs tree,net
+python benchmark_particle_physics.py --summarize results/particle_physics/uniform_N10000_seed*.jsonl
+python plot_particle_physics.py
+```
+
+Streams 10 000 points of each target into a plain tree and into trees with a global
+model, on a uniform scan or (for the likelihood) on the proposals of a Metropolis walk;
+see `BENCHMARK_RESULTS_particle_physics.md`.
 
 ### Animated Visualization
 
@@ -184,9 +221,11 @@ Key parameters to experiment with:
   `'shared'` (one GP with a shared kernel for all outputs) or `'pca'` (one GP per
   component of a learned global output basis); see the multi-output examples.
 
-- `global_mean`: `None` (default) or `'additive_gp'` to let the leaves model the
-  residual of a tree-wide global GP (see the README and
-  `BENCHMARK_RESULTS_global_mean_streams.md`); `global_mean_kwargs` tunes it.
+- `global_mean`: `None` (default), or a tree-wide global model whose residual the leaves
+  model: `'additive_gp'` (a global GP, `BENCHMARK_RESULTS_global_mean_streams.md`),
+  `'additive'` (an additive model from running sums) or `'net'` (a feature network beside
+  that additive model; needs PyTorch), both in `BENCHMARK_RESULTS_additive_sums.md`.
+  `global_mean_kwargs` tunes it.
 
 ### Custom Kernel Configuration
 

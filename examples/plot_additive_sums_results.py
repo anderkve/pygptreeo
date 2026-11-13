@@ -26,7 +26,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from matplotlib.ticker import NullFormatter
+from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SURFACE, INK, INK2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
@@ -111,6 +111,7 @@ def streams(R, out):
                         v[c] = (geo(per_seed), min(per_seed), max(per_seed))
                 vals.append(v); labels.append(f"{t}, {s}")
         rows(ax, vals, labels, series); ax.set_xscale("log"); ax.xaxis.set_minor_formatter(NullFormatter())
+        ax.xaxis.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 5.0))); ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
         ax.axvline(1.0, color=INK2, lw=1.0, zorder=1); ax.set_title(title, loc="left")
         ax.set_xlabel("error / error of the plain tree (geometric mean of the three test sets)")
     fig.legend(handles=handles(series), loc="lower center", ncol=4, fontsize=9)
