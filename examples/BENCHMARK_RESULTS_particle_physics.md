@@ -85,8 +85,8 @@ target.
   model was added (`additive=False`); and the network alone with the training it has in
   the combination (`additive=False, holdout=0.2, patience=None`: a fifth of the points
   held out, the weights with the lowest error on them published).
-* 10 000 points and seeds 1 to 3 for the uniform stream, one seed for the sampler stream
-  and for 40 000 points. A table entry is the geometric mean over the seeds.
+* 10 000 points and seeds 1 to 3 for the uniform stream, one seed for the sampler
+  stream. A table entry is the geometric mean over the seeds.
 * Run times are from four single-threaded runs side by side on a four-core machine.
 
 ## Results: uniform stream, 10 000 points
