@@ -19,7 +19,7 @@ Interfaces to several established GP packages already exist, and the code can ea
 ## Installation
 Details on installing via pip will be added soon. For now, you can clone the repository and install dependencies:
 ```bash
-git clone https://github.com/your-username/pygptreeo.git # Replace with the actual repository URL
+git clone https://github.com/anderkve/pygptreeo.git
 cd pygptreeo
 pip install numpy scikit-learn binarytree tqdm joblib
 ```
