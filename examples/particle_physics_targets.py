@@ -69,7 +69,7 @@ def dilepton_spectrum(X):
     """log10 of d sigma / d m_ll with a Z' interfering with the continuum (4D).
 
     Inputs: dilepton mass (0.5 to 5 TeV), Z' mass (1 to 4.5 TeV), Z' coupling, extra
-    (invisible) width. A peak of 1 to 10% relative width on the diagonal ``m_ll = M``,
+    (invisible) width. A peak of 0.5 to 12% relative width on the diagonal ``m_ll = M``,
     a destructive dip below it, on a continuum that falls over six orders of magnitude.
     """
     mll = _log(X[:, 0], 500.0, 5000.0); M = _lin(X[:, 1], 1000.0, 4500.0)

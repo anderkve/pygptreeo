@@ -134,7 +134,7 @@ def curves(R, out, stream="uniform"):
     fig, axes = plt.subplots(3, 4, figsize=(15.5, 10.4), sharex=True)
     for ax, t in zip(axes.ravel(), names):
         for c, col, mk, filled, _ in SERIES:
-            for r in R[(stream, N, t)].get(c, [])[:1]:
+            for r in [r for r in R[(stream, N, t)].get(c, []) if "curve" in r][:1]:
                 y = np.array(r["curve"]); x = (np.arange(len(y)) + 1) * (N // len(y))
                 ax.plot(x, y, color=col, lw=2.0 if filled else 1.4, ls="-" if filled else (0, (4, 2)), zorder=3 if filled else 2)
                 ax.plot(x[-1], y[-1], marker=mk, color=col, mfc=col if filled else SURFACE, mew=1.6, ms=7, ls="none", zorder=4, clip_on=False)
