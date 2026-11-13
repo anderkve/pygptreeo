@@ -30,6 +30,9 @@ Configurations:
                   on the reservoir, length scale 1x / 0.5x / 2x the reservoir
                   spacing)
     *_lin         leaf kernel with an added linear-trend term
+    hybrid        the feature network alone as global model (``additive=False``)
+    additive      ``GPTree(global_mean='additive')``, the additive model from running sums
+    combined      ``GPTree(global_mean='net')``: the feature network beside the additive model
 
 Global-model design shared by the prototype and the package:
     * a coverage reservoir (maximin design, 500 points) rather than a
@@ -356,7 +359,14 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
     elif config == 'hybrid':
         # GP leaves on the residual of the feature network's head (the network as global model)
         from pygptreeo import NetGlobalMean
+        package_learner = NetGlobalMean(additive=False, steps_per_update=8, random_state=seed)
+    elif config == 'combined':
+        # global_mean='net' as it is by default: the feature network beside the additive model
+        from pygptreeo import NetGlobalMean
         package_learner = NetGlobalMean(steps_per_update=8, random_state=seed)
+    elif config == 'additive':
+        from pygptreeo import AdditiveGlobalMean
+        package_learner = AdditiveGlobalMean()
     elif config not in ('tree', 'global_pkg'):
         raise ValueError(config)
     _ACTIVE['model'] = model
@@ -400,8 +410,10 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False):
         'sigma_over_rmse_focus': float(np.sqrt(np.mean(S_focus[:, 0] ** 2)) / np.sqrt(np.mean(e_focus ** 2))),
         'leaves': len(gpt.root.leaves), 'seconds': round(elapsed, 1),
     }
-    if config == 'hybrid':
+    if config in ('hybrid', 'combined'):
         out.update(refits=package_learner.learner.n_refits, fit_seconds=round(package_learner.learner.fit_seconds, 1))
+    elif config == 'additive':
+        out.update(refits=package_learner.n_refits, fit_seconds=round(package_learner.fit_seconds, 1))
     elif package_learner is not None:
         out.update(refits=package_learner.n_refits, refits_skipped=package_learner.n_skipped,
                    snapshots_alive=len({l._fitted_global.version for l in gpt.root.leaves

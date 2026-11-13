@@ -57,7 +57,7 @@ def make_model(config, seed, nbar):
                 kw.update(steps_per_update=int(part[5:]))
             else:
                 raise ValueError(config)
-        global_mean = NetGlobalMean(**kw); learner = global_mean.learner
+        global_mean = NetGlobalMean(additive=False, **kw); learner = global_mean.learner
     elif config != 'tree':
         raise ValueError(config)
     gpt = GPTree(GPR=gpr, Nbar=nbar, theta=1e-4, retrain_every_n_points=25,

@@ -13,8 +13,10 @@ the number of leaves.
     python examples/compare_tree_vs_hybrid.py --target eggholder --d 3 --N 40000 --plot
 
 Configurations: ``tree`` (ARD Matern leaves), ``hybrid`` (GP leaves on the
-residual of the feature network) and ``global_gp``
-(GP leaves on the residual of the additive global GP); ``Nbar = 100``,
+residual of the feature network alone, ``additive=False``), ``global_gp``
+(GP leaves on the residual of the additive global GP), ``additive`` (the
+additive model from running sums) and ``combined`` (``global_mean='net'`` as it
+is by default: the feature network beside the additive model); ``Nbar = 100``,
 ``theta = 1e-4``, a retrain every 25 points, gradual splitting and calibrated
 sigma unless ``--Nbar``, ``--retrain``, ``--splitting`` or ``--kernel`` say
 otherwise. ``--net key=value ...`` passes arguments to the ``FeatureNetLearner``.
@@ -139,7 +141,13 @@ def run(a):
     elif a.config == 'hybrid':
         from pygptreeo import NetGlobalMean
         gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1),
+                     global_mean=NetGlobalMean(additive=False, **net_kwargs(a)), **common)
+    elif a.config == 'combined':
+        from pygptreeo import NetGlobalMean
+        gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1),
                      global_mean=NetGlobalMean(**net_kwargs(a)), **common)
+    elif a.config == 'additive':
+        gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1), global_mean='additive', **common)
     elif a.config == 'global_gp':
         # the additive-GP global model of BENCHMARK_RESULTS_global_mean_streams.md, GP leaves on its residual
         from pygptreeo import AdditiveGPGlobalMean
@@ -276,7 +284,7 @@ def main():
     ap.add_argument('--target', default='eggholder'); ap.add_argument('--d', type=int, default=3)
     ap.add_argument('--stream', default='uniform'); ap.add_argument('--N', type=int, default=40000)
     ap.add_argument('--seed', type=int, default=1)
-    ap.add_argument('--config', default='tree', help='tree, hybrid or global_gp')
+    ap.add_argument('--config', default='tree', help='tree, hybrid, global_gp, additive or combined')
     ap.add_argument('--kernel', default='matern15', choices=KERNELS, help='leaf kernel of tree and hybrid')
     ap.add_argument('--plot', action='store_true', help='draw the figure from the CSV files of both configurations')
     ap.add_argument('--kernels', action='store_true', help="with --plot: the hybrid's kernel variants")

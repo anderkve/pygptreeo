@@ -1,9 +1,10 @@
-"""The hybrid tree: GP leaves on the residual of a tree-wide feature network.
+"""The hybrid tree: GP leaves on the residual of a tree-wide global model.
 
 Streams points of a 6D target into a plain GPTree and into the hybrid
-(``GPTree(global_mean='net')``), predicting each point before it is added, and
-prints the prequential error, the 1-sigma coverage and the time per point of
-both. Needs PyTorch (``pip install pygptreeo[neural]``).
+(``GPTree(global_mean='net')``: a feature network beside an additive model),
+predicting each point before it is added, and prints the prequential error, the
+1-sigma coverage and the time per point of both. Needs PyTorch
+(``pip install pygptreeo[neural]``).
 
     OMP_NUM_THREADS=1 python examples/example_hybrid.py
 """
@@ -26,9 +27,10 @@ sigma = 1e-3 * np.abs(y) + 1e-6          # observation-noise std of each point
 
 trees = {
     'GP tree': GPTree(Nbar=100),
-    # the leaves model y - h(x), h the feature network trained on the stream;
-    # global_mean_kwargs takes FeatureNetLearner arguments, here an amortised
-    # refit (one L-BFGS iteration per update) instead of a latency spike per refit
+    # the leaves model y - h(x), h the combination of the feature network and the
+    # additive model; global_mean_kwargs takes FeatureNetLearner arguments, here an
+    # amortised refit (one L-BFGS iteration per update) instead of a latency spike
+    # per refit, and additive=False for the network alone
     'hybrid': GPTree(Nbar=100, global_mean='net', global_mean_kwargs=dict(steps_per_update=1, random_state=1)),
 }
 
