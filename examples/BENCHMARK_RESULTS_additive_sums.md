@@ -34,6 +34,13 @@ Short answer:
 * On particle-physics-style targets (`BENCHMARK_RESULTS_particle_physics.md`) the network
   carries the gain, a factor of two on average; the additive model contributes nothing
   there.
+* **What each part of `'net'` contributes** (benchmark 3). Selecting the network's weights
+  on held-out points gives the protection against noise (0.52 of the error of the network
+  without it on the noisy streams of benchmark 1) and costs 9% without noise at 4000
+  points. The cheap leaf refit leaves the error where it was and takes 12 to 26%
+  off the run time. The additive model decides targets with strong structure along single
+  inputs (Rastrigin, Levy, Michalewicz, Ackley) and changes the error by 7% or less on
+  average everywhere else, for 3 to 13% more run time.
 
 ![Error relative to the plain tree](results/additive_sums/streams.png)
 
@@ -245,7 +252,8 @@ Reading:
   (1.02 in the geometric mean); the held-out weights give the network
   everything on these targets. With noise it has 0.49 of the network
   alone's error and is better in all 72 combinations: the network no longer fits the
-  noise, and the weights fall back on the additive model where the network has nothing.
+  noise. Benchmark 3 separates what the held-out selection and what the additive model
+  contribute to this.
 * **`'additive'`.** With noise it is a modest gain. Without noise it is level with the
   plain tree on the uniform stream and mixed on the others (between 0.43 and 1.9 of the
   plain tree's error from cell to cell), with one clear failure, the focus test of the
@@ -396,6 +404,80 @@ Reading:
   0.99), the plain tree included: the sigma is calibrated against the noisy observations.
 
 
+## Benchmark 3: the parts of `'net'` one at a time
+
+`'net'` differs from the network alone in three ways: the network's weights are selected
+on held-out points, the leaves take up a new version of the global model by the cheap
+refit, and the additive model runs beside the network. Here the three are added one at a
+time, on the runs of benchmarks 1 and 2 and of the particle-physics benchmark:
+`hybrid` (the network alone), `hybrid_holdout`, `hybrid_cheap` and `combined` in the two
+benchmark scripts of this document, `net_only`, `net_only_holdout`, `net_only_cheap` and
+`net` in `benchmark_particle_physics.py`. Geometric means of the error relative to the
+plain tree:
+
+| error / error of the plain tree | network alone | + held-out selection | + cheap leaf refit | + additive model (`'net'`) |
+|---|---|---|---|---|
+| benchmark 1, no noise (72 runs and test sets) | 0.31 | 0.34 | 0.34 | 0.31 |
+| benchmark 1, noise (72) | 1.44 | 0.75 | 0.75 | 0.70 |
+| benchmark 2, Michalewicz and Ackley | 0.88 | 0.85 | 0.85 | 0.044 |
+| benchmark 2, the other eight streams | 0.22 | 0.23 | 0.23 | 0.22 |
+| benchmark 2, noise (3 streams) | 0.31 | 0.24 | 0.24 | 0.25 |
+| particle-physics targets, 10 000 points (33 runs) | 0.54 | 0.50 | 0.50 | 0.52 |
+
+Each step relative to the one before it, with the range over the runs:
+
+| error / error of the column to the left | + held-out selection | + cheap leaf refit | + additive model (`'net'`) |
+|---|---|---|---|
+| benchmark 1, no noise (72 runs and test sets) | 1.09 (0.64 to 2.59) | 1.00 (0.93 to 1.17) | 0.93 (0.27 to 1.30) |
+| benchmark 1, noise (72) | 0.52 (0.22 to 1.06) | 0.99 (0.80 to 1.16) | 0.94 (0.55 to 1.41) |
+| benchmark 2, Michalewicz and Ackley | 0.96 (0.91 to 1.02) | 1.00 (1.00 to 1.00) | 0.05 (0.0076 to 0.35) |
+| benchmark 2, the other eight streams | 1.01 (0.90 to 1.13) | 1.00 (0.99 to 1.02) | 0.98 (0.93 to 1.02) |
+| benchmark 2, noise (3 streams) | 0.78 (0.65 to 0.94) | 1.01 (1.00 to 1.02) | 1.01 (1.00 to 1.04) |
+| particle-physics targets, 10 000 points (33 runs) | 0.93 (0.13 to 1.34) | 1.01 (0.92 to 1.18) | 1.02 (0.85 to 1.61) |
+
+The targets of benchmark 1 with additive structure (uniform stream, one seed; error on
+the uniform test set over the range):
+
+| target | noise | plain tree | network alone | + held-out selection | + cheap leaf refit | + additive model (`'net'`) |
+|---|---|---|---|---|---|---|
+| rosenbrock | no | 0.0081 | **0.0021** | 0.0027 | 0.0027 | 0.0029 |
+| rosenbrock | yes | 0.0245 | 0.0421 | 0.0186 | 0.0185 | **0.0144** |
+| rastrigin | no | 0.117 | 0.151 | 0.0971 | 0.0979 | **6.05e-07** |
+| rastrigin | yes | 0.117 | 0.151 | 0.0965 | 0.0968 | **0.0083** |
+| levy | no | 0.106 | 0.137 | 0.0813 | 0.0818 | **1.01e-06** |
+| levy | yes | 0.106 | 0.142 | 0.0828 | 0.0825 | **0.0085** |
+
+Seconds for six runs in which the five configurations ran side by side under the same
+load. The times in the other sections come from runs made at different times, whose load
+differed by up to a quarter; for comparing configurations these are the ones to use.
+
+| run | plain tree | network alone | + held-out selection | + cheap leaf refit | + additive model (`'net'`) |
+|---|---|---|---|---|---|
+| benchmark 1: gaussian_peaks, uniform, 4000 points | 18 | 63 | 58 | 52 | 58 |
+| benchmark 1: rotated_rosenbrock, walker, 4000 points | 22 | 58 | 55 | 49 | 52 |
+| physics: relic_density, 10 000 points | 75 | 145 | 137 | 113 | 117 |
+| physics: global_fit_loglike, 10 000 points | 63 | 178 | 167 | 127 | 133 |
+| benchmark 2: rotated_rosenbrock, 6D, 40 000 points | 208 | 393 | 372 | 308 | 332 |
+| benchmark 2: gaussian_peaks, 10D, 40 000 points | 253 | 542 | 537 | 398 | 409 |
+| **relative to the plain tree** | 1 | **2.44** | **2.31** | **1.89** | **2.01** |
+
+Reading:
+
+* **Held-out selection** is what protects the network against noise. On the noisy streams
+  of benchmark 1 the network with it has 0.52 of the error of the network without it, and
+  a lower error than the plain tree in 58 of 72 cases where the network without it has
+  one in 8; on the three noisy long streams it has 0.78. On the particle-physics targets
+  it removes the one large failure of the network (the oscillation probability). Without
+  noise it costs 9% at 4000 points and nothing at 40 000.
+* **The cheap leaf refit** leaves the error where it was in all six groups (0.99 to 1.01)
+  and takes 12 to 26% off the run time.
+* **The additive model** decides the targets with strong structure along single inputs:
+  five orders of magnitude on Rastrigin and Levy, a factor of 130 on Michalewicz and of 3
+  on Ackley. On the fully coupled targets of benchmark 1 it lowers the error by 6 to 7%
+  on average, with single runs between 0.27 and 1.41 of the error without it. On the
+  other eight long streams, on the noisy long streams and on the particle-physics targets
+  it changes the error by 2% or less on average. It adds 3 to 13% to the run time.
+
 ## Limits
 
 * The additive model is single-output; with several outputs `'net'` runs the network
@@ -416,9 +498,12 @@ Reading:
     # benchmark 2, one configuration of one stream, then the overlay
     OMP_NUM_THREADS=1 python examples/compare_tree_vs_hybrid.py --target michalewicz --d 5 --N 40000 --config combined
     python examples/compare_tree_vs_hybrid.py --target michalewicz --d 5 --N 40000 --plot --overlay tree,hybrid,additive,combined --overlay-name additive
+    # benchmark 3: the configurations hybrid_holdout and hybrid_cheap in the two commands above,
+    # net_only_cheap in benchmark_particle_physics.py
     # figures
     python examples/plot_additive_sums_results.py
 
-`results/additive_sums/` has the result lines of benchmark 1 and
+`results/additive_sums/` has the result lines of benchmark 1 and the times of the runs
+under the same load (`timing_same_load.jsonl`), and
 `results/compare_tree_vs_neural/*_additive_batches.csv` the per-batch records of
 benchmark 2.

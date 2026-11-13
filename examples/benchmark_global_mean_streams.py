@@ -31,6 +31,10 @@ Configurations:
                   spacing)
     *_lin         leaf kernel with an added linear-trend term
     hybrid        the feature network alone as global model (``additive=False``)
+    hybrid_holdout   the network alone with the weights that have the lowest error on a
+                  held-out fifth of the points (``holdout=0.2, patience=None``)
+    hybrid_cheap  ``hybrid_holdout`` whose leaves take up a new version of the network
+                  by a refit with their kernel hyperparameters kept
     additive      ``GPTree(global_mean='additive')``, the additive model from running sums
     combined      ``GPTree(global_mean='net')``: the feature network beside the additive model
 
@@ -361,10 +365,12 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False, nois
         model = GlobalMeanModel(d, seed, damping_scale=0.5)
     elif config == 'global_damped_wide':     # 2 x spacing: mild damping
         model = GlobalMeanModel(d, seed, damping_scale=2.0)
-    elif config == 'hybrid':
+    elif config in ('hybrid', 'hybrid_holdout', 'hybrid_cheap'):
         # GP leaves on the residual of the feature network's head (the network as global model)
         from pygptreeo import NetGlobalMean
-        package_learner = NetGlobalMean(additive=False, steps_per_update=8, random_state=seed)
+        selection = {} if config == 'hybrid' else dict(holdout=0.2, patience=None)
+        package_learner = NetGlobalMean(additive=False, steps_per_update=8, random_state=seed, **selection)
+        package_learner.cheap_leaf_refresh = config == 'hybrid_cheap'
     elif config == 'combined':
         # global_mean='net' as it is by default: the feature network beside the additive model
         from pygptreeo import NetGlobalMean
@@ -415,7 +421,7 @@ def run_one(target_name, stream, config, seed, d, N, nbar, calibrate=False, nois
         'sigma_over_rmse_focus': float(np.sqrt(np.mean(S_focus[:, 0] ** 2)) / np.sqrt(np.mean(e_focus ** 2))),
         'leaves': len(gpt.root.leaves), 'seconds': round(elapsed, 1),
     }
-    if config in ('hybrid', 'combined'):
+    if config in ('hybrid', 'hybrid_holdout', 'hybrid_cheap', 'combined'):
         out.update(refits=package_learner.learner.n_refits, fit_seconds=round(package_learner.learner.fit_seconds, 1))
     elif config == 'additive':
         out.update(refits=package_learner.n_refits, fit_seconds=round(package_learner.fit_seconds, 1))

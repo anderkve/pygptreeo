@@ -143,7 +143,9 @@ python plot_additive_sums_results.py
 
 `additive` is `GPTree(global_mean='additive')`, `combined` is `global_mean='net'` (the
 feature network beside the additive model) and `hybrid` the network alone
-(`additive=False`); see `BENCHMARK_RESULTS_additive_sums.md`.
+(`additive=False`); `hybrid_holdout` and `hybrid_cheap` add the held-out selection of
+the network's weights and the cheap leaf refit to the network alone. See
+`BENCHMARK_RESULTS_additive_sums.md`.
 
 ### Particle-physics-style targets
 

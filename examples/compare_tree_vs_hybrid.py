@@ -15,8 +15,12 @@ the number of leaves.
 Configurations: ``tree`` (ARD Matern leaves), ``hybrid`` (GP leaves on the
 residual of the feature network alone, ``additive=False``), ``global_gp``
 (GP leaves on the residual of the additive global GP), ``additive`` (the
-additive model from running sums) and ``combined`` (``global_mean='net'`` as it
-is by default: the feature network beside the additive model); ``Nbar = 100``,
+additive model from running sums), ``combined`` (``global_mean='net'`` as it
+is by default: the feature network beside the additive model),
+``hybrid_holdout`` (``hybrid`` with the weights that have the lowest error on a
+held-out fifth of the points) and ``hybrid_cheap`` (``hybrid_holdout`` whose
+leaves take up a new version of the network by a refit with their kernel
+hyperparameters kept); ``Nbar = 100``,
 ``theta = 1e-4``, a retrain every 25 points, gradual splitting and calibrated
 sigma unless ``--Nbar``, ``--retrain``, ``--splitting`` or ``--kernel`` say
 otherwise. ``--net key=value ...`` passes arguments to the ``FeatureNetLearner``.
@@ -138,10 +142,12 @@ def run(a):
     leaf_kernel = None if a.kernel == 'matern15' else make_kernel(a.kernel, a.d)
     if a.config == 'tree':
         gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1), **common)
-    elif a.config == 'hybrid':
+    elif a.config in ('hybrid', 'hybrid_holdout', 'hybrid_cheap'):
         from pygptreeo import NetGlobalMean
-        gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1),
-                     global_mean=NetGlobalMean(additive=False, **net_kwargs(a)), **common)
+        selection = {} if a.config == 'hybrid' else dict(holdout=0.2, patience=None)
+        net = NetGlobalMean(additive=False, **{**selection, **net_kwargs(a)})
+        net.cheap_leaf_refresh = a.config == 'hybrid_cheap'
+        gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1), global_mean=net, **common)
     elif a.config == 'combined':
         from pygptreeo import NetGlobalMean
         gpt = GPTree(GPR=Default_GPR(kernel=leaf_kernel, n_restarts_optimizer=1),
@@ -284,7 +290,7 @@ def main():
     ap.add_argument('--target', default='eggholder'); ap.add_argument('--d', type=int, default=3)
     ap.add_argument('--stream', default='uniform'); ap.add_argument('--N', type=int, default=40000)
     ap.add_argument('--seed', type=int, default=1)
-    ap.add_argument('--config', default='tree', help='tree, hybrid, global_gp, additive or combined')
+    ap.add_argument('--config', default='tree', help='tree, hybrid, hybrid_holdout, hybrid_cheap, global_gp, additive or combined')
     ap.add_argument('--kernel', default='matern15', choices=KERNELS, help='leaf kernel of tree and hybrid')
     ap.add_argument('--plot', action='store_true', help='draw the figure from the CSV files of both configurations')
     ap.add_argument('--kernels', action='store_true', help="with --plot: the hybrid's kernel variants")

@@ -14,6 +14,8 @@ Configurations:
     net_only_holdout   the network alone with the training of ``net``: a fifth of the
                points held out, the weights with the lowest error on them published
                (``additive=False, holdout=0.2, patience=None``)
+    net_only_cheap     ``net_only_holdout`` whose leaves take up a new version of the
+               network by a refit with their kernel hyperparameters kept, as in ``net``
 
 Streams: ``uniform`` (a random scan of the unit cube) and, for the likelihood target,
 ``sampler`` (every proposal of a Metropolis random walk on the likelihood; the test set
@@ -45,10 +47,10 @@ warnings.filterwarnings("ignore")
 from pygptreeo import GPTree, Default_GPR
 from particle_physics_targets import TARGETS
 
-CONFIGS = ('tree', 'additive', 'net', 'net_only', 'net_only_holdout')
+CONFIGS = ('tree', 'additive', 'net', 'net_only', 'net_only_holdout', 'net_only_cheap')
 CURVE_BATCH = 1000      # points per value of the prequential learning curve
 NAMES = {'tree': 'plain tree', 'additive': "`'additive'`", 'net': "`'net'`", 'net_only': "`'net'`, network alone",
-         'net_only_holdout': "network alone, held-out selection"}
+         'net_only_holdout': "network alone, held-out selection", 'net_only_cheap': "network alone, held-out selection, cheap refit"}
 
 
 def make_stream(kind, target, N, rng):
@@ -77,11 +79,14 @@ def make_tree(config, seed):
         return GPTree(**kw)
     if config == 'additive':
         return GPTree(global_mean='additive', **kw)
-    if config in ('net', 'net_only', 'net_only_holdout'):
+    if config in ('net', 'net_only', 'net_only_holdout', 'net_only_cheap'):
         net = dict(additive=config == 'net', steps_per_update=8, random_state=seed)
-        if config == 'net_only_holdout':
+        if config in ('net_only_holdout', 'net_only_cheap'):
             net.update(holdout=0.2, patience=None)
-        return GPTree(global_mean='net', global_mean_kwargs=net, **kw)
+        gpt = GPTree(global_mean='net', global_mean_kwargs=net, **kw)
+        if config == 'net_only_cheap':
+            gpt.global_mean.cheap_leaf_refresh = True
+        return gpt
     raise ValueError(config)
 
 

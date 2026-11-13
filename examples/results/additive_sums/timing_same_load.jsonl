@@ -1,0 +1,30 @@
+{"run": "benchmark 1: gaussian_peaks, uniform, 4000 points", "config": "tree", "seconds": 17.6}
+{"run": "benchmark 1: gaussian_peaks, uniform, 4000 points", "config": "hybrid", "seconds": 63.3}
+{"run": "benchmark 1: gaussian_peaks, uniform, 4000 points", "config": "hybrid_holdout", "seconds": 58.5}
+{"run": "benchmark 1: gaussian_peaks, uniform, 4000 points", "config": "hybrid_cheap", "seconds": 51.7}
+{"run": "benchmark 1: gaussian_peaks, uniform, 4000 points", "config": "combined", "seconds": 58.3}
+{"run": "benchmark 1: rotated_rosenbrock, walker, 4000 points", "config": "tree", "seconds": 22.1}
+{"run": "benchmark 1: rotated_rosenbrock, walker, 4000 points", "config": "hybrid", "seconds": 58.4}
+{"run": "benchmark 1: rotated_rosenbrock, walker, 4000 points", "config": "hybrid_holdout", "seconds": 55.4}
+{"run": "benchmark 1: rotated_rosenbrock, walker, 4000 points", "config": "hybrid_cheap", "seconds": 48.8}
+{"run": "benchmark 1: rotated_rosenbrock, walker, 4000 points", "config": "combined", "seconds": 52.2}
+{"run": "physics: relic_density, 10 000 points", "config": "tree", "seconds": 75.4}
+{"run": "physics: relic_density, 10 000 points", "config": "hybrid", "seconds": 145.2}
+{"run": "physics: relic_density, 10 000 points", "config": "hybrid_holdout", "seconds": 136.6}
+{"run": "physics: relic_density, 10 000 points", "config": "hybrid_cheap", "seconds": 112.9}
+{"run": "physics: relic_density, 10 000 points", "config": "combined", "seconds": 117.0}
+{"run": "physics: global_fit_loglike, 10 000 points", "config": "tree", "seconds": 62.8}
+{"run": "physics: global_fit_loglike, 10 000 points", "config": "hybrid", "seconds": 178.1}
+{"run": "physics: global_fit_loglike, 10 000 points", "config": "hybrid_holdout", "seconds": 167.1}
+{"run": "physics: global_fit_loglike, 10 000 points", "config": "hybrid_cheap", "seconds": 126.8}
+{"run": "physics: global_fit_loglike, 10 000 points", "config": "combined", "seconds": 133.0}
+{"run": "benchmark 2: rotated_rosenbrock, 6D, 40 000 points", "config": "tree", "seconds": 207.5, "longest_update": 0.45}
+{"run": "benchmark 2: rotated_rosenbrock, 6D, 40 000 points", "config": "hybrid", "seconds": 393.3, "longest_update": 5.91}
+{"run": "benchmark 2: rotated_rosenbrock, 6D, 40 000 points", "config": "hybrid_holdout", "seconds": 372.4, "longest_update": 5.14}
+{"run": "benchmark 2: rotated_rosenbrock, 6D, 40 000 points", "config": "hybrid_cheap", "seconds": 308.1, "longest_update": 4.8}
+{"run": "benchmark 2: rotated_rosenbrock, 6D, 40 000 points", "config": "combined", "seconds": 331.5, "longest_update": 5.53}
+{"run": "benchmark 2: gaussian_peaks, 10D, 40 000 points", "config": "tree", "seconds": 253.4, "longest_update": 0.66}
+{"run": "benchmark 2: gaussian_peaks, 10D, 40 000 points", "config": "hybrid", "seconds": 542.4, "longest_update": 6.14}
+{"run": "benchmark 2: gaussian_peaks, 10D, 40 000 points", "config": "hybrid_holdout", "seconds": 536.9, "longest_update": 6.84}
+{"run": "benchmark 2: gaussian_peaks, 10D, 40 000 points", "config": "hybrid_cheap", "seconds": 398.4, "longest_update": 5.71}
+{"run": "benchmark 2: gaussian_peaks, 10D, 40 000 points", "config": "combined", "seconds": 409.0, "longest_update": 5.07}

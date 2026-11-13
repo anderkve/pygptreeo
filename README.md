@@ -245,9 +245,10 @@ alone, as it was before the additive model existed and without held-out points u
 On two fully coupled 6D targets under four kinds of stream the network beside the
 additive model has 0.31 of the plain tree's error without noise, as the network alone,
 and 0.70 with noise, where the network alone has 1.44. On ten 40 000-point streams it has
-0.16 of the plain tree's error and 0.55 of the network alone's, at 1.5 times the plain
+0.16 of the plain tree's error and 0.55 of the network alone's, at 1.6 times the plain
 tree's run time where the network alone takes 2.0 times
-(`examples/BENCHMARK_RESULTS_additive_sums.md`). On eleven targets with the structure of
+(`examples/BENCHMARK_RESULTS_additive_sums.md`; its benchmark 3 has what the held-out
+points, the cheap leaf refit and the additive model each contribute). On eleven targets with the structure of
 particle-physics computations (cross-sections with thresholds and resonances, a relic
 density, an oscillation probability, a likelihood with nuisance parameters) it has half
 the plain tree's error on average, at 10 000 and at 40 000 points; on two of them the
