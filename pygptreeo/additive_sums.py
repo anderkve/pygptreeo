@@ -1,7 +1,7 @@
 """An additive global model computed from running sums (``GPTree(global_mean='additive')``).
 
-``f(x) ~ c + sum_j g_j(x_j)``, each ``g_j`` a GP with an RBF kernel written in a fixed sine
-basis. With fixed features the Bayesian linear model needs the stream only through
+``f(x) ~ c + sum_j g_j(x_j)``, each ``g_j`` a cubic trend plus a GP with an RBF kernel
+written in a fixed sine basis. With fixed features the Bayesian linear model needs the stream only through
 ``G = Phi^T Phi``, ``b = Phi^T y`` and the column sums of ``Phi``, so
 
 * a new point costs one update of the sums,
@@ -25,28 +25,38 @@ from pygptreeo.global_mean import GlobalMeanLearner, GlobalMeanSnapshot
 
 CHUNK = 64                                   # points added to the sums at a time
 LENGTH_SCALE_GRID = (0.5, 0.15, 0.04, 0.012)  # fractions of an input's range tried per coordinate
+GRID_GAIN = 3.0                              # log evidence a grid value must gain to be taken
 
 
 class SineFeatures:
-    """A constant and ``m`` sines per input on ``[cen - L, cen + L]``.
+    """A constant, and per input a linear, a quadratic and a cubic Legendre polynomial
+    and ``m`` sines on ``[cen - L, cen + L]``.
 
     ``[lo, hi]`` is the range of the points the basis is built for; the interval is wider
-    by ``margin`` times the half-range on each side. Inputs outside it are clipped.
+    by ``margin`` times the half-range on each side. Inputs outside it are clipped. The
+    polynomials carry smooth trends, which sines that vanish at the ends of the interval
+    represent poorly. Columns: constant, ``N_TREND * d`` polynomials, ``d * m`` sines.
     """
+
+    N_TREND = 3
 
     def __init__(self, lo, hi, m, margin=0.5):
         self.lo, self.hi = np.array(lo, dtype=float), np.array(hi, dtype=float)
         self.cen = 0.5 * (self.lo + self.hi)
-        self.L = (1.0 + margin) * np.maximum(0.5 * (self.hi - self.lo), 1e-12)
+        self.half = np.maximum(0.5 * (self.hi - self.lo), 1e-12)
+        self.L = (1.0 + margin) * self.half
         self.m, self.d = int(m), len(self.lo)
-        self.P = 1 + self.d * self.m
+        self.n_fixed = 1 + self.N_TREND * self.d                     # columns with a fixed, broad prior
+        self.P = self.n_fixed + self.d * self.m
         self.freq = np.pi * np.arange(1, self.m + 1)[None, :] / (2 * self.L[:, None])      # (d, m)
 
     def __call__(self, X):
         X = np.atleast_2d(np.asarray(X, dtype=float)); n = len(X)
         u = np.clip(X - self.cen + self.L, 0.0, 2 * self.L)
+        v = (u - self.L) / self.half
+        trend = np.concatenate([v, 0.5 * (3 * v ** 2 - 1), 0.5 * (5 * v ** 3 - 3 * v)], axis=1)
         F = np.sin(u[:, :, None] * self.freq[None, :, :]) / np.sqrt(self.L)[None, :, None]
-        return np.concatenate([np.ones((n, 1)), F.reshape(n, self.d * self.m)], axis=1)
+        return np.concatenate([np.ones((n, 1)), trend, F.reshape(n, self.d * self.m)], axis=1)
 
     def outside(self, X):
         """True for the rows with a coordinate outside the interval."""
@@ -65,7 +75,8 @@ def evidence(theta, basis, G, b, n):
     """Negative log marginal likelihood per point, its gradient, and the solution.
 
     Model: ``t ~ N(Phi w, s^2)``, ``w ~ N(0, Lambda(theta))``, for standardised targets
-    (``sum(t^2) = n``), from ``G = Phi^T Phi`` and ``b = Phi^T t``.
+    (``sum(t^2) = n``), from ``G = Phi^T Phi`` and ``b = Phi^T t``. The constant and the
+    trend terms have a fixed prior variance of 10.
     ``theta = [log length scales (d), log amplitude, log s]``.
 
     The solution is ``(keep, w, chol, r)``: the coefficients the prior has not switched
@@ -75,7 +86,7 @@ def evidence(theta, basis, G, b, n):
     """
     d = basis.d
     lv, dlv = basis.log_prior_var(theta[:d], theta[d])
-    lam = np.concatenate([[10.0], np.exp(lv).ravel()])
+    lam = np.concatenate([np.full(basis.n_fixed, 10.0), np.exp(lv).ravel()])
     keep = lam > 1e-14 * lam.max()
     lk = lam[keep]; r = np.sqrt(lk); s2 = np.exp(2 * theta[d + 1])
     Gk = G[np.ix_(keep, keep)]; bk = b[keep]
@@ -91,7 +102,7 @@ def evidence(theta, basis, G, b, n):
     Linv = solve_triangular(cf[0], np.eye(len(lk)), lower=True, check_finite=False)
     diag_Binv = np.sum(Linv * Linv, axis=0)
     g_lam = np.zeros_like(lam); g_lam[keep] = 0.5 - 0.5 * (w ** 2 + lk * diag_Binv) / lk    # d value / d log lambda
-    g = g_lam[1:].reshape(d, basis.m)
+    g = g_lam[basis.n_fixed:].reshape(d, basis.m)
     n_eff = len(lk) - np.sum(diag_Binv)                                                     # effective number of coefficients
     grad = np.concatenate([np.sum(g * dlv, axis=1), [2 * np.sum(g)], [(n - n_eff) - rss / s2]]) / n
     return value, grad, (keep, w, cf, r)
@@ -264,7 +275,7 @@ class AdditiveGlobalMean(GlobalMeanLearner):
                 for frac in LENGTH_SCALE_GRID:
                     p = x.copy(); p[j] = np.clip(np.log(frac * span[j]), lo[j], hi[j])
                     v = fun(p)[0]
-                    if v < val - 1e-5:
+                    if v < val - GRID_GAIN / n:
                         x, val, moved = p, float(v), True
             if not moved:
                 break

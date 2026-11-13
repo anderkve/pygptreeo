@@ -77,7 +77,7 @@ class TestSumsAndEvidence(unittest.TestCase):
         """For length scales that are short against the margin of the interval."""
         rng = np.random.RandomState(0); ls = np.array([0.05, 0.12]); amp = 0.7
         basis = SineFeatures(np.zeros(2), np.ones(2), 64)
-        X = rng.rand(40, 2); F = basis(X)[:, 1:]
+        X = rng.rand(40, 2); F = basis(X)[:, basis.n_fixed:]
         K = (F * np.exp(basis.log_prior_var(np.log(ls), np.log(amp))[0]).ravel()) @ F.T
         exact = sum(np.exp(-0.5 * ((X[:, j, None] - X[None, :, j]) / ls[j]) ** 2) for j in range(2)) * amp ** 2 / 2
         self.assertLess(np.abs(K - exact).max(), 0.02 * amp ** 2 / 2)
@@ -85,7 +85,7 @@ class TestSumsAndEvidence(unittest.TestCase):
     def test_evidence_from_sums_equals_the_dense_one(self):
         X, t, basis, F, theta = self._problem(); n = len(t)
         value, _, _ = evidence(theta, basis, F.T @ F, F.T @ t, n)
-        lam = np.concatenate([[10.0], np.exp(basis.log_prior_var(theta[:4], theta[4])[0]).ravel()])
+        lam = np.concatenate([np.full(basis.n_fixed, 10.0), np.exp(basis.log_prior_var(theta[:4], theta[4])[0]).ravel()])
         C = np.exp(2 * theta[5]) * np.eye(n) + (F * lam) @ F.T
         dense = 0.5 * (n * np.log(2 * np.pi) + np.linalg.slogdet(C)[1] + t @ np.linalg.solve(C, t)) / n
         self.assertAlmostEqual(value, dense, places=9)
@@ -100,7 +100,7 @@ class TestSumsAndEvidence(unittest.TestCase):
     def test_solution_is_the_posterior_mean(self):
         X, t, basis, F, theta = self._problem()
         _, _, (keep, w, cf, r) = evidence(theta, basis, F.T @ F, F.T @ t, len(t))
-        lam = np.concatenate([[10.0], np.exp(basis.log_prior_var(theta[:4], theta[4])[0]).ravel()])[keep]
+        lam = np.concatenate([np.full(basis.n_fixed, 10.0), np.exp(basis.log_prior_var(theta[:4], theta[4])[0]).ravel()])[keep]
         Fk = F[:, keep]; s2 = np.exp(2 * theta[5])
         np.testing.assert_allclose(w, np.linalg.solve(Fk.T @ Fk / s2 + np.diag(1 / lam), Fk.T @ t / s2), atol=1e-8)
 
@@ -131,6 +131,15 @@ class TestAdditiveLearner(unittest.TestCase):
         F = gm.basis(X)
         np.testing.assert_allclose(gm.G, F.T @ F, rtol=1e-9, atol=1e-9)
         np.testing.assert_allclose(gm.b, F.T @ y, rtol=1e-9, atol=1e-9)
+
+    def test_smooth_trends_are_carried_by_the_polynomials(self):
+        rng = np.random.RandomState(11)
+        f = lambda Z: 8 * Z[:, 0] - 3 * Z[:, 1] ** 2 + np.exp(2 * Z[:, 2])
+        X = rng.rand(300, 3); Xt = rng.rand(300, 3)
+        gm = AdditiveGlobalMean()
+        for i in range(300):
+            gm.observe(X[i], f(X)[i], 1e-3)
+        self.assertLess(np.sqrt(np.mean((gm.current.predict(Xt)[:, 0] - f(Xt)) ** 2)), 1e-3 * f(Xt).std())
 
     def test_share_is_small_without_additive_structure(self):
         rng = np.random.RandomState(2)
