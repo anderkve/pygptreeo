@@ -3,13 +3,17 @@
 The targets are those of ``particle_physics_targets.py``. A run streams ``N`` points
 into a tree, predicting each point before it is used, and then predicts a uniform test
 set. Errors are against the noise-free target, in the target's own unit (``rmse``) and
-over the range of the target on the test set (``nrmse``).
+over the range of the target on the test set (``nrmse``). ``curve`` is the prequential
+error over the range, batch by batch of 1000 points.
 
 Configurations:
     tree       plain GPTree
     additive   ``GPTree(global_mean='additive')``
     net        ``GPTree(global_mean='net')``: the feature network beside the additive model
     net_only   ``global_mean='net'`` with ``additive=False``: the network alone
+    net_only_holdout   the network alone with the training of ``net``: a fifth of the
+               points held out, the weights with the lowest error on them published
+               (``additive=False, holdout=0.2, patience=None``)
 
 Streams: ``uniform`` (a random scan of the unit cube) and, for the likelihood target,
 ``sampler`` (every proposal of a Metropolis random walk on the likelihood; the test set
@@ -41,8 +45,10 @@ warnings.filterwarnings("ignore")
 from pygptreeo import GPTree, Default_GPR
 from particle_physics_targets import TARGETS
 
-CONFIGS = ('tree', 'additive', 'net', 'net_only')
-NAMES = {'tree': 'plain tree', 'additive': "`'additive'`", 'net': "`'net'`", 'net_only': "`'net'`, network alone"}
+CONFIGS = ('tree', 'additive', 'net', 'net_only', 'net_only_holdout')
+CURVE_BATCH = 1000      # points per value of the prequential learning curve
+NAMES = {'tree': 'plain tree', 'additive': "`'additive'`", 'net': "`'net'`", 'net_only': "`'net'`, network alone",
+         'net_only_holdout': "network alone, held-out selection"}
 
 
 def make_stream(kind, target, N, rng):
@@ -71,8 +77,11 @@ def make_tree(config, seed):
         return GPTree(**kw)
     if config == 'additive':
         return GPTree(global_mean='additive', **kw)
-    if config in ('net', 'net_only'):
-        return GPTree(global_mean='net', global_mean_kwargs=dict(additive=config == 'net', steps_per_update=8, random_state=seed), **kw)
+    if config in ('net', 'net_only', 'net_only_holdout'):
+        net = dict(additive=config == 'net', steps_per_update=8, random_state=seed)
+        if config == 'net_only_holdout':
+            net.update(holdout=0.2, patience=None)
+        return GPTree(global_mean='net', global_mean_kwargs=net, **kw)
     raise ValueError(config)
 
 
@@ -96,12 +105,14 @@ def run_one(target_name, config, seed, N, stream='uniform'):
     rmse = lambda e: float(np.sqrt(np.mean(e ** 2)))
     out = {
         'target': target_name, 'd': target.d, 'unit': target.unit, 'config': config, 'seed': seed, 'N': N, 'stream': stream,
-        'test_rmse': rmse(e_test), 'test_nrmse': rmse(e_test) / y_range, 'test_q95': float(np.percentile(np.abs(e_test), 95)),
+        'test_rmse': rmse(e_test), 'test_nrmse': rmse(e_test) / y_range,
+        'test_median': float(np.median(np.abs(e_test))), 'test_q95': float(np.percentile(np.abs(e_test), 95)),
         'test_max': float(np.abs(e_test).max()),
         'prequential_rmse': rmse(err[half]), 'prequential_nrmse': rmse(err[half]) / y_range,
         'coverage_test': float(np.mean(np.abs(e_test) <= S[:, 0])), 'coverage_prequential': float(np.mean(np.abs(err[half]) <= sd[half])),
         'update_ms': 1e3 * t_update / N, 'predict_ms': 1e3 * t_predict / N, 'seconds': round(t_update + t_predict, 1),
         'leaves': len(gpt.root.leaves),
+        'curve': [rmse(err[i:i + CURVE_BATCH]) / y_range for i in range(0, N - CURVE_BATCH + 1, CURVE_BATCH)],
     }
     gm = gpt.global_mean
     if config == 'net':
