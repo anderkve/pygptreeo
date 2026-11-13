@@ -155,8 +155,9 @@ python benchmark_particle_physics.py --summarize results/particle_physics/unifor
 python plot_particle_physics.py
 ```
 
-Streams 10 000 points of each target into a plain tree and into trees with a global
-model, on a uniform scan or (for the likelihood) on the proposals of a Metropolis walk;
+Streams 10 000 points of each target (`--N` for other lengths) into a plain tree and
+into trees with a global model, on a uniform scan or (for the likelihood) on the
+proposals of a Metropolis walk;
 see `BENCHMARK_RESULTS_particle_physics.md`.
 
 ### Animated Visualization

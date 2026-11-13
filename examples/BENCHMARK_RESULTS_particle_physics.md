@@ -12,12 +12,16 @@ Short answer, from eleven test targets, streams of 10 000 points and three seeds
   targets and seeds) and a lower error in 28 of 33 runs: a tenth on the EFT signal
   strength, 0.35 to 0.49 on six targets, and about two thirds on the loop-induced width
   and on the signal yield with Monte Carlo noise.
-* **Two targets gain nothing from a global model.** On the oscillation probability
-  `'net'` is level with the plain tree in two seeds and has 3.3 times its error in the
-  third, and along the stream the plain tree is ahead throughout. On the jet spectrum the
-  typical error is the same with and without the network (a median of 0.04% of the
-  cross-section, a 95th percentile of 0.4 to 0.6%), but the RMSE, which a few test points
-  at the kinematic edge dominate, is about twice the plain tree's.
+* **Two targets gain nothing from a global model at 10 000 points.** On the oscillation
+  probability `'net'` is level with the plain tree in two seeds and has 3.3 times its
+  error in the third, and along the stream the plain tree is ahead throughout. On the jet
+  spectrum the typical error is the same with and without the network (a median of 0.04%
+  of the cross-section, a 95th percentile of 0.4 to 0.6%), but the RMSE, which a few test
+  points at the kinematic edge dominate, is about twice the plain tree's.
+* **With 40 000 points** (one seed) `'net'` has 0.47 of the plain tree's test
+  error and is ahead on all eleven targets, these two included (0.79 on each): on the
+  oscillation probability it overtakes the plain tree after about 20 000 points. For the
+  same seed at 10 000 points the figure was 0.48.
 * **The additive model does not help on these targets.** `global_mean='additive'` has
   1.09 of the plain tree's RMSE (6 to 14% lower on six targets, level on three,
   higher on the same two as the network), and its median error is two or more times the
@@ -35,7 +39,8 @@ Short answer, from eleven test targets, streams of 10 000 points and three seeds
 * The typical error is small with and without the network (a median of 0.04 to 1.2% of
   the quantity for the logarithmic targets); what the network improves is the tail at
   thresholds, dips and funnels, by factors of two to five in the 95th percentile.
-* The run time of `'net'` is 1.9 times that of the plain tree.
+* The run time of `'net'` is 1.9 times that of the plain tree at 10 000 points
+  and 1.4 times at 40 000.
 
 ![Test error of every configuration on every target](results/particle_physics/results.png)
 
@@ -86,7 +91,7 @@ target.
   the combination (`additive=False, holdout=0.2, patience=None`: a fifth of the points
   held out, the weights with the lowest error on them published).
 * 10 000 points and seeds 1 to 3 for the uniform stream, one seed for the sampler
-  stream. A table entry is the geometric mean over the seeds.
+  stream and for 40 000 points. A table entry is the geometric mean over the seeds.
 * Run times are from four single-threaded runs side by side on a four-core machine.
 
 ## Results: uniform stream, 10 000 points
@@ -273,9 +278,88 @@ six in the region the walk has explored. On the points at the front of the walk 
 prequential column) the differences are small, because every global model extrapolates
 there; only the network alone with held-out selection is clearly ahead of the plain tree.
 
+## Results: 40 000 points
+
+One seed, uniform stream. Test RMSE over the range of the target:
+
+| target | plain tree | `'additive'` | `'net'` | network alone | network alone, held-out selection |
+|---|---|---|---|---|---|
+| resonance_xsec (4D) | 0.0057 | 0.0050 | **0.0037** | 0.0039 | 0.0043 |
+| dilepton_spectrum (4D) | 0.0127 | 0.0115 | 0.0058 | **0.0045** | 0.0055 |
+| jet_spectrum (4D) | 5.05e-05 | 5.70e-05 | **4.01e-05** | 4.28e-05 | 4.26e-05 |
+| oscillation_probability (5D) | 0.0025 | 0.0029 | 0.0020 | 0.0036 | **0.0020** |
+| branching_ratio (5D) | 0.0208 | 0.0196 | 0.0119 | **0.0119** | 0.0121 |
+| loop_decay_width (4D) | 0.0085 | 0.0099 | **0.0057** | 0.0065 | 0.0059 |
+| relic_density (4D) | 0.0035 | 0.0029 | 0.0020 | 0.0021 | **0.0020** |
+| neutralino_mass (4D) | 7.14e-04 | 0.0013 | 3.07e-04 | **2.42e-04** | 2.89e-04 |
+| eft_signal_strength (6D) | 0.0015 | 0.0014 | **1.59e-04** | 1.61e-04 | 1.64e-04 |
+| signal_yield_mc (4D) | 0.0017 | 0.0016 | **0.0010** | 0.0012 | 0.0011 |
+| global_fit_loglike (10D) | 0.0219 | 0.0218 | 0.0057 | **0.0048** | 0.0055 |
+
+Relative to the plain tree:
+
+| target | `'additive'` | `'net'` | network alone | network alone, held-out selection |
+|---|---|---|---|---|
+| resonance_xsec | 0.87 | 0.65 | 0.69 | 0.75 |
+| dilepton_spectrum | 0.91 | 0.46 | 0.35 | 0.43 |
+| jet_spectrum | 1.13 | 0.79 | 0.85 | 0.84 |
+| oscillation_probability | 1.16 | 0.79 | 1.44 | 0.78 |
+| branching_ratio | 0.94 | 0.57 | 0.57 | 0.58 |
+| loop_decay_width | 1.17 | 0.67 | 0.76 | 0.69 |
+| relic_density | 0.81 | 0.57 | 0.60 | 0.56 |
+| neutralino_mass | 1.77 | 0.43 | 0.34 | 0.40 |
+| eft_signal_strength | 0.93 | 0.11 | 0.11 | 0.11 |
+| signal_yield_mc | 0.94 | 0.58 | 0.67 | 0.64 |
+| global_fit_loglike | 0.99 | 0.26 | 0.22 | 0.25 |
+| **geometric mean** | **1.03** | **0.47** | **0.49** | **0.48** |
+| runs with a lower error than the plain tree | 7 of 11 | 11 of 11 | 10 of 11 | 11 of 11 |
+
+![Error along the stream](results/particle_physics/curves.png)
+
+The curves are the error on each batch of 1000 points before the points are used.
+
+* **The gain of the network holds at four times the data.** `'net'` has 0.47 of
+  the plain tree's test error and is ahead on all eleven targets; for the same seed at
+  10 000 points the figure was 0.48. Along the stream its error over the eleven
+  targets is 0.59 of the plain tree's on the first 5000 points, 0.55 up to 10 000, 0.51
+  up to 20 000 and 0.48 after that.
+* **The gain moves between targets.** It shrinks on three, where the tree with the
+  network improves little between 10 000 and 40 000 points while the plain tree keeps
+  improving (resonance cross-section 0.41 to 0.65, relic density 0.33 to 0.57,
+  loop-induced width 0.53 to 0.67). It stays within 0.05 on six, and it appears on the
+  two targets that had none.
+* **Oscillation probability.** `'net'` has 1.9 to 2.9 times the plain tree's error over
+  the first 10 000 points, is level with it between 10 000 and 20 000, and has 0.74 of
+  its error over the last 10 000 (0.79 on the test set). The network alone without
+  held-out selection is at twice the plain tree's error to the end.
+* **Jet spectrum.** With a network the tree is behind the plain tree by a factor of 1.1
+  to 1.7 along the first 30 000 points and level with it on the last 10 000. On the test
+  set `'net'` has 0.79 of the plain tree's RMSE: the median error is the same (0.02 to
+  0.03% of the cross-section), and the largest error, at the kinematic edge, is now
+  smaller with the network (0.015 dex) than without (0.027 dex).
+* **`'net'` and the network alone with held-out selection are the same model here**
+  (0.98 in the geometric mean, 0.86 to 1.06 from target to target); the
+  additive model has weight zero on every target. The difference that remains is the run
+  time, since the leaves of `'net'` take up a new version of the global model by the
+  cheap refit.
+* **The additive model on its own** stays level with the plain tree (1.03) and
+  gets worse on one target late in the stream: on the neutralino mass its error doubles
+  after 31 000 points. The fit of its hyperparameters at 30 720 points moves two inputs
+  to length scales of 3 to 4% of the range. The additive model's own test error does not
+  change (0.076 of the range before and after), but what it leaves for the leaves now has
+  structure at their scale.
+* **Uncertainty.** The one-sigma coverage on the test set is between 0.62 and 0.79, with
+  three exceptions: the relic density with the additive model (0.49), the EFT signal
+  strength with a network alone (0.55 and 0.57; 0.66 with `'net'`), and the signal yield
+  with Monte Carlo noise (0.98 to 1.00, for the reason given above).
+* **Cost.** 160 to 250 seconds for the plain tree, 261 to 353 for `'net'`.
+  Relative to the plain tree: `'additive'` 1.2, `'net'` 1.4, the network
+  alone 1.9, with held-out selection 1.8. The share of the global
+  model in the run time falls with the length of the stream, because its refits come at
+  doublings.
 
 
-## Where a global model does not help
+## Where a global model is slow to help
 
 **Jet spectrum.** Close to a power law in the bulk, where the plain tree's median error
 is 0.04% of the cross-section and its 95th percentile 0.4 to 0.5%. With the network both
@@ -288,7 +372,8 @@ is 0.06 to 0.18 dex, against 0.02 to 0.03 dex for the plain tree, and that is th
 the factor in the RMSE. The additive model is worse throughout the cube here (in seed 1
 its median error is three times the plain tree's): its fit compromises between the bulk
 and the corner, which leaves a residual of about 0.5 dex that bends along p_T and
-rapidity where the target itself is nearly straight.
+rapidity where the target itself is nearly straight. With 40 000 points the trees with
+a network no longer lose in the corner, and `'net'` has 0.79 of the plain tree's RMSE.
 
 **Oscillation probability.** The additive part of an oscillation whose phase is
 `dm31 / E` is, along the energy, the oscillation averaged over `dm31`: a damped wave.
@@ -298,18 +383,21 @@ and the error it leaves is again a wave. In both cases the residual is no easier
 leaf than the target. Along the stream the plain tree is ahead of every global model, by
 factors of 1.9 to 8.5 in the prequential error above. At the end `'net'` is level with
 it in two seeds and at 3.3 times its error in the third; the network alone without
-held-out selection is at 4.9 to 8.7 times in all three.
+held-out selection is at 4.9 to 8.7 times in all three. With 40 000 points the order
+changes: `'net'` is level with the plain tree between 10 000 and 20 000 points and has
+0.74 of its error over the last 10 000.
 
 There is no rule in the package yet that detects these cases: the weights of `'net'`
 compare the two global models with each other on held-out points, not the tree with and
-without them. A short trial is the practical test, since the prequential error needs no
-test set: stream the first few thousand points into a plain tree and into one with
-`global_mean='net'`, and keep the one with the lower error on the points before they
-were used.
+without them. A trial is the practical test, since the prequential error needs no test
+set: stream the points into a plain tree and into one with `global_mean='net'`, and
+compare the errors on the points before they were used. The order can change along the
+stream, as on the oscillation probability, so a trial of a few thousand points settles
+the question only for streams of about that length.
 
 ## Reproducing
 
-    # one cell (a few minutes); results as a line starting with RESULT
+    # one cell (a few minutes; add --N 40000 for the long streams); results as a line starting with RESULT
     OMP_NUM_THREADS=1 python examples/benchmark_particle_physics.py --targets relic_density --configs tree,additive,net,net_only,net_only_holdout --seeds 1
     # the sampler stream
     OMP_NUM_THREADS=1 python examples/benchmark_particle_physics.py --targets global_fit_loglike --stream sampler --configs tree,net

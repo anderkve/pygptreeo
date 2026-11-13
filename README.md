@@ -250,7 +250,8 @@ tree's run time where the network alone takes 2.0 times
 (`examples/BENCHMARK_RESULTS_additive_sums.md`). On eleven targets with the structure of
 particle-physics computations (cross-sections with thresholds and resonances, a relic
 density, an oscillation probability, a likelihood with nuisance parameters) it has half
-the plain tree's error on average and no gain on two of them
+the plain tree's error on average, at 10 000 and at 40 000 points; on two of them the
+gain appears only between 10 000 and 40 000 points
 (`examples/BENCHMARK_RESULTS_particle_physics.md`).
 
 The network (`FeatureNetLearner`) is a 3 x 128 SiLU MLP refit when the point
