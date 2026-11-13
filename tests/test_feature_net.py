@@ -257,7 +257,20 @@ class TestNetWithAdditive(unittest.TestCase):
         gm = self._tree().global_mean
         self.assertIsNotNone(gm.additive); self.assertTrue(gm.cheap_leaf_refresh)
         self.assertEqual(gm.learner.holdout, 0.2); self.assertIsNone(gm.learner.patience)
-        self.assertEqual(self._tree(holdout=0.0).global_mean.learner.holdout, 0.0)
+        self.assertEqual(self._tree(holdout=0.3).global_mean.learner.holdout, 0.3)
+        with self.assertRaises(ValueError):
+            self._tree(holdout=0.0)
+
+    def test_held_out_points_are_kept_from_both_models(self):
+        rng = np.random.RandomState(25)
+        X = rng.rand(400, 3); y = _target(X)
+        gpt = self._tree(); _stream1(gpt, X, y)
+        gm = gpt.global_mean
+        held = gm.learner.held_out(X)
+        self.assertTrue(30 < held.sum() < 150)
+        np.testing.assert_array_equal(np.asarray(gm._held_X), X[held])
+        self.assertEqual(gm.additive.n_seen, int((~held).sum()))
+        self.assertGreater(gm.error_scale[0], 0.0)
 
     def test_additive_target_takes_the_additive_model_alone(self):
         rng = np.random.RandomState(20)
