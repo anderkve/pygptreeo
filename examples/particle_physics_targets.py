@@ -49,8 +49,9 @@ def resonance_xsec(X):
 
     Inputs: mediator mass (0.2 to 5 TeV), dark-matter mass (10 GeV to 2.5 TeV), quark
     coupling, dark-matter coupling. ``sigma = g_q^2 L(M) BR(M, m, g_q, g_chi)`` plus a small
-    off-shell piece. Six orders of magnitude from the parton flux, a square-root threshold
-    on the oblique line ``M = 2 m``, and a branching ratio that is a ratio of couplings.
+    off-shell piece. Sixteen orders of magnitude between the 1st and the 99th percentile,
+    from the parton flux and from a square-root threshold on the oblique line ``M = 2 m``,
+    and a branching ratio that is a ratio of couplings.
     """
     M = _log(X[:, 0], 200.0, 5000.0); m = _log(X[:, 1], 10.0, 2500.0)
     gq = _lin(X[:, 2], 0.05, 1.0); gx = _lin(X[:, 3], 0.1, 1.5)
@@ -70,7 +71,7 @@ def dilepton_spectrum(X):
 
     Inputs: dilepton mass (0.5 to 5 TeV), Z' mass (1 to 4.5 TeV), Z' coupling, extra
     (invisible) width. A peak of 0.5 to 12% relative width on the diagonal ``m_ll = M``,
-    a destructive dip below it, on a continuum that falls over six orders of magnitude.
+    a destructive dip below it, on a continuum that falls over nine orders of magnitude.
     """
     mll = _log(X[:, 0], 500.0, 5000.0); M = _lin(X[:, 1], 1000.0, 4500.0)
     g = _lin(X[:, 2], 0.1, 1.0); extra = _lin(X[:, 3], 0.0, 3.0)
@@ -89,7 +90,10 @@ def jet_spectrum(X):
     Inputs: p_T (50 GeV to 2 TeV), rapidity as a fraction of its kinematic limit,
     alpha_s(M_Z), renormalisation scale over p_T. A power law times a kinematic
     suppression that couples p_T and rapidity, a running coupling and a scale-dependent
-    K-factor: smooth, eight orders of magnitude, close to additive in the logarithm.
+    K-factor. Close to a power law over most of the cube, with a steep fall towards the
+    kinematic edge at large rapidity and a kink where that edge starts to cut the
+    rapidity range (p_T near 550 GeV); fourteen orders of magnitude between the 1st and
+    the 99th percentile.
     """
     pt = _log(X[:, 0], 50.0, 2000.0); xt = 2 * pt / SQRT_S
     y = X[:, 1] * np.minimum(3.0, 0.95 * np.arccosh(1.0 / xt))
