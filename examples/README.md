@@ -63,6 +63,21 @@ This directory contains example scripts demonstrating the usage of the pygptreeo
     valleys, ripples on a bowl, an all-order interaction, a jump across a hyperplane,
     a length scale that varies across the box); `BENCHMARK_RESULTS_neural_linear.md` §3.4.
 
+- **`particle_physics_targets.py`**: Eleven cheap test targets with the structure of
+  quantities emulated in particle physics, for benchmarking: `resonance_xsec`,
+  `dilepton_spectrum`, `jet_spectrum`, `oscillation_probability`, `branching_ratio`,
+  `loop_decay_width`, `relic_density`, `neutralino_mass`, `eft_signal_strength`,
+  `signal_yield_mc` (with Monte Carlo noise) and `global_fit_loglike` (a likelihood with
+  nuisance parameters), in 4 to 10 inputs. Inputs are in the unit cube:
+
+  ```python
+  from particle_physics_targets import TARGETS
+  target = TARGETS['relic_density']
+  X = rng.rand(1000, target.d)
+  truth = target(X)                        # noise-free values
+  y, sigma, truth = target.sample(X, rng)  # observations and their declared sigma
+  ```
+
 - **`plot_performance_metrics.py`**: Post-processing script for performance analysis
   - Reads results from CSV files
   - Generates detailed performance plots
