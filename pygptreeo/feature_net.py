@@ -52,7 +52,7 @@ class _GrowingStore:
 
 class _EarlyStop:
     """Keeps the weights with the lowest loss on held-out points; ``check`` returns True
-    after ``patience`` checks without improvement."""
+    after ``patience`` checks without improvement (never if ``patience`` is None)."""
 
     def __init__(self, Xh, Yh, Wh, patience: int):
         self.Xh, self.Yh, self.Wh, self.patience = Xh, Yh, Wh, patience
@@ -64,7 +64,7 @@ class _EarlyStop:
             loss = float((((net(self.Xh) - self.Yh) ** 2) * self.Wh).mean())
         if loss < self.best:
             self.best, self.state, self.best_check = loss, copy.deepcopy(net.state_dict()), self.n_checks
-        return self.n_checks - self.best_check >= self.patience
+        return self.patience is not None and self.n_checks - self.best_check >= self.patience
 
     def restore(self, net):
         self.check(net)
@@ -117,20 +117,22 @@ class FeatureNetLearner:
     check_every : int, default=25
         L-BFGS iterations between two checks of the held-out loss (ten times as
         many Adam steps).
-    patience : int, default=3
+    patience : int or None, default=3
         Checks without improvement after which a refit stops (``n_early_stops``
-        counts the refits that did).
+        counts the refits that did). None: a refit runs its whole budget and
+        publishes the weights with the lowest held-out loss.
     random_state : int or None
     """
 
     def __init__(self, hidden: int = 128, depth: int = 3, steps: int = 300, polish_steps: int = 3000,
                  lr: float = 1e-3, min_points: int = 200, reservoir_size: Optional[int] = 5000,
                  steps_per_update: Optional[int] = None, holdout: float = 0.0, check_every: int = 25,
-                 patience: int = 3, random_state: Optional[int] = None):
+                 patience: Optional[int] = 3, random_state: Optional[int] = None):
         _require_torch()
         if not (0.0 <= holdout < 1.0):
             raise ValueError("holdout must be in [0, 1)")
-        self.holdout, self.check_every, self.patience = float(holdout), int(check_every), int(patience)
+        self.holdout, self.check_every = float(holdout), int(check_every)
+        self.patience = None if patience is None else int(patience)
         if steps < 0 or polish_steps < 0:
             raise ValueError("steps and polish_steps must be non-negative")
         if steps == 0 and polish_steps == 0:
@@ -437,27 +439,160 @@ class _NetSnapshot(GlobalMeanSnapshot):
         return f"_NetSnapshot(version={self.version}, n_fit={self.n_fit})"
 
 
-class NetGlobalMean(GlobalMeanLearner):
-    """A feature network as the tree's global model: GP leaves on the residual of its head.
+class _NetView:
+    """A frozen copy of one published version of the network."""
 
-    Wraps a :class:`FeatureNetLearner` (built from the keyword arguments) as a
-    :class:`GlobalMeanLearner`. Each published network version is a new snapshot
-    the leaves refit against on first use; ``error_scale`` is the learner's.
+    def __init__(self, learner: FeatureNetLearner):
+        self.net = copy.deepcopy(learner.net)
+        self.x_mu, self.x_sd = np.array(learner.x_mu), np.array(learner.x_sd)
+        self.y_mu, self.y_sd = np.array(learner.y_mu), np.array(learner.y_sd)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        Xt = torch.tensor((np.atleast_2d(np.asarray(X, float)) - self.x_mu) / self.x_sd, dtype=torch.float32)
+        with torch.no_grad():
+            out = self.net(Xt).double().numpy()
+        return out * self.y_sd + self.y_mu
+
+
+class _CombinedSnapshot(GlobalMeanSnapshot):
+    """``c + a * additive(x) + b * network(x)`` for one published pair of versions."""
+
+    def __init__(self, version, n_fit, additive, net, weights):
+        self.version, self.n_fit = int(version), int(n_fit)
+        self.additive, self.net, self.weights = additive, net, np.array(weights, dtype=float)
+
+    @property
+    def n_outputs(self) -> int:
+        return 1
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        c, a, b = self.weights
+        out = np.full((np.atleast_2d(X).shape[0], 1), c)
+        if self.additive is not None and a != 0.0:
+            out = out + a * self.additive.predict(X)
+        if self.net is not None and b != 0.0:
+            out = out + b * self.net.predict(X)
+        return out
+
+    def __repr__(self) -> str:
+        return f"_CombinedSnapshot(version={self.version}, n_fit={self.n_fit}, weights={np.round(self.weights, 3).tolist()})"
+
+
+class NetGlobalMean(GlobalMeanLearner):
+    """A feature network as the tree's global model, beside an additive model.
+
+    Wraps a :class:`FeatureNetLearner` (built from the keyword arguments), trained on
+    the raw targets. With ``additive=True`` (the default) an
+    :class:`~pygptreeo.additive_sums.AdditiveGlobalMean` runs beside it. Both predict
+    every new point before it is used, and a running least-squares fit of ``y`` on
+    ``[1, additive prediction, network prediction]``, with forgetting, gives the
+    weights of the combination (``weights``, the two slopes in [0, 1]). A model on
+    its own, with weight one, is taken whenever its squared error or the fitted
+    weights are within ``PURE_TOLERANCE`` of the best combination. The fit starts
+    again when a model publishes its first version. The GP leaves model the residual of
+    the combination; ``error_scale`` is its running error on these honest
+    predictions. The network then defaults to ``holdout=0.2, patience=None``.
+
+    ``additive=False``, or a tree with several outputs, gives the network alone:
+    each published version is a snapshot the leaves refit against, and
+    ``error_scale`` is the learner's.
     """
 
-    def __init__(self, **learner_kwargs):
+    PURE_TOLERANCE = 0.02
+    MIN_ROWS = 30
+
+    def __init__(self, additive: bool = True, **learner_kwargs):
         _require_torch()
+        if additive:
+            learner_kwargs.setdefault('holdout', 0.2); learner_kwargs.setdefault('patience', None)
         self.learner = FeatureNetLearner(**learner_kwargs)
         self.current = None
         self.error_scale = None
+        self.additive = None
+        if additive:
+            from pygptreeo.additive_sums import AdditiveGlobalMean
+            self.additive = AdditiveGlobalMean()
+        self.cheap_leaf_refresh = bool(additive)
+        self.weights = np.zeros(3)
+        self._add_view = None; self._net_view = None; self._net_version = 0
+        self._S = np.zeros((3, 3)); self._r = np.zeros(3); self._yy = 0.0      # forgetting sums of u u^T, u y, y^2; u = [1, additive, network]
+        self._err2 = None; self._noise2 = None; self._have = (False, False)
+        self.n_seen = 0; self.n_versions = 0
 
     def observe(self, x, y, sigma) -> bool:
-        self.learner.observe(x, y, sigma)
-        self.error_scale = self.learner.error_scale
-        if self.learner.fitted and (self.current is None or self.current.version != self.learner.version):
-            self.current = _NetSnapshot(self.learner, self.learner.version)
-            return True
-        return False
+        if self.additive is not None and np.asarray(y).size != 1:
+            self.additive = None; self.cheap_leaf_refresh = False     # several outputs: the network alone
+        if self.additive is None:
+            self.learner.observe(x, y, sigma)
+            self.error_scale = self.learner.error_scale
+            if self.learner.fitted and (self.current is None or self.current.version != self.learner.version):
+                self.current = _NetSnapshot(self.learner, self.learner.version)
+                return True
+            return False
+        return self._observe_combined(x, y, sigma)
+
+    def _observe_combined(self, x, y, sigma) -> bool:
+        x = np.asarray(x, dtype=float).reshape(1, -1)
+        yv = float(np.asarray(y, dtype=float).reshape(-1)[0]); sv = float(np.asarray(sigma, dtype=float).reshape(-1)[0])
+        self.n_seen += 1
+        # predictions of the published versions for a point they have not seen
+        u = np.array([1.0, self._add_view.predict(x)[0, 0] if self._add_view is not None else 0.0,
+                      self._net_view.predict(x)[0, 0] if self._net_view is not None else 0.0])
+        have = (self._add_view is not None, self._net_view is not None)
+        if have != self._have:                                       # a model's first version: the sums start again
+            self._have = have; self._S[:] = 0.0; self._r[:] = 0.0; self._yy = 0.0
+        lam = 1.0 - 1.0 / max(300.0, 0.25 * self.n_seen)
+        self._S = lam * self._S + np.outer(u, u); self._r = lam * self._r + u * yv; self._yy = lam * self._yy + yv * yv
+        if self.current is not None:
+            k = 1.0 / min(ERROR_WINDOW, self.n_seen); e2 = (self.weights @ u - yv) ** 2
+            self._err2 = e2 if self._err2 is None else (1 - k) * self._err2 + k * e2
+            self._noise2 = sv ** 2 if self._noise2 is None else (1 - k) * self._noise2 + k * sv ** 2
+            self.error_scale = np.array([np.sqrt(max(self._err2 - self._noise2, 0.0))])
+        changed = self.additive.observe(x[0], yv, sv)
+        if changed:
+            self._add_view = self.additive.current
+        self.learner.observe(x[0], yv, sv)
+        if self.learner.fitted and self.learner.version != self._net_version:
+            self._net_version = self.learner.version; self._net_view = _NetView(self.learner); changed = True
+        if changed:
+            self.weights = self._solve_weights()
+            self.n_versions += 1
+            self.current = _CombinedSnapshot(self.n_versions, self.n_seen, self._add_view, self._net_view, self.weights)
+        return changed
+
+    def _solve_weights(self) -> np.ndarray:
+        """Least squares of y on the honest predictions, the two slopes kept in [0, 1].
+        Until ``MIN_ROWS`` predictions of the present models have come in, the weights
+        stay as they are (a first model starts with weight one)."""
+        have = [0] + ([1] if self._add_view is not None else []) + ([2] if self._net_view is not None else [])
+        S, r = self._S, self._r; scale = max(S[0, 0], 1e-12)
+        if S[0, 0] < self.MIN_ROWS or self._have != (1 in have, 2 in have):
+            if not np.any(self.weights[1:]) and len(have) > 1:
+                w = np.zeros(3); w[have[1]] = 1.0
+                return w
+            return self.weights
+        loss = lambda w: float(w @ S @ w - 2 * w @ r + self._yy)
+        fits = []
+        for use in ([have] + ([[0, 1], [0, 2]] if len(have) == 3 else []) + [[0]]):
+            w = np.zeros(3)
+            try:
+                w[use] = np.linalg.solve(S[np.ix_(use, use)] + 1e-9 * scale * np.eye(len(use)), r[use])
+            except np.linalg.LinAlgError:
+                continue
+            if np.any(w[1:] < -1e-9) or np.any(w[1:] > 1.0 + 1e-9):
+                w[1:] = np.clip(w[1:], 0.0, 1.0)
+                w[0] = (r[0] - w[1] * S[0, 1] - w[2] * S[0, 2]) / scale
+            fits.append((loss(w), w))
+        best_loss, best = min(fits, key=lambda f: f[0])
+        tol = self.PURE_TOLERANCE
+        pure = [(loss(w), w) for k, w in ((1, np.array([0.0, 1.0, 0.0])), (2, np.array([0.0, 0.0, 1.0]))) if k in have]
+        if pure:
+            pure_loss, w = min(pure, key=lambda f: f[0])
+            if pure_loss <= (1.0 + tol) * max(best_loss, 0.0) + 1e-300 or np.all(np.abs(best[1:] - w[1:]) <= tol):
+                return w
+        return best
 
     def __repr__(self) -> str:
-        return f"NetGlobalMean({self.learner!r})"
+        if self.additive is None:
+            return f"NetGlobalMean({self.learner!r})"
+        return f"NetGlobalMean({self.learner!r}, {self.additive!r}, weights={np.round(self.weights, 3).tolist()})"

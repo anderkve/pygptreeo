@@ -211,11 +211,13 @@ class TestFeatureNet(unittest.TestCase):
         N = 500
         X = rng.rand(N, 3); Y = _target(X)[:, None]; S = np.full((N, 1), 1e-3)
         gpt = GPTree(GPR=Default_GPR(), Nbar=60, retrain_every_n_points=20, use_calibrated_sigma=True,
-                     global_mean='net', global_mean_kwargs=dict(steps=300, min_points=60, random_state=0))
+                     global_mean='net', global_mean_kwargs=dict(additive=False, steps=300, min_points=60, random_state=0))
         self.assertIsInstance(gpt.global_mean, NetGlobalMean)
         self.assertTrue(gpt.root.use_standard_scaling)        # the leaves are ordinary GPs
         _stream(gpt, X, Y, S)
         gm = gpt.global_mean
+        self.assertIsNone(gm.additive); self.assertFalse(gm.cheap_leaf_refresh)
+        self.assertEqual(gm.learner.holdout, 0.0)
         self.assertGreaterEqual(gm.learner.n_refits, 2)
         self.assertEqual(gm.current.version, gm.learner.version)
         self.assertIsNotNone(gm.error_scale)
@@ -225,6 +227,93 @@ class TestFeatureNet(unittest.TestCase):
         self.assertTrue(np.all(Sd > 0))
         for leaf in gpt.root.leaves:                          # every leaf fitted against the current snapshot
             self.assertEqual(leaf._fitted_global.version, gm.current.version)
+
+    def test_patience_none_runs_the_whole_budget(self):
+        rng = np.random.RandomState(16)
+        X = rng.rand(400, 3); f = _target(X); y = f + 0.5 * f.std() * rng.randn(400)
+        learner = self._learner(steps=100, polish_steps=500, holdout=0.2, patience=None)
+        learner.fit_on(X, y)
+        self.assertEqual(learner.n_early_stops, 0)
+        self.assertTrue(np.all(np.isfinite(learner.head(X))))
+
+
+def _stream1(gpt, X, y, sigma=1e-3):
+    with contextlib.redirect_stdout(io.StringIO()):
+        for i in range(X.shape[0]):
+            gpt.update_tree(X[i:i + 1], np.array([[y[i]]]), np.array([[sigma]]))
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "PyTorch not installed")
+class TestNetWithAdditive(unittest.TestCase):
+    """``global_mean='net'``: the network beside the additive model."""
+
+    def _tree(self, **kw):
+        from pygptreeo.default_gpr import Default_GPR
+        net = dict(steps=100, polish_steps=300, min_points=100, random_state=0); net.update(kw)
+        np.random.seed(0)
+        return GPTree(GPR=Default_GPR(n_restarts_optimizer=0), Nbar=60, retrain_every_n_points=20, global_mean='net', global_mean_kwargs=net)
+
+    def test_defaults(self):
+        gm = self._tree().global_mean
+        self.assertIsNotNone(gm.additive); self.assertTrue(gm.cheap_leaf_refresh)
+        self.assertEqual(gm.learner.holdout, 0.2); self.assertIsNone(gm.learner.patience)
+        self.assertEqual(self._tree(holdout=0.0).global_mean.learner.holdout, 0.0)
+
+    def test_additive_target_takes_the_additive_model_alone(self):
+        rng = np.random.RandomState(20)
+        f = lambda Z: np.sin(9 * Z[:, 0]) + Z[:, 1] ** 2 + np.exp(Z[:, 2])
+        X = rng.rand(700, 3); Xt = rng.rand(300, 3)
+        gpt = self._tree(); _stream1(gpt, X, f(X))
+        gm = gpt.global_mean
+        np.testing.assert_array_equal(gm.weights, [0.0, 1.0, 0.0])
+        with contextlib.redirect_stdout(io.StringIO()):
+            P, Sd = gpt.predict(Xt)
+        self.assertLess(np.sqrt(np.mean((P[:, 0] - f(Xt)) ** 2)), 2e-3 * f(Xt).std())
+        self.assertTrue(np.all(Sd > 0)); self.assertIsNotNone(gm.error_scale)
+
+    def test_coupled_target_takes_the_network(self):
+        rng = np.random.RandomState(21)
+        f = lambda Z: np.tanh(4 * (Z[:, 0] + Z[:, 1] - Z[:, 2] - 0.5)) * (1 + Z[:, 0] * Z[:, 2])
+        X = rng.rand(900, 3); Xt = rng.rand(300, 3)
+        gpt = self._tree(steps=300, polish_steps=1000); _stream1(gpt, X, f(X))
+        gm = gpt.global_mean
+        self.assertGreater(gm.weights[2], 0.7); self.assertLess(gm.weights[1], 0.3)
+        global_err = np.sqrt(np.mean((gm.current.predict(Xt)[:, 0] - f(Xt)) ** 2))
+        self.assertLess(global_err, 0.5 * np.sqrt(np.mean((gm.additive.current.predict(Xt)[:, 0] - f(Xt)) ** 2)))
+        for leaf in gpt.root.leaves:
+            with contextlib.redirect_stdout(io.StringIO()):
+                leaf.predict(Xt[:1])
+            self.assertEqual(leaf._fitted_global.version, gm.current.version)
+
+    def test_published_versions_do_not_change(self):
+        rng = np.random.RandomState(22)
+        X = rng.rand(450, 3); y = _target(X); Xt = rng.rand(50, 3)
+        gpt = self._tree(); _stream1(gpt, X[:250], y[:250])
+        snap = gpt.global_mean.current; before = snap.predict(Xt).copy()
+        _stream1(gpt, X[250:], y[250:])
+        self.assertGreater(gpt.global_mean.current.version, snap.version)
+        np.testing.assert_array_equal(snap.predict(Xt), before)
+
+    def test_several_outputs_use_the_network_alone(self):
+        from pygptreeo.default_gpr import Default_GPR
+        rng = np.random.RandomState(23)
+        X = rng.rand(150, 3); Y = np.column_stack([_target(X), X[:, 0] - X[:, 1]]); S = np.full((150, 2), 1e-3)
+        gpt = GPTree(GPR=Default_GPR(), Nbar=60, retrain_every_n_points=20, n_outputs=2, global_mean='net',
+                     global_mean_kwargs=dict(steps=50, polish_steps=0, min_points=60, random_state=0))
+        _stream(gpt, X, Y, S)
+        self.assertIsNone(gpt.global_mean.additive); self.assertFalse(gpt.global_mean.cheap_leaf_refresh)
+        P, _ = gpt.predict(X[:10])
+        self.assertEqual(P.shape, (10, 2))
+
+    def test_pickle(self):
+        import pickle
+        rng = np.random.RandomState(24)
+        X = rng.rand(300, 3); y = _target(X); Xt = rng.rand(20, 3)
+        gpt = self._tree(); _stream1(gpt, X, y)
+        with contextlib.redirect_stdout(io.StringIO()):
+            P, Sd = gpt.predict(Xt); clone = pickle.loads(pickle.dumps(gpt)); P2, Sd2 = clone.predict(Xt)
+        np.testing.assert_allclose(P2, P); np.testing.assert_allclose(Sd2, Sd)
+        _stream1(clone, X[:40] * 0.9, y[:40])
 
 
 if __name__ == '__main__':
