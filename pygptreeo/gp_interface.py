@@ -181,3 +181,12 @@ class GPRegressorInterface(ABC):
         falls back to data spread). The returned array has shape (n_features,).
         """
         return None
+
+    def refit_fixed(self, X: np.ndarray, y: np.ndarray) -> bool:
+        """Fit to ``(X, y)`` with the hyperparameters of the last fit kept.
+
+        Optional capability used by global models with ``cheap_leaf_refresh``.
+        Returns False if the backend cannot, in which case the caller does a
+        full fit.
+        """
+        return False

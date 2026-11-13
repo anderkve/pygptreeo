@@ -209,16 +209,22 @@ minibatch steps (`polish_steps`, 3000) over every point seen, whose store costs
 point's squared error is weighted by the inverse of its noise variance plus the
 network's own error variance. `steps=0` or `polish_steps=0` drops a phase;
 `steps_per_update=None` runs each refit in one go instead of amortising it over
-the following updates. `examples/example_hybrid.py` runs the hybrid against the
-plain tree.
+the following updates. A fifth of the points (`holdout`, 0.2) is never trained
+on, and each refit publishes the weights that had the lowest loss on them;
+`holdout=0` trains on every point. A leaf takes up a new version of the network
+by refitting its GP on the new residual with its kernel hyperparameters kept.
+`examples/example_hybrid.py` runs the hybrid against the plain tree.
 
 On ten 40 000-point streams the hybrid beat the plain tree by an order of
 magnitude or more on smooth targets with a global structure a network can
 learn (coupled valleys, rotated peaks, a function living on a hidden 2-plane
-of ten inputs, a sharp step), by 10 to 30% on rough oscillatory targets, and
-was level on one whose ripples 40 000 points do not resolve, at a mean update
-cost of 4 to 10 ms per point (`examples/BENCHMARK_RESULTS_neural_linear.md`
-§3.8 is the reference table). Its leaves keep the default Matérn 3/2 kernel:
+of ten inputs, a sharp step), by 14 to 20% on three rough oscillatory targets,
+and was level on two whose ripples 40 000 points do not resolve, at 1.5 to 1.6
+times the plain tree's run time (`examples/BENCHMARK_RESULTS_neural_linear.md`
+§3.10 is the reference table). The held-out points are what keep it ahead of
+the plain tree on noisy targets: on 4000-point streams with noise it has 0.75
+of the plain tree's error, where a network trained on every point has 1.44.
+Its leaves keep the default Matérn 3/2 kernel:
 Matérn 5/2 was level with it, RBF failed on the rough residual of the 3D
 target, and the additive kernel gained only where the target has low-order
 additive structure, at three to seven times the update cost (§3.2). Its

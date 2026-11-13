@@ -142,6 +142,9 @@ class GlobalMeanLearner:
 
     current: Optional[GlobalMeanSnapshot] = None
     error_scale: Optional[np.ndarray] = None
+    # True: a leaf takes up a new snapshot by refitting its GP with the hyperparameters
+    # kept (where the GP backend can) instead of optimising them again.
+    cheap_leaf_refresh: bool = False
 
     def observe(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray) -> bool:
         """Register one observation; return True if a new snapshot was published."""
