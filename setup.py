@@ -9,11 +9,11 @@ setuptools.setup(
     name='pygptreeo',
     version='0.1.0',
     author='GPTreeO Project Contributors',
-    author_email='gptreeo-dev@example.com',
+    author_email='anders.kvellestad@fys.uio.no',
     description='A Python package for online regression using a dynamic tree of Gaussian Process regressors.',
     long_description=open("README.md").read(),
     long_description_content_type='text/markdown',
-    url='http://github.com/user/pygptreeo', # Placeholder URL
+    url='http://github.com/anderkve/pygptreeo',
     packages=setuptools.find_packages(),
     install_requires=[
         'numpy',
