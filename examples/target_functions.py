@@ -5,8 +5,11 @@ algorithms. The input `x` for each function is generally expected to be
 a 1-D NumPy array representing a point in a d-dimensional space, with
 values in each dimension initially scaled to the `[0,1]` range. This
 input is then mapped to the function's standard domain before computation.
+
+`make_stream` generates input streams of different character for them.
 """
 import numpy as np
+from scipy.optimize import minimize
 
 
 def Eggholder_2d(x):
@@ -408,3 +411,74 @@ def Chirp(x):
     x = np.asarray(x, dtype=float)
     freq = 1.0 + 5.0 * x[0]
     return 5.0 + np.sum(np.sin(2 * np.pi * freq * x), axis=0)
+
+
+# --------------------------------------------------------------------------- #
+# Input streams
+# --------------------------------------------------------------------------- #
+def _find_minimum(target, d, rng):
+    """The lowest of five local minima of ``target`` found from random starts in the unit cube."""
+    X0 = rng.rand(400, d)
+    f0 = target(X0.T)
+    best = None
+    for i in np.argsort(f0)[:5]:
+        res = minimize(lambda x: float(target(x)), X0[i], method='L-BFGS-B', bounds=[(0, 1)] * d)
+        if best is None or res.fun < best.fun:
+            best = res
+    return np.clip(best.x, 0, 1)
+
+
+def _normal_in_cube(centre, width, rng):
+    """``centre + width * N(0, 1)`` per coordinate, redrawn until inside the unit interval."""
+    x = centre + width * rng.randn(*np.shape(centre))
+    outside = (x < 0) | (x > 1)
+    while outside.any():
+        x[outside] = (centre + width * rng.randn(*x.shape))[outside]
+        outside = (x < 0) | (x > 1)
+    return x
+
+
+def make_stream(kind, target, d, N, rng):
+    """``N`` stream inputs in the ``d``-dimensional unit cube, one row per point.
+
+    ``kind`` is one of
+        'uniform'    independent uniform samples
+        'focusing'   a uniform phase, then a Gaussian cluster around the minimum
+                     of ``target`` whose width shrinks from 0.3 to 0.02 (an
+                     optimiser converging)
+        'sweeping'   a Gaussian cluster of width 0.12 whose centre moves along a
+                     smooth path through the cube
+        'walker'     every proposal of a Metropolis random walk on
+                     ``exp(-target / T)`` (an MCMC sampler)
+    """
+    if kind == 'uniform':
+        return rng.rand(N, d)
+
+    if kind == 'focusing':
+        n_broad = max(500, N // 6)
+        xmin = _find_minimum(target, d, rng)
+        width = 0.3 * (0.02 / 0.3) ** (np.clip(np.arange(N) - n_broad, 0, None) / (N - n_broad))
+        broad = rng.rand(N, d)
+        cluster = _normal_in_cube(np.tile(xmin, (N, 1)), width[:, None], rng)
+        return np.where((np.arange(N) < n_broad)[:, None], broad, cluster)
+
+    if kind == 'sweeping':
+        s = np.linspace(0, 1, N)
+        centre = 0.5 + 0.35 * np.column_stack([np.sin(2 * np.pi * (s * 0.75 + 0.2 * j)) for j in range(d)])
+        return _normal_in_cube(centre, 0.12, rng)
+
+    if kind == 'walker':
+        X0 = rng.rand(400, d)
+        f0 = target(X0.T)
+        T = 0.05 * (np.percentile(f0, 90) - f0.min())
+        x = X0[np.argmin(f0)].copy(); fx = float(target(x))
+        X = np.empty((N, d))
+        for i in range(N):
+            prop = _normal_in_cube(x, 0.05, rng)
+            fp = float(target(prop))
+            X[i] = prop
+            if np.log(rng.rand()) < -(fp - fx) / T:
+                x, fx = prop, fp
+        return X
+
+    raise ValueError(f"unknown stream kind '{kind}'")

@@ -1,4 +1,4 @@
-"""Tests for the particle-physics-style test targets of ``examples/particle_physics_targets.py``."""
+"""Tests for the particle-physics-style test targets of ``examples/target_functions_physics.py``."""
 
 import os
 import sys
@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'examples')))
 
-from particle_physics_targets import PRECISION, TARGETS
+from target_functions_physics import PRECISION, TARGETS
 
 
 class TestParticlePhysicsTargets(unittest.TestCase):
