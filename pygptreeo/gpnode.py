@@ -1524,7 +1524,7 @@ class GPNode(Node):
 
         if self.use_standard_scaling and self.X_scaler is not None:
             # Transform input to standardized space (same for all outputs)
-            x_scaled = self.X_scaler.transform(x)
+            x_scaled = self._scaled_inputs(x)
 
             # Get predictions for each output independently
             for i in range(self.n_outputs):
@@ -1532,11 +1532,12 @@ class GPNode(Node):
                 mu_scaled_i, sigma_scaled_i = self.my_GPRs[i].predict(x_scaled, return_std=return_std)
 
                 # Inverse transform mean: mu_original = mu_scaled * scale_y + mean_y
-                mu_pred[:, i] = self.y_scalers[i].inverse_transform(mu_scaled_i.reshape(-1, 1)).flatten()
+                y_scaler = self.y_scalers[i]
+                mu_pred[:, i] = np.asarray(mu_scaled_i, dtype=float).reshape(-1) * y_scaler.scale_[0] + y_scaler.mean_[0]
 
                 # Transform std: sigma_original = sigma_scaled * scale_y
                 # When y is scaled by scale_y, variance scales by scale_y^2, so std scales by scale_y
-                sigma_pred[:, i] = sigma_scaled_i * self.y_scalers[i].scale_[0]
+                sigma_pred[:, i] = sigma_scaled_i * y_scaler.scale_[0]
 
         else:
             # No scaling - predict on raw data for each output
@@ -1548,8 +1549,10 @@ class GPNode(Node):
         return mu_pred, sigma_pred
 
     def _scaled_inputs(self, x: np.ndarray) -> np.ndarray:
+        """``X_scaler.transform(x)`` without scikit-learn's input validation, which
+        costs more than the arithmetic for a few points."""
         if self.use_standard_scaling and self.X_scaler is not None:
-            return self.X_scaler.transform(x)
+            return (np.asarray(x, dtype=float) - self.X_scaler.mean_) / self.X_scaler.scale_
         return x
 
     def _prior_prediction(self, x: np.ndarray):

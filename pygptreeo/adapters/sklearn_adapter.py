@@ -5,10 +5,12 @@ This module provides an adapter that wraps scikit-learn's GaussianProcessRegress
 to conform to pygptreeo's GPRegressorInterface.
 """
 
+import warnings
 from typing import Union, Tuple
 import numpy as np
 from copy import deepcopy
 
+from scipy.linalg import solve_triangular
 from sklearn.gaussian_process import GaussianProcessRegressor
 
 from ..gp_interface import GPRegressorInterface
@@ -122,11 +124,33 @@ class SklearnGPAdapter(GPRegressorInterface):
             Standard deviations of shape (n_samples,) or (n_samples, 1).
             Only returned if return_std=True.
         """
-        if return_std:
-            y_mean, y_std = self._gpr.predict(X, return_std=True)
-            return y_mean, y_std
-        else:
-            return self._gpr.predict(X, return_std=False)
+        sk = self._gpr
+        X = np.asarray(X)
+        fitted = all(hasattr(sk, a) for a in ('kernel_', 'L_', 'alpha_', 'X_train_', '_y_train_mean', '_y_train_std'))
+        if not fitted or X.ndim != 2 or X.dtype != np.float64:
+            if return_std:
+                y_mean, y_std = sk.predict(X, return_std=True)
+                return y_mean, y_std
+            return sk.predict(X, return_std=False)
+        # The posterior of GaussianProcessRegressor.predict from its fitted attributes,
+        # without its input validation: the same operations, so the same numbers.
+        K_trans = sk.kernel_(X, sk.X_train_)
+        y_mean = sk._y_train_std * (K_trans @ sk.alpha_) + sk._y_train_mean
+        if y_mean.ndim > 1 and y_mean.shape[1] == 1:
+            y_mean = np.squeeze(y_mean, axis=1)
+        if not return_std:
+            return y_mean
+        V = solve_triangular(sk.L_, K_trans.T, lower=True, check_finite=False)
+        y_var = sk.kernel_.diag(X).copy()
+        y_var -= np.einsum("ij,ji->i", V.T, V)
+        negative = y_var < 0
+        if np.any(negative):
+            warnings.warn("Predicted variances smaller than 0. Setting those variances to 0.")
+            y_var[negative] = 0.0
+        y_var = np.outer(y_var, sk._y_train_std ** 2).reshape(*y_var.shape, -1)
+        if y_var.shape[1] == 1:
+            y_var = np.squeeze(y_var, axis=1)
+        return y_mean, np.sqrt(y_var)
 
     def is_trained(self) -> bool:
         """
