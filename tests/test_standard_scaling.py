@@ -263,6 +263,35 @@ class TestStandardScaling(unittest.TestCase):
         self.assertIsNotNone(y_pred)
         self.assertIsNotNone(y_std)
 
+    def test_prediction_matches_scalers_and_scikit_learn(self):
+        """A leaf scales its inputs and computes the GP posterior itself; the numbers
+        are those of the scalers and of scikit-learn's predict."""
+        rng = np.random.RandomState(0)
+        X = rng.rand(40, 3) * [1.0, 50.0, 0.01]; y = np.sin(3 * X[:, 0]) + X[:, 1] * X[:, 2]; Xt = X[:7] + 1e-3
+        gpt = GPTree(GPR=Default_GPR(), Nbar=1000, retrain_every_n_points=10, use_standard_scaling=True)
+        for i in range(X.shape[0]):
+            gpt.update_tree(X[i:i + 1], y[i:i + 1].reshape(1, 1), np.array([[1e-3]]))
+        leaf = gpt.root
+        np.testing.assert_array_equal(leaf._scaled_inputs(Xt), leaf.X_scaler.transform(Xt))
+        mu, sd = leaf.predict(Xt)
+        m, s = leaf.my_GPRs[0].sklearn_gpr.predict(leaf.X_scaler.transform(Xt), return_std=True)
+        np.testing.assert_array_equal(mu[:, 0], leaf.y_scalers[0].inverse_transform(m.reshape(-1, 1)).ravel())
+        np.testing.assert_array_equal(sd[:, 0], s * leaf.y_scalers[0].scale_[0])
+
+    def test_adapter_predict_matches_scikit_learn(self):
+        rng = np.random.RandomState(1)
+        X = rng.rand(40, 3); y = (np.sin(3 * X[:, 0]) + X[:, 1] * X[:, 2]).reshape(-1, 1); Xt = rng.rand(7, 3)
+        for normalize_y in (False, True):
+            gpr = Default_GPR(normalize_y=normalize_y)
+            gpr.fit(X, y)
+            mean, std = gpr.predict(Xt, return_std=True)
+            ref_mean, ref_std = gpr.sklearn_gpr.predict(Xt, return_std=True)
+            np.testing.assert_array_equal(mean, ref_mean)
+            np.testing.assert_array_equal(std, ref_std)
+            np.testing.assert_array_equal(gpr.predict(Xt), ref_mean)
+            # inputs that are not float64 arrays go through scikit-learn
+            np.testing.assert_array_equal(gpr.predict(Xt.tolist()), gpr.sklearn_gpr.predict(Xt.tolist()))
+
 
 if __name__ == '__main__':
     unittest.main()

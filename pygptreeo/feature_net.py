@@ -72,6 +72,7 @@ class _HeldOutBest:
 BATCH_SIZE = 128              # Adam minibatch size
 HOLDOUT_CHECK_EVERY = 25      # L-BFGS iterations between two checks of the held-out loss (ten times as many Adam steps)
 ERROR_WINDOW = 200            # observations the running estimate of the head's error remembers
+LBFGS_MAX_EVAL = 25           # loss evaluations allowed per L-BFGS iteration (line search)
 POLISH_STEPS_PER_UPDATE = 8   # Adam steps per L-BFGS iteration in an amortised refit's polish phase (about equal cost)
 
 
@@ -260,8 +261,8 @@ class FeatureNetLearner:
         if self.steps == 0:
             return None, scal
         Xt, Yt, Wt, best = self._split(Xt, Yt, Wt, hold, None)
-        # One iteration per step() call; max_eval's default of 1 would cut the line search.
-        opt = torch.optim.LBFGS(net.parameters(), lr=1.0, max_iter=1, max_eval=25, history_size=20,
+        # max_iter and max_eval are set per step() call in _train.
+        opt = torch.optim.LBFGS(net.parameters(), lr=1.0, max_iter=1, max_eval=LBFGS_MAX_EVAL, history_size=20,
                                 line_search_fn='strong_wolfe', tolerance_grad=0.0, tolerance_change=0.0)
         return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=None, state=None, best=best, it=0), scal
 
@@ -296,9 +297,18 @@ class FeatureNetLearner:
         if sched is None:
             def closure():
                 opt.zero_grad(); loss = self._loss(net, Xt, Yt, Wt); loss.backward(); return loss
+            # One step() call runs all iterations up to the next check: every call
+            # starts with a loss evaluation that a single-iteration call would repeat.
+            group = opt.param_groups[0]; opt_state = opt.state[group['params'][0]]
             while done < n_steps:
-                opt.step(closure); done += 1
-                check()
+                m = n_steps - done if best is None else min(n_steps - done, every - ph['it'] % every)
+                group['max_iter'], group['max_eval'] = m, LBFGS_MAX_EVAL * m
+                before = opt_state.get('n_iter', 0)
+                opt.step(closure)
+                k = max(opt_state.get('n_iter', 0) - before, 1)
+                done += k; ph['it'] += k
+                if best is not None and ph['it'] % every == 0:
+                    net.eval(); best.check(net); net.train()
             net.eval(); return
         n = Xt.shape[0]; batch = int(min(BATCH_SIZE, max(2, n // 2)))
         while done < n_steps:

@@ -104,6 +104,37 @@ class TestFeatureNet(unittest.TestCase):
         self.assertFalse(learner.refit_in_progress)
         self.assertEqual(learner.version, 2)
 
+    def test_lbfgs_iterations_share_optimiser_calls(self):
+        """The L-BFGS phase evaluates the loss about once per iteration and ends at
+        the weights that one optimiser call per iteration gives."""
+        rng = np.random.RandomState(3)
+        X = rng.rand(300, 3); y = _target(X)
+        loss, train = FeatureNetLearner._loss, FeatureNetLearner._train
+
+        def fit(one_call_per_iteration):
+            learner = self._learner(steps=100, min_points=10 ** 9)
+            for i in range(X.shape[0]):
+                learner.observe(X[i], y[i], 1e-3)
+            calls = []
+            patches = [mock.patch.object(FeatureNetLearner, '_loss', staticmethod(lambda *a: (calls.append(1), loss(*a))[1]))]
+            if one_call_per_iteration:
+                def one_by_one(self, net, ph, n_steps):
+                    for _ in range(n_steps):
+                        train(self, net, ph, 1)
+                patches.append(mock.patch.object(FeatureNetLearner, '_train', one_by_one))
+            with contextlib.ExitStack() as stack:
+                for patch in patches:
+                    stack.enter_context(patch)
+                learner.fit()
+            return learner, len(calls)
+
+        shared, n_shared = fit(False)
+        single, n_single = fit(True)
+        self.assertLess(n_shared, 1.5 * shared.steps)
+        self.assertGreaterEqual(n_single, 2 * single.steps)
+        for a, b in zip(shared.net.parameters(), single.net.parameters()):
+            self.assertTrue(feature_net.torch.equal(a, b))
+
     def test_sigma_weighted_loss_discounts_the_noisy_points(self):
         """Half the points carry noise of the function's own size; the sigma weighting recovers the function."""
         rng = np.random.RandomState(12)
