@@ -1613,12 +1613,16 @@ class GPNode(Node):
         return mu_pred, np.sqrt(var_pred)
 
 
-    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray]):
+    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray], only_if_fitted: bool = False):
         """ Register the residual between prediction and true value for this data point.
 
-        For multi-output: tracks performance per output dimension.
+        For multi-output: tracks performance per output dimension. With
+        ``only_if_fitted`` the prior prediction of a node without fitted GPs is
+        not registered.
         """
         mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False)
+        if only_if_fitted and not self._is_fitted():
+            return
 
         # Ensure y is array of shape (n_outputs,)
         if isinstance(y, (int, float, np.floating)):

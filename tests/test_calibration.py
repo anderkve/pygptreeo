@@ -117,6 +117,20 @@ class TestBatchFit(unittest.TestCase):
         np.testing.assert_allclose(mu_k, 1000.0 * mu, rtol=1e-3, atol=1e-3)
         np.testing.assert_allclose(sd_k, 1000.0 * sd, rtol=1e-3)
 
+    def test_with_a_global_model_the_fitted_leaves_calibrate(self):
+        """Leaves fitted against a global-model version while the tree is built register
+        their predictions; an untrained leaf's prior predictions are left out."""
+        kwargs = dict(global_mean='additive_gp',
+                      global_mean_kwargs=dict(reservoir_size=80, min_points=120, n_restarts_optimizer=0, random_state=0))
+        gpt = self._fit(**kwargs)
+        registered = [leaf.residuals_list[0].shape[0] for leaf in gpt.root.leaves]
+        self.assertGreater(min(registered), 0)
+        self.assertTrue(any(leaf.sigma_scalers != [1.0] for leaf in gpt.root.leaves))
+        mu, sd = gpt.predict(self.X_test)
+        mu_k, sd_k = self._fit(scale=1000.0, **kwargs).predict(self.X_test)
+        np.testing.assert_allclose(mu_k, 1000.0 * mu, rtol=1e-3, atol=1e-3)
+        np.testing.assert_allclose(sd_k, 1000.0 * sd, rtol=1e-3)
+
     def test_updates_after_a_fit_calibrate(self):
         gpt = self._fit()
         rng = np.random.RandomState(5)
