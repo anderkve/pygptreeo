@@ -416,8 +416,7 @@ def render_frame(n_seen):
 # --------------------------------------------------------------------------
 
 if args.kernel == "matern_rbf":
-    # README's "no additive structure" option: anisotropic Matern(1.5) + RBF,
-    # wrapped in a ConstantKernel (per-dimension length scales).
+    # Anisotropic Matern(1.5) + RBF, wrapped in a ConstantKernel
     kernel = ConstantKernel() * (Matern(length_scale=[1.0, 1.0], nu=1.5)
                                  + RBF(length_scale=[1.0, 1.0]))
 else:
