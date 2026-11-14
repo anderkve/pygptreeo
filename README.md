@@ -201,8 +201,18 @@ gpt = GPTree(Nbar=100, global_mean='net')
 gpt = GPTree(Nbar=100, global_mean='net', global_mean_kwargs=dict(steps_per_update=1))
 ```
 
-The network (`FeatureNetLearner`) is a 3 x 128 SiLU MLP refit when the point
-count has doubled, in two phases: full-batch L-BFGS (`steps`, 300) on a
+Use it with the tree's default leaf settings, as in the first line: a
+hyperparameter retrain every 100 points (`retrain_every_n_points`) and no
+optimiser restart (the default of `Default_GPR`). The network carries the
+large-scale structure, so fitting the leaves more often buys nothing: on eleven
+particle-physics-style targets (`examples/particle_physics_targets.py`) a
+retrain every 25 points with one restart gave the same error, within 2%, at 1.4
+to 1.5 times the run time. With the default leaf settings the hybrid had 0.37 of
+the plain tree's error at 3.7 times its run time on 10 000-point uniform streams
+of these targets (`examples/BENCHMARK_RESULTS_neural_linear.md` §3.11).
+
+The network (`FeatureNetLearner`) is a 5 x 128 SiLU MLP (`depth`, `hidden`)
+refit when the point count has doubled, in two phases: full-batch L-BFGS (`steps`, 300) on a
 5000-point coverage reservoir of the stream (`reservoir_size`), then Adam
 minibatch steps (`polish_steps`, 3000) over every point seen, whose store costs
 `d + 2` floats per point, a few percent of the tree's own footprint. Each
@@ -219,9 +229,11 @@ On ten 40 000-point streams the hybrid beat the plain tree by an order of
 magnitude or more on smooth targets with a global structure a network can
 learn (coupled valleys, rotated peaks, a function living on a hidden 2-plane
 of ten inputs, a sharp step), by 14 to 20% on three rough oscillatory targets,
-and was level on two whose ripples 40 000 points do not resolve, at 1.5 to 1.6
-times the plain tree's run time (`examples/BENCHMARK_RESULTS_neural_linear.md`
-§3.10 is the reference table). The held-out points are what keep it ahead of
+and was level on two whose ripples 40 000 points do not resolve
+(`examples/BENCHMARK_RESULTS_neural_linear.md` §3.10 is the reference table,
+measured with three hidden layers; with five the errors there are level, and
+on the particle-physics-style targets they are 15% lower, §3.11). The held-out
+points are what keep it ahead of
 the plain tree on noisy targets: on 4000-point streams with noise it has 0.75
 of the plain tree's error, where a network trained on every point has 1.44.
 Its leaves keep the default Matérn 3/2 kernel:
@@ -230,8 +242,8 @@ target, and the additive kernel gained only where the target has low-order
 additive structure, at three to seven times the update cost (§3.2). Its
 accuracy is nearly flat in `Nbar` and the retrain interval, where the plain
 tree on a smooth 6D target gains a factor of two from large, rarely refitted
-leaves, so the hybrid keeps `Nbar=100`, `retrain_every_n_points=25` and
-gradual splitting, the `GPTree` defaults (§3.3). `docs/neural_gptree_ideas.md`
+leaves, so the hybrid keeps `Nbar=100` and gradual splitting, the `GPTree`
+defaults (§3.3). `docs/neural_gptree_ideas.md`
 has the design and the alternatives considered, among them neural-linear
 leaves (a Bayesian linear regression on the network's features per leaf),
 which were measured and removed (§3.9).

@@ -255,6 +255,7 @@ class TestFeatureNet(unittest.TestCase):
         gm = GPTree(global_mean='net').global_mean
         self.assertTrue(gm.cheap_leaf_refresh)
         self.assertEqual(gm.learner.holdout, 0.2)
+        self.assertEqual((gm.learner.depth, gm.learner.hidden), (5, 128))
         self.assertEqual(GPTree(global_mean='net', global_mean_kwargs=dict(holdout=0.0)).global_mean.learner.holdout, 0.0)
 
     def test_leaves_take_up_a_new_version_with_their_hyperparameters_kept(self):

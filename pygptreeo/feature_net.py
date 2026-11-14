@@ -90,7 +90,10 @@ class FeatureNetLearner:
 
     Parameters
     ----------
-    hidden, depth : int
+    hidden : int, default=128
+        Units per hidden layer.
+    depth : int, default=5
+        Hidden layers.
     steps : int, default=300
         L-BFGS iterations per refit on the reservoir; 0 skips the phase.
     polish_steps : int, default=3000
@@ -117,7 +120,7 @@ class FeatureNetLearner:
     random_state : int or None
     """
 
-    def __init__(self, hidden: int = 128, depth: int = 3, steps: int = 300, polish_steps: int = 3000,
+    def __init__(self, hidden: int = 128, depth: int = 5, steps: int = 300, polish_steps: int = 3000,
                  lr: float = 1e-3, min_points: int = 200, reservoir_size: Optional[int] = 5000,
                  steps_per_update: Optional[int] = None, holdout: float = 0.2,
                  random_state: Optional[int] = None):

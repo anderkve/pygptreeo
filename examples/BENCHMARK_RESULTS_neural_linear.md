@@ -6,7 +6,7 @@ global model (`pygptreeo/feature_net.py`: `FeatureNetLearner` with the options
 `hidden`, `depth`, `steps`, `polish_steps`, `lr`, `min_points`,
 `reservoir_size`, `steps_per_update`, `holdout` and `random_state`, and
 `NetGlobalMean`, `GPTree(global_mean='net')`), the "hybrid" of the sections
-below. Its defaults are those of §3.8 with the two changes of §3.10. The
+below. Its defaults are those of §3.8 with the changes of §3.10 and §3.11. The
 neural-linear leaves (`NeuralLinearGPR`, the "neural" configuration) were
 removed after the measurements of §3.9; the records of the other removed
 options are where they were measured.
@@ -1250,6 +1250,85 @@ Reading:
 The records are `results/neural_linear_streams_holdout/*.jsonl` (the stream
 benchmark, with `timing_same_load.jsonl` for the run times) and
 `results/compare_tree_vs_neural/*_holdout_batches.csv`.
+
+### 3.11 Five hidden layers, and the leaf settings beside the network
+
+The depth of the network and the leaf settings, on the eleven targets of
+`particle_physics_targets.py`: uniform streams of 10 000 points (and 40 000),
+every point predicted before it is used, then a uniform test set of 3000
+points; RMSE over the range of the target. Base settings as in the comparison
+runs above (`Nbar = 100`, a retrain every 25 points, one optimiser restart,
+the network of §3.10 with `steps_per_update=8`), one setting changed at a
+time. The scatter between seeds is about 10% in the geometric mean over the
+targets, so single-seed differences below that are not to be read.
+
+**Depth.** Test error relative to three hidden layers, 10 000 points, seed 1:
+
+| hidden layers | 2 | 3 | 4 | 5 | 7 |
+|---|---|---|---|---|---|
+| error / error with 3 layers (geometric mean) | 1.59 | 1 | 0.95 | **0.84** | 0.89 |
+| targets lower / higher by more than 5% | 0 / 10 | | 5 / 4 | 6 / 1 | 7 / 2 |
+| run time / run time with 3 layers | 0.87 | 1 | 1.20 | 1.35 | 1.79 |
+
+Five layers against three with more data:
+
+| | error, 5 layers / 3 layers | runs lower | run time |
+|---|---|---|---|
+| 10 000 points, three seeds | **0.85** (0.84, 0.76, 0.97) | 25 of 33 | 1.33 |
+| 40 000 points, one seed | **0.83** | 9 of 11 | 1.24 |
+
+Per target over the three seeds: oscillation probability 0.44, resonance
+cross-section 0.75, loop-induced width 0.79, likelihood 0.84, neutralino mass
+0.90, jet spectrum 0.91, and 0.97 to 1.00 on the other five.
+
+On the benchmarks of this document five layers are level with three: 1.06
+and 1.00 of the error on the stream benchmark of §3.10 without and with noise
+(72 cases each), 0.98 on the ten comparison runs (0.79 on the step ridge to
+1.26 on the rotated Rosenbrock function) and 0.96 on the three with noise, at
+1.12 to 1.15 times the run time. `depth=5` is the default.
+
+**The other network settings** are best where they are (error relative to
+the default, 10 000 points, seed 1): 64 and 256 units per layer 1.15 and
+1.22; 1000 and 10 000 Adam steps 1.27 and 1.12; 1000 L-BFGS iterations 0.98;
+a held-out fraction of 0.1 and of 0.35, 1.00 and 1.10; a 2000-point reservoir
+1.28.
+
+**Leaf settings beside the network.** With the network the error hardly
+depends on how the leaves are set: leaf sizes of 50 to 400 with the retrain
+interval scaled, Matern 1/2, Matern 5/2, RBF and rational quadratic leaf
+kernels, standard splitting and an overlap of 0.05 all stay within 10% of the
+base (10 000 points, seed 1). So the cheap settings cost nothing:
+
+| | error / base | run time / base |
+|---|---|---|
+| retrain every 100 points (3 layers, seed 1) | 1.02 | 0.82 |
+| no optimiser restart (3 layers, seed 1) | 1.00 | 0.88 |
+| both, with 5 layers, against 5 layers: 10 000 points, three seeds | 1.02 | 0.72 |
+| both, with 5 layers, against 5 layers: 40 000 points | 1.00 | 0.67 |
+
+These are the defaults of `GPTree` and `Default_GPR`. For the plain tree they
+are not free: 1.10 times the error of the plain tree with a retrain every 25
+points and one restart, worse on all eleven targets, at 0.48 of its run time.
+With the default leaf settings on both sides the hybrid has 0.37 of the plain
+tree's error (lower on 10 of 11 targets; the jet spectrum 2.1) at 3.7 times
+its run time (10 000 points, seed 1).
+
+One cell of these runs:
+
+```python
+import numpy as np
+from pygptreeo import GPTree
+from particle_physics_targets import TARGETS            # in examples/
+
+target = TARGETS['relic_density']; rng = np.random.RandomState(1)
+X = rng.rand(10000, target.d); X_test = rng.rand(3000, target.d)
+y, sigma, truth = target.sample(X, rng)
+gpt = GPTree(global_mean='net', global_mean_kwargs=dict(steps_per_update=8, random_state=1))
+for i in range(len(X)):
+    gpt.update_tree(X[i:i + 1], np.array([[y[i]]]), np.array([[sigma[i]]]))
+mu, sd = gpt.predict(X_test, mode='loop')
+print(np.sqrt(np.mean((mu[:, 0] - target(X_test)) ** 2)) / np.ptp(target(X_test)))
+```
 
 ## Reproduce
 
