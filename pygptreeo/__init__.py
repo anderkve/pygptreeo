@@ -20,6 +20,7 @@ Main components:
     - AdditivePeriodicMaternKernel: Shorthand for additive-periodic + catch-all leaf kernel
     - OutputBasis / OutputBasisLearner: Global PCA output basis for multi-output trees
     - AdditiveGPGlobalMean / GlobalMeanLearner: Tree-wide global model whose residual the leaves model
+    - FeatureNetLearner / NetGlobalMean: Feature network as the tree-wide global model (needs PyTorch)
 
 Typical usage:
     from pygptreeo import GPTree
@@ -29,22 +30,11 @@ Typical usage:
     for x, y, sigma in data_stream:
         y_pred, y_std = gpt.predict(x)
         gpt.update_tree(x, y, sigma)  # sigma: observation-noise std for this point
+
+New nodes, merged and rejected points and split evaluations are reported at
+DEBUG level on the ``pygptreeo`` logger.
 """
 
-# Standard library imports
-from copy import deepcopy
-from typing import Callable, Optional, Type, Union
-
-# Third-party imports
-import joblib
-import numpy as np
-from binarytree import Node
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import Matern
-from sklearn.utils import resample
-from tqdm import tqdm
-
-# Local imports
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
 from pygptreeo.gptree import GPTree

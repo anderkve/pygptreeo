@@ -23,7 +23,7 @@ from pygptreeo.global_mean import CoverageReservoir, GlobalMeanLearner, GlobalMe
 
 def _require_torch():
     if not TORCH_AVAILABLE:
-        raise ImportError("pygptreeo.neural_linear needs PyTorch: pip install torch")
+        raise ImportError("The feature network global model (global_mean='net') needs PyTorch: pip install torch")
 
 
 class _GrowingStore:

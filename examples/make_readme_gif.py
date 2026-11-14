@@ -42,8 +42,6 @@ where <basename> reflects the chosen --target and --alt options.
 """
 
 import argparse
-import contextlib
-import io
 import os
 import sys
 
@@ -248,12 +246,6 @@ def leaf_boxes(root):
     return boxes
 
 
-def update_quiet(gpt, x, y):
-    """Feed one point to the tree, suppressing the library's stdout chatter."""
-    with contextlib.redirect_stdout(io.StringIO()):
-        gpt.update_tree(x.reshape(1, -1), y.reshape(1, 1), 0.001 * np.abs(y).reshape(1, 1))
-
-
 # --------------------------------------------------------------------------
 # Figure scaffolding
 # --------------------------------------------------------------------------
@@ -424,8 +416,7 @@ def render_frame(n_seen):
 # --------------------------------------------------------------------------
 
 if args.kernel == "matern_rbf":
-    # README's "no additive structure" option: anisotropic Matern(1.5) + RBF,
-    # wrapped in a ConstantKernel (per-dimension length scales).
+    # Anisotropic Matern(1.5) + RBF, wrapped in a ConstantKernel
     kernel = ConstantKernel() * (Matern(length_scale=[1.0, 1.0], nu=1.5)
                                  + RBF(length_scale=[1.0, 1.0]))
 else:
@@ -437,7 +428,7 @@ gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=NBAR, theta=0.05,
 frames = []
 n_seen = 0
 for i in range(N_PTS):
-    update_quiet(gpt, X_input[i], y_input[i])
+    gpt.update_tree(X_input[i].reshape(1, -1), y_input[i].reshape(1, 1), 0.001 * np.abs(y_input[i]).reshape(1, 1))
     n_seen += 1
     if args.final_only:
         if n_seen == N_PTS:

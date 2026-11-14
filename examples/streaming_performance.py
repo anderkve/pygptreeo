@@ -18,8 +18,6 @@ noise, in units of the standard deviation of the target, and declares it to the
 tree. Errors are always against the noise-free target.
 """
 import argparse
-import contextlib
-import io
 import time
 
 import numpy as np
@@ -83,13 +81,12 @@ def run(config, X, y, y_obs, sigma, batch, seed):
     np.random.seed(seed)
     N = (len(X) // batch) * batch
     pred, std, t_pred, t_upd, leaves = (np.empty(N) for _ in range(5))
-    with contextlib.redirect_stdout(io.StringIO()):       # the tree prints a line per new node
-        gpt = make_tree(config, seed)
-        for i in range(N):
-            xi = X[i:i + 1]
-            t0 = time.perf_counter(); mu, sd = gpt.predict(xi); t1 = time.perf_counter()
-            gpt.update_tree(xi, y_obs[i:i + 1, None], sigma[i:i + 1, None]); t2 = time.perf_counter()
-            pred[i], std[i], t_pred[i], t_upd[i], leaves[i] = mu[0, 0], sd[0, 0], t1 - t0, t2 - t1, len(gpt.root.leaves)
+    gpt = make_tree(config, seed)
+    for i in range(N):
+        xi = X[i:i + 1]
+        t0 = time.perf_counter(); mu, sd = gpt.predict(xi); t1 = time.perf_counter()
+        gpt.update_tree(xi, y_obs[i:i + 1, None], sigma[i:i + 1, None]); t2 = time.perf_counter()
+        pred[i], std[i], t_pred[i], t_upd[i], leaves[i] = mu[0, 0], sd[0, 0], t1 - t0, t2 - t1, len(gpt.root.leaves)
     err = (pred - y[:N]).reshape(-1, batch)
     y_b = y[:N].reshape(-1, batch)
     rel = np.abs(err) / np.maximum(np.abs(y_b), 1e-10)
