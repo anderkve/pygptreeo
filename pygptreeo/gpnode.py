@@ -13,6 +13,7 @@ Key responsibilities:
 """
 
 # Standard library imports
+import logging
 import warnings
 from copy import deepcopy
 from sys import float_info
@@ -29,6 +30,8 @@ from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner
+
+logger = logging.getLogger(__name__)
 
 # Module-level constants
 DEFAULT_OVERLAP = 0.001  # Default initial overlap for node boundaries
@@ -298,7 +301,7 @@ class GPNode(Node):
             self.sigma_preds_list = [np.array([]) for _ in range(n_outputs)]
             self.sigma_scalers = [DEFAULT_SIGMA_SCALER for _ in range(n_outputs)]
 
-        print(f"Created node {self.name}")
+        logger.debug("Created node %s", self.name)
 
 
     def _print_debug_status(self):
@@ -425,10 +428,8 @@ class GPNode(Node):
                     trained_kernel = gpr.get_kernel()
                     self.left.my_GPRs[i].set_kernel(deepcopy(trained_kernel))
                     self.right.my_GPRs[i].set_kernel(deepcopy(trained_kernel))
-            if self.n_outputs == 1:
-                print(f"Inherited hyperparameters from node {self.name} to children {self.left.name} and {self.right.name}")
-            else:
-                print(f"Inherited hyperparameters for {self.n_outputs} outputs from node {self.name} to children {self.left.name} and {self.right.name}")
+            logger.debug("Inherited hyperparameters for %d output(s) from node %s to children %s and %s",
+                         self.n_outputs, self.name, self.left.name, self.right.name)
 
         # Copy scalers so children can use parent's GP correctly
         # The children get a copy of the parent's trained GP, which was trained on
@@ -680,9 +681,10 @@ class GPNode(Node):
         self.merge_counts[nearest_idx, 0] += 1
         self.n_merges += 1
 
-        print(f"Node {self.name}: Merged points (dist={np.linalg.norm(x - x_old):.2e}, "
-              f"sigma_old_mean={np.mean(sigma_old):.2e}, sigma_new_mean={np.mean(sigma):.2e}, "
-              f"sigma_merged_mean={np.mean(sigma_merged):.2e}, total_merges={int(self.merge_counts[nearest_idx, 0])})")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Node %s: Merged points (dist=%.2e, sigma_old_mean=%.2e, sigma_new_mean=%.2e, "
+                         "sigma_merged_mean=%.2e, total_merges=%d)", self.name, np.linalg.norm(x - x_old),
+                         np.mean(sigma_old), np.mean(sigma), np.mean(sigma_merged), int(self.merge_counts[nearest_idx, 0]))
 
         return True
 
@@ -782,7 +784,8 @@ class GPNode(Node):
         is_rejected = bool(avg_relative_error < self.rejection_threshold)
 
         if is_rejected:
-            print(f"Node {self.name}: Rejected point (avg_rel_err={float(avg_relative_error):.2e} < {self.rejection_threshold:.2e})")
+            logger.debug("Node %s: Rejected point (avg_rel_err=%.2e < %.2e)",
+                         self.name, float(avg_relative_error), self.rejection_threshold)
 
         return is_rejected
 
@@ -1236,7 +1239,7 @@ class GPNode(Node):
         if len(unique_candidates) == 0:
             return None, None
 
-        print(f"Node {self.name}: Evaluating {len(unique_candidates)} candidate splits...")
+        logger.debug("Node %s: Evaluating %d candidate splits...", self.name, len(unique_candidates))
 
         # Evaluate each candidate
         best_score = np.inf
@@ -1254,7 +1257,7 @@ class GPNode(Node):
             # Evaluate this candidate
             score = self.evaluate_candidate_split(split_index, split_position, overlap)
 
-            print(f"  Candidate: {name} (dim {split_index}), score: {score:.4e}")
+            logger.debug("  Candidate: %s (dim %d), score: %.4e", name, split_index, score)
 
             if score < best_score:
                 best_score = score
@@ -1262,7 +1265,7 @@ class GPNode(Node):
                 best_position = split_position
 
         if best_index is not None:
-            print(f"  Best: dim {best_index} with score {best_score:.4e}")
+            logger.debug("  Best: dim %d with score %.4e", best_index, best_score)
 
         return best_index, best_position
 
