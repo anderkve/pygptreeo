@@ -115,13 +115,11 @@ class GPForest:
     def predict(self, X_test: np.ndarray, show_progress: Optional[bool]=False):
         """Predicts target values and their uncertainties using the GPForest.
 
-        This method aggregates predictions from all GPTrees in the forest.
-        The final mean prediction is a weighted average of the means from
-        individual trees. The weights are derived from the uncertainty
-        (sigma_i) of each tree's prediction relative to a prior uncertainty
-        (sigma_prior), as captured by the `alpha` and `T` variables in
-        the implementation. The combined standard deviation provides an
-        estimate of the overall prediction uncertainty.
+        The trees are combined as a generalised product of experts with equal
+        weights: the mean is the average of the trees' means weighted by their
+        precisions ``1 / sigma_i^2``, and the variance is the harmonic mean of
+        the trees' variances. The trees are fitted to the same data, so the
+        combined sigma does not shrink with the number of trees.
 
         Args:
             X_test: The test data features (numpy array) for which
@@ -131,46 +129,24 @@ class GPForest:
 
         Returns:
             A tuple containing:
-                - mean (np.ndarray): The weighted average of mean predictions
-                  from all GPTrees.
-                - std (np.ndarray): The combined standard deviation, representing
-                  the uncertainty of the predictions.
+                - mean (np.ndarray): The combined mean prediction.
+                - std (np.ndarray): The combined standard deviation.
         """
-        mean = np.zeros((X_test.shape[0], 1))
-        std = np.zeros((X_test.shape[0], 1))
-
-        mean_list = []
-        std_list = []
-
-        alpha = []
-        T = []
-
+        means, variances = [], []
         for i in tqdm(range(self.num_GPTrees), disable=not show_progress, desc='Predicting'):
             mean_i, sigma_i = self.GPTrees[i].predict(X_test)
+            means.append(mean_i)
+            variances.append(sigma_i * sigma_i)
+        means, variances = np.stack(means), np.stack(variances)
 
-            mean_list.append(mean_i)
-            std_list.append(sigma_i)
+        # Precisions relative to the most confident tree: finite also where a sigma is zero
+        var_min = variances.min(axis=0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rel_precision = np.where(variances > 0, var_min / variances, 1.0)
+        norm = rel_precision.sum(axis=0)
 
-            T.append(1./(sigma_i*sigma_i))
-
-            # Compute prior covariance using the GP interface
-            cov_prior = self.GPTrees[i].GPR.get_kernel_covariance(X_test)
-            sigma_prior = np.diag(cov_prior).reshape(-1, 1)
-
-            alpha.append(0.5*(np.log(sigma_prior) - np.log(sigma_i)))
-
-        sum_alpha = np.sum(alpha)
-        
-        for i in range(self.num_GPTrees):
-
-            mean += mean_list[i]*alpha[i]*T[i]/sum_alpha
-
-            std += alpha[i]*T[i]/sum_alpha
-            
-            
-        std = 1./std
-        
-        mean *= std
+        mean = (rel_precision * means).sum(axis=0) / norm
+        std = np.sqrt(self.num_GPTrees * var_min / norm)
 
         return mean, std
 
