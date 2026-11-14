@@ -374,6 +374,10 @@ class GPTree:
         forward_GPR_to_next_leaf: Optional[bool]=False
             When training the leaf-node GPs, let the next leaf start from a copy of the trained GP
             from the previous leaf. Note: For multi-output, only the first GP is forwarded.
+
+        The predicted sigma is the leaf GPs' own, also with use_calibrated_sigma: the
+        calibration needs predictions of points before they are added, which
+        update_tree registers.
         """
         self.n_features = X_train.shape[1]
         N = X_train.shape[0]
@@ -407,6 +411,8 @@ class GPTree:
         # Train all the leaves
         for i, leaf in tqdm(enumerate(self.root.leaves), total=len(self.root.leaves), disable=not show_progress, desc="Training"):
             leaf.fit_my_GPR(force_training=True)
+            # What was registered while the tree was built came from untrained GPs
+            leaf.clear_pred_perf()
             if forward_GPR_to_next_leaf and i != len(self.root.leaves) - 1:
                 # For multi-output, forward only the first GP
                 self.root.leaves[i+1].my_GPRs[0] = deepcopy(leaf.my_GPRs[0])

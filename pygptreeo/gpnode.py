@@ -1646,6 +1646,20 @@ class GPNode(Node):
             self.sigma_preds = self.sigma_preds_list[0]
 
 
+    def clear_pred_perf(self):
+        """Forget the registered prediction performance; sigma is then the GP's own
+        until new performance is registered."""
+        self.residuals_list = [np.array([]) for _ in range(self.n_outputs)]
+        self.mu_preds_list = [np.array([]) for _ in range(self.n_outputs)]
+        self.sigma_preds_list = [np.array([]) for _ in range(self.n_outputs)]
+        self.sigma_scalers = [1.0 for _ in range(self.n_outputs)]
+        if self.n_outputs == 1:
+            self.residuals = self.residuals_list[0]
+            self.mu_preds = self.mu_preds_list[0]
+            self.sigma_preds = self.sigma_preds_list[0]
+            self.sigma_scaler = 1.0
+
+
     def update_sigma_scaler(self):
         """ Update the scaling factor for the prediction uncertainty.
 
