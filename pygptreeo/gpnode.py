@@ -1362,6 +1362,8 @@ class GPNode(Node):
                 if not self.use_standard_scaling and self.my_X_data.shape[0] > 1:
                     stds = np.std(self.my_X_data, axis=0)
                     length_scales = length_scales / np.where(stds > 0, stds, 1.0)
+                # The length scale of a dimension in which the points coincide is arbitrary
+                length_scales = np.where(np.ptp(self.my_X_data, axis=0) > 0, length_scales, np.inf)
                 self.split_index = int(np.argmin(length_scales))
             elif self.my_X_data.shape[0] > 0:
                 spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
@@ -1375,6 +1377,12 @@ class GPNode(Node):
                 self.split_index = 0 # Default to 0 if no features
         else:
             raise ValueError(f"Unknown split_dimension_criteria: {self.split_dimension_criteria}")
+
+        # A dimension in which all of the node's points coincide cannot separate them
+        if self.my_X_data.shape[0] > 0:
+            spreads = np.ptp(self.my_X_data, axis=0)
+            if spreads[self.split_index] == 0:
+                self.split_index = int(np.argmax(spreads))
 
         # Calculate spread for the chosen split_index, used for overlap calculation
         # and potentially for split_position if data is scarce for other methods.
@@ -1418,10 +1426,16 @@ class GPNode(Node):
 
 
     def prob_func(self, x: np.array):
-        """ The default probability function as suggested in the DLGP article. """
-        prob = (x[:, self.split_index] - self.split_position)/self.overlap + 0.5
-        prob[prob < 0] = 0
-        prob[prob > 1] = 1
+        """The probability that x belongs to the right child: linear across the
+        overlap region around the split position, as suggested in the DLGP article.
+        Without an overlap the split is hard, and a point on it gets 0.5."""
+        dist = x[:, self.split_index] - self.split_position
+        if self.overlap > 0:
+            prob = dist/self.overlap + 0.5
+            prob[prob < 0] = 0
+            prob[prob > 1] = 1
+        else:
+            prob = 0.5 * (np.sign(dist) + 1.0)
 
         prob.shape = (x.shape[0], 1)
 
@@ -1599,12 +1613,16 @@ class GPNode(Node):
         return mu_pred, np.sqrt(var_pred)
 
 
-    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray]):
+    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray], only_if_fitted: bool = False):
         """ Register the residual between prediction and true value for this data point.
 
-        For multi-output: tracks performance per output dimension.
+        For multi-output: tracks performance per output dimension. With
+        ``only_if_fitted`` the prior prediction of a node without fitted GPs is
+        not registered.
         """
         mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False)
+        if only_if_fitted and not self._is_fitted():
+            return
 
         # Ensure y is array of shape (n_outputs,)
         if isinstance(y, (int, float, np.floating)):
@@ -1630,6 +1648,20 @@ class GPNode(Node):
             self.residuals = self.residuals_list[0]
             self.mu_preds = self.mu_preds_list[0]
             self.sigma_preds = self.sigma_preds_list[0]
+
+
+    def clear_pred_perf(self):
+        """Forget the registered prediction performance; sigma is then the GP's own
+        until new performance is registered."""
+        self.residuals_list = [np.array([]) for _ in range(self.n_outputs)]
+        self.mu_preds_list = [np.array([]) for _ in range(self.n_outputs)]
+        self.sigma_preds_list = [np.array([]) for _ in range(self.n_outputs)]
+        self.sigma_scalers = [1.0 for _ in range(self.n_outputs)]
+        if self.n_outputs == 1:
+            self.residuals = self.residuals_list[0]
+            self.mu_preds = self.mu_preds_list[0]
+            self.sigma_preds = self.sigma_preds_list[0]
+            self.sigma_scaler = 1.0
 
 
     def update_sigma_scaler(self):

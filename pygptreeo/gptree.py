@@ -278,7 +278,7 @@ class GPTree:
         if node.should_merge_point(x, y, sigma):
             # Point was merged with existing point, don't add as new point
             # Still register prediction performance and update sigma scaler
-            node.register_pred_perf(x, y)
+            node.register_pred_perf(x, y, only_if_fitted=not allow_training)
             if self.use_calibrated_sigma:
                 node.update_sigma_scaler()
             return
@@ -288,9 +288,10 @@ class GPTree:
             # Point is well-predicted, don't store it
             return
 
-        # Add new point and register prediction performance
+        # Add new point and register prediction performance. Without training, a node
+        # that has no fitted GP stays at its prior, which says nothing about the fitted GP.
         node.store_point(x, y, sigma, remove_shared=True)
-        node.register_pred_perf(x, y)
+        node.register_pred_perf(x, y, only_if_fitted=not allow_training)
 
         # Update the uncertainty scaler for this node?
         if self.use_calibrated_sigma:
@@ -374,6 +375,12 @@ class GPTree:
         forward_GPR_to_next_leaf: Optional[bool]=False
             When training the leaf-node GPs, let the next leaf start from a copy of the trained GP
             from the previous leaf. Note: For multi-output, only the first GP is forwarded.
+
+        The sigma calibration uses predictions of points made before they are added.
+        Without a global model the leaf GPs are fitted only at the end, so there are
+        none and the predicted sigma is the leaf GPs' own, also with
+        use_calibrated_sigma. With a global model the leaves are fitted against each
+        of its versions while the tree is built, and their predictions are used.
         """
         self.n_features = X_train.shape[1]
         N = X_train.shape[0]
@@ -407,6 +414,9 @@ class GPTree:
         # Train all the leaves
         for i, leaf in tqdm(enumerate(self.root.leaves), total=len(self.root.leaves), disable=not show_progress, desc="Training"):
             leaf.fit_my_GPR(force_training=True)
+            # No prediction of a fitted GP was registered: sigma is the GP's own
+            if leaf.residuals_list[0].shape[0] == 0:
+                leaf.clear_pred_perf()
             if forward_GPR_to_next_leaf and i != len(self.root.leaves) - 1:
                 # For multi-output, forward only the first GP
                 self.root.leaves[i+1].my_GPRs[0] = deepcopy(leaf.my_GPRs[0])

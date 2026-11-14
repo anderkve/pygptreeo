@@ -86,5 +86,64 @@ class TestCalibrationIntegration(unittest.TestCase):
         self.assertLessEqual(abs(coverage - TARGET_COVERAGE), 0.12)
 
 
+class TestBatchFit(unittest.TestCase):
+    """After ``GPTree.fit`` no prediction performance is registered: sigma is the GPs' own."""
+
+    def setUp(self):
+        rng = np.random.RandomState(4)
+        self.X = rng.rand(400, 2)
+        self.y = (np.sin(3 * self.X[:, 0]) + 0.5 * np.cos(5 * self.X[:, 1]))[:, None]
+        self.X_test = rng.rand(200, 2)
+
+    def _fit(self, scale=1.0, **kwargs):
+        np.random.seed(4)
+        gpt = GPTree(Nbar=100, **kwargs)
+        y = scale * self.y
+        _silent(gpt.fit, self.X, y, np.full_like(y, 1e-3 * scale))
+        return gpt
+
+    def test_sigma_is_the_uncalibrated_sigma(self):
+        gpt = self._fit()
+        for leaf in gpt.root.leaves:
+            self.assertEqual(leaf.sigma_scalers, [1.0])
+            self.assertEqual(leaf.residuals_list[0].shape[0], 0)
+        _, sd = gpt.predict(self.X_test)
+        _, sd_uncalibrated = self._fit(use_calibrated_sigma=False).predict(self.X_test)
+        np.testing.assert_array_equal(sd, sd_uncalibrated)
+
+    def test_rescaling_the_target_rescales_sigma(self):
+        mu, sd = self._fit().predict(self.X_test)
+        mu_k, sd_k = self._fit(scale=1000.0).predict(self.X_test)
+        np.testing.assert_allclose(mu_k, 1000.0 * mu, rtol=1e-3, atol=1e-3)
+        np.testing.assert_allclose(sd_k, 1000.0 * sd, rtol=1e-3)
+
+    def test_with_a_global_model_the_fitted_leaves_calibrate(self):
+        """Leaves fitted against a global-model version while the tree is built register
+        their predictions; an untrained leaf's prior predictions are left out."""
+        kwargs = dict(global_mean='additive_gp',
+                      global_mean_kwargs=dict(reservoir_size=80, min_points=120, n_restarts_optimizer=0, random_state=0))
+        gpt = self._fit(**kwargs)
+        registered = [leaf.residuals_list[0].shape[0] for leaf in gpt.root.leaves]
+        self.assertGreater(min(registered), 0)
+        self.assertTrue(any(leaf.sigma_scalers != [1.0] for leaf in gpt.root.leaves))
+        mu, sd = gpt.predict(self.X_test)
+        mu_k, sd_k = self._fit(scale=1000.0, **kwargs).predict(self.X_test)
+        np.testing.assert_allclose(mu_k, 1000.0 * mu, rtol=1e-3, atol=1e-3)
+        np.testing.assert_allclose(sd_k, 1000.0 * sd, rtol=1e-3)
+
+    def test_updates_after_a_fit_calibrate(self):
+        gpt = self._fit()
+        rng = np.random.RandomState(5)
+        X_new = rng.rand(60, 2)
+        y_new = np.sin(3 * X_new[:, 0]) + 0.5 * np.cos(5 * X_new[:, 1])
+        with contextlib.redirect_stdout(io.StringIO()):
+            for i in range(60):
+                gpt.update_tree(X_new[i:i + 1], np.array([[y_new[i]]]), np.array([[1e-3]]))
+        registered = sum(leaf.residuals_list[0].shape[0] for leaf in gpt.root.leaves)
+        self.assertGreater(registered, 0)
+        _, sd = gpt.predict(self.X_test)
+        self.assertTrue(np.all(np.isfinite(sd)) and np.all(sd > 0))
+
+
 if __name__ == "__main__":
     unittest.main()

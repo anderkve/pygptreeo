@@ -1,137 +1,43 @@
-"""Basic example script demonstrating the usage of the GPTree class.
+"""Basic usage: online regression with a GPTree.
 
-The example also defines a custom GPR class `my_GPR_class` to illustrate
-how specific kernel configurations can be passed to the `GPTree`.
+Streams points of the 2D Himmelblau function into a GPTree. Every point is
+predicted before the tree is updated with it, so the reported errors are those
+of predictions on points the tree has not seen.
+
+    python examples/example.py
 """
 import numpy as np
+
 from pygptreeo import GPTree
-from pygptreeo.adapters import SklearnGPAdapter
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, Matern, ExpSineSquared, ConstantKernel, WhiteKernel
-import sys
+from target_functions import Himmelblau
 
 from warnings import simplefilter
 from sklearn.exceptions import ConvergenceWarning
 simplefilter("ignore", category=ConvergenceWarning)
 
-from target_functions import Eggholder, Himmelblau, Rosenbrock, Rastrigin, Levy, Custom
+n_dims, n_pts, batch = 2, 2000, 250
+rng = np.random.RandomState(1)
+X = rng.rand(n_pts, n_dims)                  # inputs in the unit square
+y = Himmelblau(X.T)
+sigma = 1e-3 * np.abs(y)                     # observation-noise std of each point
 
-target_dict = {
-    'eggholder': Eggholder,
-    'himmelblau': Himmelblau,
-    'rosenbrock': Rosenbrock,
-    'rastrigin': Rastrigin,
-    'levy': Levy,
-    'custom': Custom,
-}
+# The defaults: Matern 3/2 leaf GPs with one length scale per input dimension,
+# at most Nbar points per leaf, and calibrated predictive uncertainties.
+gpt = GPTree(Nbar=100)
 
-np.random.seed(512312)
-# np.random.seed(49235)
-# np.random.seed(int(sys.argv[-1]))
+err, std = np.empty(n_pts), np.empty(n_pts)
+for i in range(n_pts):
+    x_i = X[i:i + 1]                         # 2D arrays, one row per point
+    y_pred, y_std = gpt.predict(x_i)
+    gpt.update_tree(x_i, y[i:i + 1, None], sigma[i:i + 1, None])
+    err[i], std[i] = y_pred[0, 0] - y[i], y_std[0, 0]
+    if (i + 1) % batch == 0:
+        e, s = err[i + 1 - batch:i + 1], std[i + 1 - batch:i + 1]
+        print(f"{i + 1:5d} points: NRMSE of the last {batch} predictions {np.sqrt(np.mean(e ** 2)) / np.ptp(y):.3f}, "
+              f"1-sigma coverage {np.mean(np.abs(e) <= s):.2f}, {len(gpt.root.leaves)} leaves")
 
-
-#
-# Test settings
-#
-
-target_name = "eggholder"
-target = target_dict[target_name]
-
-n_dims = 2
-n_pts = 1000
-
-Nbar = 100
-theta = 1e-4
-retrain_step = 20
-
-x_min = 0.0
-x_max = 1.0
-
-X_input = np.random.uniform(x_min, x_max, n_dims * n_pts).reshape(n_pts, n_dims)
-# X_input = np.random.normal(0.4, 0.1, n_dims * n_pts).reshape(n_pts, n_dims)
-y_input = target(X_input.T)
-
-
-class my_GPR_class(GaussianProcessRegressor):
-    """Custom Gaussian Process Regressor for use with GPTree.
-
-    This class inherits from `sklearn.gaussian_process.GaussianProcessRegressor`
-    and is tailored for this example to define specific kernel configurations
-    and default parameters for the GPR instances used within the `GPTree`.
-
-    Attributes:
-        kernel: The kernel to be used.
-        min_length_scale (float): A minimum bound for the kernel's length
-            scale hyperparameters. This is used by `GPNode` to constrain
-            the kernel optimization.
-        alpha (float or ndarray): Value added to the diagonal of the kernel
-            matrix during fitting. Passed to `GaussianProcessRegressor`.
-        optimizer (str or callable): The optimizer used for fitting the
-            kernel's hyperparameters. Passed to `GaussianProcessRegressor`.
-        n_restarts_optimizer (int): The number of times the optimizer is
-            restarted. Passed to `GaussianProcessRegressor`.
-        normalize_y (bool): Whether the target values y are normalized before
-            fitting. Passed to `GaussianProcessRegressor`.
-        copy_X_train (bool): If True, a persistent copy of the training data
-            is stored. Passed to `GaussianProcessRegressor`.
-        n_targets (int): The number of dimensions of the target values.
-            Passed to `GaussianProcessRegressor`.
-        random_state (int, RandomState instance or None): Controls the
-            randomness of the initialization. Passed to `GaussianProcessRegressor`.
-    """
-    def __init__(self, kernel=None, *, alpha=1e-6, optimizer='fmin_l_bfgs_b', n_restarts_optimizer=0, normalize_y=False, copy_X_train=True, n_targets=None, random_state=None):
-        super().__init__()
-        self.kernel = ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-3,1e8)) * Matern(nu=1.5, length_scale=[1.0]*n_dims, length_scale_bounds=[(1e-3, 1e3)]*n_dims)
-        self.min_length_scale = 0.001
-
-        self.alpha = alpha
-        self.optimizer = optimizer
-        self.n_restarts_optimizer = n_restarts_optimizer
-        self.normalize_y = normalize_y
-        self.copy_X_train = copy_X_train
-        self.n_targets = n_targets
-        self.random_state = random_state
-
-
-mygpr = my_GPR_class()
-
-# Construct GPTree
-gpt = GPTree(
-    GPR=SklearnGPAdapter(my_GPR_class()),
-    Nbar=Nbar,
-    theta=theta, 
-    split_position_method='median',
-    split_dimension_criteria='max_variance',
-    retrain_every_n_points=retrain_step,
-    use_calibrated_sigma=True,
-    splitting_strategy='gradual',
-    # splitting_strategy='standard',
-)
-
-
-# Run through points one point at a time
-point_i = 0
-for x,y in zip(X_input, y_input):
-
-    point_i += 1
-
-    x = x.reshape((1, x.shape[0]))
-    y = y.reshape((1,1))
-
-    # Compute prediction
-    y_pred, y_pred_std = gpt.predict(x, show_progress=False)
-
-    # Update gpt with training point (sigma = per-point observation-noise std)
-    gpt.update_tree(x, y, 0.001 * np.abs(y))
-
-    # Print point summary comparing predicted y to true y
-    print(f"point {point_i}:  x: {x[0]}  y: {y[0][0]}  y_pred: {y_pred[0][0]}  y_pred_std: {y_pred_std[0][0]}")
-
-print()
-print(gpt.root)
-print()
-print("Done.")
-print()
-
-
-
+# Predictions for many points at once
+X_test = rng.rand(1000, n_dims)
+y_pred, y_std = gpt.predict(X_test)
+e = y_pred[:, 0] - Himmelblau(X_test.T)
+print(f"\nTest set: NRMSE {np.sqrt(np.mean(e ** 2)) / np.ptp(y):.3f}, 1-sigma coverage {np.mean(np.abs(e) <= y_std[:, 0]):.2f}")

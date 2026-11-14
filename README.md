@@ -17,23 +17,25 @@ Interfaces to several established GP packages already exist, and the code can ea
 
 
 ## Installation
-Details on installing via pip will be added soon. For now, you can clone the repository and install dependencies:
+Details on installing via pip will be added soon. For now, clone the repository and install it from there:
 ```bash
 git clone https://github.com/anderkve/pygptreeo.git
 cd pygptreeo
-pip install numpy scikit-learn binarytree tqdm joblib
+pip install -e .
 ```
+`pip install -e ".[neural]"` adds PyTorch, for the feature network as global model, and
+`pip install -e ".[gpytorch]"` adds GPyTorch, for the GPyTorch backend.
 
 ## Usage example
 Here's a simple example of how to use GPTreeO:
 
 ```python
 import numpy as np
-from pygptreeo import GPTree, Default_GPR
+from pygptreeo import GPTree
 
 # 1. Initialize GPTree
-# You can use the Default_GPR or define your own scikit-learn compatible GPR
 # Nbar is the maximum number of points per leaf before it considers splitting.
+# The leaf GPs are the default scikit-learn GPs; pass GPR=... to use your own.
 gpt = GPTree(Nbar=50)
 
 # 2. Prepare some data
@@ -178,7 +180,7 @@ about the underlying function, as without a global model.
 
 On targets with low-order additive structure the gain is large (orders of magnitude on the
 standard N-dimensional benchmarks); on targets without it, expect a 15-50 % lower error at
-several times the run time. `examples/BENCHMARK_RESULTS_global_mean_streams.md` has the
+4 to 11 times the run time. [`docs/benchmarks.md`](docs/benchmarks.md) (section 3) has the
 measurements under uniform, focusing, sweeping and random-walk input streams. Leave
 `global_mean=None` (the default) to run the tree exactly as before.
 
@@ -215,48 +217,70 @@ on, and each refit publishes the weights that had the lowest loss on them;
 by refitting its GP on the new residual with its kernel hyperparameters kept.
 `examples/example_hybrid.py` runs the hybrid against the plain tree.
 
-On ten 40 000-point streams the hybrid beat the plain tree by an order of
-magnitude or more on smooth targets with a global structure a network can
-learn (coupled valleys, rotated peaks, a function living on a hidden 2-plane
-of ten inputs, a sharp step), by 14 to 20% on three rough oscillatory targets,
-and was level on two whose ripples 40 000 points do not resolve, at 1.5 to 1.6
-times the plain tree's run time (`examples/BENCHMARK_RESULTS_neural_linear.md`
-§3.10 is the reference table). The held-out points are what keep it ahead of
-the plain tree on noisy targets: on 4000-point streams with noise it has 0.75
-of the plain tree's error, where a network trained on every point has 1.44.
-Its leaves keep the default Matérn 3/2 kernel:
-Matérn 5/2 was level with it, RBF failed on the rough residual of the 3D
-target, and the additive kernel gained only where the target has low-order
-additive structure, at three to seven times the update cost (§3.2). Its
-accuracy is nearly flat in `Nbar` and the retrain interval, where the plain
-tree on a smooth 6D target gains a factor of two from large, rarely refitted
-leaves, so the hybrid keeps `Nbar=100`, `retrain_every_n_points=25` and
-gradual splitting, the `GPTree` defaults (§3.3). `docs/neural_gptree_ideas.md`
-has the design and the alternatives considered, among them neural-linear
-leaves (a Bayesian linear regression on the network's features per leaf),
-which were measured and removed (§3.9).
+Error relative to the plain tree on ten 40 000-point streams
+([`docs/benchmarks.md`](docs/benchmarks.md), section 4):
 
-## Running examples
-For more detailed demonstrations, see the example scripts in the `examples/` directory:
+| target | hybrid / plain tree |
+|---|---|
+| smooth, with a global structure a network can learn (coupled valleys, rotated peaks, a function on a hidden 2-plane of ten inputs) | 0.05 to 0.14 |
+| a sharp step | 0.27 |
+| rough and oscillatory | 0.80 to 0.86 |
+| ripples that 40 000 points do not resolve | 1.00 |
 
-*   `examples/example.py`: Shows a basic workflow of training and predicting with `GPTree`.
-    ```bash
-    python examples/example.py
-    ```
-*   `examples/performance_test.py`: Demonstrates performance metrics tracking and visualization during online learning.
-    ```bash
-    OMP_NUM_THREADS=1 python examples/performance_test.py
-    ```
-*   `examples/test_animated.py`: Provides an animated visualization of the `GPTree` learning process for 2D data.
-    It requires command-line arguments:
-    ```bash
-    python examples/test_animated.py <target_function_name> <n_points> <Nbar> <retrain_step> <update_step> <live_update_bool>
-    ```
-    For example:
-    ```bash
-    python examples/test_animated.py eggholder 10000 200 200 10 1
-    ```
-    (Available target functions: `eggholder`, `himmelblau`, `rosenbrock`, `rastrigin`, `levy`, `custom`)
+The run time is 1.5 to 1.6 times the plain tree's. The held-out points are
+what keep the hybrid ahead of the plain tree on noisy targets: on 4000-point
+streams with noise it has 0.75 of the plain tree's error, where a network
+trained on every point has 1.44. The hybrid is meant to be run with the
+`GPTree` defaults (Matérn 3/2 leaves, `Nbar=100`, `retrain_every_n_points=25`):
+its accuracy is nearly flat in `Nbar`, and of five other leaf kernels only the
+additive one gained anything, on a target with low-order additive structure and
+at three to seven times the update cost. [`docs/design.md`](docs/design.md) has
+the design and the alternatives considered.
+
+## GPyTorch backend (opt-in, needs GPyTorch)
+
+The leaf GPs are scikit-learn models by default. `GPyTorchAdapter` uses
+GPyTorch models instead:
+
+```python
+import gpytorch
+from pygptreeo import GPTree
+from pygptreeo.adapters import GPyTorchAdapter
+
+adapter = GPyTorchAdapter(
+    mean_module=gpytorch.means.ConstantMean(),
+    covar_module=gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=d)),
+    optimizer='adam', learning_rate=0.1, training_iterations=50, device='cpu')
+gpt = GPTree(GPR=adapter, Nbar=100)
+```
+
+Each leaf's hyperparameters are optimised with `training_iterations` steps of
+`'adam'` or `'lbfgs'`, and `device='cuda'` runs the leaves on a GPU. Two
+features need the scikit-learn backend: `output_model='shared'`, and the
+`'min_lengthscale'` split criterion, which falls back to splitting the widest
+dimension. `examples/gpytorch_backend.py` runs both backends on the same stream.
+
+## Examples and documentation
+
+[`examples/`](examples/README.md) has runnable scripts:
+
+| Script | Shows |
+|---|---|
+| `example.py` | The basic loop: predict each point, then update the tree with it |
+| `example_hybrid.py` | The hybrid against the plain tree on a 6D stream |
+| `multioutput_function_learning_pca.py` | The three multi-output models on a function observed on a grid |
+| `gpytorch_backend.py` | GPyTorch models as the leaf GPs |
+| `streaming_performance.py` | Accuracy, coverage and time per point along a stream, as a figure |
+| `make_readme_gif.py` | The animation at the top of this page |
+
+```bash
+python examples/example.py
+```
+
+[`docs/benchmarks.md`](docs/benchmarks.md) has the measurements behind the
+defaults and the numbers quoted above, and [`docs/design.md`](docs/design.md)
+the reasoning behind the global models, what was tried and dropped, and what is
+still open.
 
 ## Contributing
 Contributions are welcome! Please feel free to submit issues or pull requests.

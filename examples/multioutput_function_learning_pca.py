@@ -1,32 +1,32 @@
 """
-Multi-output GPTree for learning functions f(t; x): B-splines vs. a PCA output basis
+Multi-output GPTree for learning functions f(t; x): the three output models
 
-This example revisits the problem of ``multioutput_function_learning_bsplines.py``:
-learn a function f(t; x) of a variable t (e.g. time) that depends on a 2-D
+Learn a function f(t; x) of a variable t (e.g. time) that depends on a 2-D
 parameter vector x = (x1, x2), from training points where the whole curve
 f(t; x) is observed on a t-grid.
 
-The B-spline approach represents each curve by its B-spline coefficients and
-learns one GP per coefficient. Here that is compared with GPTree's
-``output_model='pca'``, which learns a global linear basis of the output space
-from the data and models only the leading basis scores, and with dropping the
-spline step altogether: the raw curve values on the t-grid are the outputs,
-and the PCA basis *is* the (data-adapted) function basis.
+One approach represents each curve by its B-spline coefficients and learns one
+GP per coefficient. Here that is compared with GPTree's ``output_model='pca'``,
+which learns a global linear basis of the output space from the data and models
+only the leading basis scores, and with dropping the spline step altogether:
+the raw curve values on the t-grid are the outputs, and the PCA basis *is* the
+(data-adapted) function basis.
 
 Configurations compared, all on the same GPTree settings:
 
-    (A) B-spline coefficients as outputs, output_model='independent'  (original approach)
+    (A) B-spline coefficients as outputs, output_model='independent'
     (B) B-spline coefficients as outputs, output_model='pca'
     (C) f(t) values on the t-grid as outputs, output_model='pca'      (no splines)
     (D) f(t) values on the t-grid as outputs, output_model='independent'
         (one GP per grid point: the slow brute-force reference)
+    (E) f(t) values on the t-grid as outputs, output_model='shared'
+        (one GP per leaf with a single kernel for all grid points)
 
 Usage:
     python examples/multioutput_function_learning_pca.py [n_train] [easy|hard] [noise_std]
 
     n_train    number of training parameter points (default 60)
-    easy|hard  target family: 'easy' is the target of the B-spline example, 'hard'
-               varies faster in x (default 'easy')
+    easy|hard  target family: 'hard' varies faster in x (default 'easy')
     noise_std  Gaussian noise added to the observed curves (default 0.0)
 """
 
@@ -44,7 +44,6 @@ np.random.seed(42)
 # Targets
 # --------------------------------------------------------------------------- #
 def target_easy(t, x1, x2):
-    """The target of examples/multioutput_function_learning_bsplines.py."""
     return (np.sin(2 * np.pi * t) * x1
             + np.cos(4 * np.pi * t) * x2
             + 0.5 * np.sin(6 * np.pi * t) * x1 * x2
@@ -61,7 +60,7 @@ def target_hard(t, x1, x2):
 
 
 # --------------------------------------------------------------------------- #
-# B-spline helpers (as in the B-spline example)
+# B-spline helpers
 # --------------------------------------------------------------------------- #
 def bspline_coefficients(t, f, interior_knots):
     knots, coeffs, _ = splrep(t, f, s=0, k=3, t=interior_knots)
@@ -136,8 +135,8 @@ def main():
     n_coeffs = C_train.shape[1]
     print(f"t-grid points: {len(t)}   B-spline coefficients: {n_coeffs}   test points: {n_test}\n")
 
-    # Observation noise handed to the tree: the curve noise (or a small floor). For
-    # the spline coefficients the same value is used, as in the B-spline example.
+    # Observation noise handed to the tree: the curve noise (or a small floor), also
+    # for the spline coefficients.
     sig = max(noise, 1e-3)
     sigma_C = np.full(C_train.shape, sig)
     sigma_F = np.full(F_train_obs.shape, sig)
@@ -151,6 +150,8 @@ def main():
                        'pca', lambda F: F))
     results.append(run("(D) f(t) on grid, independent GPs", X_train, F_train_obs, sigma_F, X_test,
                        'independent', lambda F: F))
+    results.append(run("(E) f(t) on grid, shared kernel", X_train, F_train_obs, sigma_F, X_test,
+                       'shared', lambda F: F))
 
     print(f"{'configuration':<44s} {'GPs/leaf':>8s} {'leaves':>6s} {'fit [s]':>8s} {'pred [s]':>8s} "
           f"{'RMSE f(t)':>10s} {'max |err|':>10s}")
@@ -181,7 +182,7 @@ def main():
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     for ax, i in zip(axes.ravel(), idx):
         ax.plot(t, F_test[i], 'k-', lw=2.5, alpha=0.6, label='true f(t)')
-        for r, style in zip(results, ['C0--', 'C1-.', 'C2-', 'C3:']):
+        for r, style in zip(results, ['C0--', 'C1-.', 'C2-', 'C3:', 'C4--']):
             ax.plot(t, r['F'][i], style, lw=1.5, label=r['name'])
         ax.set_title(f"x = ({X_test[i, 0]:.2f}, {X_test[i, 1]:.2f})")
         ax.set_xlabel('t'); ax.grid(alpha=0.3)
