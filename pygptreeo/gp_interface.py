@@ -25,7 +25,6 @@ class GPRegressorInterface(ABC):
     - Prediction with uncertainty (predict)
     - Training state checking (is_trained)
     - Observation noise configuration (set_observation_noise)
-    - Kernel covariance computation (get_kernel_covariance)
     - Deep copying (clone)
     """
 
@@ -100,25 +99,6 @@ class GPRegressorInterface(ABC):
         alpha : float or np.ndarray
             If float: a single noise level applied to all observations.
             If array: per-observation noise levels of shape (n_samples,).
-        """
-        pass
-
-    @abstractmethod
-    def get_kernel_covariance(self, X: np.ndarray) -> np.ndarray:
-        """
-        Compute the kernel covariance matrix K(X, X).
-
-        This is used by GPForest to compute prior variances.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Input points of shape (n_samples, n_features).
-
-        Returns
-        -------
-        K : np.ndarray
-            Covariance matrix of shape (n_samples, n_samples).
         """
         pass
 

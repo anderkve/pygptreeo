@@ -60,7 +60,7 @@ class SklearnGPAdapter(GPRegressorInterface):
         kernel_factory : callable, optional
             ``kernel_factory(n_features) -> Kernel``. If given, the wrapped GPR's
             kernel is replaced by ``kernel_factory(X.shape[1])`` at the first
-            ``fit`` (or ``get_kernel_covariance``) call, so that kernels needing
+            ``fit`` call, so that kernels needing
             the input dimension (e.g. one length scale per dimension) can be
             built lazily. It is dropped once used, or if ``set_kernel`` is called.
         """
@@ -182,25 +182,6 @@ class SklearnGPAdapter(GPRegressorInterface):
             self._gpr.alpha = alpha.flatten()
         else:
             self._gpr.alpha = alpha
-
-    def get_kernel_covariance(self, X: np.ndarray) -> np.ndarray:
-        """
-        Compute the kernel covariance matrix K(X, X).
-
-        This uses scikit-learn's kernel object to compute the covariance.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Input points of shape (n_samples, n_features).
-
-        Returns
-        -------
-        K : np.ndarray
-            Covariance matrix of shape (n_samples, n_samples).
-        """
-        self._ensure_kernel(np.asarray(X).shape[1])
-        return self._gpr.kernel(X)
 
     def clone(self) -> 'SklearnGPAdapter':
         """

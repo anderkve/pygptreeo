@@ -64,13 +64,6 @@ class TestDefaultKernel(unittest.TestCase):
         gpr.set_kernel(ConstantKernel() * Matern())
         self.assertIsNone(gpr._kernel_factory)
 
-    def test_kernel_covariance_builds_kernel(self):
-        gpr = Default_GPR()
-        X = np.random.rand(5, 2)
-        K = gpr.get_kernel_covariance(X)
-        self.assertEqual(K.shape, (5, 5))
-        self.assertEqual(np.shape(gpr.sklearn_gpr.kernel.k2.length_scale), (2,))
-
 
 class TestIsotropicFallback(unittest.TestCase):
 

@@ -436,31 +436,6 @@ class GPyTorchAdapter(GPRegressorInterface):
         """
         self._observation_noise = alpha
 
-    def get_kernel_covariance(self, X: np.ndarray) -> np.ndarray:
-        """
-        Compute the kernel covariance matrix K(X, X).
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Input points of shape (n_samples, n_features).
-
-        Returns
-        -------
-        K : np.ndarray
-            Covariance matrix of shape (n_samples, n_samples).
-        """
-        if not self._trained:
-            raise RuntimeError("Model must be trained before computing kernel covariance")
-
-        test_x = torch.from_numpy(X).to(self._device)
-
-        self._model.eval()
-        with torch.no_grad():
-            # Get the covariance matrix from the model's kernel
-            covar = self._model.covar_module(test_x).evaluate()
-            return covar.cpu().numpy()
-
     def clone(self) -> 'GPyTorchAdapter':
         """
         Create a deep copy of this GP regressor.
