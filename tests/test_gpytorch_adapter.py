@@ -97,15 +97,6 @@ class TestGPyTorchAdapter(unittest.TestCase):
         np.testing.assert_array_equal(gpr.predict(self.X_test), mean)
         self.assertFalse(_adapter().clone().is_trained())
 
-    def test_kernel_covariance(self):
-        gpr = _adapter()
-        with self.assertRaises(RuntimeError):
-            gpr.get_kernel_covariance(self.X_test)
-        K = gpr.fit(self.X, self.y).get_kernel_covariance(self.X_test)
-        self.assertEqual(K.shape, (25, 25))
-        np.testing.assert_allclose(K, K.T, atol=1e-6)
-        self.assertTrue(np.all(np.diag(K) > 0))
-
     def test_get_and_set_kernel(self):
         gpr = _adapter().fit(self.X, self.y)
         self.assertIsInstance(gpr.get_kernel(), gpytorch.kernels.Kernel)

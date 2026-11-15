@@ -11,7 +11,7 @@ pyGPTreeO is a Python tool designed for online/continual regression tasks. It im
 - Using the sequential input stream, GPTreeO dynamically constructs a binary tree where each node represents a specific region of the input space.
 - Leaf nodes contain their own Gaussian Process (GP) model, which is trained on the data points that fall into that node's defined region.
 - When a leaf node accumulates a sufficient number of data points (determined by the `Nbar` parameter), it splits into two children. This process creates more specialized models for subregions of the data space.
-- Predictions are typically made by the GP model in the leaf node into which a new data point falls. For overlapping regions (controlled by the `theta` parameter) or when using `GPForest`, predictions can be an aggregate prediction from multiple relevant GPs.
+- Predictions are typically made by the GP model in the leaf node into which a new data point falls. For overlapping regions (controlled by the `theta` parameter), predictions can be an aggregate prediction from multiple relevant GPs.
 
 Interfaces to several established GP packages already exist, and the code can easily be extended with more. 
 
