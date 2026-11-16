@@ -161,3 +161,55 @@ ax.set_title("On a stream that moves on, the tree of cuts gains a level per spli
 ax.text(0.0, 1.03, "Nbar = 100; the new leaf index stays 1 to 2 levels deep in all four cases, and predictions no longer follow the cuts",
         transform=ax.transAxes, fontsize=8.5, color=INK2)
 save(fig, "4_depth_of_the_cut_tree.png")
+
+# 5. prediction time along the drifting stream (one process; docs/benchmarks.md, section 8.8)
+points = [2000, 4000, 6000, 8000, 10000, 12000]
+fig, ax = plt.subplots(figsize=(7.4, 4.0))
+for name, t, colour in (("through the cuts (before)", [0.242, 0.368, 0.514, 0.637, 0.728, 0.827], RED),
+                        ("leaf index, neighbours", [0.438, 0.505, 0.508, 0.511, 0.500, 0.512], BLUE),
+                        ("leaf index", [0.177, 0.184, 0.176, 0.186, 0.200, 0.188], AQUA)):
+    ax.plot(points, t, '-o', color=colour, linewidth=2.0, markersize=6, markeredgecolor=SURFACE, markeredgewidth=1.0)
+    ax.text(points[-1] + 250, t[-1], name, color=INK, fontsize=9.5, va='center')
+ax.set_xlim(0, 16500)
+ax.set_ylim(0, 0.9)
+ax.set_xticks(points)
+ax.set_xlabel("points processed")
+ax.set_ylabel("ms per prediction")
+ax.set_title("With the leaf index a drifting stream no longer slows the predictions\n", pad=10)
+ax.text(0.0, 1.03, "A 4D cluster that moves by its width every 120 points; the tree of cuts is 131 levels deep at the end",
+        transform=ax.transAxes, fontsize=8.5, color=INK2)
+save(fig, "5_drifting_stream_cost.png")
+
+# 6. groups of the index opened by a search for 16 leaves (GP-free simulation; section 8.9)
+n = [5000, 20000, 100000, 400000, 1000000]
+panels = [("uniform stream", {3: ([5.0, 6.9, 10.9, 14.8, 17.9], [3.9, 5.0, 6.8, 7.2, 7.4]),
+                              6: ([4.5, 8.5, 19.3, 37.0, 55.3], [3.7, 5.4, 7.4, 8.6, 9.3]),
+                              10: ([4.6, 10.6, 25.2, 48.9, 70.9], [4.4, 5.5, 8.2, 9.4, 10.4])}),
+          ("random walk", {3: ([3.9, 6.1, 12.3, 19.0], [3.8, 5.8, 7.9, 7.8]),
+                           6: ([4.5, 7.8, 25.7, 46.1], [4.5, 7.6, 10.1, 10.4]),
+                           10: ([4.0, 10.3, 30.3, 67.6], [4.7, 7.3, 12.3, 16.4])})]
+fig, axs = plt.subplots(1, 2, figsize=(10.5, 4.0), sharey=True)
+for ax, (title, series) in zip(axs, panels):
+    for d, (old, new) in series.items():
+        ax.plot(n[:len(old)], old, '--o', color=ORANGE, linewidth=1.6, markersize=5, markeredgecolor=SURFACE, markeredgewidth=0.8)
+        ax.plot(n[:len(new)], new, '-o', color=BLUE, linewidth=2.0, markersize=5, markeredgecolor=SURFACE, markeredgewidth=0.8)
+        ax.text(n[len(old) - 1] * 1.15, old[-1], f"{d}D", color=INK2, fontsize=9, va='center')
+        ax.text(n[len(new) - 1] * 1.15, new[-1] + (0.0 if d != 6 else -0.3), f"{d}D", color=INK2, fontsize=9,
+                va='center' if d != 3 else 'top')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlim(4000, 2.2e6)
+    ax.set_yticks([4, 8, 16, 32, 64])
+    ax.set_yticklabels(['4', '8', '16', '32', '64'])
+    ax.minorticks_off()
+    ax.set_xticks([1e4, 1e5, 1e6])
+    ax.set_xlabel("points in the tree (100 per leaf)")
+    ax.set_title(title, fontsize=10.5, fontweight='bold', loc='left')
+axs[0].set_ylabel("groups opened per search")
+axs[0].plot([], [], '--', color=ORANGE, linewidth=1.6, label="groups divided at the median of the centres (first version)")
+axs[0].plot([], [], '-', color=BLUE, linewidth=2.0, label="groups divided where they overlap least (in the package)")
+fig.legend(loc='upper left', bbox_to_anchor=(0.005, 0.94), ncol=2, frameon=False, fontsize=9)
+fig.suptitle("The search for a query's 16 nearest leaves stays cheap up to a million points", fontsize=12, fontweight='bold',
+             x=0.01, ha='left', y=1.02)
+fig.subplots_adjust(top=0.8, wspace=0.08)
+save(fig, "6_index_search_scaling.png")
