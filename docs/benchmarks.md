@@ -723,3 +723,84 @@ numbers are relative to the leaf's own prediction.
 
 * **The number of neighbours**, without the test: 1.27 with 10, 1.01 with
   20, 0.85 with 50, 0.78 with 100, 0.74 with 200.
+
+### 8.4 Predictions from neighbours on 20 000-point streams
+
+The option as it ships (100 neighbours from the 16 nearest leaves, the test
+against the kernel, and a leaf that keeps to its own GP while that predicts
+better) on nineteen targets: the eleven physics targets, `GaussianPeaks`,
+`RotatedRosenbrock`, `StepRidge` (d = 6), `ActiveSubspacePeaks` (d = 10),
+`Michalewicz` (d = 5), `Eggholder` (d = 3), `Chirp` and the target with the
+oblique ridge (d = 4), on four stream types with two seeds: 150 runs
+(`branching_ratio` is constant at the end of the focusing stream). The NRMSE
+of the last 5000 predictions divided by that of the default tree, for the two
+seeds:
+
+| target | d | uniform | walker | sweeping | focusing |
+|---|---|---|---|---|---|
+| `active_peaks` | 10 | 0.73 / 0.74 | 0.69 / 0.73 | 0.63 / 0.82 | 0.56 / 0.58 |
+| `branching_ratio` | 5 | 1.11 / 0.89 | 0.93 / 0.99 | 1.00 / 0.98 |  |
+| `chirp` | 4 | 0.92 / 0.91 | 0.72 / 0.67 | 0.67 / 0.70 | 0.32 / 0.33 |
+| `diagonal_ridge` | 4 | 0.70 / 0.67 | 0.74 / 0.67 | 0.83 / 0.77 | 0.68 / 0.72 |
+| `dilepton_spectrum` | 4 | 0.90 / 0.85 | 0.92 / 0.85 | 0.73 / 0.82 | 0.94 / 0.86 |
+| `eft_signal_strength` | 6 | 0.39 / 0.40 | 0.38 / 0.35 | 0.58 / 0.44 | 1.04 / 1.04 |
+| `eggholder` | 3 | 0.88 / 0.89 | 0.83 / 0.86 | 0.90 / 0.90 | 0.83 / 0.85 |
+| `gaussian_peaks` | 6 | 0.64 / 0.66 | 0.40 / 0.46 | 0.51 / 0.46 | 0.54 / 0.62 |
+| `global_fit_loglike` | 10 | 0.98 / 0.93 | 0.94 / 0.95 | 0.93 / 0.96 | 0.04 / 1.00 |
+| `jet_spectrum` | 4 | 0.97 / 0.82 | 1.00 / 0.76 | 0.61 / 0.34 | 0.45 / 0.44 |
+| `loop_decay_width` | 4 | 0.85 / 0.79 | 0.86 / 0.92 | 0.39 / 0.21 | 0.29 / 0.27 |
+| `michalewicz` | 5 | 1.00 / 1.02 | 0.81 / 0.95 | 1.01 / 1.00 | 0.90 / 0.89 |
+| `neutralino_mass` | 4 | 0.84 / 0.80 | 0.98 / 0.27 | 0.83 / 0.99 | 0.48 / 0.41 |
+| `oscillation_probability` | 5 | 0.60 / 0.53 | 0.62 / 1.01 | 0.92 / 0.94 | 0.85 / 0.90 |
+| `relic_density` | 4 | 0.90 / 0.86 | 0.92 / 0.96 | 0.86 / 0.71 | 0.92 / 0.95 |
+| `resonance_xsec` | 4 | 0.92 / 0.96 | 0.61 / 1.00 | 0.97 / 0.88 | 0.67 / 0.69 |
+| `rotated_rosenbrock` | 6 | 0.52 / 0.48 | 0.53 / 0.53 | 0.45 / 0.62 | 0.47 / 0.47 |
+| `signal_yield_mc` | 4 | 0.84 / 0.84 | 0.86 / 0.85 | 0.56 / 0.53 | 0.95 / 0.93 |
+| `step_ridge` | 6 | 0.91 / 0.86 | 0.96 / 0.92 | 0.87 / 0.90 | 0.92 / 0.92 |
+| geometric mean | | 0.78 | 0.74 | 0.71 | 0.61 |
+
+* **0.71 of the default tree's error** as the geometric mean over the 150
+  runs, from 0.04 to 1.11. 135 runs are more than 2% better and 4 more than
+  2% worse.
+* **The gain is largest on the streams that move**: 22% on the uniform
+  stream, 26% on the walker, 29% on the sweeping and 39% on the focusing
+  stream.
+* **Every part of the error distribution falls**: the mean absolute error to
+  0.74, the median to 0.74, the 99% quantile to 0.72 and the largest error
+  of a run to 0.67.
+* **The four runs that are worse.** `eft_signal_strength` on the focusing
+  stream, 4% with both seeds: its declared noise is large against the change
+  of the target across the neighbours of a query in the contracted cluster,
+  and without the choice of the leaf's own GP it was 26% worse.
+  `branching_ratio` on the uniform stream, 11% with one seed and 11% better
+  with the other: one prediction of a leaf's own GP beside a threshold,
+  which the neighbours had failed the test for, is off by more than the
+  target's range. `Michalewicz` on the uniform stream, 2%.
+* **`global_fit_loglike` on the focusing stream, 0.04**: a single prediction
+  of the default tree is off by twice the range of the last quarter.
+* **Off the stream the gain is smaller**: 0.75 on points held out of the
+  stream itself, predicted at its end, and 0.83 on uniform test points.
+* **The coverage is unchanged**, 0.710 against 0.709, and 2.0% of the
+  predictions are off by more than 5 sigma against 1.9%.
+
+### 8.5 The leaves that are searched
+
+`GaussianPeaks`, `Eggholder`, `resonance_xsec`, `eft_signal_strength`,
+`global_fit_loglike` and `ActiveSubspacePeaks` on three stream types, 20 000
+points, one seed (18 runs), with the test against the kernel and no choice
+of the leaf's own GP. The neighbours are the 100 nearest points of the
+leaves whose points' boxes are nearest to the query.
+
+| leaves searched | NRMSE relative to the exact search (range) | relative to the default tree |
+|---|---|---|
+| 4 | 1.05 (0.94 to 1.28) | 0.71 |
+| 8 | 1.01 (0.98 to 1.05) | 0.68 |
+| 16 (the default) | 1.00 (0.95 to 1.02) | 0.68 |
+| 32 | 1.00 (0.99 to 1.01) | 0.68 |
+| every leaf that can hold a neighbour | 1 | 0.68 |
+
+* **Sixteen leaves give the error of the exact search.**
+* **The exact search looks at more leaves the more inputs there are**: at
+  the end of the 20 000-point runs of section 8.4, 14 to 16 leaves per query
+  in three dimensions, 8 to 31 in four, 7 to 46 in five, 35 to 79 in six and
+  41 to 77 in ten, of about 285.

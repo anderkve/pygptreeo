@@ -55,6 +55,7 @@ ALL_TARGETS = sorted(ANALYTIC) + sorted(PHYSICS)
 
 
 def target_dim(name):
+    name = name.partition('@')[0]
     return PHYSICS[name].d if name in PHYSICS else ANALYTIC[name][1]
 
 
@@ -64,6 +65,9 @@ def make_data(target, stream, N, seed, n_test=2000):
     itself (same distribution in space and along the stream)."""
     rng = np.random.RandomState(seed)
     n_hist = min(n_test, N // 5)
+    # 'name@0.2': Gaussian noise of 0.2 standard deviations of the target, declared to the model
+    target, _, noise = target.partition('@')
+    noise = float(noise) if noise else 0.0
     if target in PHYSICS:
         t = PHYSICS[target]
         d = t.d
@@ -83,6 +87,10 @@ def make_data(target, stream, N, seed, n_test=2000):
         sigma_all = np.maximum(1e-3 * np.abs(y_all), 1e-6)
         X_uni = rng.rand(n_test, d)
         y_uni = f(X_uni.T)
+    if noise > 0:
+        extra = noise * y_all.std()
+        y_obs_all = y_obs_all + extra * rng.randn(len(y_all))
+        sigma_all = np.hypot(sigma_all, extra)
     held = np.zeros(N + n_hist, dtype=bool)
     held[rng.choice(N + n_hist, n_hist, replace=False)] = True
     return dict(X=X_all[~held], y=y_all[~held], y_obs=y_obs_all[~held], sigma=sigma_all[~held],

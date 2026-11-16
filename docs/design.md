@@ -409,7 +409,9 @@ section 8.
   sigma covers 0.60 of them, and 0.44 of those beyond 7 (`docs/benchmarks.md`,
   section 7.5). Appended points shorten the time a leaf extrapolates, and
   the sigma that grows with the distance then covers 0.70 to 0.78 of them.
-  No rule was found for another leaf to predict in its place.
+  No rule was found for another leaf to predict in its place. Predictions
+  from a query's neighbours lower the error of the queries beyond 2.5 by a
+  third.
 * **The errors have heavier tails than the sigma says.** Over 140 runs 2.2%
   of the predictions are off by more than 5 sigma and 0.8% by more than 10,
   and the five largest of 5000 errors carry 23% of the squared error of the
@@ -437,6 +439,17 @@ section 8.
 
 ## Open ideas
 
+* **Oblique cuts where the target has a ridge across the inputs.** Cuts along
+  the change of the GP's gradient with decorrelated leaf inputs halve the
+  error on such targets and raise it on smooth ones (`docs/benchmarks.md`,
+  section 8.1). A leaf could try both kinds of cut on its own points when it
+  splits and keep the better, as `enable_split_evaluation` does for the
+  input of an axis-aligned cut.
+* **A kernel for the neighbours.** The leaf's kernel was fitted at the scale
+  of the leaf, and the neighbours of a query in a dense region lie within a
+  small part of it. A few steps of the hyperparameter optimisation on the
+  neighbours themselves, from the leaf's values, would fit the kernel to the
+  points it is conditioned on, at several times the cost of a prediction.
 * **Thinning sleeping leaves before removing them.** A leaf reduced to its 50
   most informative points (chosen one by one for the largest remaining GP
   variance, hyperparameters kept) had 1.2 times the error of the full leaf in

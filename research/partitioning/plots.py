@@ -87,8 +87,12 @@ targets = sorted({k[0] for k in r}, key=lambda t: gmean(v[0] for k, v in r.items
 fig, axs = plt.subplots(1, len(streams), figsize=(11.5, 0.33 * len(targets) + 1.6), sharey=True)
 for ax, s in zip(np.atleast_1d(axs), streams):
     for i, t in enumerate(targets):
-        vals = [v[0] for k, v in r.items() if k[0] == t and k[1] == s]
-        ax.plot(vals, [i] * len(vals), 'o', color=BLUE, markersize=7, markeredgecolor=SURFACE, markeredgewidth=1.2, zorder=3)
+        vals = np.array([v[0] for k, v in r.items() if k[0] == t and k[1] == s])
+        ax.plot(vals[vals >= 0.2], [i] * int(np.sum(vals >= 0.2)), 'o', color=BLUE, markersize=7, markeredgecolor=SURFACE,
+                markeredgewidth=1.2, zorder=3)
+        for v in vals[vals < 0.2]:          # off the scale: an arrow at the edge with the value
+            ax.plot([0.215], [i], '<', color=BLUE, markersize=7, markeredgecolor=SURFACE, markeredgewidth=1.2, zorder=3)
+            ax.text(0.235, i, f"{v:.2f}", va='center', ha='left', fontsize=8, color=INK2)
     ax.axvline(1.0, color=INK2, linewidth=1.0)
     ax.set_xscale('log')
     ax.set_xlim(0.2, 1.6)
@@ -101,11 +105,12 @@ for ax, s in zip(np.atleast_1d(axs), streams):
     ax.tick_params(axis='y', length=0)
 np.atleast_1d(axs)[0].set_yticks(range(len(targets)))
 np.atleast_1d(axs)[0].set_yticklabels([f"{t}  ({bench.target_dim(t)}D)" for t in targets], fontsize=9, color=INK)
+fig.subplots_adjust(top=0.9, bottom=0.075, wspace=0.12)
 fig.supxlabel("Prediction error with neighbours relative to the current tree (one dot per run; left of the line is better)",
-              fontsize=9.5, color=INK2, y=-0.04)
+              fontsize=9.5, color=INK2, y=0.015)
 all_r = np.array([v[0] for v in r.values()])
 fig.suptitle(f"20 000-point streams: {gmean(all_r):.2f} of the current tree's error over {len(all_r)} runs, "
-             f"{int(np.sum(all_r > 1.02))} more than 2% worse", fontsize=12, fontweight='bold', x=0.01, ha='left', y=1.01)
+             f"{int(np.sum(all_r > 1.02))} more than 2% worse", fontsize=12, fontweight='bold', x=0.01, ha='left', y=0.975)
 save(fig, "2_neighbours_20k_by_target.png")
 
 # 3. the error along a stream, two runs
