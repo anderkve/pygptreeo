@@ -213,3 +213,39 @@ fig.suptitle("The search for a query's 16 nearest leaves stays cheap up to a mil
              x=0.01, ha='left', y=1.02)
 fig.subplots_adjust(top=0.8, wspace=0.08)
 save(fig, "6_index_search_scaling.png")
+
+# 7. cost and error along a 200 000-point stream (one process; section 8.12)
+n = [5000, 20000, 50000, 100000, 200000]
+fig, axs = plt.subplots(1, 2, figsize=(10.5, 3.9))
+ax = axs[0]
+for name, t, colour, style in (("update, neighbours", [2.50, 2.59, 2.53, 2.65, 2.78], BLUE, '-'),
+                               ("update, current tree", [1.86, 1.86, 1.88, 1.96, 1.92], ORANGE, '-'),
+                               ("predict, neighbours", [0.549, 0.605, 0.633, 0.624, 0.592], BLUE, '--'),
+                               ("predict, current tree", [0.129, 0.170, 0.142, 0.147, 0.144], ORANGE, '--')):
+    ax.plot(n, t, style + 'o', color=colour, linewidth=2.0, markersize=5, markeredgecolor=SURFACE, markeredgewidth=0.8)
+    ax.text(n[-1] * 1.12, t[-1], name, color=INK, fontsize=9, va='center')
+ax.set_xscale('log')
+ax.set_xlim(4000, 1.6e6)
+ax.set_ylim(0, 3.2)
+ax.set_xticks([1e4, 1e5])
+ax.set_xlabel("points processed")
+ax.set_ylabel("ms per call")
+ax.set_title("Cost per point stays flat", fontsize=10.5, fontweight='bold', loc='left')
+ax = axs[1]
+for name, e, colour in (("current tree", [0.4594, 0.2822, 0.2373, 0.1617, 0.1289], ORANGE),
+                        ("with neighbours", [0.3273, 0.1746, 0.1390, 0.1032, 0.0679], BLUE)):
+    ax.plot(n, e, '-o', color=colour, linewidth=2.0, markersize=5, markeredgecolor=SURFACE, markeredgewidth=0.8)
+    ax.text(n[-1] * 1.12, e[-1], name, color=INK, fontsize=9, va='center')
+ax.set_xscale('log')
+ax.set_yscale('log')
+ax.set_xlim(4000, 1.0e6)
+ax.set_xticks([1e4, 1e5])
+ax.set_yticks([0.05, 0.1, 0.2, 0.4])
+ax.set_yticklabels(['0.05', '0.1', '0.2', '0.4'])
+ax.minorticks_off()
+ax.set_xlabel("points processed")
+ax.set_ylabel("RMSE of the next 1000 predictions")
+ax.set_title("The gain grows: 0.71 of the error at 5000 points, 0.53 at 200 000", fontsize=10.5, fontweight='bold', loc='left')
+fig.suptitle("A 200 000-point stream (GaussianPeaks, 6D, uniform; one process)", fontsize=12, fontweight='bold', x=0.01, ha='left', y=1.03)
+fig.tight_layout()
+save(fig, "7_cost_and_error_to_200k.png")

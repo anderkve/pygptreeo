@@ -868,8 +868,9 @@ NRMSE of the last 25 000 predictions:
 
 ### 8.7 Cost with one process
 
-Streams of 20 000 points, one run at a time on an otherwise idle machine. The
-update time is the mean over the stream, the prediction time the mean over
+Streams of 20 000 points, one run at a time on an otherwise idle machine,
+with the first division of the index's groups (section 8.9). The update time
+is the mean over the stream, the prediction time the mean over
 1000 single-point predictions at the points that follow it, and the RMSE
 that of those predictions, relative to the default tree. The four numbers of
 a cell are for `GaussianPeaks` on the uniform and on the walker stream,
