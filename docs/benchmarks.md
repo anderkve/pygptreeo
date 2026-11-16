@@ -640,15 +640,16 @@ says otherwise.
 
 The kernel and the calibration are those of the query's leaf, and the
 prediction is conditioned on the query's nearest stored points. In this
-table the search for them is exact and no leaf prefers its own GP (the two
-defaults of sections 8.4 and 8.5 came later); the rows below the third
-change one setting each.
+table the search for them is exact and no leaf prefers its own GP, except
+in the fourth row (the two defaults of sections 8.4 and 8.5 came later); the
+rows below it change one setting of the third each.
 
 | predictions from neighbours | uniform | walker | sweeping | all runs (range) | runs more than 2% worse | coverage |
 |---|---|---|---|---|---|---|
 | 100 neighbours, no test against the kernel | 0.86 | 0.72 | 0.71 | 0.76 (0.31 to 2.12) | 4 of 33 | 0.69 |
 | the same, distances in fitted length scales | 1.08 | 0.69 | 0.81 | 0.84 (0.44 to 6.46) | 4 of 33 | 0.68 |
 | **100 neighbours, tested against the kernel** | 0.76 | 0.69 | 0.79 | 0.74 (0.45 to 1.04) | 1 of 33 | 0.69 |
+| the same as it ships: 16 leaves searched, a leaf may keep to its own GP | 0.76 | 0.70 | 0.79 | 0.75 (0.45 to 1.04) | 1 of 33 | 0.69 |
 | 150 neighbours | 0.72 | 0.64 | 0.76 | 0.71 (0.40 to 1.01) | 0 of 33 | 0.69 |
 | 200 neighbours | 0.71 | 0.62 | 0.75 | 0.69 (0.36 to 1.00) | 0 of 33 | 0.69 |
 | limit of the test 3 | 0.78 | 0.71 | 0.81 | 0.77 (0.45 to 1.04) | 1 of 33 | 0.69 |
@@ -961,9 +962,10 @@ update.
 | `rotated_rosenbrock` | 0.52 / 0.53 / 0.45 | 0.08 / 0.07 / 0.50 | 0.07 / 0.06 / 0.43 |
 | geometric mean | 0.64 | 0.43 | 0.39 |
 
-* **With the network the neighbours lower the error by a further 10%**, from
-  28% to 3% more: 14 of the 18 runs are more than 2% better and one is worse
-  (`resonance_xsec` on the uniform stream, 3%).
+* **With the network the neighbours lower the error by a further 10%**
+  (0.72 to 1.03 of the error with the network alone): 14 of the 18 runs are
+  more than 2% better and one is worse (`resonance_xsec` on the uniform
+  stream, 3%).
 * **The gain is smaller than without the network** (36% on these runs),
   since the network already carries what the points beyond a leaf say about
   the target.
@@ -974,3 +976,31 @@ update.
 * **A prediction takes 1.44 ms against 0.50 ms** with the network alone
   (four runs at a time on four cores), and an update 4.7 ms against 3.3 ms:
   the leaf's snapshot of the network is evaluated at the neighbours.
+
+### 8.11 Noisy observations
+
+The eleven targets of sections 8.1 to 8.3 with Gaussian noise of 0.2
+standard deviations of the target on every observation, declared to the
+model, on the three stream types: 33 runs of 5000 points. NRMSE of the last
+1250 predictions against the noise-free target, with
+`predict_from='neighbours'` relative to the default tree.
+
+| target | uniform | walker | sweeping |
+|---|---|---|---|
+| `chirp` | 0.98 | 0.82 | 0.88 |
+| `diagonal_ridge` | 0.87 | 0.82 | 0.84 |
+| `eft_signal_strength` | 0.73 | 0.77 | 0.75 |
+| `eggholder` | 0.95 | 0.86 | 0.94 |
+| `gaussian_peaks` | 0.91 | 0.70 | 0.79 |
+| `loop_decay_width` | 0.84 | 0.81 | 0.83 |
+| `neutralino_mass` | 0.97 | 1.02 | 0.74 |
+| `oscillation_probability` | 0.85 | 0.81 | 0.97 |
+| `relic_density` | 0.93 | 0.94 | 0.90 |
+| `resonance_xsec` | 0.98 | 0.89 | 0.96 |
+| `rotated_rosenbrock` | 0.80 | 0.79 | 0.81 |
+| geometric mean | 0.89 | 0.83 | 0.85 |
+
+* **0.86 of the default tree's error**, from 0.70 to 1.02, and no run more
+  than 2% worse. Without the noise the same runs are at 0.75.
+* **The coverage of the noise-free target** is 0.91 against 0.90, with a
+  sigma that includes the declared noise.
