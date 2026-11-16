@@ -1587,9 +1587,7 @@ class GPNode(Node):
         else:
             prob = 0.5 * (np.sign(dist) + 1.0)
 
-        prob.shape = (x.shape[0], 1)
-
-        return prob
+        return prob.reshape(x.shape[0], 1)
 
     
     def marg_prob(self, x: np.ndarray):

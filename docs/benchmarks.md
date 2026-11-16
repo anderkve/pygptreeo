@@ -633,7 +633,7 @@ says otherwise.
 * **Decorrelated inputs** make an oblique cell usable for the leaf's kernel:
   0.21 to 0.74 on the oblique ridge and 0.39 to 1.11 on `relic_density`,
   whose funnel lies on a diagonal, against 1.32 to 1.58 on `GaussianPeaks`.
-* **A model in every node** is worse in every run but one.
+* **A model in every node** is worse in every run.
 
 ### 8.2 Predictions from a query's neighbours (`predict_from='neighbours'`)
 
@@ -667,8 +667,8 @@ change one setting each.
 
 * **The neighbours lower the error by 26%**, on every stream type, with one
   run more than 2% worse (`resonance_xsec` on the sweeping stream, 1.04).
-  The gain is 40 to 55% on the smooth six-dimensional targets and 5 to 20%
-  on the rough ones.
+  The gain is 36 to 55% on the smooth six-dimensional targets and 5 to 24%
+  on the rough `Eggholder` and `Chirp`.
 * **The coverage is unchanged** (0.69).
 * **More neighbours lower the error further**: 29% with 150 and 31% with
   200, at a cost per prediction that grows with the cube of their number.
@@ -678,7 +678,7 @@ change one setting each.
 * **The leaf size still matters.** With `Nbar=50` the kernels are fitted to
   half as many points and the error is 19% higher than with `Nbar=100`, for
   the same 100 neighbours. `Nbar=200` gains nothing over `Nbar=100`.
-* **The search can stop after 10 leaves** at no cost in error.
+* **A search that stops after 10 leaves** costs 1% in error.
 * **Nothing else in the table helps**: far points among the neighbours,
   distances in fitted length scales, or cuts that are not along the inputs.
 
