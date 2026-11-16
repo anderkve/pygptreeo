@@ -804,3 +804,52 @@ leaves whose points' boxes are nearest to the query.
   the end of the 20 000-point runs of section 8.4, 14 to 16 leaves per query
   in three dimensions, 8 to 31 in four, 7 to 46 in five, 35 to 79 in six and
   41 to 77 in ten, of about 285.
+
+### 8.6 100 000 points
+
+`GaussianPeaks` and `eft_signal_strength` (d = 6), `Eggholder` (d = 3),
+`resonance_xsec` (d = 4) and `global_fit_loglike` (d = 10) on the uniform,
+walker and sweeping streams, one seed: 15 runs of the default tree and of
+the tree with `predict_from='neighbours'`. Times are means over the runs and
+over the points of each part of the stream, with four runs at a time on four
+cores.
+
+| points | default tree: update ms mean / 99th percentile | predict ms | neighbours: update ms mean / 99th percentile | predict ms | leaves | deepest leaf of the cuts, mean (largest) | NRMSE relative to the default tree |
+|---|---|---|---|---|---|---|---|
+| 0 to 1000 | 2.40 / 71 | 0.20 | 2.98 / 66 | 0.50 | 15 | 5 (at most 6) | 0.99 |
+| 1000 to 4000 | 2.70 / 76 | 0.25 | 3.50 / 80 | 0.66 | 58 | 8 (at most 11) | 0.76 |
+| 4000 to 16000 | 2.52 / 67 | 0.24 | 3.18 / 64 | 0.65 | 235 | 12 (at most 17) | 0.69 |
+| 16000 to 64000 | 2.53 / 70 | 0.24 | 3.41 / 73 | 0.76 | 936 | 19 (at most 34) | 0.62 |
+| 64000 to 100000 | 2.52 / 67 | 0.26 | 3.40 / 64 | 0.81 | 1469 | 20 (at most 34) | 0.63 |
+
+* **The cost of a point does not grow with the stream** for either tree
+  beyond the first 4000 points, where the leaves fill up. With neighbours an
+  update takes 1.3 times as long, and a prediction three times.
+* **The search looks at 16 leaves per query** from the first split to the
+  last, of 1469 at the end.
+* **The gain from the neighbours grows with the stream** and then holds: the
+  more points there are, the nearer a query's neighbours lie compared with
+  the points of its leaf, whose number stays the same.
+
+NRMSE of the last 25 000 predictions:
+
+| target | d | stream | default tree | neighbours | ratio |
+|---|---|---|---|---|---|
+| `eft_signal_strength` | 6 | sweeping | 0.0018 | 0.0007 | 0.38 |
+| `eft_signal_strength` | 6 | uniform | 0.0009 | 0.0003 | 0.37 |
+| `eft_signal_strength` | 6 | walker | 0.0019 | 0.0006 | 0.33 |
+| `eggholder` | 3 | sweeping | 0.0328 | 0.0283 | 0.86 |
+| `eggholder` | 3 | uniform | 0.0213 | 0.0170 | 0.79 |
+| `eggholder` | 3 | walker | 0.0232 | 0.0195 | 0.84 |
+| `gaussian_peaks` | 6 | sweeping | 0.0060 | 0.0031 | 0.52 |
+| `gaussian_peaks` | 6 | uniform | 0.0039 | 0.0022 | 0.57 |
+| `gaussian_peaks` | 6 | walker | 0.0068 | 0.0027 | 0.40 |
+| `global_fit_loglike` | 10 | sweeping | 0.0153 | 0.0117 | 0.77 |
+| `global_fit_loglike` | 10 | uniform | 0.0165 | 0.0146 | 0.88 |
+| `global_fit_loglike` | 10 | walker | 0.0174 | 0.0155 | 0.89 |
+| `resonance_xsec` | 4 | sweeping | 0.0135 | 0.0128 | 0.94 |
+| `resonance_xsec` | 4 | uniform | 0.0055 | 0.0051 | 0.94 |
+| `resonance_xsec` | 4 | walker | 0.0078 | 0.0077 | 0.99 |
+
+* **0.65 of the default tree's error** as the geometric mean, from 0.33 to
+  0.99, and no run worse. The coverage is 0.66 to 0.78.
