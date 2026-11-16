@@ -1,0 +1,30 @@
+# Partitioning study
+
+Scripts behind section 8 of `docs/benchmarks.md`: other ways to partition the
+data than cuts along the inputs, and predictions from a query's nearest
+points. None of this is part of the package; the results that were kept are
+`GPTree(predict_from='neighbours')` and the index of the leaves.
+
+Run from this folder, one core per process (`run_matrix.py` starts four).
+Records go to `results/` (not in the repository).
+
+| File | What it does |
+|---|---|
+| `bench.py` | Targets, streams and one prequential run; each run stores its per-point predictions |
+| `variants.py` | The models compared, by name: `base`, `nbf` (the shipped neighbours), `nb:...`, `oblique:...`, `mr`, `knn:...`, `fisheye:...`, `hybrid:...` |
+| `run_matrix.py` | Runs variants x targets x streams x seeds in parallel; finished runs are skipped |
+| `report.py`, `tables.py`, `plots.py` | Tables and figures from the records |
+| `oblique.py` | Hyperplane cuts with a free normal, cut positions from the GP's gradient, decorrelated leaf inputs |
+| `multires.py` | A model in every node: descendants fit the residual of their ancestors' frozen GPs |
+| `knn.py` | The first version of the neighbours (brute-force search, optional far points and per-level samples) |
+| `diag_knn.py`, `diag_batch.py`, `diag_knn_report.py` | Replay: the leaf's prediction against that of its kernel on the nearest points, for every size of the neighbour set, and rules for the test against the kernel |
+| `diag_kernel.py`, `diag_kernel_report.py` | Replay: which leaf's kernel the neighbours should use |
+| `diag_select.py` | Replay: a leaf chooses between its own GP and the neighbours by their recent errors |
+| `drift_bench.py` | Cost along a steadily drifting stream |
+| `time_predict.py` | Update and prediction times with one process |
+
+```bash
+python run_matrix.py --variants "base;nbf" --set dev --N 5000 --seeds 1
+python report.py --variants "nbf" --base base --N 5000 --per_run
+python tables.py long 20000 1,2 nbf base
+```

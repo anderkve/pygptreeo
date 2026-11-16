@@ -1,3 +1,5 @@
 results/
 logs_*.txt
 snapshot*/
+queue_*.sh
+check_live.py
