@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import warnings
+from unittest import mock
 
 import joblib
 import numpy as np
@@ -15,6 +16,7 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from pygptreeo import GPTree, Default_GPR, GPRegressorInterface
+from pygptreeo import gpnode as gpnode_module
 from pygptreeo.neighbours import NeighbourSearch
 
 warnings.filterwarnings("ignore")
@@ -174,7 +176,7 @@ class TestPredictions(unittest.TestCase):
         np.random.seed(0)
         rng = np.random.RandomState(0)
         gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
-                     neighbour_consistency=np.inf, use_calibrated_sigma=False)
+                     neighbour_consistency=np.inf, neighbour_leaves=None, use_calibrated_sigma=False)
         _stream(gpt, rng.rand(400, 2))
         X, y, sigma = _stored_points(gpt)
         for q in rng.rand(15, 2):
@@ -340,6 +342,56 @@ class TestPredictions(unittest.TestCase):
             loaded = joblib.load(path)
         self.assertIs(loaded.neighbours.tree, loaded)
         np.testing.assert_allclose(loaded.predict(X_test)[0], mean, rtol=1e-12)
+
+
+class TestChoice(unittest.TestCase):
+    """A leaf predicts from its own points while they predicted its last points clearly better."""
+
+    def test_a_leaf_turns_to_its_own_gp_and_back(self):
+        rng = np.random.RandomState(11)
+        np.random.seed(11)
+        # one leaf, whose neighbours are all its points: the two predictions are the same
+        gpt = GPTree(Nbar=500, retrain_every_n_points=20, predict_from='neighbours')
+        _stream(gpt, rng.rand(60, 2))
+        leaf = gpt.root
+        self.assertFalse(leaf.prefers_own)
+        useless = lambda self, x: (np.full((len(x), 1), 50.0), np.ones((len(x), 1)))
+        with mock.patch.object(type(leaf), '_predict_from_neighbours', useless):
+            _stream(gpt, rng.rand(gpnode_module.MIN_SCORES, 2))
+            self.assertTrue(leaf.prefers_own)
+            q = rng.rand(5, 2)
+            np.testing.assert_allclose(gpt.predict(q)[0], leaf._predict_own(q)[0], rtol=1e-9)
+            self.assertLess(np.abs(gpt.predict(q)[0][:, 0] - _target(q)).max(), 0.5)
+        # the neighbours predict as well as the leaf again: it returns to them
+        _stream(gpt, rng.rand(gpnode_module.N_SCORES, 2))
+        self.assertFalse(leaf.prefers_own)
+
+    def test_children_start_with_the_record_of_their_parent(self):
+        rng = np.random.RandomState(12)
+        np.random.seed(12)
+        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours')
+        _stream(gpt, rng.rand(39, 2))
+        root = gpt.root
+        self.assertTrue(root.is_leaf)
+        root.prefers_own = True
+        record = list(root._scores)
+        self.assertGreater(len(record), 0)
+        gpt.update_tree(rng.rand(1, 2), np.array([[0.3]]), 1e-3)
+        self.assertFalse(root.is_leaf)
+        for child in root.children:
+            self.assertEqual(len(child._scores), len(root._scores))
+            self.assertIsNot(child._scores, root._scores)
+
+    def test_two_outputs(self):
+        rng = np.random.RandomState(13)
+        np.random.seed(13)
+        X = rng.rand(120, 2)
+        Y = np.column_stack((_target(X), 2.0 * _target(X) + X[:, 0]))
+        gpt = GPTree(Nbar=60, retrain_every_n_points=10, n_outputs=2, predict_from='neighbours')
+        _stream(gpt, X, Y)
+        for leaf in gpt.root.leaves:
+            self.assertEqual(np.array(leaf._scores).shape[1:], (2, 2))
+            self.assertIn(leaf.prefers_own, (True, False))
 
 
 if __name__ == '__main__':

@@ -132,7 +132,7 @@ class GPTree:
                  predict_from: str = 'leaf',
                  n_neighbours: Optional[int] = None,
                  neighbour_consistency: float = 10.0,
-                 neighbour_leaves: Optional[int] = None,
+                 neighbour_leaves: Optional[int] = 16,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -252,8 +252,10 @@ class GPTree:
                 leaf. Distances are in units of the spread of that leaf's
                 points along each input. Where the neighbours do not fit the
                 leaf's kernel (``neighbour_consistency``) the leaf's own GP
-                predicts. Needs a GP backend with ``supports_conditioning()``
-                (the scikit-learn adapter).
+                predicts. So it does for a leaf whose own GP predicted the
+                last points it received clearly better than their neighbours
+                did. Needs a GP backend with ``supports_conditioning()`` (the
+                scikit-learn adapter).
             n_neighbours (Optional[int]): For 'neighbours': the number of
                 points a prediction is conditioned on. Defaults to ``Nbar``.
             neighbour_consistency (float): For 'neighbours': the leaf's own GP
@@ -262,9 +264,10 @@ class GPTree:
                 for points the kernel describes, and in the hundreds where
                 the neighbours lie across a jump of the target that the
                 leaf's own points do not contain. Defaults to 10.
-            neighbour_leaves (Optional[int]): For 'neighbours': the search for
-                the neighbours stops after this many leaves, nearest first.
-                None (default) searches until the nearest points are certain.
+            neighbour_leaves (Optional[int]): For 'neighbours': the neighbours
+                are the nearest points of this many leaves, those whose
+                points lie nearest to the query. Defaults to 16. None looks
+                at every leaf that can hold one of the nearest points.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and

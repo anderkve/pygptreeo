@@ -101,6 +101,14 @@ def _nb(d, seed, dir=None, pos='median', whiten=False, **opts):
     return gpt
 
 
+@register('nbf')
+def _nbf(d, seed, **opts):
+    """The package's neighbour conditioning as it ships (the records of 'nb' are of earlier versions)."""
+    kw = dict(BASE)
+    kw.update(opts)
+    return GPTree(predict_from='neighbours', **kw)
+
+
 @register('hybrid')
 def _hybrid(d, seed, nb=False, **opts):
     """GP leaves on the residual of the feature network, predicting from the leaf or from neighbours."""

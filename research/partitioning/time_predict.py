@@ -3,6 +3,9 @@
     python time_predict.py live|snapshot target stream N [variants separated by ;]
 """
 import os
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")          # before numpy is loaded
+import os
 import sys
 import time
 

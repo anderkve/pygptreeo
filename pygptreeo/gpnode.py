@@ -15,6 +15,7 @@ Key responsibilities:
 # Standard library imports
 import logging
 import warnings
+from collections import deque
 from copy import deepcopy
 from sys import float_info
 from typing import Callable, Optional, Type, Union
@@ -39,6 +40,9 @@ DEFAULT_OVERLAP = 0.001  # Default initial overlap for node boundaries
 DEFAULT_N_POINTS_PRED_PERF = 25  # Number of recent predictions tracked for calibration
 DEFAULT_SIGMA_SCALER = 10.0  # Initial sigma scaling factor for uncertainty calibration
 TARGET_COVERAGE = 0.68  # Target coverage for calibrated uncertainty (1 sigma)
+N_SCORES = 50  # Recent points over which a leaf compares its own GPs with the neighbours' prediction
+MIN_SCORES = 10  # No comparison with fewer points
+OWN_MARGIN = 0.9  # A leaf predicts from its own points while their RMS error is below this times the neighbours'
 
 np.set_printoptions(suppress=True)
 
@@ -73,7 +77,10 @@ class GPNode(Node):
         asleep (bool): True while the node's fitted GPs are partly released to
             save memory (see `sleep`). The next prediction restores them.
     """
-    neighbours = None       # for a node saved before it existed
+    # for a node saved before these existed
+    neighbours = None
+    prefers_own = False
+    _scores = None
 
     def __init__(self, *args,
                  my_GPR: GPRegressorInterface,
@@ -215,8 +222,12 @@ class GPNode(Node):
         self._fitted_global = None
 
         # Tree-wide nearest-neighbour search (shared by reference; None when
-        # the node predicts from the points of its own fit).
+        # the node predicts from the points of its own fit), the squared errors
+        # of the neighbours' and of the node's own prediction at the last points
+        # the node received, and whether the node's own GPs predict for now.
         self.neighbours = neighbours
+        self._scores = deque(maxlen=N_SCORES)
+        self.prefers_own = False
 
         # Mean and standard deviation per input of the points of the last fit
         self.fit_mean = None
@@ -491,6 +502,9 @@ class GPNode(Node):
         self.right._fitted_global = self._fitted_global
         self.left.fit_mean = self.right.fit_mean = self.fit_mean
         self.left.fit_std = self.right.fit_std = self.fit_std
+        for child in self.children:
+            child._scores = deque(self._scores, maxlen=N_SCORES)
+            child.prefers_own = self.prefers_own
 
 
     def delete_point(self, index=-1, shared_point=True):
@@ -1605,7 +1619,9 @@ class GPNode(Node):
 
         A leaf of a tree with ``predict_from='neighbours'`` conditions its
         kernels on the stored points nearest to each row of ``x`` in place of
-        the points of its last fit (``_predict_from_neighbours``).
+        the points of its last fit (``_predict_from_neighbours``), unless its
+        own GPs predicted the last points it received clearly better
+        (``prefers_own``).
 
         Args:
             x (np.ndarray): The input point(s) at which to make predictions,
@@ -1640,7 +1656,7 @@ class GPNode(Node):
                 if not (getattr(self.global_mean, 'cheap_leaf_refresh', False)
                         and self._refit_on_snapshot(current)):
                     self.fit_my_GPR(force_training=True)
-        if self.neighbours is not None and self.is_leaf and self.fit_std is not None and self._is_fitted():
+        if self._can_condition() and not self.prefers_own:
             mu_pred, sigma_pred = self._predict_from_neighbours(x)
         else:
             mu_pred, sigma_pred = self._predict_own(x, return_std)
@@ -1663,6 +1679,30 @@ class GPNode(Node):
                     sigma_pred[:, i] = sigma_pred[:, i] * self.sigma_scalers[i]
 
         return mu_pred, sigma_pred
+
+
+    def _can_condition(self) -> bool:
+        """Whether this node can predict from the stored points nearest to a query."""
+        return self.neighbours is not None and self.is_leaf and self.fit_std is not None and self._is_fitted()
+
+
+    def _score_predictors(self, x: np.ndarray, y: np.ndarray, mu_pred: np.ndarray):
+        """Record how the neighbours and the node's own GPs each predicted the
+        point ``(x, y)``, of which ``mu_pred`` is the prediction of the one in
+        use, and let the own GPs predict from now on if they did clearly better
+        over the last points."""
+        if self.prefers_own:
+            mu_other, _ = self._predict_from_neighbours(x)
+        else:
+            mu_other, _ = self._predict_own(x)
+        if self._fitted_global is not None:
+            mu_other = mu_other + self._fitted_global.predict(x)
+        errors = (y - mu_pred[0]) ** 2, (y - mu_other[0]) ** 2
+        self._scores.append(errors[::-1] if self.prefers_own else errors)       # (neighbours, own)
+        if len(self._scores) >= MIN_SCORES:
+            scores = np.array(self._scores)                                    # (points, 2, n_outputs)
+            from_neighbours, own = scores[:, 0].mean(axis=0) + 1e-300, scores[:, 1].mean(axis=0) + 1e-300
+            self.prefers_own = bool(np.mean(np.log(own / from_neighbours)) < 2.0 * np.log(OWN_MARGIN))
 
 
     def _predict_own(self, x: np.ndarray, return_std: bool = True):
@@ -1842,6 +1882,9 @@ class GPNode(Node):
             y = np.array([y])
         else:
             y = np.atleast_1d(y).flatten()
+
+        if self._can_condition():
+            self._score_predictors(x, y[:self.n_outputs], mu_pred)
 
         keep_n_points = self.n_points_pred_perf - 1
 

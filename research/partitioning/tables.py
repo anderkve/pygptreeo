@@ -3,6 +3,9 @@
     python tables.py short      # the 5000-point rounds
     python tables.py long       # the 20 000-point matrix
 """
+import os
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")          # before numpy is loaded
 import sys
 
 import numpy as np

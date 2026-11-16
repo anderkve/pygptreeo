@@ -1,4 +1,7 @@
 """Run diag_knn.replay for a set of targets and streams in parallel."""
+import os
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")          # before numpy is loaded
 import itertools
 import os
 import sys

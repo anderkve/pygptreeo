@@ -1,5 +1,8 @@
 """Figures of the partitioning study from the records: python plots.py <output folder>"""
 import os
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")          # before numpy is loaded
+import os
 import sys
 
 import matplotlib
