@@ -141,7 +141,8 @@ class TestSearch(unittest.TestCase):
         for _ in range(n_queries):
             q = rng.uniform(-0.2, 1.2, d)
             w = rng.uniform(0.05, 1.0, d)
-            Xn, yn, sn = search.find(q, w)
+            Xn, yn, sn, growth = search.find(q, w)
+            self.assertIsNone(growth)
             found = np.sort((((Xn - q) / w) ** 2).sum(axis=1))
             d2 = (((X - q) / w) ** 2).sum(axis=1)
             np.testing.assert_allclose(found, np.sort(d2)[:k], rtol=1e-12)
@@ -168,9 +169,37 @@ class TestSearch(unittest.TestCase):
 
     def test_fewer_points_than_asked_for(self):
         gpt = _grown_tree(n=12, d=2)
-        Xn, yn, sn = NeighbourSearch(gpt, n_neighbours=50).find(np.array([0.5, 0.5]), np.ones(2))
-        self.assertEqual(Xn.shape, (12, 2))
+        for fade in (None, 0.5):
+            Xn, yn, sn, growth = NeighbourSearch(gpt, n_neighbours=50, fade=fade).find(np.array([0.5, 0.5]), np.ones(2))
+            self.assertEqual(Xn.shape, (12, 2))
+            self.assertIsNone(growth)           # no stored point beyond the neighbours
         self.assertIsNone(NeighbourSearch(GPTree(), n_neighbours=5).find(np.zeros(2), np.ones(2)))     # an empty tree
+
+    def test_neighbours_that_fade_out(self):
+        """The same points, with a noise that grows from ``fade`` to the first point beyond them."""
+        k = 25
+        for d, max_leaves in ((2, None), (4, None), (2, 6)):
+            gpt = _grown_tree(n=700, d=d, seed=d)
+            X = _stored_points(gpt)[0]
+            rng = np.random.RandomState(d)
+            for q in rng.uniform(-0.1, 1.1, (40, d)):
+                w = rng.uniform(0.05, 1.0, d)
+                plain = NeighbourSearch(gpt, n_neighbours=k, max_leaves=max_leaves).find(q, w)[0]
+                Xn, _, _, growth = NeighbourSearch(gpt, n_neighbours=k, max_leaves=max_leaves, fade=0.6).find(q, w)
+                distance = np.sqrt((((Xn - q) / w) ** 2).sum(axis=1))
+                np.testing.assert_allclose(np.sort(distance), np.sort(np.sqrt((((plain - q) / w) ** 2).sum(axis=1))), rtol=1e-12)
+                self.assertEqual(growth.shape, (k,))
+                if max_leaves is None:
+                    beyond = np.sort(np.sqrt((((X - q) / w) ** 2).sum(axis=1)))[k]
+                    t = np.clip((distance / beyond - 0.6) / 0.4, 0.0, 1.0)
+                    np.testing.assert_allclose(growth, t ** 2 / (1.0 - t) ** 2, rtol=1e-9)
+                    self.assertTrue(np.all(growth[distance <= 0.6 * beyond] == 0.0))        # the near ones keep their noise
+                self.assertTrue(np.all(np.diff(growth[np.argsort(distance)]) >= 0.0))
+                self.assertGreater(growth.max(), 0.0)
+        with self.assertRaises(ValueError):
+            NeighbourSearch(gpt, n_neighbours=k, fade=1.0)
+        with self.assertRaises(ValueError):
+            GPTree(predict_from='neighbours', neighbour_fade=-0.1)
 
     def test_a_limit_on_the_leaves_searched(self):
         """The points then come from the leaves whose points' boxes are nearest to the query."""
@@ -179,7 +208,7 @@ class TestSearch(unittest.TestCase):
         rng = np.random.RandomState(0)
         for q in rng.uniform(-0.1, 1.1, (40, 2)):
             for m in (1, 3):
-                Xn, _, _ = NeighbourSearch(gpt, n_neighbours=10, max_leaves=m).find(q, np.ones(2))
+                Xn = NeighbourSearch(gpt, n_neighbours=10, max_leaves=m).find(q, np.ones(2))[0]
                 gaps = [np.maximum(leaf.my_X_data.min(axis=0) - q, 0.0) + np.maximum(q - leaf.my_X_data.max(axis=0), 0.0)
                         for leaf in leaves]
                 nearest = np.argsort([(gap ** 2).sum() for gap in gaps], kind='stable')[:m]
@@ -191,24 +220,66 @@ class TestSearch(unittest.TestCase):
 class TestPredictions(unittest.TestCase):
 
     def test_equal_a_gp_on_the_neighbours_with_the_leaf_kernel(self):
-        np.random.seed(0)
-        rng = np.random.RandomState(0)
-        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
-                     neighbour_consistency=np.inf, neighbour_leaves=None, use_calibrated_sigma=False)
-        _stream(gpt, rng.rand(400, 2))
-        X, y, sigma = _stored_points(gpt)
-        for q in rng.rand(15, 2):
-            leaf = _leaf_of(gpt, q[None, :])
-            d2 = (((X - q) / leaf.fit_std) ** 2).sum(axis=1)
-            idx = np.argsort(d2)[:30]
-            xs, ys = leaf.X_scaler, leaf.y_scalers[0]
-            reference = GaussianProcessRegressor(kernel=leaf.my_GPRs[0].sklearn_gpr.kernel_, optimizer=None,
-                                                 alpha=(sigma[idx, 0] / ys.scale_[0]) ** 2)
-            reference.fit(xs.transform(X[idx]), ys.transform(y[idx]))
-            ref_mean, ref_std = reference.predict(xs.transform(q[None, :]), return_std=True)
-            mean, std = gpt.predict(q[None, :])
-            np.testing.assert_allclose(mean[0, 0], ref_mean[0] * ys.scale_[0] + ys.mean_[0], rtol=1e-6, atol=1e-8)
-            np.testing.assert_allclose(std[0, 0], ref_std[0] * ys.scale_[0], rtol=1e-4, atol=1e-8)
+        """Without fading and with it, where the noise of the outer neighbours is raised."""
+        k = 30
+        for fade in (None, 0.5):
+            np.random.seed(0)
+            rng = np.random.RandomState(0)
+            gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=k, neighbour_fade=fade,
+                         neighbour_consistency=np.inf, neighbour_leaves=None, use_calibrated_sigma=False)
+            _stream(gpt, rng.rand(400, 2))
+            X, y, sigma = _stored_points(gpt)
+            raised = 0
+            for q in rng.rand(15, 2):
+                leaf = _leaf_of(gpt, q[None, :])
+                if leaf.prefers_own:
+                    continue
+                distance = np.sqrt((((X - q) / leaf.fit_std) ** 2).sum(axis=1))
+                order = np.argsort(distance)
+                idx = order[:k]
+                noise = sigma[idx, 0] ** 2
+                if fade is not None:
+                    t = np.clip((distance[idx] / distance[order[k]] - fade) / (1.0 - fade), 0.0, 1.0)
+                    self.assertIsNotNone(leaf._predicted_variance())
+                    noise = noise + t ** 2 / (1.0 - t) ** 2 * (noise + leaf._predicted_variance()[0])
+                    raised += int(np.sum(t > 0.0))
+                xs, ys = leaf.X_scaler, leaf.y_scalers[0]
+                reference = GaussianProcessRegressor(kernel=leaf.my_GPRs[0].sklearn_gpr.kernel_, optimizer=None,
+                                                     alpha=noise / ys.scale_[0] ** 2)
+                reference.fit(xs.transform(X[idx]), ys.transform(y[idx]))
+                ref_mean, ref_std = reference.predict(xs.transform(q[None, :]), return_std=True)
+                mean, std = gpt.predict(q[None, :])
+                np.testing.assert_allclose(mean[0, 0], ref_mean[0] * ys.scale_[0] + ys.mean_[0], rtol=1e-6, atol=1e-8)
+                np.testing.assert_allclose(std[0, 0], ref_std[0] * ys.scale_[0], rtol=1e-4, atol=1e-8)
+            self.assertEqual(raised > 0, fade is not None)
+
+    def test_fading_neighbours_give_a_prediction_without_steps(self):
+        """Along a path within a leaf the mean steps where the set of neighbours changes, unless they fade out."""
+        np.random.seed(2)
+        rng = np.random.RandomState(2)
+        gpt = GPTree(GPR=_fixed_gpr(2, length_scale=0.5), Nbar=60, predict_from='neighbours', n_neighbours=30,
+                     neighbour_leaves=None, neighbour_consistency=np.inf)
+        _stream(gpt, rng.rand(700, 2), sigma=1e-2)
+        self.assertEqual(gpt.neighbours.fade, 0.9)
+        compared = 0
+        for leaf in gpt.root.leaves:
+            lo, hi = gpt.leaf_index.cell(leaf)
+            lo, hi = np.maximum(lo, 0.0), np.minimum(hi, 1.0)
+            if leaf.prefers_own or leaf._predicted_variance() is None or np.any(hi - lo < 0.05):
+                continue
+            path = lo + np.linspace(0.35, 0.65, 3000)[:, None] * (hi - lo)
+            self.assertTrue(all(gpt.leaf_index.locate(q) is leaf for q in path[::50]))
+            largest = {}
+            for fade in (None, 0.9):
+                gpt.neighbours.fade = fade
+                step = np.diff(gpt.predict(path)[0][:, 0])
+                # what a step adds to the mean of the steps before and after it
+                largest[fade] = np.abs(step[1:-1] - 0.5 * (step[:-2] + step[2:])).max()
+            gpt.neighbours.fade = 0.9
+            if largest[None] > 1e-6:
+                self.assertLess(largest[0.9], 0.05 * largest[None])
+                compared += 1
+        self.assertGreater(compared, 3)
 
     def _both(self, n=260, d=2, **kw):
         """The predictions along a stream of a tree that predicts from its leaves
@@ -284,7 +355,8 @@ class TestPredictions(unittest.TestCase):
         trees = {}
         for mode in ('leaf', 'neighbours'):
             np.random.seed(6)
-            trees[mode] = GPTree(Nbar=50, retrain_every_n_points=25, predict_from=mode, use_calibrated_sigma=False)
+            trees[mode] = GPTree(Nbar=50, retrain_every_n_points=25, predict_from=mode, use_calibrated_sigma=False,
+                                 neighbour_fade=None)
             _stream(trees[mode], X, y, sigma=1e-4)
         X_test = rng.rand(400, 2)
         X_test = X_test[np.abs(X_test[:, 0] - 0.5) > 0.02]
@@ -296,7 +368,7 @@ class TestPredictions(unittest.TestCase):
         own, conditioned = 0, 0
         for q in X_test:
             leaf = _leaf_of(gpt, q[None, :])
-            Xn, yn, sn = gpt.neighbours.find(q, leaf.fit_std)
+            Xn, yn, sn, _ = gpt.neighbours.find(q, leaf.fit_std)
             ys = leaf.y_scalers[0]
             consistency = leaf.my_GPRs[0].condition(leaf.X_scaler.transform(Xn), ys.transform(yn)[:, 0],
                                                     (sn[:, 0] / ys.scale_[0]) ** 2, leaf.X_scaler.transform(q[None, :]))[2][0]

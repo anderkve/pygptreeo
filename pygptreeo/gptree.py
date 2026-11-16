@@ -133,6 +133,7 @@ class GPTree:
                  n_neighbours: Optional[int] = None,
                  neighbour_consistency: float = 10.0,
                  neighbour_leaves: Optional[int] = 16,
+                 neighbour_fade: Optional[float] = 0.9,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -268,6 +269,14 @@ class GPTree:
                 are the nearest points of this many leaves, those whose
                 points lie nearest to the query. Defaults to 16. None looks
                 at every leaf that can hold one of the nearest points.
+            neighbour_fade (Optional[float]): For 'neighbours': the noise of
+                a neighbour grows with its distance from the query, from this
+                fraction of the distance of the first stored point beyond
+                the neighbours, where it is infinite. A point then enters
+                and leaves the neighbours with no weight, so the prediction
+                is continuous in the query within a leaf. Defaults to 0.9.
+                With None all neighbours count alike and the prediction
+                steps wherever the set of neighbours changes.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -321,7 +330,8 @@ class GPTree:
                 raise ValueError("predict_from='neighbours' needs a GP backend with supports_conditioning() == True "
                                  "(e.g. the scikit-learn adapter returned by Default_GPR)")
             self.neighbours = NeighbourSearch(self, n_neighbours=Nbar if n_neighbours is None else n_neighbours,
-                                              consistency_limit=neighbour_consistency, max_leaves=neighbour_leaves)
+                                              consistency_limit=neighbour_consistency, max_leaves=neighbour_leaves,
+                                              fade=neighbour_fade)
 
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,

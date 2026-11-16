@@ -82,6 +82,7 @@ class GPNode(Node):
     neighbours = None
     prefers_own = False
     _scores = None
+    _variance_unit = None
 
     def __init__(self, *args,
                  my_GPR: GPRegressorInterface,
@@ -1706,6 +1707,15 @@ class GPNode(Node):
             self.prefers_own = bool(np.mean(np.log(own / from_neighbours)) < 2.0 * np.log(OWN_MARGIN))
 
 
+    def _predicted_variance(self):
+        """Per output, the median of the variances that the node's GPs gave its
+        last registered predictions, before calibration, or None while there
+        are fewer than MIN_SCORES of them."""
+        if self._variance_unit is None and len(self.sigma_preds_list[0]) >= MIN_SCORES:
+            self._variance_unit = np.array([np.median(sigma ** 2) for sigma in self.sigma_preds_list])
+        return self._variance_unit
+
+
     def _predict_own(self, x: np.ndarray, return_std: bool = True):
         """The prediction of the node's GPs from the points of their fit, before
         the global model is added back."""
@@ -1746,9 +1756,15 @@ class GPNode(Node):
         the single query ``xq`` of the node's kernels given ``points``. An
         output is left as it is where the points do not fit its kernel or the
         backend cannot condition."""
-        X, y, noise_std = points
+        X, y, noise_std, growth = points
         if self._fitted_global is not None:
             y = y - self._fitted_global.predict(X)
+        if growth is not None:
+            # neighbours that fade out: their noise grows in units of itself plus the variance of a prediction
+            unit = self._predicted_variance()
+            if unit is None:
+                unit = 0.01 * y.var(axis=0)
+            noise_std = np.sqrt(noise_std ** 2 + growth[:, None] * (noise_std ** 2 + unit))
         Xs, qs = self._scaled_inputs(X), self._scaled_inputs(xq)
         scaled = self.use_standard_scaling and self.X_scaler is not None
         limit = self.neighbours.consistency_limit
@@ -1899,6 +1915,7 @@ class GPNode(Node):
 
             self.sigma_preds_list[i] = self.sigma_preds_list[i][:keep_n_points]
             self.sigma_preds_list[i] = np.insert(self.sigma_preds_list[i], 0, sigma_pred[0, i])
+        self._variance_unit = None
 
         # Also update single arrays for backward compatibility (single output case)
         if self.n_outputs == 1:
@@ -1915,6 +1932,7 @@ class GPNode(Node):
         self.residuals_list = [np.array([]) for _ in range(self.n_outputs)]
         self.mu_preds_list = [np.array([]) for _ in range(self.n_outputs)]
         self.sigma_preds_list = [np.array([]) for _ in range(self.n_outputs)]
+        self._variance_unit = None
         self.sigma_scalers = [1.0 for _ in range(self.n_outputs)]
         if self.n_outputs == 1:
             self.residuals = self.residuals_list[0]
