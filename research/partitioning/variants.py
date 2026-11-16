@@ -118,6 +118,15 @@ def _anchored(d, seed, depth=2, **opts):
     return anchored_tree(depth=depth, **kw)
 
 
+@register('tapered')
+def _tapered(d, seed, start=0.8, strength=1.0, **opts):
+    """Neighbours whose noise grows towards the edge of their set, for a prediction that is continuous in the query."""
+    from tapered import tapered_tree
+    kw = dict(BASE)
+    kw.update(opts)
+    return tapered_tree(start=start, strength=strength, **kw)
+
+
 @register('hybrid')
 def _hybrid(d, seed, nb=False, **opts):
     """GP leaves on the residual of the feature network, predicting from the leaf or from neighbours."""

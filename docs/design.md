@@ -456,7 +456,8 @@ section 8.
   changes.** Along a path through two or three leaves the mean steps by more
   than 0.1 sigma 33 to 39 times, where the leaves' own predictions step 4
   to 5 times; the largest step is no larger (`docs/benchmarks.md`, section
-  8.13). The leaf's own prediction is smooth within the leaf.
+  8.13). The leaf's own prediction is smooth within the leaf. Neighbours
+  that fade out (under Open ideas) remove these steps.
 * **A global model is evaluated at the neighbours of every query.** With
   `predict_from='neighbours'` the residuals of the neighbours are computed
   for each prediction, which is slow with the additive global GP.
@@ -479,6 +480,15 @@ section 8.
   section 8.1). A leaf could try both kinds of cut on its own points when it
   splits and keep the better, as `enable_split_evaluation` does for the
   input of an axis-aligned cut.
+* **Neighbours that fade out.** A noise that grows with the distance of a
+  neighbour, and is infinite at the first stored point beyond the set, lets
+  a point enter and leave the set with no weight: the prediction is then
+  continuous within a leaf. In a prototype it stepped as often as the
+  leaves' own predictions and by less, for 1% more error than the
+  neighbours without fading and 0.06 ms more per prediction
+  (`docs/benchmarks.md`, section 8.14). The added noise is in units of the
+  leaf's typical squared error, so that it fades a point over the same share
+  of the set's radius whatever the scale of the target.
 * **A kernel for the neighbours.** The leaf's kernel was fitted at the scale
   of the leaf, and the neighbours of a query in a dense region lie within a
   small part of it. A few steps of the hyperparameter optimisation on the

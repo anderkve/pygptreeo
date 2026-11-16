@@ -1094,7 +1094,9 @@ tree.
 from a stored point to its 200th nearest stored point, in 1000 steps
 (`research/partitioning/jitter.py`). A step counts by how far it departs
 from the mean of the steps on either side of it, in units of the predicted
-sigma. Means over the paths, which pass through 2.4 to 2.9 leaves.
+sigma, so that one discontinuity counts up to three times: itself and, at
+half its size, the step before and after it. Means over the paths, which
+pass through 2.4 to 2.9 leaves.
 
 | target, stream | prediction from | steps above 0.01 sigma | above 0.1 sigma | above 1 sigma | their sum in sigma, mean (median) | largest step, median |
 |---|---|---|---|---|---|---|
@@ -1135,3 +1137,66 @@ of a cell share their neighbours (`research/partitioning/anchored.py`). The
   points wide along each input: 32 cells halve it along five inputs, and
   the centre of a cell is still a quarter of the leaf away from most of its
   queries.
+
+### 8.14 Neighbours that fade out (not in the code)
+
+The prediction from a query's neighbours with a noise that grows with the
+distance of a neighbour (`research/partitioning/tapered.py`). With `r` the
+distance of a neighbour divided by that of the first stored point beyond the
+100 neighbours, and `t = (r - start) / (1 - start)` where `r` exceeds
+`start`, the noise variance of the neighbour is raised by
+`e^2 t^2 / (1 - t)^2`, where `e^2` is the typical squared error of the
+leaf's recent predictions (the median of their squares divided by 0.455). A
+point enters and leaves the set of neighbours with no weight, so the
+prediction is continuous in the query for as long as its leaf, and the leaves
+that are searched, stay the same.
+
+The 33 runs of sections 8.1 to 8.3, relative to the default tree:
+
+| 100 neighbours unless stated | 5000 points: uniform | walker | sweeping | all runs (range) | runs more than 2% worse | 20 000 points: all runs (range) | runs more than 2% worse |
+|---|---|---|---|---|---|---|---|
+| as in the package (no fading) | 0.76 | 0.70 | 0.79 | 0.75 (0.45 to 1.04) | 1 of 33 | 0.69 (0.38 to 0.98) | 0 of 33 |
+| fading from `start = 0.9` | 0.77 | 0.72 | 0.80 | 0.76 (0.47 to 1.04) | 1 of 33 | 0.70 (0.39 to 0.98) | 0 of 33 |
+| fading from 0.8 | 0.78 | 0.73 | 0.81 | 0.77 (0.50 to 1.04) | 1 of 33 | 0.71 (0.38 to 0.99) | 0 of 33 |
+| fading from 0.5 | 0.83 | 0.78 | 0.83 | 0.82 (0.57 to 1.07) | 2 of 33 | | |
+| from 0.8, a tenth of the added noise | 0.77 | 0.72 | 0.80 | 0.76 (0.47 to 1.04) | 1 of 33 | | |
+| from 0.8, ten times the added noise | 0.81 | 0.76 | 0.83 | 0.80 (0.53 to 1.04) | 2 of 33 | | |
+| 150 neighbours, no fading | 0.72 | 0.65 | 0.76 | 0.71 (0.40 to 1.02) | 0 of 33 | | |
+| 150 neighbours, fading from 0.8 | 0.74 | 0.68 | 0.78 | 0.73 (0.43 to 1.04) | 1 of 33 | | |
+| 150 neighbours, fading from 0.5 | 0.76 | 0.71 | 0.80 | 0.76 (0.49 to 1.05) | 2 of 33 | | |
+
+The steps of the predicted mean, measured as in section 8.13 after 20 000
+points:
+
+| target, stream | prediction from | steps above 0.01 sigma | above 0.1 sigma | above 1 sigma | their sum in sigma, mean (median) | largest step, median |
+|---|---|---|---|---|---|---|
+| `GaussianPeaks`, uniform | the leaf | 4.6 | 3.9 | 0.9 | 4.3 (2.3) | 0.89 |
+| | neighbours | 243 | 32.6 | 0.2 | 14.0 (13.1) | 0.45 |
+| | neighbours fading from 0.8 | 24.4 | 4.8 | 0.2 | 2.0 (1.5) | 0.27 |
+| | fading from 0.9, 32 leaves searched | 21.0 | 2.6 | 0.2 | 1.5 (0.8) | 0.22 |
+| `Eggholder`, walker | the leaf | 4.9 | 3.9 | 1.4 | 4.8 (3.0) | 1.26 |
+| | neighbours | 185 | 39.0 | 1.4 | 16.9 (12.3) | 0.75 |
+| | neighbours fading from 0.8 | 36.5 | 3.6 | 0.5 | 2.8 (1.4) | 0.35 |
+| | fading from 0.9, 32 leaves searched | 51.9 | 4.4 | 0.5 | 3.5 (1.9) | 0.37 |
+| `resonance_xsec`, uniform | the leaf | 6.1 | 4.8 | 2.0 | 13.7 (2.8) | 1.36 |
+| | neighbours | 175 | 35.1 | 2.1 | 25.8 (16.7) | 1.21 |
+| | neighbours fading from 0.8 | 32.9 | 5.5 | 1.6 | 12.8 (3.1) | 1.09 |
+| | fading from 0.9, 32 leaves searched | 43.6 | 5.5 | 1.6 | 13.7 (3.1) | 0.98 |
+
+* **With fading neighbours the prediction steps as often as the leaf's
+  own**, 3 to 6 times above 0.1 sigma on a path against 33 to 39 without
+  fading, and by less: the largest step of a path is 0.2 to 1.1 sigma
+  against 0.9 to 1.4 for the leaves.
+* **The fading costs 1% of the error from 0.9 and 3% from 0.8** at 20 000
+  points (0.99 to 1.06 and 0.98 to 1.13 of the error without fading in
+  single runs), and no run is worse than the default tree. The coverage is
+  0.685 against 0.684.
+* **The width of the fading hardly changes the steps**, and a wider one
+  costs more error: 9% from 0.5.
+* **The steps that remain** are where the path enters another leaf, whose
+  kernel and metric differ, and where the 16 leaves that are searched
+  change: with 32 leaves, or an exact search, the steps above 0.1 sigma on
+  a 6000-point tree of `GaussianPeaks` fall from 3.9 to 2.3 per path.
+* **Cost** (`GaussianPeaks`, 20 000 points, one process): a prediction
+  takes 0.57 ms against 0.52 ms without fading, and 0.69 ms with 32 leaves
+  searched; an update 2.5 ms against 2.3 ms.
