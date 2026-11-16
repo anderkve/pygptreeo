@@ -127,6 +127,24 @@ def _tapered(d, seed, start=0.8, strength=1.0, **opts):
     return tapered_tree(start=start, strength=strength, **kw)
 
 
+@register('blended')
+def _blended(d, seed, blend=0.1, **opts):
+    """Neighbours, with the predictions of the leaves on both sides of a cut mixed in a zone around it."""
+    from blended import blended_tree
+    kw = dict(BASE)
+    kw.update(opts)
+    return blended_tree(blend=blend, **kw)
+
+
+@register('mixed')
+def _mixed(d, seed, blend=0.1, **opts):
+    """As 'blended', with one prediction from the mixture of the kernels of the leaves on both sides of a cut."""
+    from blended import mixed_tree
+    kw = dict(BASE)
+    kw.update(opts)
+    return mixed_tree(blend=blend, **kw)
+
+
 @register('hybrid')
 def _hybrid(d, seed, nb=False, **opts):
     """GP leaves on the residual of the feature network, predicting from the leaf or from neighbours."""

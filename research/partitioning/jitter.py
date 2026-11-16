@@ -50,7 +50,8 @@ for v in (sys.argv[4].split(';') if len(sys.argv) > 4 else ('base', 'nbf')):
         largest.append(jump.max())
         located = [m.leaf_index.locate(q) for q in p[::10]]
         leaves_crossed.append(len({id(leaf) for leaf in located if leaf is not None}))
-    print(f"{target} {stream} N={N} {v:16s} leaves on a path {np.mean(leaves_crossed):4.1f}   steps off by more than "
+    used = f"  leaves per prediction {m.n_leaves_used / m.n_queries:.2f}" if hasattr(m, 'n_leaves_used') else ''
+    print(f"{target} {stream} N={N} {v:16s}{used} leaves on a path {np.mean(leaves_crossed):4.1f}   steps off by more than "
           + "  ".join(f"{level} sigma: {np.mean(c):6.1f}" for level, c in counts.items())
           + f"   sum of them {np.mean(total):6.2f} sigma (median {np.median(total):5.2f})   largest {np.median(largest):5.2f} sigma (worst path {np.max(largest):6.1f})",
           flush=True)

@@ -500,6 +500,18 @@ section 8.
   section 8.1). A leaf could try both kinds of cut on its own points when it
   splits and keep the better, as `enable_split_evaluation` does for the
   input of an axis-aligned cut.
+* **The kernels of neighbouring leaves mixed across a cut.** Within a zone
+  around each cut a prediction from neighbours would use the weighted sum of
+  the kernels of the leaves on both sides, with their metrics, target means
+  and sigma scalers averaged alike, so that the hyperparameters pass from
+  one leaf to the next gradually. A sum of kernels is a kernel, whatever
+  the leaves' scalings, which an average of their hyperparameters is not.
+  In a prototype the largest step along a path fell from 0.3 to 1.1 sigma
+  to 0.1 sigma or less and the error by 2 to 6%, for 4 to 7% more time per
+  prediction (`docs/benchmarks.md`, section 8.16). The package would need
+  the zones in the index of the leaves, the kernel matrices from the GP
+  backend, the outputs models and the global model, and a calibration of
+  sigma on the mixed predictions.
 * **A kernel for the neighbours.** The leaf's kernel was fitted at the scale
   of the leaf, and the neighbours of a query in a dense region lie within a
   small part of it. A few steps of the hyperparameter optimisation on the

@@ -1283,3 +1283,62 @@ The 150 runs of section 8.4 with the package as it is: the NRMSE of the last
   takes 0.57 ms with fading, 0.54 ms without and 0.14 ms for the default
   tree, and an update 2.53, 2.46 and 1.82 ms; on `resonance_xsec` 0.60, 0.46
   and 0.14 ms, and 3.61, 3.58 and 2.95 ms.
+
+### 8.16 Blending across the cuts (not in the code)
+
+What is left of the steps of section 8.15 is where a query passes into
+another leaf, whose kernel, scaling of the inputs and targets, metric of the
+distances and calibration differ. Two ways to pass from one leaf to the next
+gradually, within a zone around each cut whose width is a share of the
+spread of the node's points along the cut, with weights that change linearly
+across it (`research/partitioning/blended.py`); where a point is stored does
+not change:
+
+* **predictions blended**: the query is predicted from its neighbours with
+  the hyperparameters of each leaf in turn, and the predictions are mixed;
+* **kernels mixed**: one prediction, with the weighted sum of the leaves'
+  kernels (in the units of the inputs and targets) as its kernel, and the
+  weighted means of their metrics, target means, units of the fading and
+  sigma scalers. A single output without a global model; a leaf that prefers
+  its own GP, or neighbours that fail the test, give blended predictions.
+
+The steps of the mean after 20 000 points, as in section 8.13, for
+`GaussianPeaks` on the uniform stream / `Eggholder` on the walker stream /
+`resonance_xsec` on the uniform stream:
+
+| | leaves per prediction | steps above 0.1 sigma | their sum in sigma | largest step, median |
+|---|---|---|---|---|
+| the default tree | 1 | 3.9 / 3.9 / 4.8 | 4.3 / 4.8 / 13.7 | 0.89 / 1.26 / 1.36 |
+| neighbours that fade out (the package) | 1 | 4.8 / 2.5 / 5.5 | 2.1 / 2.2 / 12.7 | 0.26 / 0.32 / 1.08 |
+| predictions blended, zone 0.05 | 1.39 / 1.51 / 1.49 | 2.4 / 0.3 / 1.4 | 1.1 / 0.5 / 1.3 | 0.10 / 0.02 / 0.04 |
+| predictions blended, zone 0.1 | 1.99 / 2.15 / 2.10 | 2.3 / 0.4 / 0.9 | 1.0 / 0.7 / 0.9 | 0.09 / 0.01 / 0.02 |
+| kernels mixed, zone 0.05 | 1.39 / 1.51 / 1.49 | 2.9 / 0.5 / 2.8 | 1.3 / 0.7 / 2.9 | 0.11 / 0.03 / 0.07 |
+| kernels mixed, zone 0.1 | 1.99 / 2.15 / 2.10 | 2.5 / 0.2 / 1.9 | 1.1 / 0.5 / 1.9 | 0.10 / 0.03 / 0.05 |
+
+The 33 runs of sections 8.1 to 8.3, relative to the default tree, and
+relative to the neighbours that fade out run by run:
+
+| | 5000 points: all runs (range) | against fading alone, mean / median (range) | 20 000 points: all runs (range) | against fading alone, mean / median (range) | coverage at 20 000 | off by more than 5 sigma |
+|---|---|---|---|---|---|---|
+| neighbours that fade out (the package) | 0.77 (0.49 to 1.04) | 1 | 0.71 (0.39 to 0.99) | 1 | 0.686 | 1.52% |
+| predictions blended, zone 0.05 | 0.76 (0.48 to 1.04) | 0.985 / 0.992 (0.91 to 1.02) | | | | |
+| predictions blended, zone 0.1 | 0.75 (0.48 to 1.05) | 0.977 / 0.988 (0.80 to 1.05) | | | | |
+| kernels mixed, zone 0.05 | 0.75 (0.48 to 1.04) | 0.976 / 0.992 (0.82 to 1.03) | 0.69 (0.38 to 0.97) | 0.977 / 0.985 (0.86 to 1.03) | 0.710 | 1.08% |
+| kernels mixed, zone 0.1 | 0.72 (0.27 to 1.05) | 0.939 / 0.983 (0.31 to 1.05) | 0.67 (0.38 to 0.97) | 0.943 / 0.976 (0.51 to 1.08) | 0.733 | 0.80% |
+
+* **Either way the steps at the cuts all but vanish**: the largest step of
+  a path falls from 0.26 to 1.08 sigma to 0.01 to 0.11 sigma. On
+  `GaussianPeaks` two to three steps of a tenth of a sigma remain, where
+  the 16 leaves that are searched change.
+* **The error falls too**: with the kernels mixed in a zone of 0.1 it is 6%
+  lower than with fading alone at 20 000 points (2% in the median run, 22 of
+  33 runs more than 2% better and one worse, by 8%), and 2% lower in a zone
+  of 0.05. That is 0.67 and 0.69 of the default tree's error, where the
+  neighbours without fading have 0.69 on these runs.
+* **The coverage rises** to 0.71 and 0.73: a leaf's sigma scaler is
+  calibrated on the predictions with its own kernel alone, which are less
+  accurate in the zones.
+* **Cost** (`GaussianPeaks`, 20 000 points, one process, the prototype
+  walking the cuts for every query): a prediction with the kernels mixed
+  takes 1.04 and 1.07 times as long as with fading alone in zones of 0.05
+  and 0.1, and 1.24 and 1.86 times with the predictions blended.
