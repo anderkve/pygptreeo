@@ -100,6 +100,11 @@ class GPTree:
         save(path):
             Saves the trained GPTree object to a file.
     """
+    # for a tree saved before these existed
+    predict_from = 'leaf'
+    neighbours = None
+    leaf_index = None
+
     def __init__(self,
                  GPR: Optional[GPRegressorInterface] = None,
                  Nbar: Optional[int] = 100,
@@ -502,7 +507,7 @@ class GPTree:
 
 
     def __setstate__(self, state):
-        nodes, links = state.pop('_saved_nodes'), state.pop('_saved_links')
+        nodes, links = state.pop('_saved_nodes', ()), state.pop('_saved_links', ())
         self.__dict__.update(state)
         for node, first in zip(nodes, links):
             if first is not None:

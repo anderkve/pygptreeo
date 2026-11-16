@@ -127,6 +127,21 @@ gpt = GPTree(Nbar=100, global_mean='net', global_mean_kwargs=dict(steps_per_upda
 Further options can be passed via `global_mean_kwargs`, see the docstrings of `AdditiveGPGlobalMean` and `FeatureNetLearner`. Benchmark results are given in [`docs/benchmarks.md`](docs/benchmarks.md), and the design of the global models is described in more detail in [`docs/design.md`](docs/design.md). See `examples/example_hybrid.py` for a comparison of a tree with and without the neural network.
 
 
+## Predictions from the nearest data points (optional)
+
+By default the prediction for an input point is made by the GP of the leaf that the point falls in, i.e. from the data points of that leaf alone. In more than a few dimensions most input points lie close to an edge of their leaf, with many of their nearest data points in neighbouring leaves. With `predict_from='neighbours'` a prediction is instead based on the data points nearest to the input point, from whichever leaves hold them:
+
+```python
+gpt = GPTree(Nbar=100, predict_from='neighbours')
+```
+
+- The leaf that the input point falls in still provides the kernel hyperparameters and the calibration of the predicted uncertainty, and the tree is used to find the nearest data points without searching through all of them.
+- If the nearest data points are not described by the kernel of the leaf, the prediction of the leaf's own GP is used, as in the default setting. This happens when the target function has a jump or a kink between the leaf and its neighbours.
+- The number of data points per prediction is set with `n_neighbours` (default: `Nbar`). More neighbours give a lower error at a higher cost per prediction.
+
+In our tests with streams of 20 000 points the prediction error was reduced by XX% on average, and it was not more than 2% higher than with the default setting in any of the YY runs. The predicted uncertainties remain calibrated. A prediction takes about ZZ times as long as with the default setting, since a GP is conditioned on the neighbours for each prediction, and the time per `update_tree` call increases by about WW%. This option requires the scikit-learn interface. See [`docs/benchmarks.md`](docs/benchmarks.md) (section 8) for the benchmark results and [`docs/design.md`](docs/design.md) for the details.
+
+
 ## Limiting the memory use (optional)
 
 By default the tree keeps every leaf it creates, so its memory use grows with the number of data points. For streams that are too long for this, a memory limit can be set:

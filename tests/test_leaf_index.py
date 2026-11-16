@@ -255,6 +255,24 @@ class TestTree(unittest.TestCase):
         _stream(loaded, X[-1:] + 0.01 * np.arange(1, 41)[:, None])
         self._check_tree(loaded, 2, rng, n_queries=100)
 
+    def test_a_tree_without_an_index(self):
+        """As one saved before the index existed: the cuts are followed."""
+        rng = np.random.RandomState(5)
+        np.random.seed(5)
+        gpt = _tree(2)
+        X = rng.rand(400, 2)
+        _stream(gpt, X)
+        expected = gpt.predict(X[:50])
+        state = dict(gpt.__dict__)
+        for name in ('leaf_index', 'neighbours', 'predict_from'):
+            del state[name]
+        old = GPTree.__new__(GPTree)
+        old.__setstate__(state)
+        self.assertIsNone(old.leaf_index)
+        np.testing.assert_array_equal(old.predict(X[:50])[0], expected[0])
+        self.assertEqual(old.n_leaves, len(gpt.root.leaves))
+        _stream(old, rng.rand(60, 2))
+
     def test_the_search_agrees_with_the_one_through_the_cuts(self):
         rng = np.random.RandomState(4)
         np.random.seed(4)

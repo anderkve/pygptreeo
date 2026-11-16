@@ -77,6 +77,9 @@ class ObliqueNode(GPNode):
             return super().split_coordinate(x)
         return x @ self.split_direction
 
+    def cut_axis(self):
+        return super().cut_axis() if self.split_direction is None else None
+
     def cut_distance(self, q, w):
         if self.split_direction is None:
             return super().cut_distance(q, w)

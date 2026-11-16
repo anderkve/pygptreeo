@@ -73,6 +73,8 @@ class GPNode(Node):
         asleep (bool): True while the node's fitted GPs are partly released to
             save memory (see `sleep`). The next prediction restores them.
     """
+    neighbours = None       # for a node saved before it existed
+
     def __init__(self, *args,
                  my_GPR: GPRegressorInterface,
                  Nbar: Optional[int] = 100,

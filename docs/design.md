@@ -339,12 +339,13 @@ section 8.
   cell has its length scales along the cell: the symmetric whitening of the
   leaf's points in place of a scale per input. With the oblique cuts along
   the change of the gradient the error fell by 50 to 80% on a target with an
-  oblique ridge and rose by 30 to 90% on smooth targets (14% lower on
+  oblique ridge and rose by 7 to 93% on `GaussianPeaks` (14% lower on
   average, 15 of 33 runs worse). With the cuts along the inputs it changed
   nothing.
 * **A cut where the gradient of the leaf's GP changes most**, in place of
-  the median of the points. 2% lower error with cuts along the inputs, 7%
-  with oblique cuts, and a third of the runs worse.
+  the median of the points. 1% lower error with cuts along the inputs and
+  10% with the oblique cuts along the change of the gradient, which are then
+  6% below the default, with a third of the runs worse.
 * **A model in every node** (a multi-resolution tree). A node that splits
   leaves its GP behind, and the GPs of its descendants model what is left of
   the target. 41% worse: the residual of an interpolating GP is zero at the
