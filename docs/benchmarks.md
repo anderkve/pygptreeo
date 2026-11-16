@@ -28,7 +28,8 @@ repository; they are in its history up to commit `cd27934`
 (`examples/benchmark_*.py`, `examples/compare_tree_vs_hybrid.py`,
 `examples/results/`). `examples/streaming_performance.py` runs the same kind of
 comparison on one stream. Sections 6 and 7 were measured later, with scripts
-that are not in the repository.
+that are not in the repository, and section 8 with those of
+`research/partitioning`.
 
 ## 1. Split-dimension criterion
 
@@ -853,3 +854,62 @@ NRMSE of the last 25 000 predictions:
 
 * **0.65 of the default tree's error** as the geometric mean, from 0.33 to
   0.99, and no run worse. The coverage is 0.66 to 0.78.
+
+### 8.7 Cost with one process
+
+Streams of 20 000 points, one run at a time on an otherwise idle machine. The
+update time is the mean over the stream, the prediction time the mean over
+1000 single-point predictions at the points that follow it, and the RMSE
+that of those predictions, relative to the default tree. The four numbers of
+a cell are for `GaussianPeaks` on the uniform and on the walker stream,
+`resonance_xsec` and `global_fit_loglike` on the uniform stream.
+
+| setting | update ms | predict ms | leaves searched | RMSE relative to the default tree |
+|---|---|---|---|---|
+| default tree | 1.77 / 1.92 / 2.95 / 3.38 | 0.14 / 0.14 / 0.14 / 0.14 | | 1 |
+| **neighbours: 100 from 16 leaves** | 2.50 / 2.66 / 3.59 / 4.23 | 0.58 / 0.62 / 0.51 / 0.46 | 16 | 0.66 / 0.59 / 0.94 / 0.85 |
+| exact search | 2.81 / 2.84 / 3.71 / 4.38 | 0.91 / 1.14 / 0.62 / 0.57 | 94 / 111 / 33 / 72 | 0.66 / 0.59 / 0.94 / 0.85 |
+| 8 leaves | 2.48 / 2.59 / 3.60 / 4.08 | 0.62 / 0.57 / 0.46 / 0.42 | 8 | 0.69 / 0.59 / 0.94 / 0.83 |
+| 50 neighbours | 2.45 / 2.50 / 3.58 / 4.09 | 0.46 / 0.44 / 0.39 / 0.36 | 16 | 0.78 / 0.72 / 1.02 / 1.00 |
+| 200 neighbours | 2.99 / 2.97 / 4.13 / 4.70 | 1.07 / 1.09 / 0.89 / 0.78 | 16 | 0.61 / 0.47 / 0.93 / 0.87 |
+
+* **A prediction from neighbours takes 0.46 to 0.62 ms** against 0.14 ms,
+  3.3 to 4.4 times as long.
+* **An update takes 0.6 to 0.9 ms longer**, 22 to 41%: the point is
+  predicted from the neighbours and from the leaf's own GP before it is
+  stored.
+* **The exact search** takes up to 0.5 ms more per prediction for the same
+  error, the more the higher the dimension of the cells that touch a query's
+  neighbourhood.
+* **With 50 neighbours** a prediction is 0.1 to 0.2 ms faster and the gain
+  is gone on two of the four streams. **With 200** it takes 1.7 to 1.8 times
+  as long and the error falls further on `GaussianPeaks` only.
+
+### 8.8 A stream that drifts
+
+A four-dimensional cluster of width 0.03 that moves along the first input by
+its width every 120 points, 12 000 points, each predicted before it is added;
+one process. The first pair of columns is the package before the index of
+the leaves (commit `1a242db`), where a point reaches its leaf through the
+cuts. The times are means over the 2000 points up to each row.
+
+| points | leaves | depth of the cuts, mean (largest) | through the cuts: predict ms | update ms | leaf index: predict ms | update ms | leaf index, neighbours: predict ms | update ms |
+|---|---|---|---|---|---|---|---|---|
+| 2000 | 26 | 14 (25) | 0.24 | 3.16 | 0.18 | 3.28 | 0.44 | 3.73 |
+| 4000 | 52 | 27 (51) | 0.37 | 3.46 | 0.18 | 3.52 | 0.51 | 4.18 |
+| 6000 | 77 | 39 (76) | 0.51 | 3.77 | 0.18 | 3.41 | 0.51 | 4.03 |
+| 8000 | 110 | 54 (95) | 0.64 | 4.06 | 0.19 | 3.53 | 0.51 | 4.03 |
+| 10 000 | 145 | 66 (113) | 0.73 | 4.17 | 0.20 | 3.61 | 0.50 | 4.05 |
+| 12 000 | 179 | 76 (131) | 0.83 | 4.43 | 0.19 | 3.78 | 0.51 | 4.17 |
+
+* **Every split adds a level to the cuts**: the deepest leaf is 131 levels
+  down, where a balanced tree of 179 leaves has 8.
+* **Through the cuts the prediction time grows with the depth**, 3.4 times
+  from the first 2000 points to the last, and the update time by 1.3 ms.
+  With the index both stay as they are, and the predictions are the same.
+* **A tree more than 1100 levels deep** (two inputs, `Nbar=8`, 9000 points
+  of such a stream) predicts, is saved and loaded with the index
+  (`tests/test_leaf_index.py`). Through the cuts the descent failed at about
+  1000 levels and saving from about 150.
+* **With neighbours the RMSE of the last 6000 predictions is 0.59 of the
+  default tree's.**

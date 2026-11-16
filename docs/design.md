@@ -186,9 +186,9 @@ section 8.
 * **A kernel describes the points it was fitted to.** A leaf beside a jump or
   a kink of the target has a smooth kernel, since its own points do not
   contain the jump. Conditioned on neighbours from across the jump, that
-  kernel overshoots by several times the target's range. The tree with one
-  GP per leaf never does this, since each kernel is fitted to the points it
-  is conditioned on. The mean squared target of the neighbours after
+  kernel overshoots by several times the target's range. A leaf's own GP is
+  far less exposed to this, since its kernel is fitted to the points it is
+  conditioned on. The mean squared target of the neighbours after
   whitening with the kernel matrix, `y^T K^-1 y / k`, is about 1 where the
   kernel describes them and in the hundreds or thousands in these cases.
   Above `neighbour_consistency` (10) the leaf's own GP predicts, as in the
@@ -203,8 +203,9 @@ section 8.
   queries apart, since most queries with a low one are predicted best. So
   each leaf compares the two predictions at the last 50 points it received,
   and predicts from its own points while their RMS error is below 0.9 times
-  that of the neighbours (`prefers_own`). That run is then 4% worse, and
-  the average over the other runs 1% worse than without the rule.
+  that of the neighbours (`prefers_own`). That run is then 4% worse than
+  the leaves, and the mean error over the 75 runs of a seed, with the rule
+  and the search of 16 leaves, 0.6% above that without the two.
 * **A point is not its own neighbour.** The prediction registered for the
   calibration is made before the point is stored.
 * **The search.** The 16 leaves whose points' boxes are nearest to the query
@@ -216,8 +217,10 @@ section 8.
   leaves give the error of the exact search, eight 0.6% more, four 5%.
 * **Cost.** A prediction factorises the kernel matrix of its neighbours, at a
   cost cubic in their number, where a leaf's own GP needs one triangular
-  solve. The leaf's own GP is still fitted and extended with each point, for
-  the queries it predicts itself.
+  solve: about 0.5 ms against 0.14 ms with 100 neighbours. The leaf's own GP
+  is still fitted and extended with each point, for the queries it predicts
+  itself, and each new point is predicted both ways before it is stored, so
+  an update takes 20 to 40% longer.
 
 ## An index of the leaves
 
