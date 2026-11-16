@@ -590,6 +590,10 @@ predicted by one leaf, chosen by the cuts without overlap.
 
 ## 8. Other ways to partition the data
 
+Sections 8.2 to 8.13 were measured with neighbours that all count alike
+(`neighbour_fade=None`). Section 8.15 has the neighbours that fade out, which
+are the default of `predict_from='neighbours'`.
+
 Sections 8.1 to 8.3: eleven targets (`GaussianPeaks` and `RotatedRosenbrock`
 in six dimensions, `Eggholder` in three, `Chirp` in four, a four-dimensional
 target with a ridge and a kink on oblique hyperplanes, `resonance_xsec`,
@@ -735,9 +739,9 @@ numbers are relative to the leaf's own prediction.
 
 ### 8.4 Predictions from neighbours on 20 000-point streams
 
-The option as it ships (100 neighbours from the 16 nearest leaves, the test
-against the kernel, and a leaf that keeps to its own GP while that predicts
-better) on nineteen targets: the eleven physics targets, `GaussianPeaks`,
+The option without fading (100 neighbours from the 16 nearest leaves, the
+test against the kernel, and a leaf that keeps to its own GP while that
+predicts better) on nineteen targets: the eleven physics targets, `GaussianPeaks`,
 `RotatedRosenbrock`, `StepRidge` (d = 6), `ActiveSubspacePeaks` (d = 10),
 `Michalewicz` (d = 5), `Eggholder` (d = 3), `Chirp` and the target with the
 oblique ridge (d = 4), on four stream types with two seeds: 150 runs
@@ -1138,10 +1142,11 @@ of a cell share their neighbours (`research/partitioning/anchored.py`). The
   the centre of a cell is still a quarter of the leaf away from most of its
   queries.
 
-### 8.14 Neighbours that fade out (not in the code)
+### 8.14 Neighbours that fade out: the prototype
 
 The prediction from a query's neighbours with a noise that grows with the
-distance of a neighbour (`research/partitioning/tapered.py`). With `r` the
+distance of a neighbour (`research/partitioning/tapered.py`; section 8.15
+has the version of the package). With `r` the
 distance of a neighbour divided by that of the first stored point beyond the
 100 neighbours, and `t = (r - start) / (1 - start)` where `r` exceeds
 `start`, the noise variance of the neighbour is raised by
@@ -1200,3 +1205,81 @@ points:
 * **Cost** (`GaussianPeaks`, 20 000 points, one process): a prediction
   takes 0.57 ms against 0.52 ms without fading, and 0.69 ms with 32 leaves
   searched; an update 2.5 ms against 2.3 ms.
+
+### 8.15 Neighbours that fade out (`neighbour_fade`)
+
+In the package the noise variance of a neighbour grows by `t^2 / (1 - t)^2`
+times a unit, with `t` as in section 8.14 and `start = 0.9`. Candidates for
+the unit, on the 33 runs of 5000 points relative to the default tree, with
+the steps of the mean after 20 000 points as in section 8.13 (`GaussianPeaks`
+on the uniform stream / `Eggholder` on the walker stream):
+
+| unit of the added noise | all runs (range) | runs more than 2% worse | steps above 0.1 sigma | their sum in sigma |
+|---|---|---|---|---|
+| no fading | 0.75 (0.45 to 1.04) | 1 of 33 | 32.6 / 39.0 | 14.0 / 16.9 |
+| the squared error of the leaf's predictions (section 8.14), plus the neighbour's own noise variance | 0.76 (0.48 to 1.04) | 1 of 33 | 4.8 / 3.5 | 2.2 / 2.9 |
+| **the variance the leaf's GPs predict, plus the neighbour's own** | 0.77 (0.49 to 1.04) | 1 of 33 | 4.8 / 2.5 | 2.1 / 2.2 |
+| a quarter of the predicted variance, plus the neighbour's own | 0.76 (0.47 to 1.04) | 1 of 33 | 5.0 / 2.9 | 2.2 / 2.4 |
+
+* **The squared error of a leaf's predictions is 0.12 to 0.47 of the
+  variance its GPs predict** (medians over the leaves of four noise-free
+  targets after 5000 points), and 4.5 times that variance on a target with
+  noise of 0.2 standard deviations, where it contains the noise.
+* **Under a kernel that is not fitted** (a fixed kernel, declared noise ten
+  times the size of the errors, 30 neighbours in two dimensions) the largest
+  step along a path of 400 points across a leaf is 0.61 of that without
+  fading with the squared error alone as the unit, 0.32 with the
+  neighbour's noise added, and 0.26 with the predicted variance.
+* **On `resonance_xsec`** the predicted variance gives 5.5 steps above 0.1
+  sigma on a path with a sum of 12.7 sigma, as the squared error does.
+
+The 150 runs of section 8.4 with the package as it is: the NRMSE of the last
+5000 predictions divided by that of the default tree, for the two seeds.
+
+| target | d | uniform | walker | sweeping | focusing |
+|---|---|---|---|---|---|
+| `active_peaks` | 10 | 0.76 / 0.78 | 0.72 / 0.75 | 0.66 / 0.86 | 0.63 / 0.65 |
+| `branching_ratio` | 5 | 1.14 / 0.89 | 0.95 / 0.97 | 0.99 / 0.96 |  |
+| `chirp` | 4 | 0.92 / 0.91 | 0.73 / 0.68 | 0.69 / 0.70 | 0.37 / 0.37 |
+| `diagonal_ridge` | 4 | 0.70 / 0.67 | 0.76 / 0.68 | 0.83 / 0.78 | 0.75 / 0.73 |
+| `dilepton_spectrum` | 4 | 0.89 / 0.85 | 0.95 / 0.90 | 0.73 / 0.81 | 0.94 / 0.88 |
+| `eft_signal_strength` | 6 | 0.42 / 0.44 | 0.43 / 0.40 | 0.64 / 0.49 | 1.04 / 1.05 |
+| `eggholder` | 3 | 0.88 / 0.89 | 0.82 / 0.86 | 0.91 / 0.90 | 0.84 / 0.85 |
+| `gaussian_peaks` | 6 | 0.65 / 0.69 | 0.42 / 0.49 | 0.54 / 0.48 | 0.50 / 0.58 |
+| `global_fit_loglike` | 10 | 0.99 / 0.96 | 0.92 / 0.96 | 0.95 / 0.97 | 0.20 / 1.00 |
+| `jet_spectrum` | 4 | 0.73 / 0.83 | 1.00 / 0.77 | 0.63 / 0.75 | 0.44 / 0.44 |
+| `loop_decay_width` | 4 | 0.87 / 0.79 | 0.86 / 0.93 | 0.39 / 0.18 | 0.29 / 0.28 |
+| `michalewicz` | 5 | 1.01 / 1.02 | 0.81 / 0.96 | 1.01 / 1.00 | 0.91 / 0.91 |
+| `neutralino_mass` | 4 | 0.84 / 0.79 | 0.99 / 0.26 | 0.83 / 0.99 | 0.52 / 0.44 |
+| `oscillation_probability` | 5 | 0.63 / 0.55 | 0.63 / 1.02 | 0.93 / 0.94 | 0.87 / 0.93 |
+| `relic_density` | 4 | 0.89 / 0.86 | 0.92 / 0.96 | 0.87 / 0.74 | 0.93 / 0.96 |
+| `resonance_xsec` | 4 | 0.93 / 0.98 | 0.62 / 1.00 | 0.97 / 0.89 | 0.72 / 0.73 |
+| `rotated_rosenbrock` | 6 | 0.54 / 0.52 | 0.56 / 0.53 | 0.49 / 0.68 | 0.50 / 0.51 |
+| `signal_yield_mc` | 4 | 0.84 / 0.84 | 0.87 / 0.87 | 0.51 / 0.54 | 0.94 / 0.93 |
+| `step_ridge` | 6 | 0.92 / 0.87 | 0.95 / 0.93 | 0.87 / 0.91 | 0.91 / 0.91 |
+| geometric mean | | 0.79 | 0.75 | 0.73 | 0.65 |
+| without fading (section 8.4) | | 0.78 | 0.74 | 0.71 | 0.61 |
+
+* **0.73 of the default tree's error** as the geometric mean over the 150
+  runs, from 0.18 to 1.14, against 0.71 without fading. 135 runs are more
+  than 2% better than the default tree and 4 more than 2% worse, the four of
+  section 8.4: `branching_ratio` on the uniform stream (14%),
+  `eft_signal_strength` on the focusing stream (4 and 5%) and `Michalewicz`
+  on the uniform stream (2%).
+* **Run by run the fading costs 0.8% of error in the median** and 3.3% in
+  the geometric mean (0.75 to 4.81 of the error without fading): 0.9% on the
+  uniform stream, 1.9% on the walker, 3.3% on the sweeping and 7.4% on the
+  focusing stream. Without `global_fit_loglike` on the focusing stream,
+  where one prediction of the default tree is off by twice the range and the
+  ratio is 0.20 with fading and 0.04 without, it is 2.2%.
+* **The rest of the error distribution**: the mean absolute error is 0.77 of
+  the default tree's, the median 0.76, the 99% quantile 0.74 and the largest
+  error of a run 0.69 (without fading 0.74, 0.74, 0.72 and 0.67); 0.77 on
+  points held out of the stream and 0.84 on uniform test points.
+* **The coverage is 0.712** against 0.709 for the default tree, and 1.76% of
+  the predictions are off by more than 5 sigma, against 1.95% for the
+  default tree and 2.02% without fading.
+* **Cost** (20 000 points, one process): on `GaussianPeaks` a prediction
+  takes 0.57 ms with fading, 0.54 ms without and 0.14 ms for the default
+  tree, and an update 2.53, 2.46 and 1.82 ms; on `resonance_xsec` 0.60, 0.46
+  and 0.14 ms, and 3.61, 3.58 and 2.95 ms.

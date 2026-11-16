@@ -206,6 +206,28 @@ section 8.
   that of the neighbours (`prefers_own`). That run is then 4% worse than
   the leaves, and the mean error over the 75 runs of a seed, with the rule
   and the search of 16 leaves, 0.6% above that without the two.
+* **Neighbours fade out** (`neighbour_fade`, 0.9). With neighbours that
+  all count alike the prediction steps wherever the set changes: 33 to 39
+  times by more than 0.1 sigma on a path through two or three leaves, where
+  the leaves' own predictions step 4 to 5 times. So the noise variance of a
+  neighbour grows with its distance `r` from the query, measured against
+  that of the first stored point beyond the set: by `t^2 / (1 - t)^2` times
+  the sum of its own noise variance and the variance of a prediction, with
+  `t = (r - 0.9) / 0.1` beyond 0.9. At the edge the noise is infinite, a
+  point enters and leaves the set with no weight, and the prediction is
+  continuous in the query while its leaf and the leaves searched stay the
+  same. It then steps as often as the leaves' own predictions and by less,
+  for 1% more error than without fading in the median run and 3% in the
+  mean of 150 runs (`docs/benchmarks.md`, sections 8.14 and 8.15).
+* **The unit of that noise** is what decides whether a point still counts:
+  its variance given the other neighbours, which the kernel sets. The
+  median variance that the leaf's GPs gave their last predictions is of that
+  size whether or not the kernel is calibrated, and the point's own noise
+  is added for targets where the noise is the larger of the two. The squared
+  error of the last predictions, the unit of the first version, is an eighth
+  to a half of that variance on noise-free targets, and far less under a
+  kernel that claims more uncertainty than there is: the fading then takes
+  place within the last hundredths of the radius, and is a step again.
 * **A point is not its own neighbour.** The prediction registered for the
   calibration is made before the point is stored.
 * **The search.** The 16 leaves whose points' boxes are nearest to the query
@@ -452,12 +474,10 @@ section 8.
 * **GPyTorch leaves predict from their own points.** The adapter cannot
   condition a fitted kernel on other points, so `predict_from='neighbours'`
   needs the scikit-learn adapter.
-* **Predictions from neighbours step wherever the set of neighbours
-  changes.** Along a path through two or three leaves the mean steps by more
-  than 0.1 sigma 33 to 39 times, where the leaves' own predictions step 4
-  to 5 times; the largest step is no larger (`docs/benchmarks.md`, section
-  8.13). The leaf's own prediction is smooth within the leaf. Neighbours
-  that fade out (under Open ideas) remove these steps.
+* **Predictions from neighbours step where the query's leaf changes**, as
+  the leaves' own predictions do: the kernel, the metric of the distances
+  and the calibration are those of the leaf. They also step, by less, where
+  the 16 leaves that are searched change.
 * **A global model is evaluated at the neighbours of every query.** With
   `predict_from='neighbours'` the residuals of the neighbours are computed
   for each prediction, which is slow with the additive global GP.
@@ -480,15 +500,6 @@ section 8.
   section 8.1). A leaf could try both kinds of cut on its own points when it
   splits and keep the better, as `enable_split_evaluation` does for the
   input of an axis-aligned cut.
-* **Neighbours that fade out.** A noise that grows with the distance of a
-  neighbour, and is infinite at the first stored point beyond the set, lets
-  a point enter and leave the set with no weight: the prediction is then
-  continuous within a leaf. In a prototype it stepped as often as the
-  leaves' own predictions and by less, for 1% more error than the
-  neighbours without fading and 0.06 ms more per prediction
-  (`docs/benchmarks.md`, section 8.14). The added noise is in units of the
-  leaf's typical squared error, so that it fades a point over the same share
-  of the set's radius whatever the scale of the target.
 * **A kernel for the neighbours.** The leaf's kernel was fitted at the scale
   of the leaf, and the neighbours of a query in a dense region lie within a
   small part of it. A few steps of the hyperparameter optimisation on the
