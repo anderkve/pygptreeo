@@ -389,8 +389,9 @@ class GPNode(Node):
         # and predicts with them until its first retrain.
         left_gprs = [gpr.clone() for gpr in self.my_GPRs]
         right_gprs = [gpr.clone() for gpr in self.my_GPRs]
-        self.left = GPNode(0, my_GPR=left_gprs[0], my_GPRs=left_gprs, name=self.name + "0", **node_config_kwargs)
-        self.right = GPNode(0, my_GPR=right_gprs[0], my_GPRs=right_gprs, name=self.name + "1", **node_config_kwargs)
+        node_class = type(self)
+        self.left = node_class(0, my_GPR=left_gprs[0], my_GPRs=left_gprs, name=self.name + "0", **node_config_kwargs)
+        self.right = node_class(0, my_GPR=right_gprs[0], my_GPRs=right_gprs, name=self.name + "1", **node_config_kwargs)
         
         self.left.is_left = True
         self.right.is_left = False
@@ -1526,11 +1527,16 @@ class GPNode(Node):
         self.overlap = theta * current_dim_spread
 
 
+    def split_coordinate(self, x: np.ndarray):
+        """The coordinate of the rows of x along the normal of this node's cut."""
+        return x[:, self.split_index]
+
+
     def prob_func(self, x: np.array):
         """The probability that x belongs to the right child: linear across the
         overlap region around the split position, as suggested in the DLGP article.
         Without an overlap the split is hard, and a point on it gets 0.5."""
-        dist = x[:, self.split_index] - self.split_position
+        dist = self.split_coordinate(x) - self.split_position
         if self.overlap > 0:
             prob = dist/self.overlap + 0.5
             prob[prob < 0] = 0
