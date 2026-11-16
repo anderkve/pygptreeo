@@ -510,7 +510,7 @@ section 8.
   to 0.1 sigma or less and the error by 2 to 6%, for 4 to 7% more time per
   prediction (`docs/benchmarks.md`, section 8.16). The package would need
   the zones in the index of the leaves, the kernel matrices from the GP
-  backend, the outputs models and the global model, and a calibration of
+  backend, the output models and the global model, and a calibration of
   sigma on the mixed predictions.
 * **A kernel for the neighbours.** The leaf's kernel was fitted at the scale
   of the leaf, and the neighbours of a query in a dense region lie within a
