@@ -88,8 +88,12 @@ def _fisheye(d, seed, k=100, per=4, res=32, levels=None, metric='std', search='b
 
 
 @register('nb')
-def _nb(d, seed, **opts):
-    """The package's own neighbour conditioning."""
+def _nb(d, seed, dir=None, pos='median', whiten=False, **opts):
+    """The package's own neighbour conditioning, optionally with oblique cuts."""
     kw = dict(BASE)
     kw.update(opts)
-    return GPTree(predict_from='neighbours', **kw)
+    gpt = GPTree(predict_from='neighbours', **kw)
+    if dir is not None:
+        from oblique import ObliqueNode
+        gpt.root.__class__ = type('ObliqueNode_' + dir, (ObliqueNode,), dict(direction=dir, position=pos, whiten=whiten))
+    return gpt

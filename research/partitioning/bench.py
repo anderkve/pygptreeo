@@ -98,7 +98,7 @@ def run_stream(model, data, seed, checkpoint=1000):
     X, y_obs, sigma = data['X'], data['y_obs'], data['sigma']
     N = len(X)
     pred, std, t_pred, t_upd = (np.empty(N) for _ in range(4))
-    leaves = []
+    leaves, depth, searched = [], [], []
     clock = time.perf_counter
     for i in range(N):
         xi = X[i:i + 1]
@@ -110,7 +110,14 @@ def run_stream(model, data, seed, checkpoint=1000):
         pred[i], std[i], t_pred[i], t_upd[i] = mu[0, 0], sd[0, 0], t1 - t0, t2 - t1
         if (i + 1) % checkpoint == 0:
             leaves.append(n_leaves(model))
-    rec = dict(pred=pred, std=std, y=data['y'], t_pred=t_pred, t_upd=t_upd, leaves=np.array(leaves))
+            if hasattr(model, 'root'):
+                names = [len(leaf.name) - 1 for leaf in model.root.leaves]
+                depth.append((max(names), float(np.mean(names))))
+            search = getattr(model, 'neighbours', None)
+            if search is not None:
+                searched.append((search.n_searches, search.n_leaves_searched))
+    rec = dict(pred=pred, std=std, y=data['y'], t_pred=t_pred, t_upd=t_upd, leaves=np.array(leaves),
+               depth=np.array(depth), searched=np.array(searched))
     for name in ('uni', 'hist'):
         t0 = clock()
         mu, sd = model.predict(data['X_' + name])

@@ -77,6 +77,12 @@ class ObliqueNode(GPNode):
             return super().split_coordinate(x)
         return x @ self.split_direction
 
+    def cut_distance(self, q, w):
+        if self.split_direction is None:
+            return super().cut_distance(q, w)
+        norm = np.sqrt(((self.split_direction * w) ** 2).sum())
+        return (q @ self.split_direction - self.split_position) / norm, 0.5 * self.overlap / norm, None
+
     def _scale(self):
         if self.use_standard_scaling and self.X_scaler is not None:
             return self.X_scaler.scale_

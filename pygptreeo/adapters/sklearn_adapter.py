@@ -11,6 +11,7 @@ import numpy as np
 from copy import deepcopy
 
 from scipy.linalg import cho_solve, cholesky, solve_triangular
+from scipy.linalg.lapack import dpotrf, dtrtrs
 from sklearn.gaussian_process import GaussianProcessRegressor
 
 from ..gp_interface import GPRegressorInterface
@@ -308,19 +309,21 @@ class SklearnGPAdapter(GPRegressorInterface):
         # one kernel call for the matrix of the points and their covariances with the queries
         K_all = sk.kernel_(np.vstack((X, X_query)))
         K = K_all[:n, :n].copy()
-        K[np.diag_indices_from(K)] += noise
-        try:
-            L = cholesky(K, lower=True, check_finite=False)
-        except np.linalg.LinAlgError:
+        K.flat[::n + 1] += noise
+        L, info = dpotrf(K, lower=True, overwrite_a=True)
+        if info != 0:
             return None
         y = (np.asarray(y, dtype=float).reshape(n, -1) - sk._y_train_mean) / sk._y_train_std
-        alpha = cho_solve((L, True), y, check_finite=False)
-        K_trans = K_all[n:, :n]
-        mean = (K_trans @ alpha) * sk._y_train_std + sk._y_train_mean
-        V = solve_triangular(L, K_trans.T, lower=True, check_finite=False)
-        var = np.diagonal(K_all)[n:] - np.einsum("ij,ij->j", V, V)
+        n_targets = y.shape[1]
+        # L^-1 applied to the targets and to the covariances with the queries at once
+        solved, info = dtrtrs(L, np.column_stack((y, K_all[:n, n:])), lower=True)
+        if info != 0:
+            return None
+        v, U = solved[:, :n_targets], solved[:, n_targets:]
+        mean = (U.T @ v) * sk._y_train_std + sk._y_train_mean
+        var = np.diagonal(K_all)[n:] - np.einsum("ij,ij->j", U, U)
         std = np.sqrt(np.maximum(var, 0.0)) * np.max(sk._y_train_std)
-        return mean, std, np.einsum("ij,ij->j", y, alpha) / n
+        return mean, std, np.einsum("ij,ij->j", v, v) / n
 
     def nbytes(self) -> int:
         """Size of the training data and the Cholesky factor that a fit stores."""
