@@ -411,13 +411,14 @@ class GPTree:
         # prediction registered below is one made without the point
         node.wake()
 
-        # Check if this point should be merged with a nearby point (updates existing point in-place)
-        if node.should_merge_point(x, y, sigma):
-            # Point was merged with existing point, don't add as new point
-            # Still register prediction performance and update sigma scaler
+        # A point close to a stored one is merged into it, after its prediction
+        # was registered, and is not added as a new point
+        nearest = node.merge_candidate(x)
+        if nearest is not None:
+            self._register_prediction(node, x, y, allow_training)
+            node.merge_with_point(x, y, sigma, nearest)
             if self.leaf_index is not None:
                 self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
-            self._register_prediction(node, x, y, allow_training)
             self._after_update(node)
             return
 

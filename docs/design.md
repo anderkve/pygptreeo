@@ -250,13 +250,15 @@ section 8.
   search. The cells are those of the tree of cuts, so the predictions do not
   change.
 * **Within an overlap the cuts are followed.** A cell stops half an overlap
-  short of a cut. A point in no cell lies in the overlap of two children,
-  and is given to a leaf, or predicted by several, through `prob_func` as
-  before.
+  short of a cut. A point in no cell lies in the overlap of two children, or
+  on a cut that has none, and is given to a leaf, or predicted by several,
+  through `prob_func` as before.
 * **A removed leaf.** The leaves along the removed cut extend their cells
   over the cell of the removed leaf, as they do in the tree of cuts.
 * **Saving.** The nodes are saved as a list with their links as positions in
-  it, so that saving does not recurse through the levels.
+  it, so that saving does not recurse through the levels. A node that is
+  pickled or copied on its own, without its tree, comes back without its
+  links.
 
 ## Tried and dropped
 
@@ -362,8 +364,9 @@ section 8.
   leaf's points in place of a scale per input. With the oblique cuts along
   the change of the gradient the error fell by 50 to 80% on a target with an
   oblique ridge and rose by 7 to 93% on `GaussianPeaks` (14% lower on
-  average, 15 of 33 runs worse). With the cuts along the inputs it changed
-  nothing.
+  average, 15 of 33 runs worse; on 20 000-point streams 16% lower, 11 of
+  33 runs worse, by up to 2.7 times). With the cuts along the inputs it
+  changed nothing.
 * **A cut where the gradient of the leaf's GP changes most**, in place of
   the median of the points. 1% lower error with cuts along the inputs and
   10% with the oblique cuts along the change of the gradient, which are then

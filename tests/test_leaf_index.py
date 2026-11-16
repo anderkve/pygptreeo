@@ -1,6 +1,8 @@
 """Tests for the balanced index over the leaves (``LeafIndex``) and its use by the tree."""
 
+import copy
 import os
+import pickle
 import sys
 import tempfile
 import unittest
@@ -292,12 +294,58 @@ class TestTree(unittest.TestCase):
         state = dict(gpt.__dict__)
         for name in ('leaf_index', 'neighbours', 'predict_from'):
             del state[name]
+        nodes = [gpt.root]
+        while nodes:
+            node = nodes.pop()
+            for name in ('neighbours', 'prefers_own', '_scores'):
+                node.__dict__.pop(name, None)
+            nodes += node.children or []
         old = GPTree.__new__(GPTree)
         old.__setstate__(state)
         self.assertIsNone(old.leaf_index)
         np.testing.assert_array_equal(old.predict(X[:50])[0], expected[0])
-        self.assertEqual(old.n_leaves, len(gpt.root.leaves))
-        _stream(old, rng.rand(60, 2))
+        n_leaves = len(gpt.root.leaves)
+        self.assertEqual(old.n_leaves, n_leaves)
+        _stream(old, rng.rand(200, 2))
+        self.assertGreater(old.n_leaves, n_leaves + 3)        # its leaves split
+
+    def test_a_point_on_a_cut_without_overlap(self):
+        """Inputs on a grid, ``theta=0``: a point on a cut belongs to both children."""
+        rng = np.random.RandomState(6)
+        np.random.seed(6)
+        gpt = _tree(2, theta=0.0)
+        X = rng.randint(0, 10, (600, 2)).astype(float)
+        _stream(gpt, X)
+        index = gpt.leaf_index
+        on_a_cut = 0
+        for q in np.array([[i, j] for i in range(10) for j in range(10)], dtype=float):
+            expected = _by_the_cuts(gpt, q[None, :])
+            self.assertIs(index.locate(q), expected)
+            leaves, weights = gpt._leaves_of(q[None, :])
+            self.assertAlmostEqual(sum(weights), 1.0)
+            if expected is None:
+                on_a_cut += 1
+                self.assertGreater(len(leaves), 1)
+            np.testing.assert_allclose(gpt.predict(q[None, :], mode='recursive')[0], gpt.predict(q[None, :], mode='loop')[0],
+                                       rtol=1e-9, atol=1e-12)
+        self.assertGreater(on_a_cut, 10)
+
+    def test_a_node_saved_before_its_tree(self):
+        """The links of a node that is pickled ahead of its tree are those the tree restores."""
+        rng = np.random.RandomState(7)
+        np.random.seed(7)
+        gpt = _tree(2, predict_from='neighbours', n_neighbours=10)
+        X = rng.rand(300, 2)
+        _stream(gpt, X)
+        leaf = gpt.root.leaves[3]
+        loaded_leaf, loaded = pickle.loads(pickle.dumps((leaf, gpt)))
+        self.assertIs(loaded_leaf.parent.children[0 if loaded_leaf.is_left else 1], loaded_leaf)
+        self.assertIn(loaded_leaf, loaded.leaf_index)
+        self.assertTrue(any(node is loaded_leaf for node in loaded.root.leaves))
+        np.testing.assert_array_equal(loaded.predict(X[:30])[0], gpt.predict(X[:30])[0])
+        copied = copy.deepcopy(gpt)
+        self.assertTrue(all(node.parent.children[0 if node.is_left else 1] is node for node in copied.root.leaves))
+        np.testing.assert_array_equal(copied.predict(X[:30])[0], gpt.predict(X[:30])[0])
 
     def test_the_search_of_a_tree_without_an_index(self):
         """Every leaf is looked at, and the points found are the same."""

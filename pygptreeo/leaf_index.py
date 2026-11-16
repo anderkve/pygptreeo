@@ -105,13 +105,14 @@ class LeafIndex:
 
     def split(self, leaf, left, right, j, position, margin=0.0):
         """Replace a leaf by its two children, cut along input ``j`` at
-        ``position``. Their cells stop ``margin`` short of the cut."""
+        ``position``. Their cells stop ``margin`` short of the cut, and a
+        point on a cut without a margin is in neither."""
         group = self._group.pop(leaf)
         i = group.children.index(leaf)
         lo, hi = group.cell_lo[i].copy(), group.cell_hi[i].copy()
         left_hi, right_lo = hi.copy(), lo.copy()
         left_hi[j] = min(hi[j], position - margin)
-        right_lo[j] = max(lo[j], position + margin)
+        right_lo[j] = max(lo[j], position + margin if margin > 0 else np.nextafter(position, np.inf))
         group.put(i, left, (lo, left_hi) + self.data_box(left))
         group.put(len(group.children), right, (right_lo, hi) + self.data_box(right))
         self._group[left] = self._group[right] = group

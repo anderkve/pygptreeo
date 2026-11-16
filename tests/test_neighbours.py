@@ -78,12 +78,30 @@ class TestCondition(unittest.TestCase):
             reference.fit(X_other, values(X_other))
             ref_mean, ref_std = reference.predict(X_query, return_std=True)
             np.testing.assert_allclose(mean, ref_mean.reshape(7, n_targets), rtol=1e-7, atol=1e-9)
-            np.testing.assert_allclose(std, ref_std.reshape(7, -1)[:, 0], rtol=1e-6, atol=1e-9)
+            self.assertEqual(std.shape, (7, n_targets))
+            np.testing.assert_allclose(std, np.tile(ref_std.reshape(7, -1)[:, :1], (1, n_targets)), rtol=1e-6, atol=1e-9)
             self.assertEqual(consistency.shape, (n_targets,))
             # the fit is as it was
             before = gpr.predict(X_query, return_std=True)
             own = gpr.condition(X, values(X), np.full(50, 1e-6), X_query)
             np.testing.assert_allclose(own[0], np.reshape(before[0], (7, n_targets)), rtol=1e-7, atol=1e-9)
+
+    def test_targets_normalised_by_the_gp(self):
+        """With ``normalize_y`` each target has its own scale, in the mean and in sigma."""
+        rng = np.random.RandomState(2)
+        X, X_other, X_query = rng.rand(50, 2), rng.rand(40, 2), rng.rand(5, 2)
+
+        def values(Z):
+            return np.column_stack((np.sin(3 * Z[:, 0]) + Z[:, 1], 40.0 * np.cos(2 * Z[:, 1]) + 100.0))
+        kernel = ConstantKernel(1.0) * RBF(length_scale=[1.0, 1.0])
+        gpr = Default_GPR(kernel=kernel, normalize_y=True)
+        gpr.set_observation_noise(np.full(50, 1e-6))
+        gpr.fit(X, values(X))
+        mean, std, _ = gpr.condition(X, values(X), np.full(50, 1e-6), X_query)
+        ref_mean, ref_std = gpr.predict(X_query, return_std=True)
+        np.testing.assert_allclose(mean, ref_mean, rtol=1e-7, atol=1e-8)
+        np.testing.assert_allclose(std, ref_std, rtol=1e-5, atol=1e-9)
+        self.assertGreater(std[0, 1], 5.0 * std[0, 0])
 
     def test_consistency_tells_points_the_kernel_does_not_describe(self):
         rng = np.random.RandomState(1)
@@ -289,6 +307,28 @@ class TestPredictions(unittest.TestCase):
                 conditioned += 1
         self.assertGreater(own, 5)
         self.assertGreater(conditioned, 100)
+
+    def test_a_merged_point_is_predicted_before_the_merge(self):
+        rng = np.random.RandomState(4)
+        np.random.seed(4)
+        gpt = GPTree(GPR=_fixed_gpr(2), Nbar=40, predict_from='neighbours',
+                     enable_point_merging=True, merge_distance_threshold=0.02, min_points_before_merging=10)
+        X = rng.rand(150, 2)
+        _stream(gpt, X)
+        merged = moved = 0
+        for x in X[:80] + 0.001:
+            x = x[None, :]
+            leaf = _leaf_of(gpt, x)
+            if leaf.merge_candidate(x) is None:
+                continue
+            before, n_merges = leaf.predict(x, return_std=False), leaf.n_merges
+            gpt.update_tree(x, np.array([[_target(x)[0] + 0.5]]), 1e-3)
+            self.assertEqual(leaf.n_merges, n_merges + 1)
+            merged += 1
+            np.testing.assert_allclose(leaf.mu_preds_list[0][0], np.ravel(before)[0])
+            moved += not np.allclose(leaf.predict(x, return_std=False), before)
+        self.assertGreater(merged, 5)
+        self.assertGreater(moved, 0)        # the merged point is among the neighbours afterwards
 
     def test_a_sleeping_leaf_stays_asleep(self):
         np.random.seed(7)

@@ -43,6 +43,7 @@ TARGET_COVERAGE = 0.68  # Target coverage for calibrated uncertainty (1 sigma)
 N_SCORES = 50  # Recent points over which a leaf compares its own GPs with the neighbours' prediction
 MIN_SCORES = 10  # No comparison with fewer points
 OWN_MARGIN = 0.9  # A leaf predicts from its own points while their RMS error is below this times the neighbours'
+NODE_LINKS = ('left', 'right', 'parent', 'children')  # Saved by the tree, not by the node
 
 np.set_printoptions(suppress=True)
 
@@ -340,9 +341,16 @@ class GPNode(Node):
         restores them (``GPTree.__getstate__``), so that saving a tree does not
         recurse through its levels."""
         state = self.__dict__.copy()
-        for link in ('left', 'right', 'parent', 'children'):
-            state[link] = None
+        for link in NODE_LINKS:
+            state.pop(link, None)
         return state
+
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # links that the tree has already restored are kept
+        for link in NODE_LINKS:
+            self.__dict__.setdefault(link, None)
 
 
     def _print_debug_status(self):
@@ -503,7 +511,7 @@ class GPNode(Node):
         self.left.fit_mean = self.right.fit_mean = self.fit_mean
         self.left.fit_std = self.right.fit_std = self.fit_std
         for child in self.children:
-            child._scores = deque(self._scores, maxlen=N_SCORES)
+            child._scores = deque(self._scores or (), maxlen=N_SCORES)
             child.prefers_own = self.prefers_own
 
 
@@ -737,6 +745,19 @@ class GPNode(Node):
         return True
 
 
+    def merge_candidate(self, x: np.ndarray):
+        """Index of the stored point that a new point at ``x`` is merged with, or
+        None: merging is enabled, the node has ``min_points_before_merging``
+        points and a fitted GP, and its nearest stored point lies within
+        ``merge_distance_threshold``."""
+        if not self.enable_point_merging or self.n_points < self.min_points_before_merging or not self._is_fitted():
+            return None
+        nearest_idx, nearest_dist = self.find_nearest_neighbor(x)
+        if nearest_idx is None or not nearest_dist < self.merge_distance_threshold:
+            return None
+        return nearest_idx
+
+
     def should_merge_point(self, x: np.ndarray, y: Union[float, np.ndarray],
                            sigma: Union[float, np.ndarray]):
         """Determines if a new point should be merged with an existing nearby point.
@@ -757,28 +778,10 @@ class GPNode(Node):
         Returns:
             bool: True if point was merged (don't add it), False otherwise (add as new point)
         """
-        # Point merging disabled or not enough points yet
-        if not self.enable_point_merging:
-            return False
-
-        if self.n_points < self.min_points_before_merging:
-            return False
-
-        # GP not trained yet
-        if not self._is_fitted():
-            return False
-
-        # Find nearest neighbor
-        nearest_idx, nearest_dist = self.find_nearest_neighbor(x)
+        nearest_idx = self.merge_candidate(x)
         if nearest_idx is None:
             return False
-
-        # Check if distance is below threshold
-        if nearest_dist < self.merge_distance_threshold:
-            # Merge the points
-            return self.merge_with_point(x, y, sigma, nearest_idx)
-
-        return False
+        return self.merge_with_point(x, y, sigma, nearest_idx)
 
 
     def should_reject_point(self, x: np.ndarray, y: Union[float, np.ndarray]):
@@ -1755,7 +1758,7 @@ class GPNode(Node):
                 shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
                 result = gpr.condition(Xs, (y[:, i] - shift) / scale, (noise_std[:, i] / scale) ** 2, qs)
                 if result is not None and result[2][0] <= limit:
-                    mu[i], sigma[i] = result[0][0, 0] * scale + shift, result[1][0] * scale
+                    mu[i], sigma[i] = result[0][0, 0] * scale + shift, result[1][0, 0] * scale
 
         elif self.output_model == 'shared':
             shift, scale = self.y_common_scaler if scaled and self.y_common_scaler is not None else (0.0, 1.0)
@@ -1773,7 +1776,7 @@ class GPNode(Node):
                 if result is None or not result[2][0] <= limit:
                     return
                 z_mean[0, j] = result[0][0, 0] * z_scale[j] + z_shift[j]
-                z_var[0, j] = (result[1][0] * z_scale[j]) ** 2
+                z_var[0, j] = (result[1][0, 0] * z_scale[j]) ** 2
             mu_pred, var_pred = basis.reconstruct(z_mean, z_var)
             mu[:], sigma[:] = mu_pred[0], np.sqrt(var_pred[0])
 

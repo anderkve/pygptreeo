@@ -322,7 +322,7 @@ class SklearnGPAdapter(GPRegressorInterface):
         v, U = solved[:, :n_targets], solved[:, n_targets:]
         mean = (U.T @ v) * sk._y_train_std + sk._y_train_mean
         var = np.diagonal(K_all)[n:] - np.einsum("ij,ij->j", U, U)
-        std = np.sqrt(np.maximum(var, 0.0)) * np.max(sk._y_train_std)
+        std = np.sqrt(np.maximum(var, 0.0))[:, None] * np.broadcast_to(sk._y_train_std, (n_targets,))
         return mean, std, np.einsum("ij,ij->j", v, v) / n
 
     def nbytes(self) -> int:
