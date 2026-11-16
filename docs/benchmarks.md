@@ -635,6 +635,13 @@ says otherwise.
   0.21 to 0.74 on the oblique ridge and 0.39 to 1.11 on `relic_density`,
   whose funnel lies on a diagonal, against 1.32 to 1.58 on `GaussianPeaks`.
 * **A model in every node** is worse in every run.
+* **On 20 000-point streams** the same 33 runs give the same picture:
+
+| 20 000 points | uniform | walker | sweeping | all runs (range) | runs more than 2% worse |
+|---|---|---|---|---|---|
+| hyperplane of the gradient's change, placed where it changes most | 1.02 | 0.99 | 0.85 | 0.95 (0.42 to 1.71) | 16 of 33 |
+| the same with decorrelated inputs | 0.86 | 0.92 | 0.76 | 0.84 (0.18 to 2.69) | 11 of 33 |
+| predictions from neighbours (section 8.4), default cuts | 0.72 | 0.66 | 0.69 | 0.69 (0.38 to 0.98) | 0 of 33 |
 
 ### 8.2 Predictions from a query's neighbours (`predict_from='neighbours'`)
 

@@ -22,6 +22,7 @@ Records go to `results/` (not in the repository).
 | `diag_select.py` | Replay: a leaf chooses between its own GP and the neighbours by their recent errors |
 | `drift_bench.py` | Cost along a steadily drifting stream |
 | `time_predict.py` | Update and prediction times with one process |
+| `time_scaling.py` | The same at checkpoints along one long stream |
 | `index_scaling.py` | The search for the nearest leaves up to a million points, without GPs |
 
 ```bash
