@@ -1131,7 +1131,7 @@ of a cell share their neighbours (`research/partitioning/anchored.py`). The
 
 * **Neighbours that are shared by a cell step as rarely as the leaf's
   prediction and keep 1 to 6% of the 25% that the query's own neighbours
-  gain.** A leaf of 100 points in four to six dimensions is one or two
+  gain.** A leaf of 100 points in four to six dimensions is two or three
   points wide along each input: 32 cells halve it along five inputs, and
   the centre of a cell is still a quarter of the leaf away from most of its
   queries.
