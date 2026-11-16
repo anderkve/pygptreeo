@@ -296,6 +296,32 @@ class SklearnGPAdapter(GPRegressorInterface):
         sk.alpha_ = cho_solve((L, True), sk.y_train_, check_finite=False)
         return True
 
+    def supports_conditioning(self) -> bool:
+        return True
+
+    def condition(self, X: np.ndarray, y: np.ndarray, noise: np.ndarray, X_query: np.ndarray):
+        """The posterior of the fitted kernel given ``(X, y)``; see the interface."""
+        sk = self._gpr
+        if not hasattr(sk, 'kernel_'):
+            return None
+        n = X.shape[0]
+        # one kernel call for the matrix of the points and their covariances with the queries
+        K_all = sk.kernel_(np.vstack((X, X_query)))
+        K = K_all[:n, :n].copy()
+        K[np.diag_indices_from(K)] += noise
+        try:
+            L = cholesky(K, lower=True, check_finite=False)
+        except np.linalg.LinAlgError:
+            return None
+        y = (np.asarray(y, dtype=float).reshape(n, -1) - sk._y_train_mean) / sk._y_train_std
+        alpha = cho_solve((L, True), y, check_finite=False)
+        K_trans = K_all[n:, :n]
+        mean = (K_trans @ alpha) * sk._y_train_std + sk._y_train_mean
+        V = solve_triangular(L, K_trans.T, lower=True, check_finite=False)
+        var = np.diagonal(K_all)[n:] - np.einsum("ij,ij->j", V, V)
+        std = np.sqrt(np.maximum(var, 0.0)) * np.max(sk._y_train_std)
+        return mean, std, np.einsum("ij,ij->j", y, alpha) / n
+
     def nbytes(self) -> int:
         """Size of the training data and the Cholesky factor that a fit stores."""
         return sum(getattr(self._gpr, name).nbytes for name in ('X_train_', 'y_train_', 'L_', 'alpha_')

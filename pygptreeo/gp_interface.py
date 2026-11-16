@@ -184,6 +184,30 @@ class GPRegressorInterface(ABC):
         """
         return False
 
+    def supports_conditioning(self) -> bool:
+        """Whether ``condition`` is implemented. Required by
+        ``GPTree(predict_from='neighbours')``. Backends default to False.
+        """
+        return False
+
+    def condition(self, X: np.ndarray, y: np.ndarray, noise: np.ndarray, X_query: np.ndarray):
+        """The posterior at ``X_query`` of a GP with the fitted hyperparameters,
+        given the points ``(X, y)`` in place of the points of the fit.
+
+        ``X`` has shape (n, n_features), ``y`` shape (n,) or (n, n_targets) and
+        ``noise`` holds the n noise variances, all as ``fit`` takes them;
+        ``X_query`` has shape (m, n_features). The fit itself is not changed.
+
+        Returns ``(mean, std, consistency)``: the mean with shape (m, n_targets),
+        the standard deviation with shape (m,), and per target the mean squared
+        value of ``y`` after whitening with the kernel matrix,
+        ``y^T K^-1 y / n``. That number is about 1 for points the kernel
+        describes as well as those it was fitted to, and many times larger for
+        points it does not describe. Returns None if there is no fit or the
+        backend cannot.
+        """
+        return None
+
     def nbytes(self) -> int:
         """Approximate size in bytes of what a fit has stored, 0 without a fit.
 

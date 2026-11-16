@@ -88,6 +88,9 @@ class KNNNode(GPNode):
         ls_cap: length scales are capped at this many times the shortest one in the metric
         search: 'brute' (all stored points) or 'tree' (through the tree's cuts)
         max_leaves: with 'tree', stop the search after this many leaves (None: exact)
+        fallback: the leaf's own GP predicts instead where the neighbours fit the leaf's
+            kernel worse than this (the mean squared whitened target of the neighbours,
+            1 for a kernel that describes them); None: never
     """
     store = None
     tree = None
@@ -97,8 +100,10 @@ class KNNNode(GPNode):
     ls_cap = 10.0
     search = 'brute'
     max_leaves = None
+    fallback = None
     _registering = False
     stats = None
+    chi2_log = None
 
     def _conditioning_set(self, q, w):
         if self.search == 'tree':
@@ -156,7 +161,17 @@ class KNNNode(GPNode):
                 K[np.diag_indices_from(K)] += 1e-8
                 L = cholesky(K, lower=True, check_finite=False)
             ks = kernel(Xn, qs)[:, 0]
-            mu[i, 0] = ks @ cho_solve((L, True), (yn - ym) / ysc, check_finite=False) * ysc + ym
+            ys = (yn - ym) / ysc
+            alpha = cho_solve((L, True), ys, check_finite=False)
+            chi2 = float(ys @ alpha) / len(ys)
+            if not self._registering and self.chi2_log is not None:
+                self.chi2_log.append(chi2)
+            if self.fallback is not None and not chi2 <= self.fallback:
+                m, s = GPNode.predict(self, x[i:i + 1], return_std=True, use_calibrated_sigma=False)
+                mu[i, 0], sd[i, 0] = m[0, 0], s[0, 0]
+                self.stats[2] += 1
+                continue
+            mu[i, 0] = ks @ alpha * ysc + ym
             v = solve_triangular(L, ks, lower=True, check_finite=False)
             sd[i, 0] = np.sqrt(max(kernel.diag(qs)[0] - v @ v, 0.0)) * ysc
         if use_calibrated_sigma:
@@ -170,16 +185,19 @@ class KNNTree(GPTree):
         self.root.store.add(x, y, sigma)
 
     def extra_record(self):
-        calls, visited = self.root.stats
-        return dict(knn_leaves=np.array(visited / max(calls, 1)))
+        calls, visited, fallbacks = self.root.stats
+        return dict(knn_leaves=np.array(visited / max(calls, 1)), fallbacks=np.array(fallbacks),
+                    chi2=np.array(self.root.chi2_log))
 
 
-def knn_tree(k=100, metric='ard', far=0, search='brute', max_leaves=None, node_base=KNNNode, **tree_kwargs):
-    tree_kwargs.setdefault('append_points_between_fits', False)
+def knn_tree(k=100, metric='std', far=0, search='brute', max_leaves=None, fallback=None, node_bases=(KNNNode,),
+             node_attrs=None, **tree_kwargs):
+    tree_kwargs.setdefault('append_points_between_fits', fallback is not None)
     gpt = KNNTree(**tree_kwargs)
-    node_class = type('KNNNode_', (node_base,), dict(store=PointStore(), tree=gpt, k=k, metric=metric, far=far,
-                                                     search=search, max_leaves=max_leaves, stats=[0, 0]))
-    gpt.root.__class__ = node_class
+    attrs = dict(store=PointStore(), tree=gpt, k=k, metric=metric, far=far, search=search, max_leaves=max_leaves,
+                 fallback=fallback, stats=[0, 0, 0], chi2_log=[])
+    attrs.update(node_attrs or {})
+    gpt.root.__class__ = type('KNNNode_', tuple(node_bases), attrs)
     return gpt
 
 
@@ -276,12 +294,12 @@ class FisheyeTree(KNNTree):
             node = node.children[int(node.prob_func(xq)[0, 0] > 0.5)]
 
 
-def fisheye_tree(k=100, per_level=4, reservoir_size=32, levels=None, metric='ard', search='brute', max_leaves=None,
-                 **tree_kwargs):
-    tree_kwargs.setdefault('append_points_between_fits', False)
+def fisheye_tree(k=100, per_level=4, reservoir_size=32, levels=None, metric='std', search='brute', max_leaves=None,
+                 fallback=None, **tree_kwargs):
+    tree_kwargs.setdefault('append_points_between_fits', fallback is not None)
     gpt = FisheyeTree(**tree_kwargs)
     node_class = type('FisheyeNode_', (FisheyeNode,), dict(
-        store=PointStore(), tree=gpt, k=k, metric=metric, search=search, max_leaves=max_leaves, stats=[0, 0],
-        per_level=per_level, reservoir_size=reservoir_size, levels=levels))
+        store=PointStore(), tree=gpt, k=k, metric=metric, search=search, max_leaves=max_leaves, fallback=fallback,
+        stats=[0, 0, 0], chi2_log=[], per_level=per_level, reservoir_size=reservoir_size, levels=levels))
     gpt.root.__class__ = node_class
     return gpt

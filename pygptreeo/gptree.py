@@ -33,6 +33,7 @@ from pygptreeo.gpnode import GPNode, TARGET_COVERAGE
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
+from pygptreeo.neighbours import NeighbourSearch
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,9 @@ class GPTree:
             between two of its fits is added to its fitted GPs at once.
         widen_sigma_with_distance (bool): Whether sigma grows with the distance
             of a query from the fitted points of its leaf.
+        predict_from (str): 'leaf' if a prediction is conditioned on the points
+            of the query's leaf, 'neighbours' if on the stored points nearest
+            to the query.
         max_memory_mb (Optional[float]): The memory the tree stays within, in MB,
             or None for no limit.
         memory_mb (float): The tree's estimate of its own size, in MB.
@@ -115,6 +119,10 @@ class GPTree:
                  max_memory_mb: Optional[float] = None,
                  append_points_between_fits: bool = True,
                  widen_sigma_with_distance: bool = True,
+                 predict_from: str = 'leaf',
+                 n_neighbours: Optional[int] = None,
+                 neighbour_consistency: float = 10.0,
+                 neighbour_leaves: Optional[int] = None,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -226,6 +234,27 @@ class GPTree:
                 is for a leaf that predicts beyond its own points. The
                 predictions themselves do not change. Without
                 `use_calibrated_sigma` it has no effect.
+            predict_from (str): The points a prediction is conditioned on.
+                'leaf' (default): the points of the leaf that the query falls
+                in, through the leaf's fitted GP. 'neighbours': the
+                ``n_neighbours`` stored points nearest to the query, from
+                whichever leaves hold them, with the kernel of the query's
+                leaf. Distances are in units of the spread of that leaf's
+                points along each input. Where the neighbours do not fit the
+                leaf's kernel (``neighbour_consistency``) the leaf's own GP
+                predicts. Needs a GP backend with ``supports_conditioning()``
+                (the scikit-learn adapter).
+            n_neighbours (Optional[int]): For 'neighbours': the number of
+                points a prediction is conditioned on. Defaults to ``Nbar``.
+            neighbour_consistency (float): For 'neighbours': the leaf's own GP
+                predicts where the mean squared target of the neighbours,
+                whitened with the leaf's kernel, exceeds this. It is about 1
+                for points the kernel describes, and in the hundreds where
+                the neighbours lie across a jump of the target that the
+                leaf's own points do not contain. Defaults to 10.
+            neighbour_leaves (Optional[int]): For 'neighbours': the search for
+                the neighbours stops after this many leaves, nearest first.
+                None (default) searches until the nearest points are certain.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -268,10 +297,23 @@ class GPTree:
         self._distance_errors = deque(maxlen=SIGMA_DISTANCE_WINDOW)
         self._sigma_slope = 0.0
 
+        if predict_from not in ('leaf', 'neighbours'):
+            raise ValueError(f"Unknown predict_from '{predict_from}'. Use 'leaf' or 'neighbours'.")
+        self.predict_from = predict_from
+        # Tree-wide nearest-neighbour search (None by default; shared by reference with every node)
+        self.neighbours = None
+        if predict_from == 'neighbours':
+            supports = getattr(GPR, 'supports_conditioning', None)
+            if supports is None or not supports():
+                raise ValueError("predict_from='neighbours' needs a GP backend with supports_conditioning() == True "
+                                 "(e.g. the scikit-learn adapter returned by Default_GPR)")
+            self.neighbours = NeighbourSearch(self, n_neighbours=Nbar if n_neighbours is None else n_neighbours,
+                                              consistency_limit=neighbour_consistency, max_leaves=neighbour_leaves)
+
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
                           output_model=output_model, output_basis=self.output_basis,
-                          global_mean=self.global_mean,
+                          global_mean=self.global_mean, neighbours=self.neighbours,
                           **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
@@ -368,10 +410,12 @@ class GPTree:
             self._after_update(node)
             return
 
-        # Add new point and register prediction performance. Without training, a node
-        # that has no fitted GP stays at its prior, which says nothing about the fitted GP.
-        node.store_point(x, y, sigma, remove_shared=True)
+        # Register the prediction performance, then add the new point: the point is
+        # not yet among the stored points that a prediction may be conditioned on.
+        # Without training, a node that has no fitted GP stays at its prior, which
+        # says nothing about the fitted GP.
         self._register_prediction(node, x, y, allow_training)
+        node.store_point(x, y, sigma, remove_shared=True)
 
         # Retrain GP? The node will decide based Nbar and/or its buffer of training points
         if allow_training:

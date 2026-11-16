@@ -30,6 +30,7 @@ from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner
+from pygptreeo.neighbours import NeighbourSearch
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ class GPNode(Node):
                  output_model: Optional[str] = 'independent',
                  output_basis: Optional[OutputBasisLearner] = None,
                  global_mean: Optional[GlobalMeanLearner] = None,
+                 neighbours: Optional[NeighbourSearch] = None,
                  my_GPRs: Optional[list] = None):
         """Initializes a GPNode.
 
@@ -170,6 +172,11 @@ class GPNode(Node):
                 fit time, added back at predict time, and remembered per node. A
                 node that is asked to predict while a newer snapshot exists refits
                 against it first (see ``predict``).
+            neighbours (Optional[NeighbourSearch]): The tree's search for the
+                stored points nearest to a query, shared by reference between
+                all nodes, or None (default). When present, a prediction of
+                the node is conditioned on those points in place of the points
+                of the node's last fit (see ``predict``).
             my_GPRs (Optional[list]): Explicit list of GP regressors for this node
                 (used when creating children: one clone per parent GP). If None, the
                 list is built from ``my_GPR`` according to ``output_model``.
@@ -204,6 +211,10 @@ class GPNode(Node):
         # the snapshot of it that this node's GPs were fitted against.
         self.global_mean = global_mean
         self._fitted_global = None
+
+        # Tree-wide nearest-neighbour search (shared by reference; None when
+        # the node predicts from the points of its own fit).
+        self.neighbours = neighbours
 
         # Mean and standard deviation per input of the points of the last fit
         self.fit_mean = None
@@ -383,6 +394,7 @@ class GPNode(Node):
             'output_model': self.output_model,
             'output_basis': self.output_basis,
             'global_mean': self.global_mean,
+            'neighbours': self.neighbours,
         }
 
         # Each child gets its own clone of every parent GP (one per output / score)
@@ -1532,6 +1544,15 @@ class GPNode(Node):
         return x[:, self.split_index]
 
 
+    def cut_distance(self, q: np.ndarray, w: np.ndarray):
+        """Where the point ``q`` lies relative to this node's cut, with every
+        input divided by ``w``: its signed distance from the cut (positive on the
+        right child's side), how far beyond the cut a stored point of either
+        child can lie, and the input the cut is along."""
+        j = self.split_index
+        return (q[j] - self.split_position) / w[j], 0.5 * self.overlap / w[j], j
+
+
     def prob_func(self, x: np.array):
         """The probability that x belongs to the right child: linear across the
         overlap region around the split position, as suggested in the DLGP article.
@@ -1574,6 +1595,10 @@ class GPNode(Node):
 
         For multi-output: returns predictions for all outputs as (n_samples, n_outputs) arrays.
 
+        A leaf of a tree with ``predict_from='neighbours'`` conditions its
+        kernels on the stored points nearest to each row of ``x`` in place of
+        the points of its last fit (``_predict_from_neighbours``).
+
         Args:
             x (np.ndarray): The input point(s) at which to make predictions,
                 in the original (unscaled) space.
@@ -1607,14 +1632,10 @@ class GPNode(Node):
                 if not (getattr(self.global_mean, 'cheap_leaf_refresh', False)
                         and self._refit_on_snapshot(current)):
                     self.fit_my_GPR(force_training=True)
-        self.wake()
-
-        if self.output_model == 'independent':
-            mu_pred, sigma_pred = self._predict_independent(x, return_std)
-        elif self.output_model == 'shared':
-            mu_pred, sigma_pred = self._predict_shared(x)
+        if self.neighbours is not None and self.is_leaf and self.fit_std is not None and self._is_fitted():
+            mu_pred, sigma_pred = self._predict_from_neighbours(x)
         else:
-            mu_pred, sigma_pred = self._predict_pca(x)
+            mu_pred, sigma_pred = self._predict_own(x, return_std)
 
         # Add back the snapshot the GPs were fitted against, and its estimated error:
         # the residual GP cannot know how wrong the global model is at x.
@@ -1634,6 +1655,81 @@ class GPNode(Node):
                     sigma_pred[:, i] = sigma_pred[:, i] * self.sigma_scalers[i]
 
         return mu_pred, sigma_pred
+
+
+    def _predict_own(self, x: np.ndarray, return_std: bool = True):
+        """The prediction of the node's GPs from the points of their fit, before
+        the global model is added back."""
+        self.wake()
+        if self.output_model == 'independent':
+            return self._predict_independent(x, return_std)
+        if self.output_model == 'shared':
+            return self._predict_shared(x)
+        return self._predict_pca(x)
+
+
+    def _predict_from_neighbours(self, x: np.ndarray):
+        """The prediction of the node's kernels given, for each row of ``x``, the
+        stored points nearest to it, before the global model is added back.
+
+        Distances are in units of the spread of the points of the node's last
+        fit. Where the neighbours do not fit a kernel
+        (``NeighbourSearch.consistency_limit``) the node's own GP predicts.
+        """
+        n = x.shape[0]
+        mu = np.full((n, self.n_outputs), np.nan)
+        sigma = np.full((n, self.n_outputs), np.nan)
+        for r in range(n):
+            found = self.neighbours.find(x[r], self.fit_std)
+            if found is not None:
+                self._condition_on(found, x[r:r + 1], mu[r], sigma[r])
+        missing = np.isnan(mu)
+        rows = missing.any(axis=1)
+        if rows.any():
+            mu_own, sigma_own = self._predict_own(x[rows])
+            mu[rows] = np.where(missing[rows], mu_own, mu[rows])
+            sigma[rows] = np.where(missing[rows], sigma_own, sigma[rows])
+        return mu, sigma
+
+
+    def _condition_on(self, points, xq: np.ndarray, mu: np.ndarray, sigma: np.ndarray):
+        """Fill ``mu`` and ``sigma`` (one entry per output) with the posterior at
+        the single query ``xq`` of the node's kernels given ``points``. An
+        output is left as it is where the points do not fit its kernel or the
+        backend cannot condition."""
+        X, y, noise_std = points
+        if self._fitted_global is not None:
+            y = y - self._fitted_global.predict(X)
+        Xs, qs = self._scaled_inputs(X), self._scaled_inputs(xq)
+        scaled = self.use_standard_scaling and self.X_scaler is not None
+        limit = self.neighbours.consistency_limit
+
+        if self.output_model == 'independent':
+            for i, gpr in enumerate(self.my_GPRs):
+                shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
+                result = gpr.condition(Xs, (y[:, i] - shift) / scale, (noise_std[:, i] / scale) ** 2, qs)
+                if result is not None and result[2][0] <= limit:
+                    mu[i], sigma[i] = result[0][0, 0] * scale + shift, result[1][0] * scale
+
+        elif self.output_model == 'shared':
+            shift, scale = self.y_common_scaler if scaled and self.y_common_scaler is not None else (0.0, 1.0)
+            result = self.my_GPRs[0].condition(Xs, (y - shift) / scale, np.mean((noise_std / scale) ** 2, axis=1), qs)
+            if result is not None and np.max(result[2]) <= limit:
+                mu[:], sigma[:] = result[0][0] * scale + shift, result[1][0] * scale
+
+        else:  # 'pca'
+            basis = self._fitted_basis
+            Z, noise_z = basis.project(y), basis.project_noise(noise_std)
+            z_shift, z_scale = self.z_scaler
+            z_mean, z_var = np.empty((1, basis.n_components)), np.empty((1, basis.n_components))
+            for j, gpr in enumerate(self.my_GPRs):
+                result = gpr.condition(Xs, (Z[:, j] - z_shift[j]) / z_scale[j], noise_z[:, j] / z_scale[j] ** 2, qs)
+                if result is None or not result[2][0] <= limit:
+                    return
+                z_mean[0, j] = result[0][0, 0] * z_scale[j] + z_shift[j]
+                z_var[0, j] = (result[1][0] * z_scale[j]) ** 2
+            mu_pred, var_pred = basis.reconstruct(z_mean, z_var)
+            mu[:], sigma[:] = mu_pred[0], np.sqrt(var_pred[0])
 
 
     def _predict_independent(self, x: np.ndarray, return_std: bool = True):

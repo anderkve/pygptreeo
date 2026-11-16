@@ -48,11 +48,11 @@ def _base(d, seed, **opts):
 
 
 @register('oblique')
-def _oblique(d, seed, dir='pca', pos='median', scaled=False, minfrac=0.25, **opts):
+def _oblique(d, seed, dir='pca', pos='median', scaled=False, minfrac=0.25, whiten=False, **opts):
     from oblique import oblique_tree
     kw = dict(BASE)
     kw.update(opts)
-    return oblique_tree(direction=dir, position=pos, scaled=scaled, min_fraction=minfrac, **kw)
+    return oblique_tree(direction=dir, position=pos, scaled=scaled, min_fraction=minfrac, whiten=whiten, **kw)
 
 
 @register('mr')
@@ -64,17 +64,32 @@ def _mr(d, seed, min_new=0, **opts):
 
 
 @register('knn')
-def _knn(d, seed, k=100, metric='ard', far=0, search='brute', max_leaves=None, **opts):
-    from knn import knn_tree
+def _knn(d, seed, k=100, metric='ard', far=0, search='brute', max_leaves=None, fallback=None,
+         dir=None, pos='median', whiten=False, **opts):
+    from knn import KNNNode, knn_tree
     kw = dict(BASE)
     kw.update(opts)
-    return knn_tree(k=k, metric=metric, far=far, search=search, max_leaves=max_leaves, **kw)
+    bases, attrs = (KNNNode,), {}
+    if dir is not None:                 # oblique cuts under the neighbour conditioning
+        from oblique import ObliqueNode
+        bases, attrs = (KNNNode, ObliqueNode), dict(direction=dir, position=pos, whiten=whiten)
+    return knn_tree(k=k, metric=metric, far=far, search=search, max_leaves=max_leaves, fallback=fallback,
+                    node_bases=bases, node_attrs=attrs, **kw)
 
 
 @register('fisheye')
-def _fisheye(d, seed, k=100, per=4, res=32, levels=None, metric='ard', search='brute', max_leaves=None, **opts):
+def _fisheye(d, seed, k=100, per=4, res=32, levels=None, metric='std', search='brute', max_leaves=None, fallback=None,
+             **opts):
     from knn import fisheye_tree
     kw = dict(BASE)
     kw.update(opts)
     return fisheye_tree(k=k, per_level=per, reservoir_size=res, levels=levels, metric=metric, search=search,
-                        max_leaves=max_leaves, **kw)
+                        max_leaves=max_leaves, fallback=fallback, **kw)
+
+
+@register('nb')
+def _nb(d, seed, **opts):
+    """The package's own neighbour conditioning."""
+    kw = dict(BASE)
+    kw.update(opts)
+    return GPTree(predict_from='neighbours', **kw)

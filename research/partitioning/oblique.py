@@ -5,6 +5,25 @@ from pygptreeo import GPTree
 from pygptreeo.gpnode import GPNode
 
 
+class Whitener:
+    """Centred, decorrelated inputs: ``(x - mean) @ W``, with ``W`` the symmetric
+    inverse square root of the covariance of the points (the whitening closest to
+    a scaling of each input). The correlation matrix is shrunk towards the identity."""
+
+    def __init__(self, X, shrink=0.1):
+        self.mean_ = X.mean(axis=0)
+        std = X.std(axis=0)
+        self.scale_ = np.where(std > 0, std, 1.0)
+        Z = (X - self.mean_) / self.scale_
+        C = (1 - shrink) * (Z.T @ Z) / len(Z) + shrink * np.eye(X.shape[1])
+        evals, evecs = np.linalg.eigh(C)
+        self.W = (evecs / np.sqrt(evals)) @ evecs.T / self.scale_[:, None]
+        self.W_inv = np.linalg.inv(self.W)
+
+    def transform(self, X):
+        return (np.asarray(X, dtype=float) - self.mean_) @ self.W
+
+
 class ObliqueNode(GPNode):
     """A node cut by the hyperplane ``x @ split_direction = split_position``.
 
@@ -18,16 +37,40 @@ class ObliqueNode(GPNode):
                        most (leading eigenvector of the covariance of its gradients)
             'twomeans' the line between the centroids of a 2-means clustering
             'random'   a random direction
+            'ard'      the axis of the node's scaled inputs with the shortest fitted length scale
         position: 'median', 'midpoint' (between the two centroids, 'twomeans' only) or
             'gsplit' (where the gradient of the GP mean along the normal changes most)
         min_fraction: smallest share of the node's points on either side of a cut
+        whiten: whether the GPs see decorrelated inputs (``Whitener``) instead of inputs scaled one by one
         scaled: whether 'pca', 'twomeans' and 'random' work in the node's standardised inputs
     """
     direction = 'pca'
     position = 'median'
     scaled = False
     min_fraction = 0.25
+    whiten = False
     split_direction = None
+
+    def _fit_scalers(self, X, y):
+        super()._fit_scalers(X, y)
+        if self.whiten and X.shape[0] > X.shape[1] + 1:
+            self.X_scaler = Whitener(X)
+
+    def _scaled_inputs(self, x):
+        if isinstance(self.X_scaler, Whitener):
+            return self.X_scaler.transform(x)
+        return super()._scaled_inputs(x)
+
+    def _raw_normal(self, ws):
+        """The normal in the raw inputs of the hyperplane with normal ``ws`` in the scaled inputs."""
+        if isinstance(self.X_scaler, Whitener):
+            return self.X_scaler.W @ ws
+        return ws / self._scale()
+
+    def _scaled_normal(self, w):
+        if isinstance(self.X_scaler, Whitener):
+            return self.X_scaler.W_inv @ w
+        return w * self._scale()
 
     def split_coordinate(self, x):
         if self.split_direction is None:
@@ -75,7 +118,15 @@ class ObliqueNode(GPNode):
                 return None
             C = (G.T @ G) / len(G) if self.direction == 'grad' else np.cov(G.T)
             w = np.linalg.eigh(np.atleast_2d(C))[1][:, -1]
-            return w / scale
+            return self._raw_normal(w)
+        if self.direction == 'ard':
+            # the axis of the scaled inputs with the shortest fitted length scale
+            ls = self._pooled_length_scales() if self._is_fitted() else None
+            if ls is None:
+                return None
+            ws = np.zeros(d)
+            ws[int(np.argmin(ls))] = 1.0
+            return self._raw_normal(ws)
         Z = (X - X.mean(axis=0)) / scale if self.scaled else X - X.mean(axis=0)
         if self.direction == 'pca':
             w = np.linalg.eigh(np.atleast_2d(np.cov(Z.T)))[1][:, -1]
@@ -107,7 +158,7 @@ class ObliqueNode(GPNode):
             return None
         X = self.my_X_data
         n = X.shape[0]
-        ws = w * self._scale()
+        ws = self._scaled_normal(w)
         ws = ws / np.linalg.norm(ws)
         g = (G @ ws).reshape(-1, n)                    # one row per GP
         t = X @ w
@@ -154,10 +205,11 @@ class ObliqueNode(GPNode):
         self.overlap = theta * np.ptp(t)
 
 
-def oblique_tree(direction='pca', position='median', scaled=False, min_fraction=0.25, **tree_kwargs):
+def oblique_tree(direction='pca', position='median', scaled=False, min_fraction=0.25, whiten=False, **tree_kwargs):
     """A GPTree whose nodes are ObliqueNodes with the given configuration."""
     node_class = type('ObliqueNode_' + direction, (ObliqueNode,),
-                      dict(direction=direction, position=position, scaled=scaled, min_fraction=min_fraction))
+                      dict(direction=direction, position=position, scaled=scaled, min_fraction=min_fraction,
+                           whiten=whiten))
     gpt = GPTree(**tree_kwargs)
     gpt.root.__class__ = node_class
     return gpt
