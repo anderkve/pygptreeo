@@ -24,6 +24,7 @@ Records go to `results/` (not in the repository).
 | `time_predict.py` | Update and prediction times with one process |
 | `time_scaling.py` | The same at checkpoints along one long stream |
 | `index_scaling.py` | The search for the nearest leaves up to a million points, without GPs |
+| `profile_search.py` | The parts of a neighbour search on a growing tree |
 
 ```bash
 python run_matrix.py --variants "base;nbf" --set dev --N 5000 --seeds 1

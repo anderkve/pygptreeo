@@ -831,9 +831,12 @@ cores.
 | 16000 to 64000 | 2.53 / 70 | 0.24 | 3.41 / 73 | 0.76 | 936 | 19 (at most 34) | 0.62 |
 | 64000 to 100000 | 2.52 / 67 | 0.26 | 3.40 / 64 | 0.81 | 1469 | 20 (at most 34) | 0.63 |
 
-* **The cost of a point does not grow with the stream** for either tree
-  beyond the first 4000 points, where the leaves fill up. With neighbours an
-  update takes 1.3 times as long, and a prediction three times.
+* **The update time does not grow with the stream** for either tree beyond
+  the first 4000 points, where the leaves fill up. With neighbours an update
+  takes 1.3 times as long, and a prediction three times. These runs had the
+  first division of the index's groups (section 8.9), with which a
+  prediction from neighbours went from 0.65 to 0.81 ms; section 8.12 has
+  the times of the package as it is.
 * **The search looks at 16 leaves per query** from the first split to the
   last, of 1469 at the end.
 * **The gain from the neighbours grows with the stream** and then holds: the
@@ -950,6 +953,18 @@ least (the index of the package). Both give the same leaves.
   `predict_from='neighbours'` all of them are identical with the two
   divisions.
 
+The same on the default tree of `GaussianPeaks` on the uniform stream
+(`research/partitioning/profile_search.py`, 1000 queries at the points that
+follow each checkpoint, three processes at a time), first division → least
+overlap:
+
+| points | leaves | groups opened | `nearest` ms | the whole search for 100 neighbours, ms |
+|---|---|---|---|---|
+| 5000 | 70 | 5.0 → 3.9 | 0.06 → 0.05 | 0.14 → 0.14 |
+| 20 000 | 291 | 8.8 → 5.9 | 0.10 → 0.07 | 0.19 → 0.16 |
+| 50 000 | 728 | 9.1 → 7.8 | 0.12 → 0.09 | 0.23 → 0.20 |
+| 100 000 | 1436 | 13.1 → 8.3 | 0.17 → 0.10 | 0.32 → 0.23 |
+
 ### 8.10 Neighbours with the feature network
 
 `GaussianPeaks`, `RotatedRosenbrock`, `Eggholder`, `resonance_xsec`,
@@ -1011,3 +1026,42 @@ model, on the three stream types: 33 runs of 5000 points. NRMSE of the last
   than 2% worse. Without the noise the same runs are at 0.75.
 * **The coverage of the noise-free target** is 0.91 against 0.90, with a
   sigma that includes the declared noise.
+
+### 8.12 Cost along a 200 000-point stream
+
+`GaussianPeaks` (d = 6) on the uniform stream, one process on an otherwise
+idle machine, the package as it is. The update time is the mean since the
+previous row, the prediction time the mean over 1000 single-point
+predictions at the points that follow, and the RMSE that of those
+predictions (`research/partitioning/time_scaling.py`).
+
+| points | leaves | default tree: update ms | predict ms | RMSE | neighbours: update ms | predict ms | RMSE | RMSE ratio |
+|---|---|---|---|---|---|---|---|---|
+| 5000 | 71 | 1.86 | 0.13 | 0.459 | 2.50 | 0.55 | 0.327 | 0.71 |
+| 20 000 | 289 | 1.86 | 0.17 | 0.282 | 2.59 | 0.61 | 0.175 | 0.62 |
+| 50 000 | 730 | 1.88 | 0.14 | 0.237 | 2.53 | 0.63 | 0.139 | 0.59 |
+| 100 000 | 1465 | 1.96 | 0.15 | 0.162 | 2.65 | 0.62 | 0.103 | 0.64 |
+| 200 000 | 2917 | 1.92 | 0.14 | 0.129 | 2.78 | 0.59 | 0.068 | 0.53 |
+
+* **The prediction time does not grow with the stream**: 0.55 to 0.63 ms
+  with neighbours and 0.13 to 0.17 ms without, from 71 leaves to 2917.
+* **The update time grows by 3% for the default tree and by 11% with
+  neighbours** from the first 5000 points to the last 100 000.
+* **The gain from the neighbours grows with the stream**, to 0.53 of the
+  default tree's error at 200 000 points.
+
+`global_fit_loglike` (d = 10) on the walker stream, 100 000 points, with
+the first division of the index's groups and with the package as it is,
+side by side (two processes at a time; the predictions are the same):
+
+| points | default tree, predict ms: first division → least overlap | neighbours, update ms | neighbours, predict ms |
+|---|---|---|---|
+| 5000 | 0.12 → 0.12 | 3.81 → 3.63 | 0.43 → 0.38 |
+| 20 000 | 0.17 → 0.18 | 3.74 → 3.59 | 0.55 → 0.50 |
+| 50 000 | 0.17 → 0.13 | 3.81 → 3.59 | 0.66 → 0.42 |
+| 100 000 | 0.21 → 0.13 | 3.84 → 3.33 | 0.97 → 0.53 |
+
+* **With the first division a prediction from neighbours took twice as long
+  at 100 000 points as at 5000**, and one of the default tree 1.7 times.
+  With the division at the least overlap neither grows beyond the spread of
+  the measurement.

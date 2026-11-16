@@ -217,10 +217,11 @@ section 8.
   leaves give the error of the exact search, eight 0.6% more, four 5%.
 * **Cost.** A prediction factorises the kernel matrix of its neighbours, at a
   cost cubic in their number, where a leaf's own GP needs one triangular
-  solve: about 0.5 ms against 0.14 ms with 100 neighbours. The leaf's own GP
+  solve: about 0.6 ms against 0.15 ms with 100 neighbours. The leaf's own GP
   is still fitted and extended with each point, for the queries it predicts
   itself, and each new point is predicted both ways before it is stored, so
-  an update takes 20 to 40% longer.
+  an update takes 20 to 45% longer. Neither time grows with the stream
+  (`docs/benchmarks.md`, section 8.12).
 
 ## An index of the leaves
 
