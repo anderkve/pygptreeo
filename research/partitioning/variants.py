@@ -50,11 +50,11 @@ def _base(d, seed, **opts):
 
 
 @register('oblique')
-def _oblique(d, seed, dir='pca', pos='median', scaled=False, minfrac=0.25, whiten=False, **opts):
+def _oblique(d, seed, dir='pca', pos='median', scaled=False, minfrac=0.25, whiten=False, metric='raw', **opts):
     from oblique import oblique_tree
     kw = dict(BASE)
     kw.update(opts)
-    return oblique_tree(direction=dir, position=pos, scaled=scaled, min_fraction=minfrac, whiten=whiten, **kw)
+    return oblique_tree(direction=dir, position=pos, scaled=scaled, min_fraction=minfrac, whiten=whiten, metric=metric, **kw)
 
 
 @register('mr')
@@ -107,6 +107,15 @@ def _nbf(d, seed, **opts):
     kw = dict(BASE)
     kw.update(opts)
     return GPTree(predict_from='neighbours', **kw)
+
+
+@register('anchored')
+def _anchored(d, seed, depth=2, **opts):
+    """Neighbours of one of 2**depth cells of the query's leaf, shared by the queries of the cell."""
+    from anchored import anchored_tree
+    kw = dict(BASE)
+    kw.update(opts)
+    return anchored_tree(depth=depth, **kw)
 
 
 @register('hybrid')

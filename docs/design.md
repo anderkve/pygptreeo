@@ -400,6 +400,17 @@ section 8.
 * **A blend of the neighbours' prediction and the leaf's own**, with equal
   weights or weights from the two sigmas: 1 to 13% worse than the
   neighbours' prediction alone.
+* **A split into two clusters of the leaf's points**, each point going to
+  the child with the nearer centroid (`docs/benchmarks.md`, section 8.13).
+  This is a cut by the hyperplane half-way between the centroids. With
+  clusters of the inputs it was 26 to 30% worse than the default cuts, and
+  with distances in the fitted length scales of the leaf's kernel level with
+  them. The shape of a cell does not change how many of its queries lie at
+  its edge.
+* **Neighbours shared by the queries of a small cell**, to keep the
+  prediction smooth within the cell: 1 to 6% lower error than the leaves,
+  against 25% with the neighbours of each query. In several dimensions a
+  cell with few points is still a large part of its leaf across.
 * **Dividing a group of the index at the median of its children's centres**,
   along the input in which they are spread most. The boxes of the groups
   overlapped, a point lay in those of 5 bottom groups in four dimensions and
@@ -441,6 +452,11 @@ section 8.
 * **GPyTorch leaves predict from their own points.** The adapter cannot
   condition a fitted kernel on other points, so `predict_from='neighbours'`
   needs the scikit-learn adapter.
+* **Predictions from neighbours step wherever the set of neighbours
+  changes.** Along a path through two or three leaves the mean steps by more
+  than 0.1 sigma 33 to 39 times, where the leaves' own predictions step 4
+  to 5 times; the largest step is no larger (`docs/benchmarks.md`, section
+  8.13). The leaf's own prediction is smooth within the leaf.
 * **A global model is evaluated at the neighbours of every query.** With
   `predict_from='neighbours'` the residuals of the neighbours are computed
   for each prediction, which is slow with the additive global GP.

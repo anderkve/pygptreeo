@@ -1066,3 +1066,72 @@ side by side (two processes at a time; the predictions are the same):
   at 100 000 points as at 5000**, and one of the default tree 1.7 times.
   With the division at the least overlap neither grows beyond the spread of
   the measurement.
+
+### 8.13 Two clusters per split, and the steps of the predictions (not in the code)
+
+**A split into two clusters.** The points of a leaf are divided into two
+clusters (2-means), and a point goes to the child whose centroid is nearer:
+a cut by the hyperplane half-way between the centroids. The 33 runs of
+5000 points of sections 8.1 to 8.3, one GP per leaf, relative to the default
+tree.
+
+| two clusters of the leaf's points | uniform | walker | sweeping | all runs (range) | runs more than 2% worse |
+|---|---|---|---|---|---|
+| nearest centroid | 1.48 | 1.31 | 1.03 | 1.26 (0.22 to 4.48) | 24 of 33 |
+| nearest centroid, standardised inputs | 1.44 | 1.35 | 1.13 | 1.30 (0.35 to 4.83) | 26 of 33 |
+| cut at the median along the line between the centroids (section 8.1) | 1.54 | 1.33 | 1.08 | 1.30 (0.30 to 4.88) | 23 of 33 |
+| nearest centroid, distances in the GP's fitted length scales | 0.99 | 1.17 | 0.97 | 1.04 (0.65 to 2.43) | 15 of 33 |
+| the same, cut at the median | 0.99 | 0.99 | 1.00 | 0.99 (0.61 to 1.71) | 14 of 33 |
+| nearest centroid, fitted length scales, decorrelated inputs for the GPs | 1.08 | 1.31 | 1.14 | 1.17 (0.59 to 3.24) | 25 of 33 |
+
+* **Clusters of the inputs alone are 26 to 30% worse than the default
+  cuts**, as the other rules of section 8.1 that do not look at the target.
+* **Clusters in the metric of the leaf's kernel are level with the default
+  cuts** and differ from them by up to 2.4 times in single runs, as the
+  other hyperplanes from the GP.
+
+**Steps of the predicted mean.** After 20 000 points, along 60 straight paths
+from a stored point to its 200th nearest stored point, in 1000 steps
+(`research/partitioning/jitter.py`). A step counts by how far it departs
+from the mean of the steps on either side of it, in units of the predicted
+sigma. Means over the paths, which pass through 2.4 to 2.9 leaves.
+
+| target, stream | prediction from | steps above 0.01 sigma | above 0.1 sigma | above 1 sigma | their sum in sigma, mean (median) | largest step, median |
+|---|---|---|---|---|---|---|
+| `GaussianPeaks`, uniform | the leaf | 4.6 | 3.9 | 0.9 | 4.3 (2.3) | 0.89 |
+| | the query's neighbours | 243 | 32.6 | 0.2 | 14.0 (13.1) | 0.45 |
+| | the neighbours of one of 8 cells of the leaf | 8.6 | 7.0 | 1.7 | 5.7 (4.7) | 1.46 |
+| | of one of 32 cells | 10.7 | 8.3 | 1.4 | 5.8 (5.0) | 1.21 |
+| `Eggholder`, walker | the leaf | 4.9 | 3.9 | 1.4 | 4.8 (3.0) | 1.26 |
+| | the query's neighbours | 185 | 39.0 | 1.4 | 16.9 (12.3) | 0.75 |
+| | the neighbours of one of 8 cells of the leaf | 10.0 | 7.0 | 1.4 | 5.6 (4.6) | 1.21 |
+| | of one of 32 cells | 14.5 | 10.0 | 1.4 | 5.8 (4.1) | 0.92 |
+| `resonance_xsec`, uniform | the leaf | 6.1 | 4.8 | 2.0 | 13.7 (2.8) | 1.36 |
+| | the query's neighbours | 175 | 35.1 | 2.1 | 25.8 (16.7) | 1.21 |
+
+* **The leaf's prediction steps where the path enters another leaf**, 4 to
+  5 times on a path, by about one sigma at the largest.
+* **The neighbours' prediction steps whenever the set of neighbours
+  changes**: 33 to 39 steps above 0.1 sigma on a path and 3 to 5 times the
+  sum, with a largest step that is no larger than the leaf's.
+
+**Neighbours of a cell.** Each leaf is divided into 4 to 32 cells by median
+cuts of its points, and a prediction is conditioned on the 100 stored points
+nearest to the mean of the points of the query's cell, so that the queries
+of a cell share their neighbours (`research/partitioning/anchored.py`). The
+33 runs of 5000 points, relative to the default tree.
+
+| neighbours of | uniform | walker | sweeping | all runs (range) | runs more than 2% worse |
+|---|---|---|---|---|---|
+| the query (`predict_from='neighbours'`) | 0.76 | 0.70 | 0.79 | 0.75 (0.45 to 1.04) | 1 of 33 |
+| one of 4 cells of its leaf | 0.89 | 1.05 | 1.04 | 0.99 (0.78 to 1.24) | 12 of 33 |
+| one of 8 cells | 0.87 | 1.08 | 1.04 | 0.99 (0.78 to 1.55) | 13 of 33 |
+| one of 16 cells | 0.84 | 0.96 | 1.04 | 0.94 (0.67 to 1.66) | 8 of 33 |
+| one of 32 cells | 0.83 | 0.98 | 1.02 | 0.94 (0.64 to 2.02) | 10 of 33 |
+
+* **Neighbours that are shared by a cell step as rarely as the leaf's
+  prediction and keep 1 to 6% of the 25% that the query's own neighbours
+  gain.** A leaf of 100 points in four to six dimensions is one or two
+  points wide along each input: 32 cells halve it along five inputs, and
+  the centre of a cell is still a quarter of the leaf away from most of its
+  queries.

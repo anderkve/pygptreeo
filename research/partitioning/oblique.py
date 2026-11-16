@@ -43,10 +43,12 @@ class ObliqueNode(GPNode):
         min_fraction: smallest share of the node's points on either side of a cut
         whiten: whether the GPs see decorrelated inputs (``Whitener``) instead of inputs scaled one by one
         scaled: whether 'pca', 'twomeans' and 'random' work in the node's standardised inputs
+        metric: 'kernel' for 'pca' and 'twomeans' in the GP's inputs divided by its fitted length scales
     """
     direction = 'pca'
     position = 'median'
     scaled = False
+    metric = 'raw'
     min_fraction = 0.25
     whiten = False
     split_direction = None
@@ -130,7 +132,21 @@ class ObliqueNode(GPNode):
             ws = np.zeros(d)
             ws[int(np.argmin(ls))] = 1.0
             return self._raw_normal(ws)
-        Z = (X - X.mean(axis=0)) / scale if self.scaled else X - X.mean(axis=0)
+        if self.metric == 'kernel' and self.direction in ('pca', 'twomeans'):
+            ls = self._pooled_length_scales() if self._is_fitted() else None
+            if ls is None:
+                return None
+            ls = np.asarray(ls, dtype=float)
+            Xs = self._scaled_inputs(X)
+            Z = (Xs - Xs.mean(axis=0)) / ls
+
+            def to_raw(wz):
+                return self._raw_normal(wz / ls)
+        else:
+            Z = (X - X.mean(axis=0)) / scale if self.scaled else X - X.mean(axis=0)
+
+            def to_raw(wz):
+                return wz / scale if self.scaled else wz
         if self.direction == 'pca':
             w = np.linalg.eigh(np.atleast_2d(np.cov(Z.T)))[1][:, -1]
         elif self.direction == 'random':
@@ -147,10 +163,10 @@ class ObliqueNode(GPNode):
                 lab = new
             c0, c1 = Z[~lab].mean(axis=0), Z[lab].mean(axis=0)
             w = c1 - c0
-            self._midpoint = 0.5 * (c0 + c1)
+            self._labels = lab
         else:
             raise ValueError(self.direction)
-        return w / scale if self.scaled else w
+        return to_raw(w)
 
     def _gradient_split(self, w):
         """The position along the normal ``w`` that best separates the node's points
@@ -196,11 +212,12 @@ class ObliqueNode(GPNode):
         t = self.my_X_data @ w
         self.split_position = float(np.median(t))
         if self.position == 'midpoint' and self.direction == 'twomeans':
-            X = self.my_X_data
-            mid = X.mean(axis=0) + (self._midpoint * self._scale() if self.scaled else self._midpoint)
+            # between the two clusters, which the nearest-centroid rule separates along the normal
+            lab = self._labels if t[self._labels].mean() >= t[~self._labels].mean() else ~self._labels
+            mid = 0.5 * (t[~lab].max() + t[lab].min())
             # keep both children populated
             lo, hi = np.quantile(t, [self.min_fraction, 1 - self.min_fraction])
-            self.split_position = float(np.clip(mid @ w, lo, hi))
+            self.split_position = float(np.clip(mid, lo, hi))
         elif self.position == 'gsplit':
             s = self._gradient_split(w)
             if s is not None:
@@ -208,11 +225,12 @@ class ObliqueNode(GPNode):
         self.overlap = theta * np.ptp(t)
 
 
-def oblique_tree(direction='pca', position='median', scaled=False, min_fraction=0.25, whiten=False, **tree_kwargs):
+def oblique_tree(direction='pca', position='median', scaled=False, min_fraction=0.25, whiten=False, metric='raw',
+                 **tree_kwargs):
     """A GPTree whose nodes are ObliqueNodes with the given configuration."""
     node_class = type('ObliqueNode_' + direction, (ObliqueNode,),
                       dict(direction=direction, position=position, scaled=scaled, min_fraction=min_fraction,
-                           whiten=whiten))
+                           whiten=whiten, metric=metric))
     gpt = GPTree(**tree_kwargs)
     gpt.root.__class__ = node_class
     return gpt
