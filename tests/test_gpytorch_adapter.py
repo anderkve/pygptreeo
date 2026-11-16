@@ -108,6 +108,16 @@ class TestGPyTorchAdapter(unittest.TestCase):
         gpr = _adapter().fit(self.X, self.y)
         self.assertFalse(gpr.supports_multitarget())
         self.assertIsNone(gpr.get_length_scales(1))
+        self.assertFalse(gpr.release())
+        self.assertFalse(gpr.restore())
+        self.assertFalse(gpr.append(self.X[:1], self.y[:1], 1e-4))
+
+    def test_size_of_a_fit(self):
+        gpr = _adapter()
+        self.assertEqual(gpr.nbytes(), 0)
+        gpr.fit(self.X, self.y)
+        itemsize = gpr.model.train_inputs[0].element_size()
+        self.assertEqual(gpr.nbytes(), itemsize * 40 * (40 + 1 + 1))
 
 
 @unittest.skipUnless(GPYTORCH_AVAILABLE, "GPyTorch is not installed")
@@ -130,6 +140,22 @@ class TestGPTreeWithGPyTorch(unittest.TestCase):
         mean, std = gpt.predict(X_test)
         self.assertTrue(np.all(np.isfinite(mean)) and np.all(std > 0))
         self.assertLess(np.sqrt(np.mean((mean[:, 0] - _target(X_test)) ** 2)), 0.1)
+
+    def test_memory_limit_removes_leaves_and_puts_none_to_sleep(self):
+        torch.manual_seed(2)
+        np.random.seed(2)
+        rng = np.random.RandomState(2)
+        X = rng.rand(300, 1)
+        y = _target(X)
+        gpt = GPTree(GPR=_adapter(training_iterations=10), Nbar=40, retrain_every_n_points=40, max_memory_mb=0.12)
+        for i in range(300):
+            gpt.update_tree(X[i:i + 1], y[i:i + 1, None], np.full((1, 1), 1e-2))
+            self.assertLessEqual(gpt.memory_mb, 0.12)
+        leaves = gpt.root.leaves
+        self.assertLess(sum(leaf.n_points for leaf in leaves), 300)
+        self.assertFalse(any(leaf.asleep for leaf in leaves))
+        mean, std = gpt.predict(X[:20])
+        self.assertTrue(np.all(np.isfinite(mean)) and np.all(std > 0))
 
     def test_shared_output_model_needs_another_backend(self):
         with self.assertRaises(ValueError):

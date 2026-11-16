@@ -30,6 +30,39 @@ def _target(X):
     return np.sin(3 * X[:, 0]) * np.cos(2 * X[:, 1]) + 0.5 * X[:, 2] ** 2
 
 
+class TestPointStore(unittest.TestCase):
+
+    def _fill(self, store, n):
+        for i in range(n):
+            store.add(np.array([float(i), 0.5 * i]), np.array([2.0 * i]), np.array([1e-3]))
+        store._flush()
+        return store
+
+    def test_keeps_every_point_without_a_size(self):
+        store = self._fill(feature_net._PointStore(2, 1), 700)
+        self.assertEqual(store.n, 700)
+        np.testing.assert_array_equal(store.X[:, 0], np.arange(700.0))
+
+    def test_keeps_every_point_until_full(self):
+        store = self._fill(feature_net._PointStore(2, 1, size=500, rng=np.random.RandomState(0)), 500)
+        every = self._fill(feature_net._PointStore(2, 1), 500)
+        np.testing.assert_array_equal(store.X, every.X)
+        np.testing.assert_array_equal(store.y, every.y)
+        np.testing.assert_array_equal(store.sigma, every.sigma)
+
+    def test_is_a_uniform_sample_of_a_longer_stream(self):
+        n, size = 20000, 500
+        store = self._fill(feature_net._PointStore(2, 1, size=size, rng=np.random.RandomState(1)), n)
+        self.assertEqual(store.n, size)
+        index = store.X[:, 0]
+        self.assertEqual(np.unique(index).size, size)
+        np.testing.assert_array_equal(store.X[:, 1], 0.5 * index)       # rows stay together
+        np.testing.assert_array_equal(store.y[:, 0], 2.0 * index)
+        # each fifth of the stream holds a fifth of the sample: 100 +- 9 points
+        counts = np.histogram(index, bins=5, range=(0, n))[0]
+        self.assertTrue(np.all(np.abs(counts - size / 5) < 35), counts)
+
+
 @unittest.skipUnless(TORCH_AVAILABLE, "PyTorch not installed")
 class TestFeatureNet(unittest.TestCase):
 
@@ -172,6 +205,22 @@ class TestFeatureNet(unittest.TestCase):
         self.assertFalse(learner.refit_in_progress)
         self.assertEqual(learner.version, 2)
 
+    def test_bounded_store_for_the_polish_phase(self):
+        rng = np.random.RandomState(16)
+        X = rng.rand(1200, 3); y = _target(X); Xt = rng.rand(300, 3); yt = _target(Xt)
+        learner = self._learner(min_points=300, steps=60, reservoir_size=200, polish_steps=400, store_size=300)
+        for i in range(1200):
+            learner.observe(X[i], y[i], 1e-3)
+        self.assertEqual(learner.store.n, 300)
+        self.assertEqual(learner.n_refits, 3)                     # at 300, 600 and 1200 points
+        self.assertLess(np.sqrt(np.mean((learner.head(Xt)[:, 0] - yt) ** 2)) / (yt.max() - yt.min()), 0.05)
+        unbounded = self._learner(min_points=1200, reservoir_size=200, polish_steps=400, store_size=None)
+        for i in range(1200):
+            unbounded.observe(X[i], y[i], 1e-3)
+        self.assertEqual(unbounded.store.n, 1200)
+        with self.assertRaises(ValueError):
+            self._learner(store_size=1)
+
     def test_holdout_argument(self):
         self.assertEqual(FeatureNetLearner().holdout, 0.2)
         X = np.random.RandomState(0).rand(50, 3)
@@ -282,10 +331,45 @@ class TestFeatureNet(unittest.TestCase):
         for leaf in gpt.root.leaves:                          # every leaf fitted against the current snapshot
             self.assertEqual(leaf._fitted_global.version, gm.current.version)
 
+    def test_hybrid_within_a_memory_limit(self):
+        """The limit covers the network's reservoir, store and weights at their full size."""
+        from pygptreeo.default_gpr import Default_GPR
+        rng = np.random.RandomState(18)
+        N = 700
+        X = rng.rand(N, 3); Y = _target(X)[:, None]; S = np.full((N, 1), 1e-3)
+        kwargs = dict(steps=100, polish_steps=200, min_points=60, reservoir_size=100, store_size=150, random_state=0)
+        weights = 4 * (4 * 128 + 129 * 128 + 129 * 128 + 129)
+        fixed_mb = (8 * 100 * (101 + 3 + 2) + 8 * 150 * (3 + 2) + weights) / 1e6
+        gpt = GPTree(GPR=Default_GPR(), Nbar=40, retrain_every_n_points=20, max_memory_mb=fixed_mb + 0.25,
+                     global_mean='net', global_mean_kwargs=kwargs)
+        _stream(gpt, X, Y, S)
+        learner = gpt.global_mean.learner
+        self.assertAlmostEqual(gpt._fixed_bytes / 1e6, fixed_mb)
+        self.assertLessEqual(gpt.memory_mb, fixed_mb + 0.25)
+        self.assertLess(sum(leaf.n_points for leaf in gpt.root.leaves), N)       # leaves were removed
+        self.assertEqual((learner.sample.n, learner.store.n), (100, 150))
+        Xt = rng.rand(200, 3); yt = _target(Xt)
+        P, Sd = gpt.predict(Xt)
+        self.assertTrue(np.all(np.isfinite(P)) and np.all(Sd > 0))
+        self.assertLess(np.sqrt(np.mean((P[:, 0] - yt) ** 2)) / (yt.max() - yt.min()), 0.1)
+
+    def test_memory_limit_below_the_network_or_without_a_fixed_size(self):
+        x, y = np.zeros((1, 3)), np.zeros((1, 1))
+        gpt = GPTree(max_memory_mb=100, global_mean='net')                       # the default reservoir takes 200 MB
+        with self.assertRaisesRegex(ValueError, "global model"):
+            gpt.update_tree(x, y, 1e-3)
+        for kwargs in (dict(store_size=None), dict(reservoir_size=None)):
+            gpt = GPTree(max_memory_mb=1000, global_mean='net', global_mean_kwargs=kwargs)
+            with self.assertRaisesRegex(ValueError, "fixed size"):
+                gpt.update_tree(x, y, 1e-3)
+        self.assertEqual(GPTree(global_mean='net', global_mean_kwargs=dict(polish_steps=0, store_size=None))
+                         .global_mean.max_nbytes(3, 1), 8 * 5000 * (5001 + 3 + 2) + 4 * (4 * 128 + 2 * 129 * 128 + 129))
+
     def test_hybrid_defaults(self):
         gm = GPTree(global_mean='net').global_mean
         self.assertTrue(gm.cheap_leaf_refresh)
         self.assertEqual(gm.learner.holdout, 0.2)
+        self.assertEqual(gm.learner.store_size, 100000)
         self.assertEqual(GPTree(global_mean='net', global_mean_kwargs=dict(holdout=0.0)).global_mean.learner.holdout, 0.0)
 
     def test_leaves_take_up_a_new_version_with_their_hyperparameters_kept(self):

@@ -198,6 +198,10 @@ class OutputBasisLearner:
         self.fit()
         return True
 
+    def max_nbytes(self) -> int:
+        """Bytes of the full reservoir and of a basis of full rank."""
+        return 8 * (self.reservoir_size * (self.n_outputs + 1) + self.n_outputs * (self.n_outputs + 2))
+
     def fit(self) -> OutputBasis:
         """Fit the basis on the current reservoir (also usable to force a refit)."""
         Y = self._reservoir

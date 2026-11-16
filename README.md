@@ -126,6 +126,42 @@ gpt = GPTree(Nbar=100, global_mean='net', global_mean_kwargs=dict(steps_per_upda
 
 Further options can be passed via `global_mean_kwargs`, see the docstrings of `AdditiveGPGlobalMean` and `FeatureNetLearner`. Benchmark results are given in [`docs/benchmarks.md`](docs/benchmarks.md), and the design of the global models is described in more detail in [`docs/design.md`](docs/design.md). See `examples/example_hybrid.py` for a comparison of a tree with and without the neural network.
 
+## New points between fits of a leaf
+
+The GP of a leaf is fitted again only after a number of new points have arrived in the leaf (`retrain_every_n_points`). In between, a new data point is added to the GP of its leaf as soon as it arrives, with the kernel hyperparameters unchanged. This is enabled by default and can be switched off with `append_points_between_fits=False`. It requires the scikit-learn interface; with the GPyTorch interface a point enters the GP at the next fit of its leaf.
+
+In our tests with streams of 40 000 points in six dimensions, this reduced the prediction error by 49% for a stream that sweeps through the input space, by 23% for a random walk, and by 7-17% for streams that stay in the same region, with an 11% longer update time. For eleven physics-motivated test functions in 4-10 dimensions, the error was lower for every function and stream type: on average by 26-32% for streams that move through the input space, and by 8-11% for streams that do not. See [`docs/benchmarks.md`](docs/benchmarks.md) for details.
+
+## Uncertainties beyond the data of a leaf
+
+A leaf covers a region that can be much larger than the one its data points lie in, in particular when the input stream moves through the input space. A prediction beyond the data points of its leaf is an extrapolation, and its error is on average larger than the uncertainty of the leaf GP suggests. pyGPTreeO therefore increases the predicted uncertainty with the distance between the prediction point and the data points of its leaf. The rate of increase is a single number for the tree, learned from the prediction errors along the input stream. The predictions themselves are not changed. This is enabled by default and can be switched off with `widen_sigma_with_distance=False`.
+
+In our tests with thirteen test functions and a stream that sweeps through the input space, 28% of the predictions were made beyond the data points of their leaf. For these, the fraction of true values within the predicted uncertainty increased from 0.46-0.60 to 0.70-0.78, and the fraction of all predictions with an error larger than five times the predicted uncertainty decreased from 3.3% to 2.7%. For streams that stay in the same region the uncertainties are practically unchanged. See [`docs/benchmarks.md`](docs/benchmarks.md) for details.
+
+## Limiting the memory use (optional)
+
+By default the tree keeps every leaf it creates, so its memory use grows with the number of data points. For streams that are too long for this, a memory limit can be set:
+
+```python
+gpt = GPTree(Nbar=100, max_memory_mb=500)
+```
+
+The tree then keeps its own estimate of its size, available as `gpt.memory_mb`, within the limit. Nothing changes until the limit is reached. From then on the tree does two things:
+
+- It puts leaves to sleep, starting with the leaf that has gone unused for the longest time. A sleeping leaf keeps its data points and its kernel hyperparameters, but releases the Cholesky factor of its GP, which takes most of the memory of a leaf. The factor is computed again when the leaf is next used, so the predictions do not change.
+- When putting leaves to sleep is no longer enough, it removes the leaf that has gone longest without receiving a data point, together with its data points and its GP. The leaf's sibling in the tree takes over its region.
+
+Some things to note:
+
+- The limit applies to the data held by pyGPTreeO: the leaves and the global model, the latter counted at its full size. It does not include the Python interpreter and the imported libraries. In our tests the estimate was within 5% of the memory that Python had allocated for the tree.
+- The limit must be larger than the fixed size of the global model, otherwise an error is raised. Note that the network's reservoir requires 200 MB at its default size of 5000 points (`reservoir_size`).
+- The tree forgets the regions whose leaves have been removed. A prediction there is an extrapolation from the neighbouring leaves that remain, and neither the prediction nor its uncertainty should be trusted. A global model reduces the error of such predictions, since it is fitted to a subsample of the entire stream, but their uncertainties remain too small.
+- Only data points passed to `update_tree` (or `fit`) keep a leaf from being removed. Predictions do not.
+- Leaves can only be put to sleep with the scikit-learn interface. With GPyTorch the limit is met by removing leaves.
+- `gpt.memory_mb` is also available without a limit, which can be used to choose one.
+
+In our tests with streams of 40 000 points in six dimensions a tree without a limit required 66 MB. For a stream that keeps returning to the same regions, a limit of half this size did not change the prediction error for the incoming points: the tree kept 97% of its leaves, two thirds of them asleep. With limits of 17% and 5% of the full size the error was 2.1 and 3.0 times higher. For a stream that never returns to a region it has left, the error was the same or lower than without a limit. Waking leaves added at most 0.2 ms to the 2.5 ms required per data point. See [`docs/benchmarks.md`](docs/benchmarks.md) for details.
+
 ## Using GPyTorch
 
 By default the leaf GPs are scikit-learn GP regressors. GPyTorch can be used instead via the `GPyTorchAdapter`:

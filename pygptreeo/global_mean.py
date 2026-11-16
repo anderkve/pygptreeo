@@ -82,6 +82,11 @@ class CoverageReservoir:
         self._row_min = None              # per-row minimum of _D, kept so an offer costs O(size)
         self.turnover = 0                 # number of insertions/replacements so far
 
+    @staticmethod
+    def max_nbytes(size: int, n_features: int, n_outputs: int) -> int:
+        """Bytes of a full reservoir: its points and their pairwise distances."""
+        return 8 * size * (size + 1 + n_features + 2 * n_outputs)
+
     @property
     def n(self) -> int:
         return self.X.shape[0]
@@ -149,6 +154,12 @@ class GlobalMeanLearner:
     def observe(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray) -> bool:
         """Register one observation; return True if a new snapshot was published."""
         raise NotImplementedError
+
+    def max_nbytes(self, n_features: int, n_outputs: int) -> float:
+        """Bytes the learner's data take once its samples are full (inf if they
+        grow with the stream). Counted by ``GPTree(max_memory_mb=...)``; a
+        learner that does not report it is not counted."""
+        return 0
 
 
 class AdditiveGPGlobalMean(GlobalMeanLearner):
@@ -285,6 +296,11 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
         self.turnover_at_fit = res.turnover
         self.n_refits += 1
         return self.current
+
+    def max_nbytes(self, n_features: int, n_outputs: int) -> int:
+        """The reservoir, and the factor and training data of the GP fitted on it."""
+        m = self.reservoir_size
+        return CoverageReservoir.max_nbytes(m, n_features, n_outputs) + 8 * m * (m + n_features + 2 * n_outputs)
 
     def __repr__(self) -> str:
         return (f"AdditiveGPGlobalMean(reservoir_size={self.reservoir_size}, min_points={self.min_points}, "

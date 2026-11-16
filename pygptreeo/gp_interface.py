@@ -170,3 +170,39 @@ class GPRegressorInterface(ABC):
         full fit.
         """
         return False
+
+    def append(self, x: np.ndarray, y, noise: float) -> bool:
+        """Condition the fitted GP on one more point, with its hyperparameters kept.
+
+        ``x`` has shape (1, n_features), ``y`` is the point's target (one row of
+        targets for a multi-target fit) and ``noise`` its noise variance, all as
+        ``fit`` takes them. The result is the GP that a fit with fixed
+        hyperparameters to the points of the last fit and this one would give,
+        at a cost quadratic in the number of points. Optional capability used
+        by ``GPTree(append_points_between_fits=True)``. Returns False if there
+        is no fit to extend or the backend cannot.
+        """
+        return False
+
+    def nbytes(self) -> int:
+        """Approximate size in bytes of what a fit has stored, 0 without a fit.
+
+        Used by ``GPTree(max_memory_mb=...)``. A backend that does not report
+        it is not counted.
+        """
+        return 0
+
+    def release(self) -> bool:
+        """Free the part of the fitted state that ``restore`` can compute again.
+
+        Optional capability used to put a leaf to sleep under
+        ``GPTree(max_memory_mb=...)``. Returns False if there is nothing to
+        free or the backend cannot; its leaves are then never put to sleep.
+        """
+        return False
+
+    def restore(self) -> bool:
+        """Compute again what ``release`` freed, so that the GP predicts as before
+        (to numerical precision after ``append``). Returns False if the backend
+        cannot."""
+        return False

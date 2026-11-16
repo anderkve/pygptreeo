@@ -1,7 +1,8 @@
 # Design notes
 
-Why the tree has a global model, how the mechanism works, what was tried and
-dropped, and what is still open. The measurements are in
+Why the tree has a global model, how the mechanism works, how the tree stays
+within a fixed size, how a point reaches a leaf's GP between two fits, what
+was tried and dropped, and what is still open. The measurements are in
 [`benchmarks.md`](benchmarks.md).
 
 ## What is global and what is local
@@ -29,6 +30,15 @@ calibration of that uncertainty from local residuals.
 * **Per-leaf calibration.** Each leaf keeps its last 25 normalised prediction
   errors and scales its sigma to their 68% quantile. This holds the on-stream
   coverage at the nominal value for every leaf model and global model measured.
+* **A sigma that grows beyond a leaf's points** (`widen_sigma_with_distance`,
+  on by default). The distance of a query from a leaf's points is its
+  distance from the mean of the points of the leaf's last fit in units of
+  their standard deviation, the largest over the inputs. Beyond a distance of
+  2 the calibrated sigma is multiplied by 1 + slope * (distance - 2). The
+  slope is one number for the tree: over the last 200 predictions registered
+  beyond 2, the 68% quantile of the errors in units of sigma, minus 1,
+  divided by their mean distance beyond 2. The predictions do not change, and
+  on a stream that stays in a region hardly any query is beyond 2.
 * **Blending near a cut.** A prediction in the overlap region of a split is a
   mixture over the leaves the point could belong to.
 
@@ -67,10 +77,84 @@ Two global models ship:
   `d (d - 1) / 2` pair terms, so it becomes slow beyond about six dimensions.
 * **`'net'`** (`FeatureNetLearner`, `NetGlobalMean`): an MLP trained at a fixed
   cost per refit, not limited to additive structure. Each refit runs L-BFGS on
-  the reservoir and then Adam steps over every point seen, and publishes the
-  weights with the lowest loss on a held-out fifth of the points. A leaf takes
-  up a new version by refitting on the new residual with its kernel
+  the reservoir and then Adam steps over the stored points (every point of the
+  stream up to `store_size`, a uniform sample of it after that), and publishes
+  the weights with the lowest loss on a held-out fifth of the points. A leaf
+  takes up a new version by refitting on the new residual with its kernel
   hyperparameters kept.
+
+## A memory limit
+
+`GPTree(max_memory_mb=...)` keeps the tree within a fixed size on an endless
+stream. One setting in MB replaces a count of leaves because a leaf has no
+fixed size: a fitted leaf takes 40 kB at `Nbar=50` in three dimensions and
+370 kB at `Nbar=200` in six.
+
+* **Where the memory is.** A fitted leaf at `Nbar=100` in six dimensions takes
+  about 113 kB: 80 kB for the Cholesky factor of its GP, 7 kB for the GP's
+  copy of the training data and its weights, 6 kB for the leaf's own and shared
+  points, and about 20 kB for Python objects (the node, an inner node, scalers,
+  kernels). The factor follows from the training data and the kernel.
+* **A sleeping leaf** has released the factors and weights of its GPs and
+  keeps everything else. Restoring them takes one kernel matrix and one
+  factorisation, and the GP then predicts as before: exactly, or to the
+  numerical precision of the factorisation if points were appended since its
+  fit (about 1e-8 of the target's range in the mean). The GP's own
+  training data are kept for this: rebuilt from the leaf's points, the GP would
+  also include the points that arrived after its last fit, and a prediction
+  would depend on whether the leaf had slept.
+* **A leaf is woken before a point is stored in it**, so that the prediction
+  registered for the calibration is still one made without the point.
+* **Two orders.** Leaves go to sleep in the order in which their GPs were last
+  used, by a point or by a prediction. Leaves are removed in the order in
+  which a point last reached them. A prediction can therefore keep a GP awake,
+  but it does not protect a leaf from removal, and it never causes one: a
+  prediction that wakes a leaf sends another to sleep.
+* **Sleep first, then remove.** Below the limit nothing sleeps. At the limit
+  the least recently used leaf is put to sleep while the GPs awake take more
+  than half of the memory left for the leaves (`FITTED_SHARE`), and the leaf
+  that has gone longest without a point is removed otherwise. With an even
+  split the tree never has fewer than half as many GPs awake, or half as many
+  leaves, as another split would give it.
+* **The tree adds up its own size.** The arrays of the leaves and their GPs
+  are counted exactly. Their other objects are counted as constants, 10 kB per
+  leaf and 10 kB per GP of a leaf (`NODE_OVERHEAD_BYTES`,
+  `GPR_OVERHEAD_BYTES`), so that a run does not depend on the Python version.
+  The estimate was within 5% of the memory Python had allocated for the tree
+  in six configurations. The global model and the output basis count at the
+  size they have once their samples are full, and a limit below that is an
+  error.
+* **A removal changes the structure only.** The leaf and its parent are
+  removed, and the leaf's sibling, a leaf or a subtree, takes the parent's
+  place. The leaves along the removed cut then extend over the removed leaf's
+  region. No remaining leaf changes its points or its GP, so a removal costs
+  no fit.
+* **The removed leaf's points are discarded.** With gradual splitting much of
+  them is still in the tree: the sibling is a leaf in 47 to 91% of the
+  removals, and it then usually holds copies of about half of the removed
+  leaf's points as shared points. Beyond that, the memory of the regions the
+  stream has left is the global model, whose reservoir is a coverage sample of
+  the whole stream: a leaf that extends over a forgotten region adds its
+  extrapolated residual to the global model there.
+* **The network's point store is a sample.** Beyond `store_size` points
+  (100 000) the store is a uniform sample of the stream, with the stream's own
+  distribution of points. The Adam phase of a refit draws about 400 000 points
+  (3000 steps of 128), a few passes over the store.
+
+## Points between two fits of a leaf
+
+* **Appended points** (`append_points_between_fits`, on by default). Between
+  two fits of a leaf a point is added to its fitted GPs as they are: the
+  Cholesky factor gets one more row, at a cost quadratic in the number of
+  points. The hyperparameters, the scaling and the global-model snapshot of
+  the last fit are kept, so the result is the GP that a fit with fixed
+  hyperparameters to the points of that fit and the new one would give. The
+  next fit starts from the leaf's points as usual, so nothing accumulates.
+  The prediction registered for the calibration is made before the point is
+  appended.
+* **With every point appended the retrain interval matters little**: the
+  hyperparameters change slowly, and what a leaf lacked between two fits was
+  the points themselves.
 
 ## Tried and dropped
 
@@ -90,6 +174,79 @@ Two global models ship:
 * **A floor on the predicted sigma at the observation-noise level.** It bounds
   the calibration scaler, but turns sigma into the uncertainty of a noisy
   observation. The error budget above addresses the term that was missing.
+* **Appending only the points far from their leaf's other points**, in place
+  of every point: half of the gain on a sweeping stream, and none on the
+  streams that stay in a region, where every point appended lowers the error
+  by 7 to 23%.
+* **Points beyond a leaf's cuts**, with every query predicted by one leaf. An
+  overlap of 0.05 for the stored points alone lowered the error by 3% over
+  18 runs (4% and 6% on the uniform and sweeping streams, none on the
+  walker), and overlaps of 0.2 and 0.5 did worse. Leaves that keep 25 of
+  their sibling's points nearest the cut gained 6%, most of which was the
+  larger GP. Neither changed the largest errors (`docs/benchmarks.md`,
+  section 7.6).
+* **Other forms of the sigma beyond a leaf's points.** A factor per band of
+  the distance, each learned from the errors in its band: the same coverage
+  as the one slope, with a list per band. The slope as the 68% quantile of
+  the slopes that each error would need: learned from queries just beyond 2,
+  it reached 40 on uniform streams.
+* **A leaf of its own for new territory**: a point far from its leaf's other
+  points splits the leaf between those points and itself. The error rose by 73% on a sweeping stream and
+  90% on a walker: the new leaves have too few points to predict from.
+* **Another leaf for a query far from its leaf's points** (`far_threshold`).
+  The leaves at the edge of the explored region own everything beyond it, and
+  a stream that moves on can enter the region of a leaf whose points lie far
+  away. A query more than 7 standard deviations from the mean of its leaf's
+  fitted points, along some input, was given to the leaf of its family with
+  the nearest points; the family has, for each ancestor, the leaf the query
+  reaches beyond the ancestor's cut. On the seed the threshold was chosen on,
+  the error on moving streams fell by 10% with no run more than 3% worse. On
+  two further seeds single runs changed by -47% to +35%, with a mean of -4%
+  on a sweeping stream and +2% on a walker (`docs/benchmarks.md`, section
+  7.4). Where every candidate leaf is far from the query, no distance tells
+  which one is right. No better: lower thresholds (up to +53% in single runs
+  at 4), the recently updated leaves as the candidates, nearness by distance
+  from the leaf's mean, distances in units of the kernel's length scales or
+  of the GP's variance, a margin on the nearness, a sigma that grows with the
+  distance, and the nearest leaf for every query.
+* **A decision function of its own for predictions.** The cuts decide where a
+  point is stored, and the same cuts decide which leaf predicts a query. A
+  rule for the queries alone can use the distance from the query to each
+  candidate leaf's points (`docs/benchmarks.md`, sections 7.3 and 7.4):
+  * The distance has to be in units of the leaf's own spread. In units of
+    the inputs' range the leaf with the nearest points is the worse one in
+    most runs.
+  * A blend of the own leaf and its neighbour beyond the nearest cut,
+    weighted by that distance, lowers the error in 117 of 140 runs, by 6% on
+    average, on every stream type, and the share of predictions off by more
+    than 10 sigma from 0.8% to 0.6%. It predicts with 1.7 leaves per query.
+  * A leaf can be wrong by many times the target's range just beyond its
+    cut, with a small sigma, and no distance shows it. Two such queries made
+    one run 4.9 times worse. Using the blend only where the two predictions
+    agree within 5 sigma left no run more than 2% worse and a gain of 5%,
+    but it keeps the own leaf's largest errors.
+  * An overlap of 0.2 for the queries alone gave about the error of that
+    overlap for both, 10 to 18% below the default on `GaussianPeaks`, with a
+    sigma that is too large and up to four times the prediction time.
+  * Leaves chosen by a query's nearest stored points (a vote of the 25
+    nearest, or the nearest leaf centroids) predict 2 to 4 times worse than
+    the own leaf when every input is in units of its spread over the stream.
+    In units of the spread of the own leaf's points, and with the other
+    leaves used only where they agree with the own leaf within 5 sigma, the
+    vote lowered the error by 8% on two seeds with no run worse, at 3.4
+    leaves per query. A GP on the 100 nearest points with the own leaf's
+    hyperparameters gained 13% under the same test and was worse in 5 to 9
+    of the runs of a seed.
+
+  Not pursued: the gains do not pay for several leaves per query.
+* **Merging a removed leaf and its sibling back into their parent**, with the
+  parent's points and hyperparameters as they were at the split. On four
+  40 000-point runs the error was 11 to 49% higher than with plain removal and
+  the tree split 31 to 140% more often: the restored parent is full and splits
+  again at its next point, and it has lost the points that arrived after the
+  split. With gradual splitting the sibling already holds about 80 of the
+  parent's 100 points. A variant that kept the pair's newest points was within
+  the seed-to-seed spread of plain removal.
 
 ## Known limitations
 
@@ -97,13 +254,42 @@ Two global models ship:
   regions the stream has not visited the coverage of every configuration falls
   to 0.1 to 0.5, and a tree with a global model is more accurate there without
   its sigma growing accordingly.
+* **A leaf predicts beyond its own points.** The leaves at the edge of the
+  explored region own everything beyond it. On a sweeping stream 27% of the
+  queries lie more than 2 standard deviations from the mean of their leaf's
+  fitted points, along some input, and carry 81% of the squared error; the
+  sigma covers 0.60 of them, and 0.44 of those beyond 7 (`docs/benchmarks.md`,
+  section 7.5). Appended points shorten the time a leaf extrapolates, and
+  the sigma that grows with the distance then covers 0.70 to 0.78 of them.
+  No rule was found for another leaf to predict in its place.
+* **The errors have heavier tails than the sigma says.** Over 140 runs 2.2%
+  of the predictions are off by more than 5 sigma and 0.8% by more than 10,
+  and the five largest of 5000 errors carry 23% of the squared error of the
+  median run. Near a leaf's points the sigma that grows with the distance
+  changes nothing: 2.5% of the predictions within a distance of 2 are off by
+  more than 5 sigma.
+* **GPyTorch leaves take no appended points.** The adapter cannot extend a
+  fit, so a point enters the GPs with the leaf's next fit.
 * **The network lags at the front of a moving stream**, since it refits only
   when the point count doubles. The leaves correct most of this.
+* **Regions the tree has forgotten.** Under a memory limit, a prediction in a
+  region whose leaves were removed is the extrapolation of a neighbouring
+  leaf, on top of the global model if there is one. Its sigma is too small in
+  the same way as far from the data.
+* **GPyTorch leaves do not sleep.** The adapter cannot release and restore a
+  fit, so a memory limit is met by removing leaves only.
 * **Calibration after a new network version.** Coverage can dip for a batch
   until the per-leaf calibration catches up with the shifted residual.
 
 ## Open ideas
 
+* **Thinning sleeping leaves before removing them.** A leaf reduced to its 50
+  most informative points (chosen one by one for the largest remaining GP
+  variance, hyperparameters kept) had 1.2 times the error of the full leaf in
+  a one-step test, and 1.6 times with 25 points. Keeping the hyperparameters
+  was better than fitting them again to the remaining points, and the
+  calibration has to be redone, for which the discarded points are a held-out
+  set.
 * **Bagged networks for the off-stream sigma.** The spread of a few networks
   trained on resampled points is an uncertainty about the global model that
   grows away from the data (Lakshminarayanan et al. 2017; Osband et al. 2023

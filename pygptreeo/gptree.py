@@ -6,6 +6,7 @@ adapts to incoming data by splitting nodes and training local GP models.
 
 The GPTree manages:
     - Dynamic tree growth based on data accumulation
+    - Keeping the tree within a memory limit (sleeping and removed leaves)
     - Routing of data points to appropriate leaf nodes
     - Prediction aggregation across multiple leaf nodes
     - Training coordination for all GP models
@@ -15,6 +16,8 @@ arrives sequentially and the model needs to adapt continuously.
 """
 
 # Standard library imports
+import logging
+from collections import OrderedDict, deque
 from copy import deepcopy
 from typing import Callable, Optional, Type, Union
 
@@ -26,10 +29,22 @@ from tqdm import tqdm
 
 # Local imports
 from pygptreeo.default_gpr import Default_GPR
-from pygptreeo.gpnode import GPNode
+from pygptreeo.gpnode import GPNode, TARGET_COVERAGE
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
+
+logger = logging.getLogger(__name__)
+
+# The accounting of GPTree(max_memory_mb=...)
+NODE_OVERHEAD_BYTES = 10000   # the objects of a leaf and of one inner node, besides their arrays
+GPR_OVERHEAD_BYTES = 10000    # the objects of one GP of a leaf, besides its arrays
+FITTED_SHARE = 0.5            # share of the leaves' memory that the GPs awake may take when leaves are removed
+
+# The sigma of GPTree(widen_sigma_with_distance=True)
+SIGMA_DISTANCE_START = 2.0    # sigma grows from this distance from a leaf's fitted points, in their standard deviations
+SIGMA_DISTANCE_WINDOW = 200   # the growth is learned from the last predictions beyond it, this many
+SIGMA_DISTANCE_MIN = 20       # and there is none before this many
 
 
 class GPTree:
@@ -59,6 +74,13 @@ class GPTree:
             Automatically determined from the first data point.
         first_point (bool): A flag indicating if the next point to be processed
             is the first one. Used for initial setup like determining n_features.
+        append_points_between_fits (bool): Whether a point a leaf receives
+            between two of its fits is added to its fitted GPs at once.
+        widen_sigma_with_distance (bool): Whether sigma grows with the distance
+            of a query from the fitted points of its leaf.
+        max_memory_mb (Optional[float]): The memory the tree stays within, in MB,
+            or None for no limit.
+        memory_mb (float): The tree's estimate of its own size, in MB.
 
     Methods:
         fit(X_train, y_train, show_progress=False, shuffle=True, forward_GPR_to_next_leaf=False):
@@ -90,6 +112,9 @@ class GPTree:
                  output_basis_reservoir_size: int = 2000,
                  global_mean: Union[None, str, GlobalMeanLearner] = None,
                  global_mean_kwargs: Optional[dict] = None,
+                 max_memory_mb: Optional[float] = None,
+                 append_points_between_fits: bool = True,
+                 widen_sigma_with_distance: bool = True,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -170,6 +195,37 @@ class GPTree:
             global_mean_kwargs (Optional[dict]): Keyword arguments for the built-in
                 learner when ``global_mean`` is given as a string (e.g.
                 ``dict(reservoir_size=300, n_restarts_optimizer=1)``).
+            max_memory_mb (Optional[float]): The memory the tree stays within,
+                in MB (10^6 bytes), by its own estimate (``memory_mb``): the
+                points and fitted GPs of its leaves, a fixed amount per leaf,
+                and the global model and output basis at their full size. At
+                the limit the tree first puts leaves to sleep, the one whose
+                GPs were unused for the longest time first: the GPs release
+                their Cholesky factors and compute them again when the leaf
+                is next used, so no prediction changes. Once the GPs that are
+                awake take less than half of the memory left for the leaves,
+                the tree instead removes the leaf that has gone longest
+                without a point, with its points and GPs, and the leaf's
+                sibling takes over the parent's region. A prediction never
+                removes a leaf. Leaves only sleep with a GP backend that can
+                release and restore a fit (the scikit-learn adapter); with
+                another one they are only removed. Defaults to None (no limit).
+            append_points_between_fits (bool): If True (default), a point a
+                leaf receives between two of its fits is added to its fitted
+                GPs at once, with the hyperparameters and the scaling of the
+                last fit kept (``GPNode.append_point``). If False, a point
+                enters the GPs with the leaf's next fit. This is also the case
+                with a GP backend that cannot append a point (only the
+                scikit-learn adapter can).
+            widen_sigma_with_distance (bool): If True (default), the
+                calibrated sigma of a query that lies more than 2 standard
+                deviations from the mean of its leaf's fitted points, along
+                some input, is multiplied by 1 + slope * (distance - 2). The
+                slope is one number for the tree, set so that sigma covers
+                the errors of its latest predictions at such distances. This
+                is for a leaf that predicts beyond its own points. The
+                predictions themselves do not change. Without
+                `use_calibrated_sigma` it has no effect.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -206,6 +262,12 @@ class GPTree:
         # Tree-wide global model (None by default; shared by reference with every node)
         self.global_mean = make_global_mean(global_mean, **(global_mean_kwargs or {}))
 
+        self.append_points_between_fits = append_points_between_fits
+        self.widen_sigma_with_distance = widen_sigma_with_distance
+        # The last predictions beyond SIGMA_DISTANCE_START: (error in units of sigma, distance beyond), and the slope in use
+        self._distance_errors = deque(maxlen=SIGMA_DISTANCE_WINDOW)
+        self._sigma_slope = 0.0
+
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
                           output_model=output_model, output_basis=self.output_basis,
@@ -219,6 +281,18 @@ class GPTree:
         self.use_calibrated_sigma = use_calibrated_sigma
 
         self.max_n_pred_leaves = max_n_pred_leaves
+
+        if max_memory_mb is not None and max_memory_mb <= 0:
+            raise ValueError("max_memory_mb must be positive")
+        self.max_memory_mb = max_memory_mb
+        # Under a limit: the leaves with their size, least recently reached by a
+        # point first, and those with fitted GPs that are awake, with the size of
+        # what the GPs hold, least recently used first.
+        self._leaves = OrderedDict()
+        self._fitted = OrderedDict()
+        self._leaf_bytes = 0
+        self._fitted_bytes = 0
+        self._fixed_bytes = None    # global model and output basis; known at the first point
 
         self.aggregation = aggregation
 
@@ -238,7 +312,8 @@ class GPTree:
         on its buffer conditions (e.g., `retrain_every_n_points`) or if it becomes
         full. If the node's capacity `Nbar` is reached, it splits into two
         child nodes, its data is partitioned, and its own GPR and data are
-        typically deleted to save memory.
+        typically deleted to save memory. With `max_memory_mb` set, the tree
+        is brought back within the limit at the end.
 
         Args:
             x (np.ndarray): The new input data point (features), expected as a
@@ -259,6 +334,8 @@ class GPTree:
         if self.first_point:
             self.n_features = x.size
             self.root.init_data_set(self.n_features)
+            if self.max_memory_mb is not None:
+                self._start_accounting()
             self.first_point = False
 
         # The tree-global output basis ('pca') and the global model see every observation
@@ -273,33 +350,35 @@ class GPTree:
         node = self.root
         while not node.is_leaf:
             node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
+        # A sleeping leaf is woken before the point is stored, so that the
+        # prediction registered below is one made without the point
+        node.wake()
 
         # Check if this point should be merged with a nearby point (updates existing point in-place)
         if node.should_merge_point(x, y, sigma):
             # Point was merged with existing point, don't add as new point
             # Still register prediction performance and update sigma scaler
-            node.register_pred_perf(x, y, only_if_fitted=not allow_training)
-            if self.use_calibrated_sigma:
-                node.update_sigma_scaler()
+            self._register_prediction(node, x, y, allow_training)
+            self._after_update(node)
             return
 
         # Check if this point should be rejected (if well-predicted by current GP)
         if node.should_reject_point(x, y):
             # Point is well-predicted, don't store it
+            self._after_update(node)
             return
 
         # Add new point and register prediction performance. Without training, a node
         # that has no fitted GP stays at its prior, which says nothing about the fitted GP.
         node.store_point(x, y, sigma, remove_shared=True)
-        node.register_pred_perf(x, y, only_if_fitted=not allow_training)
-
-        # Update the uncertainty scaler for this node?
-        if self.use_calibrated_sigma:
-            node.update_sigma_scaler()
+        self._register_prediction(node, x, y, allow_training)
 
         # Retrain GP? The node will decide based Nbar and/or its buffer of training points
         if allow_training:
             did_retrain = node.fit_my_GPR()
+            # Between two fits the point is added to the fitted GPs as they are
+            if self.append_points_between_fits and not did_retrain:
+                node.append_point(x, y, sigma)
 
         # If the node is full, generate child nodes
         if node.n_points >= node.Nbar:
@@ -345,6 +424,142 @@ class GPTree:
             # GP and training data of non-leaf nodes is not needed
             node.delete_data(delete_own_data=True, delete_shared_data=True)
             node.delete_my_GPR()
+
+        self._after_update(node)
+
+
+    @property
+    def memory_mb(self):
+        """The tree's estimate of its own size in MB (10^6 bytes): the arrays of
+        its leaves' points and GPs, a fixed amount per leaf and per GP for their
+        other objects, and the global model and output basis at their full size."""
+        if self.first_point:
+            return 0.0
+        if self.max_memory_mb is not None:
+            return self._memory() / 1e6
+        return (self._fixed_size() + sum(self._leaf_size(leaf)[0] for leaf in self.root.leaves)) / 1e6
+
+
+    def _fixed_size(self):
+        """Bytes of the global model and the output basis once their samples are full."""
+        size = 0
+        if self.global_mean is not None:
+            size += self.global_mean.max_nbytes(self.n_features, self.n_outputs)
+        if self.output_basis is not None:
+            size += self.output_basis.max_nbytes()
+        return size
+
+
+    @staticmethod
+    def _leaf_size(leaf: GPNode):
+        """Bytes of a leaf, and those of them that its GPs hold from their fits."""
+        fitted = leaf.nbytes_fitted()
+        return leaf.nbytes_points() + fitted + NODE_OVERHEAD_BYTES + GPR_OVERHEAD_BYTES * len(leaf.my_GPRs), fitted
+
+
+    def _memory(self):
+        return self._fixed_bytes + self._leaf_bytes
+
+
+    def _start_accounting(self):
+        self._fixed_bytes = self._fixed_size()
+        if self._fixed_bytes == float('inf'):
+            raise ValueError("max_memory_mb needs a global model of a fixed size, and this one keeps every "
+                             "point of the stream: give it a reservoir_size and a store_size")
+        if self._fixed_bytes >= 1e6 * self.max_memory_mb:
+            raise ValueError(f"max_memory_mb={self.max_memory_mb} is less than the {self._fixed_bytes / 1e6:.3g} MB of the "
+                             "global model and output basis alone: raise it, or reduce their reservoir_size")
+        self._account(self.root, updated=True)
+
+
+    def _account(self, leaf: GPNode, updated=False):
+        """Record the current size of `leaf` and mark its GPs as the most recently
+        used; with `updated`, also mark the leaf as the last one a point reached."""
+        size, fitted = self._leaf_size(leaf)
+        self._leaf_bytes += size - self._leaves.get(leaf, 0)
+        self._leaves[leaf] = size
+        if updated:
+            self._leaves.move_to_end(leaf)
+        self._fitted_bytes -= self._fitted.pop(leaf, 0)
+        if fitted and not leaf.asleep:
+            self._fitted[leaf] = fitted
+            self._fitted_bytes += fitted
+
+
+    def _forget(self, node: GPNode):
+        """Take a node that is no longer a leaf of the tree out of the accounts."""
+        self._leaf_bytes -= self._leaves.pop(node)
+        self._fitted_bytes -= self._fitted.pop(node, 0)
+
+
+    def _after_update(self, node: GPNode):
+        """Account for the leaf a point went to, or the two it was split into, and
+        bring the tree back within its memory limit."""
+        if self.max_memory_mb is None:
+            return
+        if node.is_leaf:
+            self._account(node, updated=True)
+        else:
+            self._forget(node)
+            for child in node.children:
+                self._account(child, updated=True)
+        self._enforce_memory_limit(remove=True)
+
+
+    def _enforce_memory_limit(self, remove: bool):
+        """Put the leaves whose GPs were unused for the longest time to sleep until
+        the tree is within its limit. With `remove`, once the GPs awake take less
+        than `FITTED_SHARE` of the leaves' memory, remove the leaves that have
+        gone longest without a point instead."""
+        limit = 1e6 * self.max_memory_mb
+        for_fitted = FITTED_SHARE * (limit - self._fixed_bytes)
+        while self._memory() > limit:
+            if self._fitted_bytes > for_fitted or not remove or len(self._leaves) == 1:
+                # The least recently used leaf whose GPs can release part of their fit
+                asleep = next((leaf for leaf in self._fitted if leaf.sleep()), None)
+                if asleep is not None:
+                    self._account(asleep)
+                    logger.debug("Leaf %s put to sleep", asleep.name)
+                    continue
+            if not remove:
+                return
+            if len(self._leaves) == 1:
+                raise ValueError(f"max_memory_mb={self.max_memory_mb} is too small for a single leaf")
+            stalest = next(iter(self._leaves))
+            self._forget(stalest)
+            self._collapse_leaf(stalest)
+
+
+    def _collapse_leaf(self, leaf: GPNode):
+        """Remove `leaf` with its points and GP. Its sibling, a leaf or a subtree,
+        takes the parent's place in the tree and so covers the parent's region."""
+        parent = leaf.parent
+        sibling = parent.right if leaf.is_left else parent.left
+        grandparent = parent.parent
+        logger.debug("Removed leaf %s", leaf.name)
+
+        sibling.parent = grandparent
+        sibling.is_left = parent.is_left
+        sibling.parent_split_index = parent.parent_split_index
+        sibling.parent_split_position = parent.parent_split_position
+        if grandparent is None:
+            self.root = sibling
+        elif parent.is_left:
+            grandparent.left = grandparent.children[0] = sibling
+        else:
+            grandparent.right = grandparent.children[1] = sibling
+
+        # A node's name is its path from the root
+        to_rename = [(sibling, parent.name)]
+        while to_rename:
+            node, name = to_rename.pop()
+            node.name = name
+            if not node.is_leaf:
+                to_rename += [(node.left, name + "0"), (node.right, name + "1")]
+
+        # Without these links the removed nodes are freed at once
+        parent.left = parent.right = parent.children = None
+        parent.parent = leaf.parent = None
 
 
     def fit(self, X_train: np.ndarray, y_train: np.ndarray, sigma_train: np.ndarray,
@@ -414,6 +629,9 @@ class GPTree:
         # Train all the leaves
         for i, leaf in tqdm(enumerate(self.root.leaves), total=len(self.root.leaves), disable=not show_progress, desc="Training"):
             leaf.fit_my_GPR(force_training=True)
+            if self.max_memory_mb is not None:
+                self._account(leaf)
+                self._enforce_memory_limit(remove=False)
             # No prediction of a fitted GP was registered: sigma is the GP's own
             if leaf.residuals_list[0].shape[0] == 0:
                 leaf.clear_pred_perf()
@@ -422,8 +640,42 @@ class GPTree:
                 self.root.leaves[i+1].my_GPRs[0] = deepcopy(leaf.my_GPRs[0])
                 if self.n_outputs == 1:
                     self.root.leaves[i+1].my_GPR = self.root.leaves[i+1].my_GPRs[0]
+        if self.max_memory_mb is not None:
+            self._enforce_memory_limit(remove=True)   # sleeping leaves keep the training data of their GPs
                 
                 
+    def _register_prediction(self, node: GPNode, x: np.ndarray, y, allow_training: bool):
+        """Register how the node predicted the point before it was fitted to it: for
+        the node's sigma scaler and, beyond SIGMA_DISTANCE_START, for the slope
+        of sigma with the distance from the node's fitted points."""
+        errors = node.register_pred_perf(x, y, only_if_fitted=not allow_training)
+        if not self.use_calibrated_sigma:
+            return
+        if self.widen_sigma_with_distance and errors is not None:
+            beyond = node.distance_from_fit(x)[0] - SIGMA_DISTANCE_START
+            if beyond > 0.0:
+                self._distance_errors.append((float(np.mean(errors)), beyond))
+                if len(self._distance_errors) >= SIGMA_DISTANCE_MIN:
+                    # the slope with which sigma covers these errors at their mean distance
+                    error, distance = np.array(self._distance_errors).T
+                    self._sigma_slope = max(0.0, (np.quantile(error, TARGET_COVERAGE) - 1.0) / distance.mean())
+        node.update_sigma_scaler()
+
+
+    def _predict_leaf(self, leaf: GPNode, x: np.ndarray):
+        """The prediction of one leaf, with a sigma that grows with the distance from
+        the leaf's fitted points. Under a memory limit this counts as a use of the
+        leaf's GPs, and if the leaf had to be woken another one is put to sleep."""
+        mu, sigma = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+        if self._sigma_slope > 0.0:
+            beyond = np.maximum(leaf.distance_from_fit(x) - SIGMA_DISTANCE_START, 0.0)
+            sigma = sigma * (1.0 + self._sigma_slope * beyond)[:, None]
+        if self.max_memory_mb is not None and not self.first_point:
+            self._account(leaf)
+            self._enforce_memory_limit(remove=False)
+        return mu, sigma
+
+
     def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False, return_leaf_names: Optional[bool]=False):
         """ 
         A predict function that uses a recursive function to collect contributing leaves.
@@ -547,7 +799,7 @@ class GPTree:
 
                 for leaf, ptilde in zip(leaves, pred_leaf_probs):
 
-                    mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+                    mu_leaf, sigma_leaf = self._predict_leaf(leaf, x)
                     # mu_leaf and sigma_leaf have shape (1, n_outputs)
 
                     mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
@@ -563,7 +815,7 @@ class GPTree:
                 vars_ = []
                 betas = pred_leaf_probs
                 for leaf, ptilde in zip(leaves, pred_leaf_probs):
-                    mu_leaf, sigma_leaf = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+                    mu_leaf, sigma_leaf = self._predict_leaf(leaf, x)
                     # mu_leaf and sigma_leaf have shape (1, n_outputs)
                     mus.append(mu_leaf[0, :])
                     vars_.append(sigma_leaf[0, :]**2)
@@ -630,7 +882,7 @@ class GPTree:
             if not np.any(mask):
                 continue
 
-            mu_leaf, sigma_leaf = leaf.predict(X_test[mask], return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+            mu_leaf, sigma_leaf = self._predict_leaf(leaf, X_test[mask])
             # mu_leaf and sigma_leaf have shape (n_masked, n_outputs)
 
             # Broadcast ptilde to match shape (n_masked, n_outputs)
@@ -649,7 +901,7 @@ class GPTree:
             ptilde = leaf.marg_prob(X_test)
             ptilde = ptilde.reshape(mean_DLGP.shape)
 
-            mu_leaf, sigma_leaf = leaf.predict(X_test, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
+            mu_leaf, sigma_leaf = self._predict_leaf(leaf, X_test)
             res.append((mu_leaf, sigma_leaf, ptilde))
         return res
     

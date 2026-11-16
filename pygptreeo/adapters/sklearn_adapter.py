@@ -10,7 +10,7 @@ from typing import Union, Tuple
 import numpy as np
 from copy import deepcopy
 
-from scipy.linalg import solve_triangular
+from scipy.linalg import cho_solve, cholesky, solve_triangular
 from sklearn.gaussian_process import GaussianProcessRegressor
 
 from ..gp_interface import GPRegressorInterface
@@ -268,6 +268,56 @@ class SklearnGPAdapter(GPRegressorInterface):
             sk.fit(X, y)
         finally:
             sk.optimizer, sk.kernel = optimizer, kernel
+        return True
+
+    def append(self, x: np.ndarray, y, noise: float) -> bool:
+        """One more row for the Cholesky factor: the factor of the kernel matrix
+        with the new point is the old one with a row ``[l, lam]`` below it."""
+        sk = self._gpr
+        if not hasattr(sk, 'L_'):
+            return False
+        n = sk.X_train_.shape[0]
+        x = np.asarray(x, dtype=float).reshape(1, -1)
+        l = solve_triangular(sk.L_, sk.kernel_(sk.X_train_, x)[:, 0], lower=True, check_finite=False)
+        lam2 = sk.kernel_.diag(x)[0] + noise - l @ l
+        if not lam2 > 0.0:
+            return False                  # the factor cannot tell the point from those it has
+        L = np.zeros((n + 1, n + 1))
+        L[:n, :n] = sk.L_
+        L[n, :n] = l
+        L[n, n] = np.sqrt(lam2)
+        y = np.asarray(y, dtype=float).reshape((1,) + sk.y_train_.shape[1:])
+        if sk.normalize_y:
+            y = (y - sk._y_train_mean) / sk._y_train_std
+        sk.X_train_ = np.vstack((sk.X_train_, x))
+        sk.y_train_ = np.concatenate((sk.y_train_, y))
+        sk.alpha = np.append(np.broadcast_to(sk.alpha, (n,)), noise)
+        sk.L_ = L
+        sk.alpha_ = cho_solve((L, True), sk.y_train_, check_finite=False)
+        return True
+
+    def nbytes(self) -> int:
+        """Size of the training data and the Cholesky factor that a fit stores."""
+        return sum(getattr(self._gpr, name).nbytes for name in ('X_train_', 'y_train_', 'L_', 'alpha_')
+                   if hasattr(self._gpr, name))
+
+    def release(self) -> bool:
+        """Free the Cholesky factor and the weights. The training data, the noise
+        and the fitted kernel stay, and determine them."""
+        if not hasattr(self._gpr, 'L_'):
+            return False
+        del self._gpr.L_, self._gpr.alpha_
+        return True
+
+    def restore(self) -> bool:
+        """The factor and the weights as scikit-learn's ``fit`` computes them."""
+        sk = self._gpr
+        if hasattr(sk, 'L_') or not hasattr(sk, 'X_train_'):
+            return False
+        K = sk.kernel_(sk.X_train_)
+        K[np.diag_indices_from(K)] += sk.alpha
+        sk.L_ = cholesky(K, lower=True, check_finite=False)
+        sk.alpha_ = cho_solve((sk.L_, True), sk.y_train_, check_finite=False)
         return True
 
     # Provide access to the underlying scikit-learn GPR for advanced users

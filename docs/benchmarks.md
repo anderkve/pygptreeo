@@ -14,14 +14,21 @@ Conventions:
   retrain_every_n_points=25, splitting_strategy='gradual')` with the default
   ARD Matérn 3/2 leaves and one optimiser restart, and each point's declared
   noise is `1e-3 |y|`.
-* Run times predate the speed-ups of commit `575531e` (the leaf prediction and
-  the L-BFGS phase of the network refit) and were not measured again.
+* Run times in sections 1 to 5 predate the speed-ups of commit `575531e` (the
+  leaf prediction and the L-BFGS phase of the network refit) and were not
+  measured again.
+* Sections 1 to 6 were measured with `append_points_between_fits=False`,
+  before the tree appended points between fits (section 7).
+* Every coverage but those of the second table of section 7.5 was measured
+  with `widen_sigma_with_distance=False`, before the sigma grew with the
+  distance from a leaf's points.
 
 The scripts and raw records that produced these numbers were removed from the
 repository; they are in its history up to commit `cd27934`
 (`examples/benchmark_*.py`, `examples/compare_tree_vs_hybrid.py`,
 `examples/results/`). `examples/streaming_performance.py` runs the same kind of
-comparison on one stream.
+comparison on one stream. Sections 6 and 7 were measured later, with scripts
+that are not in the repository.
 
 ## 1. Split-dimension criterion
 
@@ -200,9 +207,10 @@ Seconds per run, plain tree and hybrid side by side under the same load:
 So 1.5 to 1.6 times the plain tree on the long runs. A refit of the network
 has a fixed length, and refits come at each doubling of the point count, so
 their share falls along a stream. A prediction takes 1.1 to 1.2 ms on average
-against 0.8 to 0.9 ms for the plain tree. The store of every point seen costs
+against 0.8 to 0.9 ms for the plain tree. The store of the Adam phase costs
 `d + 2` floats per point, about 5% of the tree's own footprint (1.3 kB per
-point at `Nbar=100` in 6D).
+point at `Nbar=100` in 6D), and holds at most `store_size` points (100 000 by
+default).
 
 ### 4.4 Leaf kernel, `Nbar`, retrain interval and splitting
 
@@ -265,3 +273,316 @@ which visits only the leaves a point can belong to) cost the same at 1460
 leaves as at 17. Batch prediction in `mode='loop'` calls every leaf once and
 grows with the number of leaves; on a long stream predict with the default
 mode. The hybrid in its shipped form was not run on this benchmark.
+
+## 6. A memory limit (`max_memory_mb`)
+
+`GaussianPeaks` in six dimensions, 40 000 points, plain tree, means of three
+seeds. NRMSE and coverage are prequential, over the last 10 000 predictions.
+"Left behind" is the NRMSE and coverage, at the end of the stream, of 2000
+points of its first quarter. The sweeping stream does not come back to a region
+it has left; the walker keeps returning to the same peaks. The tree without a
+limit takes 66 to 68 MB by its own estimate, and the limits of 34.1, 11.4 and
+3.4 MB are what 300, 100 and 30 fitted leaves take. "Removal only" is the same
+tree with no leaf ever put to sleep (`FITTED_SHARE` above 1), which is what a
+GP backend that cannot release a fit gives.
+
+| stream | limit MB | at the limit | leaves (asleep) | points kept | NRMSE | coverage | left behind: NRMSE / coverage |
+|---|---|---|---|---|---|---|---|
+| walker | none | | 585 | 40 000 | 0.0119 | 0.67 | 0.0001 / 1.00 |
+| walker | 34.1 | sleep | 568 (371) | 38 897 | 0.0120 | 0.67 | 0.0068 / 0.99 |
+| walker | 34.1 | removal only | 302 | 20 654 | 0.0198 | 0.66 | 0.0275 / 0.77 |
+| walker | 11.4 | sleep | 192 (127) | 13 393 | 0.0244 | 0.67 | 0.0317 / 0.70 |
+| walker | 11.4 | removal only | 101 | 6814 | 0.0290 | 0.67 | 0.0419 / 0.65 |
+| walker | 3.4 | sleep | 58 (39) | 3869 | 0.0354 | 0.67 | 0.0472 / 0.68 |
+| walker | 3.4 | removal only | 30 | 2091 | 0.0464 | 0.66 | 0.0589 / 0.66 |
+| sweeping | none | | 598 | 40 000 | 0.0168 | 0.67 | 0.0026 / 0.97 |
+| sweeping | 34.1 | sleep | 568 (371) | 38 048 | 0.0168 | 0.67 | 0.0082 / 0.90 |
+| sweeping | 34.1 | removal only | 302 | 20 494 | 0.0097 | 0.66 | 0.134 / 0.36 |
+| sweeping | 11.4 | sleep | 192 (127) | 13 231 | 0.0110 | 0.66 | 0.238 / 0.59 |
+| sweeping | 11.4 | removal only | 101 | 6955 | 0.0088 | 0.66 | 0.312 / 0.16 |
+| sweeping | 3.4 | sleep | 58 (39) | 4002 | 0.0080 | 0.66 | 0.195 / 0.62 |
+| sweeping | 3.4 | removal only | 30 | 2100 | 0.0081 | 0.66 | 0.293 / 0.20 |
+
+* **Sleeping leaves fit 1.9 times as many leaves and points into a limit**:
+  568 against 302 leaves at 34.1 MB, with two thirds of them asleep.
+* **With half the memory of the unlimited tree the walker loses nothing.** At
+  34.1 MB its error is that of the unlimited tree in every seed, where removal
+  alone gives 1.7 times that error. At 11.4 and 3.4 MB the error with sleeping
+  leaves is 16 and 24% below that of removal alone, and it is lower in all
+  nine pairs of runs.
+* **The sweeping stream gains from forgetting, and sleeping leaves forget
+  less.** Removal alone lowers the error on this stream by 42 to 52%, at the
+  same median error (0.0012 of the range). With sleeping leaves the
+  error is that of the unlimited tree at 34.1 MB, 25% above removal alone at
+  11.4 MB and the same at 3.4 MB.
+* **What forgetting removes on the sweeping stream are predictions by leaves
+  whose points lie elsewhere** (one seed). In the unlimited tree 0.7% of the
+  predictions are made by a leaf whose tenth nearest point is more than three
+  cluster widths from the point predicted, and they make two thirds of the
+  squared error. The stream keeps entering territory that belongs to the open
+  side of the region of a leaf it left long ago. Once such a leaf is removed
+  its territory falls to a leaf with recent points: with removal alone at
+  11.4 MB the squared error is three times smaller, and no prediction is made
+  from beyond four widths. Where the tenth nearest point is within two widths,
+  91% of the predictions, the error is the same with and without a limit
+  (0.0046 to 0.0049). On the walker no prediction of the unlimited tree is
+  made from beyond four widths, although 99% of them are made by leaves whose
+  points are mostly more than 4000 updates old.
+* **The regions left behind are remembered for longer.** With sleeping leaves
+  the error there is 16 times lower at 34.1 MB on the sweeping stream and 4
+  times lower on the walker, and 1.2 to 1.5 times lower at the two smaller
+  limits. Its coverage is 0.59 to 0.99 against 0.16 to 0.77.
+* **The on-stream coverage holds** at 0.66 to 0.67 for every limit.
+* **Waking a leaf is cheap.** On the walker a leaf is woken for 0.12 to 0.20
+  of the points, and the mean time of a prediction rises from 0.26 to 0.31 ms
+  to 0.31 to 0.39 ms. The sweeping stream at 3.4 MB wakes a leaf for half of
+  the points, at 0.50 ms per prediction against 0.29 ms. The update takes 2.2
+  to 2.4 ms in every run.
+* **The tree's estimate of its size holds.** With every 3000 points of a
+  walker stream, the estimate (`memory_mb`) was between 0.98 and 1.05 times the
+  memory that Python had allocated since the tree was created (`tracemalloc`),
+  for `Nbar` of 50, 100 and 200, one and three outputs, without a limit and
+  with limits that put leaves to sleep and remove them. In separate processes
+  the resident memory grew by at most 6% more than the limit, and stayed there
+  over the last 24 000 of 48 000 points.
+
+The hybrid on the same streams (`steps_per_update=1`, one seed), with a limit
+of 218.3 MB: the 206.9 MB of the network's reservoir, store and weights, and
+the 11.4 MB of the table above for the leaves.
+
+| stream | at the limit | leaves (asleep) | NRMSE | coverage | left behind: NRMSE / coverage |
+|---|---|---|---|---|---|
+| walker | no limit | 589 | 0.0014 | 0.68 | 0.0002 / 0.88 |
+| walker | sleep | 192 (127) | 0.0016 | 0.68 | 0.0011 / 0.61 |
+| walker | removal only | 101 | 0.0018 | 0.68 | 0.0013 / 0.58 |
+| sweeping | no limit | 597 | 0.0081 | 0.68 | 0.0010 / 1.00 |
+| sweeping | sleep | 192 (127) | 0.0067 | 0.68 | 0.014 / 0.82 |
+| sweeping | removal only | 101 | 0.0062 | 0.69 | 0.042 / 0.25 |
+
+* **The limit costs the hybrid less than the plain tree**: on the walker 1.2
+  times the error without a limit with sleeping leaves and 1.3 times with
+  removal alone, against 2.1 and 2.8 for the plain tree with the same seed and
+  the same memory for its leaves.
+* **The network keeps part of what the leaves forget.** The error in the
+  regions left behind is 28 times (walker) and 14 times (sweeping) lower than
+  that of the plain tree with sleeping leaves. On the sweeping stream the sigma
+  there is too small without sleeping leaves (coverage 0.25).
+
+`examples/streaming_performance.py --max_memory_mb` runs a stream under a limit.
+
+
+## 7. Points appended between fits (`append_points_between_fits`)
+
+"As before" is `append_points_between_fits=False`, the tree of sections 1 to 6.
+
+### 7.1 `GaussianPeaks`
+
+`GaussianPeaks` in six dimensions, 40 000 points, plain tree, prequential NRMSE
+of the last 10 000 predictions, means of three seeds.
+
+| tree | sweeping | walker |
+|---|---|---|
+| as before | 0.0168 | 0.0119 |
+| points appended (the default) | 0.0086 | 0.0092 |
+
+* **The appended points lower the error in all six runs.** The median error
+  falls too, from 0.0012 to 0.0010 of the range on the sweeping stream and
+  from 0.0019 to 0.0015 on the walker. 97% of the points are appended; the
+  others arrive with a fit.
+* **The coverage is 0.66 to 0.67** in every run.
+* **Cost**, means of two seeds and both streams: an update takes 2.15 ms as
+  before and 2.39 ms with the points appended, a prediction 0.30 and 0.33 ms.
+
+One seed each:
+
+| run | as before | points appended |
+|---|---|---|
+| uniform stream | 0.0055 | 0.0051 |
+| focusing stream | 0.0023 | 0.0019 |
+| `RotatedRosenbrock`, d = 6, sweeping | 0.0127 | 0.0070 |
+| `Eggholder`, d = 3, sweeping | 0.0538 | 0.0503 |
+| `Eggholder`, d = 3, walker | 0.0163 | 0.0145 |
+| `retrain_every_n_points=100`, sweeping | 0.0230 | 0.0083 |
+| `retrain_every_n_points=100`, walker | 0.0133 | 0.0099 |
+| hybrid, sweeping | 0.0081 | 0.0069 |
+| hybrid, walker | 0.0014 | 0.0012 |
+| `max_memory_mb=11.4`, sweeping | 0.0128 | 0.0080 |
+| `max_memory_mb=11.4`, walker | 0.0257 | 0.0175 |
+
+* **The appended points lower the error in every run**, by 7% (uniform,
+  `Eggholder` sweeping) to 64%.
+* **With appended points the retrain interval matters little.** A fit every
+  100 points then gives 0.0083 and 0.0099, against 0.0083 and 0.0098 with a
+  fit every 25 points (same seed), at two thirds of the update time.
+* **Under a memory limit the sweeping stream no longer loses to removal
+  alone** (0.0091 in section 6). The appended points make the GPs larger, so
+  the tree holds 185 leaves where it held 192.
+
+### 7.2 The physics targets
+
+The eleven targets of `examples/target_functions_physics.py`, 20 000 points,
+one seed, plain tree. The table gives the NRMSE of the last 5000 predictions
+with the points appended, divided by that of the tree as before.
+
+| target | d | walker | sweeping | uniform | focusing |
+|---|---|---|---|---|---|
+| `dilepton_spectrum` | 4 | 0.91 | 0.51 | 0.94 | 0.93 |
+| `resonance_xsec` | 4 | 0.68 | 0.86 | 0.92 | 0.85 |
+| `jet_spectrum` | 4 | 0.33 | 0.77 | 0.99 | 0.85 |
+| `oscillation_probability` | 5 | 0.65 | 0.84 | 0.85 | 0.94 |
+| `branching_ratio` | 5 | 0.83 | 0.91 | 0.83 | |
+| `loop_decay_width` | 4 | 0.92 | 0.59 | 0.95 | 0.89 |
+| `relic_density` | 4 | 0.94 | 0.92 | 0.92 | 0.92 |
+| `neutralino_mass` | 4 | 0.71 | 0.85 | 0.94 | 0.89 |
+| `eft_signal_strength` | 6 | 0.61 | 0.33 | 0.86 | 0.95 |
+| `signal_yield_mc` | 4 | 0.96 | 0.43 | 0.96 | 0.99 |
+| `global_fit_loglike` | 10 | 0.98 | 0.80 | 0.95 | 0.71 |
+| geometric mean | | 0.74 | 0.68 | 0.92 | 0.89 |
+
+* **The error is lower in all 43 combinations.** `branching_ratio` on the
+  focusing stream has no NRMSE: the target is constant over the last 5000
+  points.
+* **The coverage** changes by at most 0.012.
+* **An update** takes 7% longer on the uniform and focusing streams.
+
+### 7.3 The overlap (`theta`)
+
+`GaussianPeaks` in six dimensions, 20 000 points, one seed, the default tree.
+NRMSE of the last 5000 predictions, with the coverage in brackets.
+
+| `theta` | sweeping | walker | uniform |
+|---|---|---|---|
+| 1e-4 (the default) | 0.0127 (0.66) | 0.0098 (0.68) | 0.0072 (0.68) |
+| 0.05 | 0.0113 (0.73) | 0.0097 (0.77) | 0.0065 (0.73) |
+| 0.2 | 0.0095 (0.87) | 0.0090 (0.92) | 0.0060 (0.88) |
+
+* **A wide overlap lowers the error by 8 to 25%**, on every stream. The sigma
+  of a blend of leaves is then too large, and a prediction takes 0.7 to
+  1.3 ms where it took 0.30 to 0.35 ms.
+* **The gain is in the predictions, not in where the points are stored.**
+  With the points routed at `theta=1e-4` and the queries weighted with an
+  overlap of 0.2, the errors are 0.0108, 0.0088 and 0.0059.
+
+### 7.4 Another leaf than the owner for a prediction (not in the code)
+
+Rules evaluated on recorded predictions: for every query of the last 5000 of
+a run, the prediction of the leaf that owns it and of the leaves it would
+reach beyond each of the five nearest cuts above that leaf (its family), with
+each leaf's distance to the query. 140 runs: the eleven physics targets,
+`GaussianPeaks` and `RotatedRosenbrock` (d = 6) on the four stream types with
+three seeds, 20 000 points, points appended (without the focusing stream for
+seed 3, and without three runs whose target is constant over the last 5000
+points). All numbers are relative to the own leaf always.
+
+| rule | NRMSE | worst run | runs more than 2% better | more than 2% worse | 99% quantile of the error | predictions off by more than 10 sigma |
+|---|---|---|---|---|---|---|
+| the own leaf | 1 | | | | 1 | 0.79% |
+| the family fallback (removed) | 0.98 | 1.35 | 18 | 5 | 0.99 | 0.78% |
+| the leaf with the nearest points, always | 2.2 | 75 | 23 | 111 | | |
+| blend with the neighbour | 0.94 | 4.9 | 117 | 4 | 0.93 | 0.56% |
+| blend, where the two agree within 5 sigma | 0.95 | 1.02 | 96 | 0 | 0.94 | 0.79% |
+
+* **The NRMSE of a run rests on a few queries.** The five largest of the
+  5000 errors of the own leaf carry 23% of the squared error in the median
+  run and 71% in the tenth of the runs where they carry most. 2.2% of its
+  predictions are off by more than 5 sigma, and 94.5% lie within 3 sigma.
+* **The family fallback** (`far_threshold`, removed) gave a query more than 7
+  standard deviations from the mean of its leaf's fitted points, along some
+  input, to the leaf of its family with the nearest points. The threshold
+  was chosen on seed 1, where the error on the walker and the sweeping stream
+  was 0.90 times that of the own leaf, with no run more than 3% worse (4:
+  0.89, with single runs up to 1.53; 5: 0.87, up to 1.26; 10: 0.97). With
+  seeds 2 and 3 it is 1.02 on the walker and 0.96 on the sweeping stream,
+  with single runs from 0.53 to 1.35.
+* **The blend**: the own leaf and the family leaf beyond the nearest cut, with
+  weights `z**-8`, where `z` is the root mean square over the inputs of the
+  query's distance from the mean of a leaf's fitted points in units of their
+  standard deviation. The neighbour's weight is multiplied by 0.3, and it
+  takes part only where its `z` is at most 2. The sigma is the root of the
+  sum of the squared weighted sigmas, with a coverage of 0.70 against 0.71
+  for the own leaf. It predicts with 1.7 leaves per query.
+* **The blend lowers the error in most runs, on every stream type** (0.93 on
+  the uniform and focusing streams, 0.91 on the walker, 0.98 on the sweeping
+  stream), and the largest error of a run in 71 runs, against 6 where it is
+  larger. Its losses are single queries for which the neighbour is wrong by
+  up to 29 times the target's range with a small sigma, close to its own
+  points. The largest error of the own leaf is 2.9 times the range.
+* **The agreement test** uses the blend only where the neighbour's prediction
+  lies within 5 sigma of the own leaf's prediction. No run is then more than
+  2% worse. The predictions off by more than 10 sigma stay: where the two
+  leaves disagree, the test keeps the own leaf.
+* **Distances to a leaf's points in units of the inputs' range** do not rank
+  the leaves: the leaf with the nearest points is the worse one in most runs.
+
+### 7.5 Errors by the distance from the leaf's points
+
+The own leaf's predictions in the 140 runs of section 7.4, by the far score of
+the query: its distance from the mean of the leaf's fitted points in units of
+their standard deviation, the largest over the inputs. Means over the 39 runs
+of a stream type. On the uniform stream 99.5% of the queries are below 2.
+
+| far score | sweeping: queries | squared error | off by more than 5 sigma | within 1 sigma | walker: queries | squared error | off by more than 5 sigma | within 1 sigma |
+|---|---|---|---|---|---|---|---|---|
+| below 2 | 73% | 19% | 1.9% | 0.75 | 86% | 39% | 1.9% | 0.74 |
+| 2 to 4 | 25% | 43% | 4.7% | 0.60 | 14% | 43% | 5.0% | 0.60 |
+| 4 to 7 | 1.2% | 25% | 11% | 0.49 | 0.7% | 13% | 14% | 0.49 |
+| above 7 | 0.3% | 13% | 16% | 0.44 | 0.1% | 5% | 13% | 0.39 |
+
+* **On a stream that moves, most of the squared error is just outside the
+  leaf's points.** 27% of the queries of the sweeping stream have a far score
+  above 2 and carry 81% of the squared error, and the sigma covers fewer of
+  them the farther they are.
+
+The sigma with `widen_sigma_with_distance` (the default) against the sigma
+without it, for the same predictions: the thirteen targets with another seed,
+20 000 points. Each cell is without it, then with it.
+
+| far score | sweeping: within 1 sigma | off by more than 5 sigma | walker: within 1 sigma | off by more than 5 sigma |
+|---|---|---|---|---|
+| below 2 | 0.75, 0.75 | 2.5%, 2.5% | 0.74, 0.74 | 2.5%, 2.5% |
+| 2 to 4 | 0.60, 0.70 | 5.1%, 3.0% | 0.60, 0.69 | 5.5%, 3.6% |
+| 4 to 7 | 0.46, 0.71 | 14%, 7.3% | 0.50, 0.76 | 14%, 2.7% |
+| above 7 | 0.53, 0.78 | 15%, 10% | | |
+| all queries | 0.70, 0.73 | 3.3%, 2.7% | 0.72, 0.73 | 2.9%, 2.6% |
+
+* **The sigma grows by 10% on average on the sweeping stream and 5% on the
+  walker**, all of it for the queries beyond 2. The slope at the end of a run
+  is 0.9 on the sweeping stream and 0.7 on the walker (medians; at most 2.3
+  and 5.5).
+* **On the uniform stream** 0.5% of the queries are beyond 2, and the sigma
+  grows by 0.2% on average. The slope is larger there (median 5.9, at most
+  16), since it is learned from queries just beyond 2; 0.63 of these are
+  then within 1 sigma, against 0.57.
+* **A factor per band of the far score** in place of the one slope gives
+  0.72, 0.62 and 0.67 within 1 sigma in the three bands above 2 on the
+  sweeping stream, and 2.6% off by more than 5 sigma.
+
+### 7.6 Points beyond a leaf's cuts (not in the code)
+
+`GaussianPeaks`, `branching_ratio` and `loop_decay_width` on three stream types
+with two seeds, 20 000 points, points appended. The NRMSE of the last 5000
+predictions relative to the default tree, as geometric means; every query is
+predicted by one leaf, chosen by the cuts without overlap.
+
+| change | uniform | walker | sweeping | all runs (range) | runs more than 2% worse |
+|---|---|---|---|---|---|
+| points stored with an overlap of 0.05 | 0.96 | 1.00 | 0.94 | 0.97 (0.86 to 1.12) | 3 of 18 |
+| points stored with an overlap of 0.2 | 0.99 | 1.04 | 0.90 | 0.98 (0.80 to 1.13) | 7 of 18 |
+| points stored with an overlap of 0.5 | 1.46 | 1.47 | 0.95 | 1.27 (0.77 to 2.00) | 7 of 9 |
+| a leaf keeps 25 of its sibling's points | 0.91 | 1.04 | 0.88 | 0.94 (0.75 to 1.20) | 4 of 18 |
+| the same with `Nbar=80` | 0.97 | 1.10 | 0.87 | 0.98 (0.81 to 1.23) | 2 of 9 |
+| a leaf keeps 10 of its sibling's points | 0.94 | 1.02 | 0.98 | 0.98 (0.85 to 1.14) | 2 of 9 |
+
+* **An overlap for the stored points alone** gives a leaf points beyond its
+  cuts and takes away some of those within them. A small overlap lowers the
+  error a little on the uniform and sweeping streams and a large one raises
+  it. The rows with 9 runs have one seed.
+* **Kept points**: with gradual splitting a leaf starts with copies of its
+  sibling's points and drops them as its own arrive, those nearest the cut
+  last. Here the last 25 or 10 are never dropped. The GPs then hold up to 125
+  points, and with `Nbar=80`, where they hold as many as in the default tree,
+  most of the gain is gone.
+* **The outliers stay.** With an overlap of 0.05 the 99% quantile of the
+  error is 1.02 times that of the default tree and the largest error 1.00
+  times, and 2.0% of the predictions are off by more than 5 sigma, against
+  2.1%.

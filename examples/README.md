@@ -16,7 +16,7 @@ the small linear-algebra calls of the leaves and gives consistent timings.
 | `example_hybrid.py` | The hybrid (`global_mean='net'`) against the plain tree on a 6D stream | PyTorch | 1 min |
 | `multioutput_function_learning_pca.py` | The three multi-output models (`independent`, `shared`, `pca`) on a function f(t; x) observed on a t-grid | matplotlib for the figure | 15 s |
 | `gpytorch_backend.py` | GPyTorch models as the leaf GPs, against the scikit-learn default | GPyTorch | 10 s |
-| `streaming_performance.py` | Accuracy, coverage and time per point along a stream, for the plain tree, the hybrid and the additive global GP, as a figure | matplotlib (PyTorch for the hybrid) | 2 min |
+| `streaming_performance.py` | Accuracy, coverage and time per point along a stream, for the plain tree, the hybrid and the additive global GP, as a figure. `--max_memory_mb` limits the memory of the trees | matplotlib (PyTorch for the hybrid) | 2 min |
 | `make_readme_gif.py` | The animation in the top-level README: a 2D target learned locally from a moving cluster of points | matplotlib, Pillow | 3 min |
 
 ```bash
@@ -26,6 +26,7 @@ python examples/multioutput_function_learning_pca.py [n_train] [easy|hard] [nois
 python examples/gpytorch_backend.py
 OMP_NUM_THREADS=1 python examples/streaming_performance.py --target eggholder --d 3 --N 20000
 OMP_NUM_THREADS=1 python examples/streaming_performance.py --target relic_density --stream walker --configs tree,hybrid,global_gp
+OMP_NUM_THREADS=1 python examples/streaming_performance.py --target gaussian_peaks --d 6 --stream walker --configs tree --max_memory_mb 10
 python examples/make_readme_gif.py --alt      # --quick for a fast preview
 ```
 

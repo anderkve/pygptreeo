@@ -69,6 +69,8 @@ class GPNode(Node):
         split_position_method (str): Method used to determine split point.
         retrain_every_n_points (int): Frequency of GPR retraining.
         overlap (float): The size of the overlapping region with sibling nodes.
+        asleep (bool): True while the node's fitted GPs are partly released to
+            save memory (see `sleep`). The next prediction restores them.
     """
     def __init__(self, *args,
                  my_GPR: GPRegressorInterface,
@@ -203,6 +205,10 @@ class GPNode(Node):
         self.global_mean = global_mean
         self._fitted_global = None
 
+        # Mean and standard deviation per input of the points of the last fit
+        self.fit_mean = None
+        self.fit_std = None
+
         # GP regressors: one per output ('independent'), one for all outputs
         # ('shared'), or one per basis score ('pca'; the list is sized at the
         # first fit, once the basis rank is known). Children receive their own
@@ -264,6 +270,7 @@ class GPNode(Node):
         
         self.n_points = 0
         self.n_points_since_retrain = 0
+        self.asleep = False
 
         self.my_X_data = None
         self.my_y_data = None
@@ -457,6 +464,8 @@ class GPNode(Node):
         self.right.z_scaler = deepcopy(self.z_scaler)
         self.left._fitted_global = self._fitted_global
         self.right._fitted_global = self._fitted_global
+        self.left.fit_mean = self.right.fit_mean = self.fit_mean
+        self.left.fit_std = self.right.fit_std = self.fit_std
 
 
     def delete_point(self, index=-1, shared_point=True):
@@ -980,6 +989,8 @@ class GPNode(Node):
             self._fitted_basis = basis
 
         self._fitted_global = snapshot
+        self.asleep = False
+        self._set_fit_statistics(X_train)
         if self.n_outputs == 1:
             self.my_GPR = self.my_GPRs[0]
         return True
@@ -1012,7 +1023,94 @@ class GPNode(Node):
             if not done:
                 return False
         self._fitted_global = snapshot
+        self.asleep = False
+        self._set_fit_statistics(X_train)
         return True
+
+
+    def _set_fit_statistics(self, X_train: np.ndarray):
+        self.fit_mean = X_train.mean(axis=0)
+        std = X_train.std(axis=0)
+        self.fit_std = np.where(std > 0.0, std, 1.0)
+
+
+    def distance_from_fit(self, x: np.ndarray):
+        """How far the rows of ``x`` lie from the points of the node's last fit:
+        the distance from their mean in units of their standard deviation, the
+        largest over the inputs. Zero for a node without a fit."""
+        if self.fit_mean is None:
+            return np.zeros(x.shape[0])
+        return np.abs((x - self.fit_mean) / self.fit_std).max(axis=1)
+
+
+    def append_point(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray]):
+        """Condition the fitted GPs on one more point, at a cost quadratic in their
+        number of points.
+
+        The hyperparameters, the scaling and the global-model snapshot of the
+        last fit are kept. The next fit starts from the node's points as usual.
+        Returns False if the GPs are not fitted or their backend cannot do it.
+        """
+        if self.asleep or not self._is_fitted():
+            return False
+        x = np.asarray(x, dtype=float).reshape(1, -1)
+        y = np.asarray(y, dtype=float).reshape(1, self.n_outputs)
+        sigma = np.broadcast_to(np.asarray(sigma, dtype=float).reshape(1, -1), (1, self.n_outputs))
+        if self._fitted_global is not None:
+            y = y - self._fitted_global.predict(x)
+        scaled = self.use_standard_scaling and self.X_scaler is not None
+        xs = self._scaled_inputs(x)
+
+        if self.output_model == 'independent':
+            done = []
+            for i, gpr in enumerate(self.my_GPRs):
+                shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
+                done.append(gpr.append(xs, (y[0, i] - shift) / scale, (sigma[0, i] / scale) ** 2))
+            return all(done)
+
+        if self.output_model == 'shared':
+            mu, scale = self.y_common_scaler if scaled and self.y_common_scaler is not None else (0.0, 1.0)
+            return self.my_GPRs[0].append(xs, (y - mu) / scale, float(np.mean((sigma / scale) ** 2)))
+
+        z = self._fitted_basis.project(y)[0]
+        noise_z = self._fitted_basis.project_noise(sigma)[0]
+        z_shift, z_scale = self.z_scaler
+        return all([gpr.append(xs, (z[j] - z_shift[j]) / z_scale[j], noise_z[j] / z_scale[j] ** 2)
+                    for j, gpr in enumerate(self.my_GPRs)])
+
+
+    def sleep(self):
+        """Have the fitted GPs release what they can compute again, to save memory.
+
+        The next prediction restores them, and they then predict as before (to
+        numerical precision if points were appended). Returns False if there is
+        nothing to release or the GP backend cannot.
+        """
+        if self.asleep or not any([gpr.release() for gpr in self.my_GPRs]):
+            return False
+        self.asleep = True
+        return True
+
+
+    def wake(self):
+        """Restore the GPs of a sleeping node."""
+        if not self.asleep:
+            return
+        if all([gpr.restore() for gpr in self.my_GPRs]):
+            self.asleep = False
+        else:
+            self.fit_my_GPR(force_training=True)
+
+
+    def nbytes_points(self):
+        """Size in bytes of the node's own and shared points."""
+        return sum(a.nbytes for a in (self.my_X_data, self.my_y_data, self.my_sigma_data,
+                                      self.shared_X_data, self.shared_y_data, self.shared_sigma_data))
+
+
+    def nbytes_fitted(self):
+        """Size in bytes of what the node's GPs hold from their fits, as they report it."""
+        return sum(gpr.nbytes() for gpr in self.my_GPRs)
 
 
     def _compute_dimensional_uncertainty(self):
@@ -1503,6 +1601,7 @@ class GPNode(Node):
                 if not (getattr(self.global_mean, 'cheap_leaf_refresh', False)
                         and self._refit_on_snapshot(current)):
                     self.fit_my_GPR(force_training=True)
+        self.wake()
 
         if self.output_model == 'independent':
             mu_pred, sigma_pred = self._predict_independent(x, return_std)
@@ -1621,11 +1720,12 @@ class GPNode(Node):
 
         For multi-output: tracks performance per output dimension. With
         ``only_if_fitted`` the prior prediction of a node without fitted GPs is
-        not registered.
+        not registered. Returns the errors in units of the calibrated sigma, per
+        output, or None if nothing was registered.
         """
         mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False)
         if only_if_fitted and not self._is_fitted():
-            return
+            return None
 
         # Ensure y is array of shape (n_outputs,)
         if isinstance(y, (int, float, np.floating)):
@@ -1651,6 +1751,8 @@ class GPNode(Node):
             self.residuals = self.residuals_list[0]
             self.mu_preds = self.mu_preds_list[0]
             self.sigma_preds = self.sigma_preds_list[0]
+
+        return np.abs(y[:self.n_outputs] - mu_pred[0]) / (sigma_pred[0] * np.asarray(self.sigma_scalers) + 1e-300)
 
 
     def clear_pred_perf(self):

@@ -15,7 +15,11 @@ the residual of the additive global GP). Targets: the functions of
 ``target_functions_physics.py`` in their own dimension. ``--stream`` is a kind
 of ``target_functions.make_stream``; ``--noise`` adds Gaussian observation
 noise, in units of the standard deviation of the target, and declares it to the
-tree. Errors are always against the noise-free target.
+tree. Errors are always against the noise-free target. ``--max_memory_mb``
+limits the memory of every tree, which then puts leaves to sleep and removes
+the ones the stream has left:
+
+    OMP_NUM_THREADS=1 python examples/streaming_performance.py --target gaussian_peaks --d 6 --stream walker --configs tree --max_memory_mb 10
 """
 import argparse
 import time
@@ -65,23 +69,24 @@ def make_data(a, rng):
     return X, y, y_obs, sigma
 
 
-def make_tree(config, seed):
+def make_tree(config, seed, max_memory_mb=None):
     if config == 'tree':
-        return GPTree()
+        return GPTree(max_memory_mb=max_memory_mb)
     if config == 'hybrid':
         # steps_per_update=1 spreads each refit of the network over the following updates
-        return GPTree(global_mean='net', global_mean_kwargs=dict(steps_per_update=1, random_state=seed))
+        return GPTree(max_memory_mb=max_memory_mb, global_mean='net',
+                      global_mean_kwargs=dict(steps_per_update=1, random_state=seed))
     if config == 'global_gp':
-        return GPTree(global_mean='additive_gp', global_mean_kwargs=dict(random_state=seed))
+        return GPTree(max_memory_mb=max_memory_mb, global_mean='additive_gp', global_mean_kwargs=dict(random_state=seed))
     raise ValueError(f"unknown configuration '{config}'")
 
 
-def run(config, X, y, y_obs, sigma, batch, seed):
+def run(config, X, y, y_obs, sigma, batch, seed, max_memory_mb=None):
     """Stream the points through one tree; the metrics per batch of ``batch`` points."""
     np.random.seed(seed)
     N = (len(X) // batch) * batch
     pred, std, t_pred, t_upd, leaves = (np.empty(N) for _ in range(5))
-    gpt = make_tree(config, seed)
+    gpt = make_tree(config, seed, max_memory_mb)
     for i in range(N):
         xi = X[i:i + 1]
         t0 = time.perf_counter(); mu, sd = gpt.predict(xi); t1 = time.perf_counter()
@@ -139,6 +144,8 @@ def main():
     ap.add_argument('--configs', default='tree,hybrid', help='comma-separated: tree, hybrid, global_gp')
     ap.add_argument('--noise', type=float, default=0.0, help='noise std in units of the standard deviation of the target')
     ap.add_argument('--seed', type=int, default=1)
+    ap.add_argument('--max_memory_mb', type=float, default=None,
+                    help="memory limit of a tree in MB, global model included (default: no limit)")
     ap.add_argument('--out', default=None, help='figure file (default: streaming_performance_<target>.png)')
     a = ap.parse_args()
 
@@ -146,7 +153,7 @@ def main():
     runs = {}
     for cfg in a.configs.split(','):
         t0 = time.time()
-        runs[cfg] = m = run(cfg, X, y, y_obs, sigma, a.batch, a.seed)
+        runs[cfg] = m = run(cfg, X, y, y_obs, sigma, a.batch, a.seed, a.max_memory_mb)
         print(f"{cfg:10s} {time.time() - t0:6.0f} s   last batch: predict {1e3 * m['predict_time'][-1]:.2f} ms, "
               f"update {1e3 * m['update_time'][-1]:.2f} ms (max {1e3 * m['update_time_max'][-1]:.0f} ms), "
               f"NRMSE {m['nrmse'][-1]:.4f}, within 1% {m['within_1'][-1]:.2f}, coverage {m['coverage'][-1]:.2f}, "
