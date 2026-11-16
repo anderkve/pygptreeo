@@ -424,6 +424,15 @@ class GPyTorchAdapter(GPRegressorInterface):
         """
         return self._trained
 
+    def nbytes(self) -> int:
+        """Size of the training data and of the n x n factor that GPyTorch caches
+        for predictions."""
+        if not self._trained:
+            return 0
+        train_x = self._model.train_inputs[0]
+        n = train_x.shape[0]
+        return (train_x.nelement() + n + n * n) * train_x.element_size()
+
     def set_observation_noise(self, alpha: Union[float, np.ndarray]) -> None:
         """
         Set the observation noise levels for training data.

@@ -26,13 +26,15 @@ def _require_torch():
         raise ImportError("The feature network global model (global_mean='net') needs PyTorch: pip install torch")
 
 
-class _GrowingStore:
-    """Every point of the stream."""
+class _PointStore:
+    """Every point of the stream, or with ``size`` a uniform random sample of that
+    many (reservoir sampling with ``rng``)."""
 
-    def __init__(self, n_features: int, n_outputs: int):
+    def __init__(self, n_features: int, n_outputs: int, size: Optional[int] = None, rng=None):
         self.X = np.empty((0, n_features)); self.y = np.empty((0, n_outputs)); self.sigma = np.empty((0, n_outputs))
         self._bx, self._by, self._bs = [], [], []
-        self.turnover = 0
+        self.size = size; self.rng = rng
+        self.n_seen = 0
 
     def _flush(self):
         if self._bx:
@@ -45,8 +47,17 @@ class _GrowingStore:
         return self.X.shape[0] + len(self._bx)
 
     def add(self, x, y, sigma) -> bool:
+        self.n_seen += 1
+        if self.size is not None and self.n >= self.size:
+            j = self.rng.randint(self.n_seen)
+            if j >= self.size:
+                return False
+            self._flush()
+            self.X[j] = np.asarray(x, float).ravel(); self.y[j] = np.asarray(y, float).ravel()
+            self.sigma[j] = np.asarray(sigma, float).ravel()
+            return True
         self._bx.append(np.asarray(x, float).ravel()); self._by.append(np.asarray(y, float).ravel())
-        self._bs.append(np.asarray(sigma, float).ravel()); self.turnover += 1
+        self._bs.append(np.asarray(sigma, float).ravel())
         return True
 
 
@@ -82,7 +93,7 @@ class FeatureNetLearner:
     An MLP of ``depth`` hidden layers of ``hidden`` SiLU units with a linear
     output ``h(x)``. Each refit runs two phases of fixed length, so its cost does not depend on
     the stream's length: full-batch L-BFGS on a maximin coverage reservoir of
-    the stream, then Adam minibatch steps over every point seen. The loss weights
+    the stream, then Adam minibatch steps over the stored points. The loss weights
     each point by ``1 / (sigma^2 + s^2)``, ``s`` the head's prequential error
     with the observation noise subtracted (``error_scale``). A refit is due when
     the observation count has doubled since the last one. A fraction ``holdout``
@@ -95,9 +106,8 @@ class FeatureNetLearner:
     steps : int, default=300
         L-BFGS iterations per refit on the reservoir; 0 skips the phase.
     polish_steps : int, default=3000
-        Adam steps per refit over every point seen, with the learning rate
-        cosine-annealed to zero; 0 skips the phase. The store of every point
-        costs ``d + 2`` floats per point.
+        Adam steps per refit over the stored points, with the learning rate
+        cosine-annealed to zero; 0 skips the phase.
     lr : float, default=1e-3
         Adam's learning rate.
     min_points : int, default=200
@@ -116,12 +126,16 @@ class FeatureNetLearner:
         weights, so without held-out points a fit to few or noisy points is carried
         along. 0 trains on every point and publishes the last weights.
     random_state : int or None
+    store_size : int or None, default=100000
+        Points stored for the Adam phase, at ``d + 2`` floats per point: every
+        point of the stream until it is longer than this, then a uniform random
+        sample of it. None stores every point.
     """
 
     def __init__(self, hidden: int = 128, depth: int = 3, steps: int = 300, polish_steps: int = 3000,
                  lr: float = 1e-3, min_points: int = 200, reservoir_size: Optional[int] = 5000,
                  steps_per_update: Optional[int] = None, holdout: float = 0.2,
-                 random_state: Optional[int] = None):
+                 random_state: Optional[int] = None, store_size: Optional[int] = 100000):
         _require_torch()
         if not (0.0 <= holdout < 1.0):
             raise ValueError("holdout must be in [0, 1)")
@@ -134,17 +148,20 @@ class FeatureNetLearner:
             raise ValueError("min_points must be at least 2")
         if steps_per_update is not None and steps_per_update < 1:
             raise ValueError("steps_per_update must be at least 1")
+        if store_size is not None and store_size < 2:
+            raise ValueError("store_size must be at least 2")
         self.hidden, self.depth, self.steps, self.polish_steps = int(hidden), int(depth), int(steps), int(polish_steps)
         self.lr = float(lr)
         self.min_points = int(min_points)
         self.reservoir_size = int(reservoir_size) if reservoir_size is not None else None
+        self.store_size = int(store_size) if store_size is not None else None
         self.steps_per_update = int(steps_per_update) if steps_per_update is not None else None
         self.random_state = random_state
         self.rng = np.random.RandomState(random_state)
         self.gen = torch.Generator().manual_seed(int(self.rng.randint(1 << 30)))
 
         self.sample = None                       # the reservoir (or every point when unbounded)
-        self.store = None                        # every point, for the polish phase of a bounded reservoir
+        self.store = None                        # the points of the polish phase of a bounded reservoir
         self._shadow = None                      # an in-progress amortised refit
         self.n_features = None; self.n_outputs = None
         self.net = None
@@ -168,11 +185,11 @@ class FeatureNetLearner:
         if self.sample is None:
             self.n_features, self.n_outputs = x.shape[1], y.shape[1]
             if self.reservoir_size is None:
-                self.sample = _GrowingStore(self.n_features, self.n_outputs)
+                self.sample = _PointStore(self.n_features, self.n_outputs)
             else:
                 self.sample = CoverageReservoir(self.reservoir_size, self.n_features, self.n_outputs)
                 if self.polish_steps > 0:
-                    self.store = _GrowingStore(self.n_features, self.n_outputs)
+                    self.store = _PointStore(self.n_features, self.n_outputs, self.store_size, self.rng)
         self.n_seen += 1
         if self.net is not None:
             # Prequential error of the head; its expectation is (h - f)^2 + noise^2.
@@ -218,7 +235,7 @@ class FeatureNetLearner:
         """``source`` standardised as tensors, the per-point loss weights, the
         scaling ``(x_mu, x_sd, y_mu, y_sd)`` and the mask of held-out rows;
         ``scal`` reuses a scaling."""
-        if isinstance(source, _GrowingStore):
+        if isinstance(source, _PointStore):
             source._flush()
         X = source.X; Y = source.y; S = source.sigma
         if X.shape[0] < 2:
@@ -267,7 +284,7 @@ class FeatureNetLearner:
         return dict(Xt=Xt, Yt=Yt, Wt=Wt, opt=opt, sched=None, state=None, best=best, it=0), scal
 
     def _polish_phase(self, net, scal, best=None):
-        """The Adam phase over every point, with this refit's scaling; None when off."""
+        """The Adam phase over the stored points, with this refit's scaling; None when off."""
         source = self.store if self.store is not None else self.sample
         if self.polish_steps == 0 or source.n < 2:
             return None
@@ -382,6 +399,17 @@ class FeatureNetLearner:
     def refit_in_progress(self) -> bool:
         return self._shadow is not None
 
+    def max_nbytes(self, n_features: int, n_outputs: int) -> float:
+        """Bytes of the reservoir, the point store and the weights once the samples
+        are full; inf if either sample keeps every point."""
+        if self.reservoir_size is None or (self.polish_steps > 0 and self.store_size is None):
+            return float('inf')
+        size = CoverageReservoir.max_nbytes(self.reservoir_size, n_features, n_outputs)
+        if self.polish_steps > 0:
+            size += 8 * self.store_size * (n_features + 2 * n_outputs)
+        widths = [n_features] + [self.hidden] * self.depth + [n_outputs]
+        return size + 4 * sum((a + 1) * b for a, b in zip(widths[:-1], widths[1:]))
+
     # -- prediction ---------------------------------------------------------------------
     def _xt(self, X):
         return torch.tensor((np.atleast_2d(np.asarray(X, float)) - self.x_mu) / self.x_sd, dtype=torch.float32)
@@ -394,7 +422,8 @@ class FeatureNetLearner:
 
     def __repr__(self) -> str:
         return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, steps={self.steps}, "
-                f"polish_steps={self.polish_steps}, reservoir_size={self.reservoir_size}, holdout={self.holdout}, n_seen={self.n_seen}, "
+                f"polish_steps={self.polish_steps}, reservoir_size={self.reservoir_size}, store_size={self.store_size}, "
+                f"holdout={self.holdout}, n_seen={self.n_seen}, "
                 f"n_refits={self.n_refits}, version={self.version})")
 
 
@@ -433,6 +462,9 @@ class NetGlobalMean(GlobalMeanLearner):
         self.learner = FeatureNetLearner(**learner_kwargs)
         self.current = None
         self.error_scale = None
+
+    def max_nbytes(self, n_features: int, n_outputs: int) -> float:
+        return self.learner.max_nbytes(n_features, n_outputs)
 
     def observe(self, x, y, sigma) -> bool:
         self.learner.observe(x, y, sigma)
