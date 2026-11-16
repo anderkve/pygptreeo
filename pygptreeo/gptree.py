@@ -896,15 +896,15 @@ class GPTree:
             # The default: mixture of experts, following the DLGP paper
             if self.aggregation == "default" or self.aggregation == "moe":
 
-                for leaf, ptilde in zip(leaves, pred_leaf_probs):
-
-                    mu_leaf, sigma_leaf = self._predict_leaf(leaf, x)
-                    # mu_leaf and sigma_leaf have shape (1, n_outputs)
-
+                # mu_leaf and sigma_leaf have shape (1, n_outputs)
+                parts = [(ptilde,) + self._predict_leaf(leaf, x) for leaf, ptilde in zip(leaves, pred_leaf_probs)]
+                for ptilde, mu_leaf, _ in parts:
                     mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
-                    var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + mu_leaf[0, :]**2)
-
-                var_DLGP[i, :] += -mean_DLGP[i, :]**2
+                # The variance of the mixture: that of each leaf, and the spread of
+                # their means about the mixture's. In this form a small sigma
+                # survives a large mean.
+                for ptilde, mu_leaf, sigma_leaf in parts:
+                    var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + (mu_leaf[0, :] - mean_DLGP[i, :])**2)
 
             # Generalized product of experts
             elif self.aggregation == "poe":
@@ -971,6 +971,7 @@ class GPTree:
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
         var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
 
+        parts = []
         for leaf in tqdm(self.root.leaves, disable=not show_progress, desc="Predicting"):
 
             ptilde = leaf.marg_prob(X_test)  # Shape: (n_test, 1)
@@ -986,9 +987,11 @@ class GPTree:
 
             # Broadcast ptilde to match shape (n_masked, n_outputs)
             mean_DLGP[mask] += ptilde[mask] * mu_leaf
-            var_DLGP[mask] += ptilde[mask] * (sigma_leaf**2 + mu_leaf**2)
+            parts.append((mask, ptilde[mask], mu_leaf, sigma_leaf))
 
-        var_DLGP += -mean_DLGP**2
+        # The variance of the mixture, in the form in which a small sigma survives a large mean
+        for mask, ptilde, mu_leaf, sigma_leaf in parts:
+            var_DLGP[mask] += ptilde * (sigma_leaf**2 + (mu_leaf - mean_DLGP[mask])**2)
 
         return mean_DLGP, np.sqrt(var_DLGP)
 
