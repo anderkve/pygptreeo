@@ -121,3 +121,46 @@ if sys.argv[1] == 'long':
               f"off by more than 5 sigma {100 * np.mean([v[1]['off5'] for v in sel]):.2f}% (base {100 * np.mean([v[2]['off5'] for v in sel]):.2f}%)   "
               f"predict {np.mean([v[1]['t_pred'] for v in sel]):.2f} ms (base {np.mean([v[2]['t_pred'] for v in sel]):.2f})   "
               f"update {np.mean([v[1]['t_upd'] for v in sel]):.2f} ms (base {np.mean([v[2]['t_upd'] for v in sel]):.2f})")
+
+if sys.argv[1] == 'scaling':
+    # cost and error along long streams: python tables.py scaling 100000 nbf base
+    N = int(sys.argv[2])
+    variants = sys.argv[3:5] if len(sys.argv) > 4 else ['nbf', 'base']
+    R = {v: {k: dict(r) for k, r in report.load(v, N).items() if k[2] == 1} for v in variants}
+    for records in R.values():
+        for rec in records.values():        # the first records have no depths or search counts
+            rec.setdefault('depth', np.empty((0, 2)))
+            rec.setdefault('searched', np.empty((0, 2)))
+    common = sorted(set.intersection(*[set(R[v]) for v in variants]))
+    common = [k for k in common if report.metrics(R[variants[1]][k])['rmse'] > 0]      # not a constant target
+    print(f"{len(common)} runs at N={N}: " + ", ".join(f"{k[0]}/{k[1]}" for k in common))
+    edges = [e for e in (0, 1000, 4000, 16000, 64000, 100000) if e <= N]
+    print("| points | " + " | ".join(f"{v}: update ms mean / 99th percentile | {v}: predict ms" for v in variants)
+          + " | leaves | deepest leaf of the cuts | error of " + variants[0] + " relative to " + variants[1] + " |")
+    print("|---|" + "---|" * (2 * len(variants) + 3))
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        cells = []
+        for v in variants:
+            upd = np.concatenate([R[v][k]['t_upd'][lo:hi] for k in common])
+            pred = np.concatenate([R[v][k]['t_pred'][lo:hi] for k in common])
+            cells.append(f"{1e3 * upd.mean():.2f} / {1e3 * np.quantile(upd, 0.99):.0f} | {1e3 * pred.mean():.2f}")
+        leaves = np.mean([R[variants[1]][k]['leaves'][hi // 1000 - 1] for k in common])
+        depth = [R[variants[1]][k]['depth'][hi // 1000 - 1, 0] for k in common if len(R[variants[1]][k]['depth'])]
+        ratio = gmean(np.sqrt(np.mean((R[variants[0]][k]['pred'][lo:hi] - R[variants[0]][k]['y'][lo:hi]) ** 2))
+                      / np.sqrt(np.mean((R[variants[1]][k]['pred'][lo:hi] - R[variants[1]][k]['y'][lo:hi]) ** 2)) for k in common)
+        print(f"| {lo} to {hi} | " + " | ".join(cells) + f" | {leaves:.0f} | {np.mean(depth):.0f} (at most {np.max(depth):.0f}) | {ratio:.2f} |"
+              if depth else f"| {lo} to {hi} | " + " | ".join(cells) + f" | {leaves:.0f} | | {ratio:.2f} |")
+    print("\nper run, last quarter:")
+    print("| target | d | stream | NRMSE " + variants[1] + " | NRMSE " + variants[0] + " | ratio | coverage | deepest leaf |")
+    print("|---|---|---|---|---|---|---|---|")
+    import bench
+    for k in common:
+        ma, mb = report.metrics(R[variants[0]][k]), report.metrics(R[variants[1]][k])
+        depth = R[variants[1]][k]['depth']
+        print(f"| `{k[0]}` | {bench.target_dim(k[0])} | {k[1]} | {mb['rmse'] / mb['range']:.4f} | {ma['rmse'] / ma['range']:.4f} | "
+              f"{ma['rmse'] / mb['rmse']:.2f} | {ma['cover']:.2f} | {int(depth[-1, 0]) if len(depth) else ''} |")
+    r = np.array([report.metrics(R[variants[0]][k])['rmse'] / report.metrics(R[variants[1]][k])['rmse'] for k in common])
+    print(f"\ngeometric mean {gmean(r):.3f}, range {r.min():.2f} to {r.max():.2f}, {int(np.sum(r > 1.02))} of {len(r)} more than 2% worse")
+    searched = [R[variants[0]][k]['searched'] for k in common if len(R[variants[0]][k]['searched'])]
+    if searched:
+        print("leaves searched per query:", np.round(np.mean([s[-1, 1] / s[-1, 0] for s in searched]), 1))

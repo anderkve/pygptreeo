@@ -638,14 +638,16 @@ says otherwise.
 ### 8.2 Predictions from a query's neighbours (`predict_from='neighbours'`)
 
 The kernel and the calibration are those of the query's leaf, and the
-prediction is conditioned on the query's nearest stored points. The rows
-below the third change one setting of the option each.
+prediction is conditioned on the query's nearest stored points. In this
+table the search for them is exact and no leaf prefers its own GP (the two
+defaults of sections 8.4 and 8.5 came later); the rows below the third
+change one setting each.
 
 | predictions from neighbours | uniform | walker | sweeping | all runs (range) | runs more than 2% worse | coverage |
 |---|---|---|---|---|---|---|
 | 100 neighbours, no test against the kernel | 0.86 | 0.72 | 0.71 | 0.76 (0.31 to 2.12) | 4 of 33 | 0.69 |
 | the same, distances in fitted length scales | 1.08 | 0.69 | 0.81 | 0.84 (0.44 to 6.46) | 4 of 33 | 0.68 |
-| **100 neighbours (the option as it is)** | 0.76 | 0.69 | 0.79 | 0.74 (0.45 to 1.04) | 1 of 33 | 0.69 |
+| **100 neighbours, tested against the kernel** | 0.76 | 0.69 | 0.79 | 0.74 (0.45 to 1.04) | 1 of 33 | 0.69 |
 | 150 neighbours | 0.72 | 0.64 | 0.76 | 0.71 (0.40 to 1.01) | 0 of 33 | 0.69 |
 | 200 neighbours | 0.71 | 0.62 | 0.75 | 0.69 (0.36 to 1.00) | 0 of 33 | 0.69 |
 | limit of the test 3 | 0.78 | 0.71 | 0.81 | 0.77 (0.45 to 1.04) | 1 of 33 | 0.69 |

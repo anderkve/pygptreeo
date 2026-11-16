@@ -194,13 +194,26 @@ section 8.
   Above `neighbour_consistency` (10) the leaf's own GP predicts, as in the
   tree without neighbours. Limits from 5 to 100 give the same error, and the
   number comes with the factorisation that the prediction needs anyway.
+* **A leaf keeps to its own GP while that predicts its points better.**
+  Where the declared noise is large against the change of the target across
+  a query's neighbours, they say less about its slope than the points of the
+  leaf, which lie further apart. On a stream that had contracted into a
+  dense cluster of such a target the neighbours were 26% worse than the
+  leaves, with a consistency of 0.2: no limit on the consistency tells these
+  queries apart, since most queries with a low one are predicted best. So
+  each leaf compares the two predictions at the last 50 points it received,
+  and predicts from its own points while their RMS error is below 0.9 times
+  that of the neighbours (`prefers_own`). That run is then 4% worse, and
+  the average over the other runs 1% worse than without the rule.
 * **A point is not its own neighbour.** The prediction registered for the
   calibration is made before the point is stored.
-* **The search.** The leaves whose points' boxes are nearest to the query are
-  taken from the index of the leaves (`neighbour_leaves` of them), and the
-  neighbours are the nearest points among theirs. Without that limit the
-  search is exact: the query's leaf bounds the distance of the neighbours,
-  and every leaf whose points can lie within it is looked at.
+* **The search.** The 16 leaves whose points' boxes are nearest to the query
+  are taken from the index of the leaves (`neighbour_leaves`), and the
+  neighbours are the nearest points among theirs. With `None` the search is
+  exact: the query's leaf bounds the distance of the neighbours, and every
+  leaf whose points can lie within it is looked at, 7 to 46 leaves in three
+  to five dimensions and 35 to 79 in six to ten at 20 000 points. Sixteen
+  leaves give the error of the exact search, eight 0.6% more, four 5%.
 * **Cost.** A prediction factorises the kernel matrix of its neighbours, at a
   cost cubic in their number, where a leaf's own GP needs one triangular
   solve. The leaf's own GP is still fitted and extended with each point, for

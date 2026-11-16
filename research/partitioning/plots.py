@@ -37,7 +37,8 @@ def save(fig, name):
 rows = [
     ("Neighbours, 200 points", 'knn:metric=std,fallback=10,k=200'),
     ("Neighbours, 150 points", 'nb:n_neighbours=150'),
-    ("Neighbours, 100 points (the new option)", 'nb'),
+    ("Neighbours, 100 points (as shipped)", 'nbf'),
+    ("Neighbours, 100 points, exact search", 'nb'),
     ("Neighbours, without the consistency test", 'knn:metric=std'),
     ("Oblique cuts + decorrelated leaf inputs", 'oblique:dir=curv,pos=gsplit,whiten=True'),
     ("Current tree with 200-point leaves", 'base:Nbar=200,retrain_every_n_points=50'),
@@ -55,7 +56,8 @@ rows = [
 data = []
 for label, variant in rows:
     r = np.array([v[0] for v in ratios(variant, 'base', 5000).values()])
-    data.append((label, gmean(r), int(np.sum(r > 1.02)), len(r)))
+    if len(r):
+        data.append((label, gmean(r), int(np.sum(r > 1.02)), len(r)))
 data.sort(key=lambda t: t[1])
 fig, ax = plt.subplots(figsize=(9.2, 6.0))
 y = np.arange(len(data))[::-1]
@@ -79,7 +81,7 @@ ax.text(0.0, 1.085, "5000-point streams, 11 targets (artificial and physics) x u
 save(fig, "1_alternatives_5k.png")
 
 # 2. the new option on 20 000-point streams, run by run
-r = ratios('nb', 'base', 20000, seeds=(1, 2))
+r = ratios('nbf', 'base', 20000, seeds=(1, 2))
 streams = [s for s in ('uniform', 'walker', 'sweeping', 'focusing') if any(k[1] == s for k in r)]
 targets = sorted({k[0] for k in r}, key=lambda t: gmean(v[0] for k, v in r.items() if k[0] == t))
 fig, axs = plt.subplots(1, len(streams), figsize=(11.5, 0.33 * len(targets) + 1.6), sharey=True)
@@ -102,12 +104,12 @@ np.atleast_1d(axs)[0].set_yticklabels([f"{t}  ({bench.target_dim(t)}D)" for t in
 fig.supxlabel("Prediction error with neighbours relative to the current tree (one dot per run; left of the line is better)",
               fontsize=9.5, color=INK2, y=-0.04)
 all_r = np.array([v[0] for v in r.values()])
-fig.suptitle(f"20 000-point streams: {gmean(all_r):.2f} of the current tree's error over the {len(all_r)} runs done so far, "
-             f"{int(np.sum(all_r > 1.02))} more than 2% worse", fontsize=12, fontweight='bold', x=0.01, ha='left', y=1.02)
+fig.suptitle(f"20 000-point streams: {gmean(all_r):.2f} of the current tree's error over {len(all_r)} runs, "
+             f"{int(np.sum(all_r > 1.02))} more than 2% worse", fontsize=12, fontweight='bold', x=0.01, ha='left', y=1.01)
 save(fig, "2_neighbours_20k_by_target.png")
 
 # 3. the error along a stream, two runs
-A, B = report.load('nb', 20000), report.load('base', 20000)
+A, B = report.load('nbf', 20000), report.load('base', 20000)
 picks = [k for k in (('gaussian_peaks', 'walker', 1), ('resonance_xsec', 'uniform', 1), ('eft_signal_strength', 'sweeping', 1),
                      ('relic_density', 'uniform', 1), ('rotated_rosenbrock', 'uniform', 1), ('diagonal_ridge', 'sweeping', 1),
                      ('chirp', 'focusing', 1)) if k in A and k in B][:3]
