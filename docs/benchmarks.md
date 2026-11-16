@@ -941,3 +941,36 @@ least (the index of the package). Both give the same leaves.
 * **The predictions do not change**: on two 5000-point streams with
   `predict_from='neighbours'` all of them are identical with the two
   divisions.
+
+### 8.10 Neighbours with the feature network
+
+`GaussianPeaks`, `RotatedRosenbrock`, `Eggholder`, `resonance_xsec`,
+`eft_signal_strength` and `relic_density` on the uniform, walker and
+sweeping streams, 20 000 points, one seed: 18 runs. NRMSE of the last 5000
+predictions divided by that of the default tree, for the three streams in
+that order. The network is `global_mean='net'` with one training step per
+update.
+
+| target | neighbours | feature network | both |
+|---|---|---|---|
+| `eft_signal_strength` | 0.39 / 0.38 / 0.58 | 0.12 / 0.15 / 0.44 | 0.11 / 0.14 / 0.34 |
+| `eggholder` | 0.88 / 0.83 / 0.90 | 0.98 / 1.52 / 1.09 | 0.88 / 1.09 / 0.97 |
+| `gaussian_peaks` | 0.64 / 0.40 / 0.51 | 0.18 / 0.11 / 0.72 | 0.17 / 0.10 / 0.61 |
+| `relic_density` | 0.90 / 0.92 / 0.86 | 0.48 / 0.72 / 0.74 | 0.47 / 0.73 / 0.67 |
+| `resonance_xsec` | 0.92 / 0.61 / 0.97 | 0.59 / 2.55 / 1.18 | 0.61 / 2.53 / 1.12 |
+| `rotated_rosenbrock` | 0.52 / 0.53 / 0.45 | 0.08 / 0.07 / 0.50 | 0.07 / 0.06 / 0.43 |
+| geometric mean | 0.64 | 0.43 | 0.39 |
+
+* **With the network the neighbours lower the error by a further 10%**, from
+  28% to 3% more: 14 of the 18 runs are more than 2% better and one is worse
+  (`resonance_xsec` on the uniform stream, 3%).
+* **The gain is smaller than without the network** (36% on these runs),
+  since the network already carries what the points beyond a leaf say about
+  the target.
+* **The neighbours do not repair a run that the network makes worse**:
+  `resonance_xsec` on the walker stream stays at 2.5 times the tree's error.
+* **The coverage is unchanged**, 0.71 against 0.70 with the network alone,
+  and 3.0% of the predictions are off by more than 5 sigma with both.
+* **A prediction takes 1.44 ms against 0.50 ms** with the network alone
+  (four runs at a time on four cores), and an update 4.7 ms against 3.3 ms:
+  the leaf's snapshot of the network is evaluated at the neighbours.
