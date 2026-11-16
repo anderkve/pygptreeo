@@ -41,4 +41,4 @@ for name, gpt in trees.items():
     err = np.array(err[N // 2:]); cover = np.array(cover[N // 2:])   # the second half of the stream
     nrmse = np.sqrt(np.mean(err ** 2)) / (y.max() - y.min())
     print(f"{name:8s} NRMSE {nrmse:.4f}  coverage {cover.mean():.2f}  {1e3 * (time.perf_counter() - t0) / N:.1f} ms per point  "
-          f"{len(gpt.root.leaves)} leaves")
+          f"{gpt.n_leaves} leaves")

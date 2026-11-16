@@ -16,6 +16,9 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "examples"))
+# long batches run against a frozen copy of the package, if there is one
+if os.path.isdir(os.path.join(HERE, "snapshot", "pygptreeo")) and not os.environ.get("PYGPTREEO_LIVE"):
+    sys.path.insert(0, os.path.join(HERE, "snapshot"))
 import target_functions as tf                                   # noqa: E402
 from target_functions_physics import TARGETS as PHYSICS         # noqa: E402
 

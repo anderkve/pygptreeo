@@ -97,3 +97,12 @@ def _nb(d, seed, dir=None, pos='median', whiten=False, **opts):
         from oblique import ObliqueNode
         gpt.root.__class__ = type('ObliqueNode_' + dir, (ObliqueNode,), dict(direction=dir, position=pos, whiten=whiten))
     return gpt
+
+
+@register('hybrid')
+def _hybrid(d, seed, nb=False, **opts):
+    """GP leaves on the residual of the feature network, predicting from the leaf or from neighbours."""
+    kw = dict(BASE)
+    kw.update(opts)
+    return GPTree(global_mean='net', global_mean_kwargs=dict(steps_per_update=1, random_state=seed),
+                  predict_from='neighbours' if nb else 'leaf', **kw)

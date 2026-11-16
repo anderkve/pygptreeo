@@ -7,10 +7,12 @@ of the true value, the 1-sigma coverage and the number of leaves.
 
     OMP_NUM_THREADS=1 python examples/streaming_performance.py --target eggholder --d 3 --N 20000
     OMP_NUM_THREADS=1 python examples/streaming_performance.py --target relic_density --configs tree,hybrid,global_gp
+    OMP_NUM_THREADS=1 python examples/streaming_performance.py --target gaussian_peaks --d 6 --stream walker --configs tree,neighbours
 
-Configurations: ``tree`` (the plain GPTree), ``hybrid`` (GP leaves on the
-residual of the feature network; needs PyTorch) and ``global_gp`` (GP leaves on
-the residual of the additive global GP). Targets: the functions of
+Configurations: ``tree`` (the plain GPTree), ``neighbours`` (predictions from
+each query's nearest stored points, ``predict_from='neighbours'``), ``hybrid``
+(GP leaves on the residual of the feature network; needs PyTorch) and
+``global_gp`` (GP leaves on the residual of the additive global GP). Targets: the functions of
 ``target_functions.py`` in ``--d`` dimensions and those of
 ``target_functions_physics.py`` in their own dimension. ``--stream`` is a kind
 of ``target_functions.make_stream``; ``--noise`` adds Gaussian observation
@@ -43,8 +45,9 @@ ANALYTIC_TARGETS = {
     'active_peaks': tf.ActiveSubspacePeaks, 'michalewicz': tf.Michalewicz, 'ackley': tf.Ackley,
     'griewank': tf.Griewank, 'step_ridge': tf.StepRidge, 'chirp': tf.Chirp,
 }
-LABELS = {'tree': 'GP tree', 'hybrid': 'hybrid (GP leaves on network residual)', 'global_gp': 'GP tree + additive global GP'}
-COLORS = {'tree': 'tab:blue', 'hybrid': 'tab:green', 'global_gp': 'tab:orange'}
+LABELS = {'tree': 'GP tree', 'neighbours': 'GP tree, predictions from neighbours',
+          'hybrid': 'hybrid (GP leaves on network residual)', 'global_gp': 'GP tree + additive global GP'}
+COLORS = {'tree': 'tab:blue', 'neighbours': 'tab:red', 'hybrid': 'tab:green', 'global_gp': 'tab:orange'}
 TOLERANCES = (16, 8, 4, 2, 1)   # percent
 
 
@@ -72,6 +75,8 @@ def make_data(a, rng):
 def make_tree(config, seed, max_memory_mb=None):
     if config == 'tree':
         return GPTree(max_memory_mb=max_memory_mb)
+    if config == 'neighbours':
+        return GPTree(max_memory_mb=max_memory_mb, predict_from='neighbours')
     if config == 'hybrid':
         # steps_per_update=1 spreads each refit of the network over the following updates
         return GPTree(max_memory_mb=max_memory_mb, global_mean='net',
@@ -91,7 +96,7 @@ def run(config, X, y, y_obs, sigma, batch, seed, max_memory_mb=None):
         xi = X[i:i + 1]
         t0 = time.perf_counter(); mu, sd = gpt.predict(xi); t1 = time.perf_counter()
         gpt.update_tree(xi, y_obs[i:i + 1, None], sigma[i:i + 1, None]); t2 = time.perf_counter()
-        pred[i], std[i], t_pred[i], t_upd[i], leaves[i] = mu[0, 0], sd[0, 0], t1 - t0, t2 - t1, len(gpt.root.leaves)
+        pred[i], std[i], t_pred[i], t_upd[i], leaves[i] = mu[0, 0], sd[0, 0], t1 - t0, t2 - t1, gpt.n_leaves
     err = (pred - y[:N]).reshape(-1, batch)
     y_b = y[:N].reshape(-1, batch)
     rel = np.abs(err) / np.maximum(np.abs(y_b), 1e-10)
@@ -141,7 +146,7 @@ def main():
     ap.add_argument('--stream', default='uniform', choices=('uniform', 'focusing', 'sweeping', 'walker'))
     ap.add_argument('--N', type=int, default=20000)
     ap.add_argument('--batch', type=int, default=1000)
-    ap.add_argument('--configs', default='tree,hybrid', help='comma-separated: tree, hybrid, global_gp')
+    ap.add_argument('--configs', default='tree,hybrid', help='comma-separated: tree, neighbours, hybrid, global_gp')
     ap.add_argument('--noise', type=float, default=0.0, help='noise std in units of the standard deviation of the target')
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--max_memory_mb', type=float, default=None,

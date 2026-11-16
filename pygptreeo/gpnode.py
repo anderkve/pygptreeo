@@ -322,6 +322,16 @@ class GPNode(Node):
         logger.debug("Created node %s", self.name)
 
 
+    def __getstate__(self):
+        """A node is saved without its links to other nodes. The tree saves and
+        restores them (``GPTree.__getstate__``), so that saving a tree does not
+        recurse through its levels."""
+        state = self.__dict__.copy()
+        for link in ('left', 'right', 'parent', 'children'):
+            state[link] = None
+        return state
+
+
     def _print_debug_status(self):
         print(f"DEBUG: node {self.name}:  retrain_every_n_points: {self.retrain_every_n_points}  n_points_since_retrain: {self.n_points_since_retrain}  n_points: {self.n_points}  my_X_data.shape: {self.my_X_data.shape}  n_points: {self.n_points}  shared_X_data.shape: {self.shared_X_data.shape}  n_shared_points: {self.n_shared_points}", flush=True)
 
@@ -1544,6 +1554,11 @@ class GPNode(Node):
         return x[:, self.split_index]
 
 
+    def cut_axis(self):
+        """The input this node's cut is along, or None if it is along none."""
+        return self.split_index
+
+
     def cut_distance(self, q: np.ndarray, w: np.ndarray):
         """Where the point ``q`` lies relative to this node's cut, with every
         input divided by ``w``: its signed distance from the cut (positive on the
@@ -1680,7 +1695,7 @@ class GPNode(Node):
         mu = np.full((n, self.n_outputs), np.nan)
         sigma = np.full((n, self.n_outputs), np.nan)
         for r in range(n):
-            found = self.neighbours.find(x[r], self.fit_std)
+            found = self.neighbours.find(x[r], self.fit_std, leaf=self)
             if found is not None:
                 self._condition_on(found, x[r:r + 1], mu[r], sigma[r])
         missing = np.isnan(mu)

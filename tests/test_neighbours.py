@@ -153,12 +153,19 @@ class TestSearch(unittest.TestCase):
         self.assertIsNone(NeighbourSearch(GPTree(), n_neighbours=5).find(np.zeros(2), np.ones(2)))     # an empty tree
 
     def test_a_limit_on_the_leaves_searched(self):
+        """The points then come from the leaves whose points' boxes are nearest to the query."""
         gpt = _grown_tree(n=600, d=2)
-        q = np.array([0.31, 0.62])
-        own = _leaf_of(gpt, q[None, :])
-        Xn, _, _ = NeighbourSearch(gpt, n_neighbours=10, max_leaves=1).find(q, np.ones(2))
-        d2 = ((own.my_X_data - q) ** 2).sum(axis=1)
-        np.testing.assert_allclose(np.sort(((Xn - q) ** 2).sum(axis=1)), np.sort(d2)[:10])
+        leaves = [leaf for leaf in gpt.root.leaves if leaf.n_points > 0]
+        rng = np.random.RandomState(0)
+        for q in rng.uniform(-0.1, 1.1, (40, 2)):
+            for m in (1, 3):
+                Xn, _, _ = NeighbourSearch(gpt, n_neighbours=10, max_leaves=m).find(q, np.ones(2))
+                gaps = [np.maximum(leaf.my_X_data.min(axis=0) - q, 0.0) + np.maximum(q - leaf.my_X_data.max(axis=0), 0.0)
+                        for leaf in leaves]
+                nearest = np.argsort([(gap ** 2).sum() for gap in gaps], kind='stable')[:m]
+                points = np.vstack([leaves[i].my_X_data for i in nearest])
+                np.testing.assert_allclose(np.sort(((Xn - q) ** 2).sum(axis=1)),
+                                           np.sort(((points - q) ** 2).sum(axis=1))[:10])
 
 
 class TestPredictions(unittest.TestCase):

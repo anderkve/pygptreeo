@@ -586,3 +586,138 @@ predicted by one leaf, chosen by the cuts without overlap.
   error is 1.02 times that of the default tree and the largest error 1.00
   times, and 2.0% of the predictions are off by more than 5 sigma, against
   2.1%.
+
+## 8. Other ways to partition the data
+
+Sections 8.1 to 8.3: eleven targets (`GaussianPeaks` and `RotatedRosenbrock`
+in six dimensions, `Eggholder` in three, `Chirp` in four, a four-dimensional
+target with a ridge and a kink on oblique hyperplanes, `resonance_xsec`,
+`loop_decay_width`, `relic_density`, `eft_signal_strength`, `neutralino_mass`
+and `oscillation_probability`) on the uniform, walker and sweeping streams,
+5000 points, one seed: 33 runs. The tables give the NRMSE of the last 1250
+predictions divided by that of the default tree in the same run, as geometric
+means over the runs, and the mean coverage.
+
+### 8.1 Rules for the cuts (not in the code)
+
+One GP per leaf, as in the default tree. A hyperplane cut has a free normal
+and is placed at the median of the leaf's points along it, unless the row
+says otherwise.
+
+| cuts, one GP per leaf | uniform | walker | sweeping | all runs (range) | runs more than 2% worse | coverage |
+|---|---|---|---|---|---|---|
+| along the input with the largest spread of the points (`max_spread`) | 1.34 | 1.20 | 1.25 | 1.26 (0.66 to 4.31) | 24 of 33 | 0.69 |
+| hyperplane: largest spread of the points | 1.49 | 1.34 | 1.18 | 1.33 (0.27 to 4.33) | 24 of 33 | 0.69 |
+| hyperplane: between the centroids of two clusters | 1.54 | 1.33 | 1.08 | 1.30 (0.30 to 4.88) | 23 of 33 | 0.69 |
+| hyperplane: random direction | 1.61 | 1.46 | 1.05 | 1.35 (0.32 to 3.27) | 28 of 33 | 0.69 |
+| hyperplane: largest change of the GP mean | 1.18 | 1.18 | 0.91 | 1.08 (0.54 to 2.30) | 15 of 33 | 0.68 |
+| hyperplane: largest change of the GP mean's gradient | 1.07 | 0.93 | 1.14 | 1.04 (0.55 to 3.16) | 15 of 33 | 0.68 |
+| the default cut, placed where the gradient changes most | 1.03 | 0.97 | 0.98 | 0.99 (0.48 to 1.80) | 15 of 33 | 0.68 |
+| hyperplane of the gradient's change, placed where it changes most | 0.97 | 0.94 | 0.92 | 0.94 (0.43 to 1.80) | 11 of 33 | 0.68 |
+| the default cut, decorrelated inputs for the GPs | 1.00 | 0.98 | 1.03 | 1.00 (0.70 to 1.43) | 15 of 33 | 0.68 |
+| the axis of the decorrelated inputs with the shortest length scale | 1.06 | 1.23 | 1.09 | 1.13 (0.46 to 2.44) | 22 of 33 | 0.69 |
+| hyperplane of the gradient's change, decorrelated inputs | 0.85 | 0.86 | 1.03 | 0.91 (0.21 to 1.89) | 15 of 33 | 0.69 |
+| the same, placed where the gradient changes most | 0.87 | 0.82 | 0.90 | 0.86 (0.22 to 1.93) | 15 of 33 | 0.68 |
+| a model in every node (multi-resolution) | 1.66 | 1.27 | 1.33 | 1.41 (1.01 to 6.39) | 32 of 33 | 0.70 |
+
+* **No rule for the cuts is better than the default without being worse in
+  a third of the runs or more.**
+* **Rules that only look at the points** (their spread, two clusters, a
+  random direction) are 26 to 35% worse, along the inputs or not.
+* **Hyperplanes from the leaf's GP** are level with the default on average
+  and far from it in single runs. On the target with the oblique ridge the
+  hyperplane along the change of the gradient has 0.74 to 0.79 of the
+  default's error, on `oscillation_probability` 0.55 to 0.98, and on the
+  smooth `eft_signal_strength`, `GaussianPeaks` and `RotatedRosenbrock` 0.99
+  to 1.70.
+* **Decorrelated inputs** make an oblique cell usable for the leaf's kernel:
+  0.21 to 0.74 on the oblique ridge and 0.39 to 1.11 on `relic_density`,
+  whose funnel lies on a diagonal, against 1.32 to 1.58 on `GaussianPeaks`.
+* **A model in every node** is worse in every run but one.
+
+### 8.2 Predictions from a query's neighbours (`predict_from='neighbours'`)
+
+The kernel and the calibration are those of the query's leaf, and the
+prediction is conditioned on the query's nearest stored points. The rows
+below the third change one setting of the option each.
+
+| predictions from neighbours | uniform | walker | sweeping | all runs (range) | runs more than 2% worse | coverage |
+|---|---|---|---|---|---|---|
+| 100 neighbours, no test against the kernel | 0.86 | 0.72 | 0.71 | 0.76 (0.31 to 2.12) | 4 of 33 | 0.69 |
+| the same, distances in fitted length scales | 1.08 | 0.69 | 0.81 | 0.84 (0.44 to 6.46) | 4 of 33 | 0.68 |
+| **100 neighbours (the option as it is)** | 0.76 | 0.69 | 0.79 | 0.74 (0.45 to 1.04) | 1 of 33 | 0.69 |
+| 150 neighbours | 0.72 | 0.64 | 0.76 | 0.71 (0.40 to 1.01) | 0 of 33 | 0.69 |
+| 200 neighbours | 0.71 | 0.62 | 0.75 | 0.69 (0.36 to 1.00) | 0 of 33 | 0.69 |
+| limit of the test 3 | 0.78 | 0.71 | 0.81 | 0.77 (0.45 to 1.04) | 1 of 33 | 0.69 |
+| limit of the test 30 | 0.75 | 0.71 | 0.77 | 0.75 (0.45 to 1.04) | 1 of 33 | 0.69 |
+| distances in fitted length scales | 0.75 | 0.65 | 0.80 | 0.73 (0.44 to 1.01) | 0 of 33 | 0.69 |
+| 30 of the 100 at growing ranks of distance (no test) | 1.08 | 0.68 | 0.82 | 0.85 (0.42 to 6.49) | 3 of 33 | 0.68 |
+| 4 points per level above the leaf among the 100 | 0.77 | 0.72 | 0.79 | 0.76 (0.47 to 1.05) | 2 of 33 | 0.69 |
+| `Nbar=50` | 0.88 | 0.83 | 0.95 | 0.88 (0.54 to 2.39) | 9 of 33 | 0.69 |
+| `Nbar=50`, a fit every 12 points | 0.85 | 0.83 | 0.89 | 0.86 (0.47 to 2.05) | 6 of 33 | 0.69 |
+| `Nbar=200`, a fit every 50 points | 0.74 | 0.74 | 0.78 | 0.75 (0.44 to 1.31) | 4 of 33 | 0.68 |
+| a fit every 50 points or more (one fit per leaf) | 0.77 | 0.72 | 0.83 | 0.77 (0.45 to 1.03) | 4 of 33 | 0.69 |
+| at most 10 leaves searched | 0.76 | 0.69 | 0.79 | 0.75 (0.47 to 1.04) | 1 of 33 | 0.69 |
+| hyperplane cuts along the gradient's change | 0.82 | 0.68 | 0.83 | 0.77 (0.45 to 1.81) | 5 of 33 | 0.68 |
+| the same, placed where the gradient changes most | 0.76 | 0.71 | 0.77 | 0.75 (0.44 to 1.15) | 2 of 33 | 0.69 |
+| the tree without neighbours, `Nbar=200`, a fit every 50 points | 0.89 | 0.93 | 0.87 | 0.89 (0.58 to 1.27) | 7 of 33 | 0.69 |
+| the tree without neighbours, `theta=0.2` | 0.91 | 0.97 | 0.96 | 0.95 (0.65 to 1.58) | 7 of 33 | 0.86 |
+
+* **The neighbours lower the error by 26%**, on every stream type, with one
+  run more than 2% worse (`resonance_xsec` on the sweeping stream, 1.04).
+  The gain is 40 to 55% on the smooth six-dimensional targets and 5 to 20%
+  on the rough ones.
+* **The coverage is unchanged** (0.69).
+* **More neighbours lower the error further**: 29% with 150 and 31% with
+  200, at a cost per prediction that grows with the cube of their number.
+* **Doubling the leaves of the tree without neighbours gains 11%** at 1.6
+  times the update time, and a wide overlap 5% with a sigma that is too
+  large.
+* **The leaf size still matters.** With `Nbar=50` the kernels are fitted to
+  half as many points and the error is 19% higher than with `Nbar=100`, for
+  the same 100 neighbours. `Nbar=200` gains nothing over `Nbar=100`.
+* **The search can stop after 10 leaves** at no cost in error.
+* **Nothing else in the table helps**: far points among the neighbours,
+  distances in fitted length scales, or cuts that are not along the inputs.
+
+### 8.3 The test of the neighbours against the kernel
+
+Recorded for every query of the second half of the 33 runs: the prediction
+of the query's leaf, and that of the leaf's kernel conditioned on the 100
+nearest points, with `y^T K^-1 y / k` of those points (the consistency). All
+numbers are relative to the leaf's own prediction.
+
+| the neighbours predict where the consistency is | NRMSE | worst run | runs more than 2% worse | share of the queries |
+|---|---|---|---|---|
+| anything (no test) | 0.78 | 3.10 | 3 of 33 | 100% |
+| at most 1.5 | 0.81 | 1.01 | 0 | 81% |
+| at most 3 | 0.76 | 1.00 | 0 | 91% |
+| at most 5 | 0.73 | 1.00 | 0 | 94% |
+| at most 10 (the default) | 0.73 | 1.00 | 0 | 96% |
+| at most 30 | 0.72 | 1.00 | 0 | 98% |
+| at most 100 | 0.72 | 1.00 | 0 | 99% |
+| whichever of the two is nearer the truth | 0.62 | 0.97 | 0 | 60% |
+
+* **Without the test three runs are up to 3.1 times worse.** On
+  `resonance_xsec`, whose value falls by orders of magnitude across an
+  oblique line, a leaf on the smooth side has length scales of 30 to 600
+  times its spread. Its 23 worst predictions from neighbours on a sweeping
+  stream have a consistency of 350 to 13 000 and errors of up to 13 where
+  the leaf's own are below 0.5; elsewhere the consistency is 0.1 to 2.
+* **Any limit from 5 to 100 gives the same error**, and no run is worse than
+  the leaf's own predictions.
+* **Other tests are no better**: the leave-one-out errors of the 5, 10 or 20
+  nearest neighbours in units of their sigma (0.72 to 0.73 at their best
+  limits), the smaller of the two sigmas (0.75), the largest set of nearest
+  neighbours that passes the test, or the neighbours up to the first one
+  that the nearer ones predict badly (0.72).
+* **The gain grows with the distance of the query from the centre of its
+  leaf**, the far score of section 7.5:
+
+| far score | below 0.75 | 0.75 to 1.25 | 1.25 to 1.75 | 1.75 to 2.5 | above 2.5 |
+|---|---|---|---|---|---|
+| share of the queries | 4% | 21% | 45% | 21% | 13% |
+| NRMSE relative to the leaf's own | 0.98 | 0.88 | 0.77 | 0.74 | 0.68 |
+
+* **The number of neighbours**, without the test: 1.27 with 10, 1.01 with
+  20, 0.85 with 50, 0.78 with 100, 0.74 with 200.

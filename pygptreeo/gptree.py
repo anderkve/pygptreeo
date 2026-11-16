@@ -33,6 +33,7 @@ from pygptreeo.gpnode import GPNode, TARGET_COVERAGE
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
+from pygptreeo.leaf_index import LeafIndex
 from pygptreeo.neighbours import NeighbourSearch
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ class GPTree:
         max_memory_mb (Optional[float]): The memory the tree stays within, in MB,
             or None for no limit.
         memory_mb (float): The tree's estimate of its own size, in MB.
+        n_leaves (int): Number of leaves of the tree.
 
     Methods:
         fit(X_train, y_train, show_progress=False, shuffle=True, forward_GPR_to_next_leaf=False):
@@ -338,6 +340,10 @@ class GPTree:
 
         self.aggregation = aggregation
 
+        # Balanced index over the leaves, built with the first point. None for
+        # a tree whose cuts are not along the inputs.
+        self.leaf_index = None
+
         self.first_point = True
 
 
@@ -376,6 +382,8 @@ class GPTree:
         if self.first_point:
             self.n_features = x.size
             self.root.init_data_set(self.n_features)
+            self.leaf_index = LeafIndex(self.n_features)
+            self.leaf_index.add(self.root)
             if self.max_memory_mb is not None:
                 self._start_accounting()
             self.first_point = False
@@ -387,11 +395,7 @@ class GPTree:
             self.global_mean.observe(x, y, sigma)
 
         # Find a leaf node for the new (x,y,sigma) point
-        # - Start from the root node
-        # - For each level, pick a branch according node.prob_func(x), until a leaf node is reached
-        node = self.root
-        while not node.is_leaf:
-            node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
+        node = self._leaf_of(x)
         # A sleeping leaf is woken before the point is stored, so that the
         # prediction registered below is one made without the point
         node.wake()
@@ -400,6 +404,8 @@ class GPTree:
         if node.should_merge_point(x, y, sigma):
             # Point was merged with existing point, don't add as new point
             # Still register prediction performance and update sigma scaler
+            if self.leaf_index is not None:
+                self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
             self._register_prediction(node, x, y, allow_training)
             self._after_update(node)
             return
@@ -416,6 +422,8 @@ class GPTree:
         # says nothing about the fitted GP.
         self._register_prediction(node, x, y, allow_training)
         node.store_point(x, y, sigma, remove_shared=True)
+        if self.leaf_index is not None:
+            self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
 
         # Retrain GP? The node will decide based Nbar and/or its buffer of training points
         if allow_training:
@@ -465,11 +473,92 @@ class GPTree:
             # for child in node.children:
             #     child.fit_my_GPR()
 
+            if self.leaf_index is not None:
+                axis = node.cut_axis()
+                if axis is None:
+                    self.leaf_index = None      # the cells are no boxes
+                else:
+                    self.leaf_index.split(node, node.left, node.right, axis, node.split_position, 0.5 * node.overlap)
+
             # GP and training data of non-leaf nodes is not needed
             node.delete_data(delete_own_data=True, delete_shared_data=True)
             node.delete_my_GPR()
 
         self._after_update(node)
+
+
+    def __getstate__(self):
+        """The nodes are saved as a list, with their links as positions in it."""
+        state = self.__dict__.copy()
+        nodes, links = [self.root], []
+        for node in nodes:              # breadth first; the list grows while it is read
+            if node.is_leaf:
+                links.append(None)
+            else:
+                links.append(len(nodes))
+                nodes += [node.left, node.right]
+        state['_saved_nodes'], state['_saved_links'] = nodes, links
+        return state
+
+
+    def __setstate__(self, state):
+        nodes, links = state.pop('_saved_nodes'), state.pop('_saved_links')
+        self.__dict__.update(state)
+        for node, first in zip(nodes, links):
+            if first is not None:
+                node.left, node.right = nodes[first], nodes[first + 1]
+                node.children = [node.left, node.right]
+                node.left.parent = node.right.parent = node
+
+
+    def _leaf_of(self, x: np.ndarray):
+        """The leaf that the point ``x`` (one row) is stored in. The index of the
+        leaves gives it wherever the point belongs to one leaf alone. Within
+        the overlap of two children the cuts are followed from the root, each
+        branch taken with the probability of ``prob_func``."""
+        if self.leaf_index is not None:
+            leaf = self.leaf_index.locate(np.asarray(x, dtype=float).reshape(-1))
+            if leaf is not None:
+                return leaf
+        node = self.root
+        while not node.is_leaf:
+            node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
+        return node
+
+
+    def _leaves_of(self, x: np.ndarray):
+        """The leaves that predict at the point ``x`` (one row) and their weights:
+        one leaf where the point belongs to it alone, and within the overlap
+        of two children the leaves on both sides, each with the product of
+        the probabilities of ``prob_func`` along its branch."""
+        if self.leaf_index is not None:
+            leaf = self.leaf_index.locate(x[0])
+            if leaf is not None:
+                return [leaf], [1.0]
+        leaves, weights, total = [], [], 0.0
+        stack = [(self.root, 1.0)]
+        while stack and total < 1:
+            node, weight = stack.pop()
+            if node.is_leaf:
+                leaves.append(node)
+                weights.append(weight)
+                total += weight
+                continue
+            p = node.prob_func(x)[0, 0]
+            # the right child goes on the stack first, so the left one is visited first
+            if weight * p > 0:
+                stack.append((node.right, weight * p))
+            if weight * (1 - p) > 0:
+                stack.append((node.left, weight * (1 - p)))
+        return leaves, weights
+
+
+    @property
+    def n_leaves(self):
+        """Number of leaves of the tree."""
+        if self.leaf_index is not None:
+            return len(self.leaf_index)
+        return len(self.root.leaves)
 
 
     @property
@@ -581,6 +670,26 @@ class GPTree:
         sibling = parent.right if leaf.is_left else parent.left
         grandparent = parent.parent
         logger.debug("Removed leaf %s", leaf.name)
+
+        if self.leaf_index is not None:
+            # the leaves along the removed cut extend over the removed leaf's cell
+            axis = parent.cut_axis()
+            lo, hi = self.leaf_index.cell(leaf)
+            self.leaf_index.remove(leaf)
+            along = [sibling]
+            while along:
+                node = along.pop()
+                if node.is_leaf:
+                    cell_lo, cell_hi = self.leaf_index.cell(node)
+                    if leaf.is_left:
+                        cell_lo[axis] = lo[axis]
+                    else:
+                        cell_hi[axis] = hi[axis]
+                    self.leaf_index.set_cell(node, cell_lo, cell_hi)
+                elif node.cut_axis() == axis:
+                    along.append(node.left if leaf.is_left else node.right)
+                else:
+                    along += [node.left, node.right]
 
         sibling.parent = grandparent
         sibling.is_left = parent.is_left
@@ -722,7 +831,7 @@ class GPTree:
 
     def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False, return_leaf_names: Optional[bool]=False):
         """ 
-        A predict function that uses a recursive function to collect contributing leaves.
+        A predict function that, for each point, visits only the leaves it can belong to.
         Should be the fastest alternative when N_train >> Nbar. 
         
         Arguments
@@ -750,78 +859,13 @@ class GPTree:
             A list with the names of the leaves contributing to the prediction. Only returned if return_leaf_names=True.
         """
         
-        global sum_probs, collection_done
-        def collect_leaves(x: np.ndarray, current_node: GPNode, current_prob: float):
-            """Recursively traverses the tree to find relevant leaf nodes for prediction.
-
-            This helper function is called by `predict_recursive` for a single test
-            point `x`. It navigates down the tree from `current_node`, calculating
-            the probability of taking each path. If a path's probability is non-zero,
-            it continues traversal.
-
-            When a leaf node is reached, it's added to the `leaves` list (in the
-            outer scope of `predict_recursive`), and its accumulated probability
-            (`current_prob`) is added to `pred_leaf_probs` (also in the outer scope).
-
-            The traversal uses `sum_probs` and `collection_done` (global variables
-            within `predict_recursive`'s scope) for early stopping: if the sum of
-            probabilities of collected leaves reaches or exceeds 1.0, the search
-            is considered complete.
-
-            Args:
-                x (np.ndarray): The single test point (1-row numpy array) for which
-                    leaf nodes are being collected.
-                current_node (GPNode): The GPNode from which to continue the traversal.
-                current_prob (float): The accumulated probability of reaching the
-                    `current_node` from the root.
-            """
-
-            global sum_probs, collection_done
-
-            if collection_done or current_prob <= 0:
-                return
-            
-            # Return if we have reached a leaf node
-            if current_node.is_leaf:
-                leaves.append(current_node)
-                pred_leaf_probs.append(current_prob)
-
-                sum_probs += current_prob
-                if sum_probs >= 1:
-                    collection_done = True                
-                return
-
-            # Ok, not a leaf node. Now, for both child nodes:
-            # - compute the probability
-            # - call this function again
-
-            new_p = current_node.prob_func(x)[0,0]
-
-            p0 = current_prob*(1 - new_p)
-            if p0 > 0:
-                collect_leaves(x, current_node.left, p0)
-
-            p1 = current_prob*new_p
-            if p1 > 0:
-                collect_leaves(x, current_node.right, p1)
-
-            # Done
-            return
-        
-
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
         var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
 
         for i, x in tqdm(enumerate(X_test), total=X_test.shape[0], disable=not show_progress, desc="Predicting"):
             x = x.reshape((1, x.shape[0]))
 
-            # Collect leaves
-            sum_probs = 0
-            collection_done = False
-
-            leaves = []
-            pred_leaf_probs = []
-            collect_leaves(x, self.root, 1.0)
+            leaves, pred_leaf_probs = self._leaves_of(x)
 
             # Limit the number of leaves used?
             if self.max_n_pred_leaves:
