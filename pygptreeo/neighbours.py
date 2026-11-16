@@ -4,10 +4,9 @@ Used by ``GPTree(predict_from='neighbours')``: a leaf then supplies the kernel
 of a prediction, and the points the prediction is conditioned on are the
 query's nearest neighbours among all the points the tree holds. The leaves
 that can hold them are found through the tree's index of the leaves
-(``LeafIndex``), or through the cuts of a tree that has none.
+(``LeafIndex``).
 """
 
-import heapq
 from typing import Optional
 
 import numpy as np
@@ -61,11 +60,12 @@ class NeighbourSearch:
             ``(X, y, sigma)`` of the points found, in no particular order, or
             None if the tree holds no point.
         """
-        index = getattr(self.tree, 'leaf_index', None)
-        if index is None:
-            return self._find_through_cuts(q, w)
+        index = self.tree.leaf_index
         k = self.n_neighbours
-        if self.max_leaves is not None:
+        if index is None:
+            # a tree without an index: every leaf
+            leaves = [near for near in self.tree.root.leaves if near.n_points > 0]
+        elif self.max_leaves is not None:
             leaves = index.nearest(q, w, self.max_leaves)
         else:
             if leaf is None or leaf not in index:
@@ -91,65 +91,5 @@ class NeighbourSearch:
         sigma = np.concatenate([near.my_sigma_data for near in leaves])
         if len(X) > k:
             nearest = np.argpartition((((X - q) / w) ** 2).sum(axis=1), k - 1)[:k]
-            return X[nearest], y[nearest], sigma[nearest]
-        return X, y, sigma
-
-    def _find_through_cuts(self, q: np.ndarray, w: np.ndarray):
-        """``find`` for a tree without an index of its leaves. The leaves nearest
-        to ``q`` are taken until they hold enough points, which bounds the
-        distance of the points looked for. Every other leaf that the cuts do
-        not put beyond that distance is then added, nearest first."""
-        k = self.n_neighbours
-        # entries: lower bound of the squared distance to a subtree, a tie-breaker,
-        # the subtree, and the offset from q to its region along each input
-        heap = [(0.0, 0, self.tree.root, None)]
-        pushed = 1
-        radius = np.inf                 # squared distance within which the k nearest points lie
-        leaves, n_points, d2 = [], 0, None
-        while heap:
-            bound, _, node, offsets = heapq.heappop(heap)
-            if bound >= radius:
-                break
-            while not node.is_leaf:
-                t, margin, j = node.cut_distance(q, w)
-                near, far = (node.right, node.left) if t > 0 else (node.left, node.right)
-                t = max(abs(t) - margin, 0.0)
-                if j is None:
-                    far_bound, far_offsets = max(bound, t * t), offsets
-                else:
-                    # the offsets along different inputs add up
-                    far_offsets = np.zeros(len(q)) if offsets is None else offsets.copy()
-                    far_bound = bound - far_offsets[j] ** 2 + t * t
-                    far_offsets[j] = t
-                if far_bound < radius:
-                    heapq.heappush(heap, (far_bound, pushed, far, far_offsets))
-                    pushed += 1
-                node = near
-            if node.n_points == 0:
-                continue
-            leaves.append(node)
-            n_points += node.n_points
-            if d2 is None and n_points >= k:
-                # enough points to bound the distance of the k nearest
-                X = np.concatenate([leaf.my_X_data for leaf in leaves]) if len(leaves) > 1 else node.my_X_data
-                d2 = (((X - q) / w) ** 2).sum(axis=1)
-                radius = np.partition(d2, k - 1)[k - 1]
-                first = len(leaves)
-            if self.max_leaves is not None and len(leaves) >= self.max_leaves:
-                break
-        self.n_searches += 1
-        self.n_leaves_searched += len(leaves)
-        if not leaves:
-            return None
-        if d2 is None:                  # fewer than k points among the leaves searched
-            first = 0
-        if len(leaves) > first:
-            more = np.concatenate([leaf.my_X_data for leaf in leaves[first:]])
-            more_d2 = (((more - q) / w) ** 2).sum(axis=1)
-            X, d2 = (more, more_d2) if d2 is None else (np.concatenate((X, more)), np.concatenate((d2, more_d2)))
-        y = np.concatenate([leaf.my_y_data for leaf in leaves])
-        sigma = np.concatenate([leaf.my_sigma_data for leaf in leaves])
-        if len(d2) > k:
-            nearest = np.argpartition(d2, k - 1)[:k]
             return X[nearest], y[nearest], sigma[nearest]
         return X, y, sigma

@@ -1,4 +1,7 @@
-"""Prediction time of a tree after N points: python time_predict.py live|snapshot target stream N"""
+"""Update time along N points and prediction time after them:
+
+    python time_predict.py live|snapshot target stream N [variants separated by ;]
+"""
 import os
 import sys
 import time
@@ -7,6 +10,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if sys.argv[1] == 'live':
     os.environ['PYGPTREEO_LIVE'] = '1'
 sys.path.insert(0, HERE)
+VARIANTS = sys.argv[5].split(';') if len(sys.argv) > 5 else ('base', 'nb')
 import numpy as np                                              # noqa: E402
 import bench                                                    # noqa: E402
 import pygptreeo                                                # noqa: E402
@@ -15,7 +19,7 @@ from variants import make_model                                 # noqa: E402
 target, stream, N = sys.argv[2], sys.argv[3], int(sys.argv[4])
 data = bench.make_data(target, stream, N + 1000, 1)
 X, y_obs, sigma = data['X'], data['y_obs'], data['sigma']
-for v in ('base', 'nb', 'nb:neighbour_leaves=8'):
+for v in VARIANTS:
     m = make_model(v, data['d'], 1)
     np.random.seed(1)
     t0 = time.perf_counter()

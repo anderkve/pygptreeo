@@ -273,18 +273,18 @@ class TestTree(unittest.TestCase):
         self.assertEqual(old.n_leaves, len(gpt.root.leaves))
         _stream(old, rng.rand(60, 2))
 
-    def test_the_search_agrees_with_the_one_through_the_cuts(self):
+    def test_the_search_of_a_tree_without_an_index(self):
+        """Every leaf is looked at, and the points found are the same."""
         rng = np.random.RandomState(4)
         np.random.seed(4)
         gpt = _tree(3, Nbar=30)
         _stream(gpt, np.vstack((rng.rand(700, 3), _drifting(500, 3, rng, step=0.002))))
         search = NeighbourSearch(gpt, n_neighbours=40)
+        plain = NeighbourSearch(_without_index(gpt), n_neighbours=40)
         for q in rng.uniform(-0.1, 1.1, (80, 3)):
             w = rng.uniform(0.05, 1.0, 3)
-            with_index = search.find(q, w)
-            through_cuts = search._find_through_cuts(q, w)
-            np.testing.assert_allclose(np.sort((((with_index[0] - q) / w) ** 2).sum(axis=1)),
-                                       np.sort((((through_cuts[0] - q) / w) ** 2).sum(axis=1)), rtol=1e-12)
+            np.testing.assert_allclose(np.sort((((search.find(q, w)[0] - q) / w) ** 2).sum(axis=1)),
+                                       np.sort((((plain.find(q, w)[0] - q) / w) ** 2).sum(axis=1)), rtol=1e-12)
 
 
 class _without_index:

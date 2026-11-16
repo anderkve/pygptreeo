@@ -31,6 +31,8 @@ def parse(name):
                 pass
         if v == 'True' or v == 'False':
             v = (v == 'True')
+        elif v == 'None':
+            v = None
         opts[k] = v
     return kind, opts
 

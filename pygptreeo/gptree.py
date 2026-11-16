@@ -87,6 +87,9 @@ class GPTree:
             or None for no limit.
         memory_mb (float): The tree's estimate of its own size, in MB.
         n_leaves (int): Number of leaves of the tree.
+        leaf_index (Optional[LeafIndex]): A balanced index over the leaves,
+            through which the leaf of a point is found whatever the depth of
+            the tree of cuts.
 
     Methods:
         fit(X_train, y_train, show_progress=False, shuffle=True, forward_GPR_to_next_leaf=False):

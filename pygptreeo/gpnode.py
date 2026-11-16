@@ -1561,15 +1561,6 @@ class GPNode(Node):
         return self.split_index
 
 
-    def cut_distance(self, q: np.ndarray, w: np.ndarray):
-        """Where the point ``q`` lies relative to this node's cut, with every
-        input divided by ``w``: its signed distance from the cut (positive on the
-        right child's side), how far beyond the cut a stored point of either
-        child can lie, and the input the cut is along."""
-        j = self.split_index
-        return (q[j] - self.split_position) / w[j], 0.5 * self.overlap / w[j], j
-
-
     def prob_func(self, x: np.array):
         """The probability that x belongs to the right child: linear across the
         overlap region around the split position, as suggested in the DLGP article.
