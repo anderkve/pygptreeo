@@ -168,6 +168,32 @@ class TestIndex(unittest.TestCase):
         self.assertLessEqual(index.depth(), 6)
         self.assertEqual(index.locate(np.array([1500.6])).my_X_data[0, 0], 1500.0)
 
+    def test_the_boxes_of_the_groups_overlap_little(self):
+        """Leaves cut at the median along random inputs: a point lies in the cells' box of one group."""
+        d = 4
+        rng = np.random.RandomState(0)
+        index = LeafIndex(d)
+        leaves = [_Leaf(rng.rand(16000, d))]
+        index.add(leaves[0])
+        while len(leaves) < 1000:
+            leaf = leaves.pop(0)
+            X, j = leaf.my_X_data, rng.randint(d)
+            position = np.median(X[:, j])
+            left, right = _Leaf(X[X[:, j] <= position]), _Leaf(X[X[:, j] > position])
+            index.split(leaf, left, right, j, position)
+            leaves += [left, right]
+        bottom, groups = [], [index.root]
+        while groups:
+            group = groups.pop()
+            if group.bottom:
+                bottom.append(group.union()[:2])
+            else:
+                groups.extend(group.children)
+        self.assertGreater(len(bottom), 1000 // index.fanout)
+        holding = [sum(bool(np.all(lo <= q) and np.all(q < hi)) for lo, hi in bottom) for q in rng.rand(500, d)]
+        self.assertLess(np.mean(holding), 1.1)
+        self._check(index, leaves, rng, n_queries=50)
+
 
 class TestTree(unittest.TestCase):
 

@@ -913,3 +913,31 @@ cuts. The times are means over the 2000 points up to each row.
   1000 levels and saving from about 150.
 * **With neighbours the RMSE of the last 6000 predictions is 0.59 of the
   default tree's.**
+
+### 8.9 The index of the leaves up to a million points
+
+Without GPs (`research/partitioning/index_scaling.py`): leaves of 100 points,
+cut at the median along a random input, on a uniform stream and on a random
+walk in the unit cube. The groups of the index that the search for the 16
+nearest leaves opens, as the mean over 500 queries near the latest points:
+with groups divided at the median of their children's centres (the index of
+sections 8.4 to 8.8), then with groups divided where their halves overlap
+least (the index of the package). Both give the same leaves.
+
+| points | leaves | uniform, d = 3 | d = 6 | d = 10 | walk, d = 3 | d = 6 | d = 10 |
+|---|---|---|---|---|---|---|---|
+| 5000 | 70 | 5.0 → 3.9 | 4.5 → 3.7 | 4.6 → 4.4 | 3.9 → 3.8 | 4.5 → 4.5 | 4.0 → 4.7 |
+| 20 000 | 300 | 6.9 → 5.0 | 8.5 → 5.4 | 10.6 → 5.5 | 6.1 → 5.8 | 7.8 → 7.6 | 10.3 → 7.3 |
+| 100 000 | 1500 | 10.9 → 6.8 | 19.3 → 7.4 | 25.2 → 8.2 | 12.3 → 7.9 | 25.7 → 10.1 | 30.3 → 12.3 |
+| 400 000 | 6000 | 14.8 → 7.2 | 37.0 → 8.6 | 48.9 → 9.4 | 19.0 → 7.8 | 46.1 → 10.4 | 67.6 → 16.4 |
+| 1 000 000 | 14 500 | 17.9 → 7.4 | 55.3 → 9.3 | 70.9 → 10.4 | | | |
+
+* **Divided at the median of the centres, the groups opened grow with a
+  power of the number of leaves**: twice as many for four times the leaves
+  in six and ten dimensions.
+* **Divided where the halves overlap least, they grow by one to four for
+  four times the leaves**, and a point lies in the cells' box of one bottom
+  group, against 5 in four dimensions and 9 in eight.
+* **The predictions do not change**: on two 5000-point streams with
+  `predict_from='neighbours'` all of them are identical with the two
+  divisions.

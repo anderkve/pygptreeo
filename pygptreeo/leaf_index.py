@@ -156,26 +156,37 @@ class LeafIndex:
             group = parent
 
     def _divide(self, group):
-        """Split a group that holds more than ``fanout`` children into two, along
-        the input in which the centres of its children are spread most."""
+        """Split a group that holds more than ``fanout`` children into two: along
+        the input, and with 30 to 70% of the children in the first half, for
+        which the boxes of the two halves overlap least."""
         n = len(group.children)
-        # a centre: of the box of the points, or of the cell within the reach of all points
-        lo, hi = group.data_lo[:n].copy(), group.data_hi[:n].copy()
-        empty = lo[:, 0] > hi[:, 0]
-        if empty.all():
-            centre = np.zeros((n, self.n_features))
-        else:
-            reach_lo, reach_hi = lo[~empty].min(axis=0), hi[~empty].max(axis=0)
-            lo[empty] = np.clip(group.cell_lo[:n][empty], reach_lo, reach_hi)
-            hi[empty] = np.clip(group.cell_hi[:n][empty], reach_lo, reach_hi)
+        order, size = np.arange(n), n // 2
+        filled = group.data_lo[:n, 0] <= group.data_hi[:n, 0]
+        if filled.any():
+            # the cells of the children within the reach of the points
+            reach_lo, reach_hi = group.data_lo[:n][filled].min(axis=0), group.data_hi[:n][filled].max(axis=0)
+            lo = np.clip(group.cell_lo[:n], reach_lo, reach_hi)
+            hi = np.clip(group.cell_hi[:n], reach_lo, reach_hi)
             centre = 0.5 * (lo + hi)
-        j = int(np.argmax(np.ptp(centre, axis=0)))
-        order = np.argsort(centre[:, j], kind='stable')
+            sizes = np.arange(max(1, -(-3 * n // 10)), min(n - 1, 7 * n // 10) + 1)
+            best = None
+            for j in range(self.n_features):
+                by_centre = np.argsort(centre[:, j], kind='stable')
+                upper = np.maximum.accumulate(hi[by_centre, j])                 # of the first children
+                lower = np.minimum.accumulate(lo[by_centre[::-1], j])[::-1]     # of the last children
+                extent = upper[-1] - lower[0]
+                if extent <= 0.0:
+                    continue
+                overlap = np.maximum(upper[sizes - 1] - lower[sizes], 0.0) / extent
+                i = np.lexsort((np.abs(sizes - n / 2), overlap))[0]             # least overlap, then most even
+                key = (overlap[i], abs(sizes[i] - n / 2))
+                if best is None or key < best:
+                    best, order, size = key, by_centre, int(sizes[i])
         members = [(group.children[i], [a.copy() for a in group.boxes(i)]) for i in order]
         other = _Group(group.bottom, self.fanout + 1, self.n_features)
         group.children = []
         for k, (child, boxes) in enumerate(members):
-            target = group if k < n // 2 else other
+            target = group if k < size else other
             target.put(len(target.children), child, boxes)
             if target.bottom:
                 self._group[child] = target

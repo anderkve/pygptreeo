@@ -233,11 +233,17 @@ section 8.
   recursive descent that predictions used failed, and saving a tree failed
   from about 150 levels.
 * **`LeafIndex`** (`pygptreeo/leaf_index.py`) holds the same leaves in a
-  hierarchy of bounding boxes: groups of up to 32 leaves or groups, and a
-  group that overflows is divided in two along the input in which the
-  centres of its children are spread most (as the nodes of an R-tree,
-  Guttman 1984). Its depth is the logarithm to base 32 of the number of
-  leaves, whatever the order of the points.
+  hierarchy of bounding boxes: groups of up to 32 leaves or groups, as the
+  nodes of an R-tree (Guttman 1984). Its depth grows with the logarithm of
+  the number of leaves, whatever the order of the points.
+* **A group that overflows is divided where the cells of its two halves
+  overlap least**, along any input and with 30 to 70% of the children in
+  each half (the overlap criterion of the R*-tree, Beckmann et al. 1990).
+  Cells that were made by cuts can nearly always be separated by one of
+  those cuts, so the boxes of the groups do not overlap, and a search opens
+  few groups however many there are: 5 at 20 000 points and 9 at a million
+  for the 16 nearest leaves in six dimensions (`docs/benchmarks.md`,
+  section 8.9).
 * **Two boxes per leaf.** The cell that the cuts give the leaf, which finds
   the leaf of a point, and the bounding box of its stored points, which
   bounds the distance from a query to the leaf's points for the neighbour
@@ -390,6 +396,11 @@ section 8.
 * **A blend of the neighbours' prediction and the leaf's own**, with equal
   weights or weights from the two sigmas: 1 to 13% worse than the
   neighbours' prediction alone.
+* **Dividing a group of the index at the median of its children's centres**,
+  along the input in which they are spread most. The boxes of the groups
+  overlapped, a point lay in those of 5 bottom groups in four dimensions and
+  of 9 in eight, and the search for the 16 nearest leaves opened 9 groups at
+  20 000 points and 55 at a million in six dimensions.
 * **Merging a removed leaf and its sibling back into their parent**, with the
   parent's points and hyperparameters as they were at the split. On four
   40 000-point runs the error was 11 to 49% higher than with plain removal and
@@ -478,6 +489,8 @@ section 8.
 
 ## References
 
+* Beckmann, Kriegel, Schneider, Seeger 1990, The R*-tree: an efficient and
+  robust access method for points and rectangles, SIGMOD.
 * Constantine, Dow, Wang 2014, Active subspace methods in theory and practice,
   SIAM J. Sci. Comput., arXiv:1304.2070.
 * Gramacy, Apley 2015, Local Gaussian process approximation for large
