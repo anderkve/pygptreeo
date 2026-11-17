@@ -77,9 +77,10 @@ class TestIndex(unittest.TestCase):
             if not group.bottom:
                 for i, child in enumerate(group.children):
                     self.assertIs(child.parent, group)
-                    cell_lo, cell_hi, data_lo, data_hi = child.union()
+                    cell_lo, cell_hi, data_lo, data_hi, _, _, _, reach_lo, reach_hi = child.union()
                     self.assertTrue(np.all(group.cell_lo[i] <= cell_lo) and np.all(group.cell_hi[i] >= cell_hi))
                     self.assertTrue(np.all(group.data_lo[i] <= data_lo) and np.all(group.data_hi[i] >= data_hi))
+                    self.assertTrue(np.all(group.reach_lo[i] <= reach_lo) and np.all(group.reach_hi[i] >= reach_hi))
                     groups.append(child)
         cells = {leaf: index.cell(leaf) for leaf in leaves}
         for q in rng.uniform(-0.5, 1.5, (n_queries, d)):
@@ -107,55 +108,119 @@ class TestIndex(unittest.TestCase):
             self.assertEqual(len(nearest), min(m, len(leaves)))
             np.testing.assert_allclose([distance[leaf] for leaf in nearest], sorted(distance.values())[:m])
 
+    def _grown(self, d, fanout, rng, blend=None, margin=0.0, steps=300):
+        """An index after splits, arriving points and removals, with its leaves and the number of removals."""
+        index = LeafIndex(d, fanout=fanout, blend=blend)
+        first = _Leaf(rng.rand(40, d))
+        index.add(first)
+        leaves, removed = [first], 0
+        for step in range(steps):
+            if step % 7 == 6 and len(leaves) > 3:
+                # a leaf goes, and a neighbour across one of its faces takes its cell
+                leaf = leaves[rng.randint(len(leaves))]
+                lo, hi, _ = index.faces(leaf)
+                for other, j in [(other, j) for other in leaves if other is not leaf for j in range(d)]:
+                    other_lo, other_hi, _ = index.faces(other)
+                    rest = [k for k in range(d) if k != j]
+                    if np.all(other_lo[rest] == lo[rest]) and np.all(other_hi[rest] == hi[rest]) \
+                            and (other_hi[j] == lo[j] or other_lo[j] == hi[j]):
+                        index.extend(other, leaf, j)
+                        index.remove(leaf)
+                        leaves.remove(leaf)
+                        removed += 1
+                        break
+                continue
+            leaf = leaves[rng.randint(len(leaves))]
+            X = leaf.my_X_data
+            if len(X) < 4:
+                continue
+            j = rng.randint(d)
+            position = np.median(X[:, j])
+            left, right = _Leaf(X[X[:, j] < position]), _Leaf(X[X[:, j] >= position])
+            if len(left.my_X_data) == 0 or len(right.my_X_data) == 0:
+                continue
+            index.split(leaf, left, right, j, position, margin)
+            leaves.remove(leaf)
+            leaves += [left, right]
+            # a point arrives in one of them
+            x = rng.uniform(-0.2, 1.2, d)
+            target = index.locate(x)
+            if target is not None:
+                target.my_X_data = np.vstack((target.my_X_data, x))
+                index.grow(target, x)
+        return index, leaves, removed
+
     def test_cells_tile_the_space_through_splits_and_removals(self):
         rng = np.random.RandomState(0)
         for d, fanout in ((2, 4), (3, 6), (5, 32)):
-            index = LeafIndex(d, fanout=fanout)
-            first = _Leaf(rng.rand(40, d))
-            index.add(first)
-            leaves = [first]
-            for step in range(300):
-                if step % 7 == 6 and len(leaves) > 3:
-                    # a leaf goes, and a neighbour across one of its faces takes its cell
-                    leaf = leaves[rng.randint(len(leaves))]
-                    lo, hi = index.cell(leaf)
-                    merged = False
-                    for other in leaves:
-                        if other is leaf:
-                            continue
-                        other_lo, other_hi = index.cell(other)
-                        for j in range(d):
-                            rest = [k for k in range(d) if k != j]
-                            if np.all(other_lo[rest] == lo[rest]) and np.all(other_hi[rest] == hi[rest]) \
-                                    and (other_hi[j] == lo[j] or other_lo[j] == hi[j]):
-                                index.remove(leaf)
-                                index.set_cell(other, np.minimum(lo, other_lo), np.maximum(hi, other_hi))
-                                leaves.remove(leaf)
-                                merged = True
-                                break
-                        if merged:
-                            break
-                    continue
-                leaf = leaves[rng.randint(len(leaves))]
-                X = leaf.my_X_data
-                if len(X) < 4:
-                    continue
-                j = rng.randint(d)
-                position = np.median(X[:, j])
-                left, right = _Leaf(X[X[:, j] < position]), _Leaf(X[X[:, j] >= position])
-                if len(left.my_X_data) == 0 or len(right.my_X_data) == 0:
-                    continue
-                index.split(leaf, left, right, j, position)
-                leaves.remove(leaf)
-                leaves += [left, right]
-                # a point arrives in one of them
-                x = rng.uniform(-0.2, 1.2, d)
-                target = index.locate(x)
-                target.my_X_data = np.vstack((target.my_X_data, x))
-                index.grow(target, x)
+            index, leaves, removed = self._grown(d, fanout, rng)
+            self.assertGreater(removed, 5)
             self._check(index, leaves, rng)
             if fanout < 32:
                 self.assertGreaterEqual(index.depth(), 2)
+
+    def _weights(self, index, leaves, q):
+        """The weights of ``LeafIndex.blend`` from the faces and zones of every leaf."""
+        weights = {}
+        for leaf in leaves:
+            lo, hi, half = index.faces(leaf)
+            factors = []
+            for j in range(len(q)):
+                if half[j] > 0.0:
+                    factors.append(np.clip(min((q[j] - lo[j] + half[j]) / (2 * half[j]),
+                                               (hi[j] + half[j] - q[j]) / (2 * half[j])), 0.0, 1.0))
+                else:
+                    factors.append(float(lo[j] <= q[j] < hi[j]))
+            if np.prod(factors) > 0.0:
+                weights[leaf] = np.prod(factors)
+        total = sum(weights.values())
+        return {leaf: weight / total for leaf, weight in weights.items()}
+
+    def test_the_leaves_of_a_prediction_and_their_weights(self):
+        rng = np.random.RandomState(1)
+        for d, fanout, margin in ((1, 4, 0.0), (2, 4, 0.01), (3, 6, 0.0), (5, 32, 0.0)):
+            index, leaves, removed = self._grown(d, fanout, rng, blend=0.3, margin=margin)
+            self.assertGreater(removed, 5)
+            if margin == 0.0:
+                self._check(index, leaves, rng, n_queries=20)
+            for leaf in leaves:
+                lo, hi, half = index.faces(leaf)
+                both = np.isfinite(lo) & np.isfinite(hi)
+                np.testing.assert_allclose(half[both], 0.15 * (hi - lo)[both], rtol=1e-9)
+                self.assertTrue(np.all(half >= 0.0) and np.all(np.isfinite(half)))
+            several = 0
+            for q in rng.uniform(-0.3, 1.3, (300, d)):
+                found, weights = index.blend(q)
+                expected = self._weights(index, leaves, q)
+                self.assertEqual(set(found), set(expected))
+                np.testing.assert_allclose(weights, [expected[leaf] for leaf in found], rtol=1e-9)
+                self.assertAlmostEqual(sum(weights), 1.0)
+                several += len(found) > 1
+                # the leaf whose faces hold the point is among them
+                holding = [leaf for leaf in leaves if np.all(index.faces(leaf)[0] <= q) and np.all(q < index.faces(leaf)[1])]
+                self.assertEqual(len(holding), 1)
+                self.assertIn(holding[0], found)
+            self.assertGreater(several, 30)
+            # along a path the weights change gradually
+            a, b = rng.uniform(0.0, 1.0, (2, d))
+            path = a + np.linspace(0.0, 1.0, 4001)[:, None] * (b - a)
+            before = self._weights(index, leaves, path[0])
+            largest = 0.0
+            for q in path[1:]:
+                found, weights = index.blend(q)
+                now = dict(zip(found, weights))
+                largest = max([largest] + [abs(now.get(leaf, 0.0) - before.get(leaf, 0.0)) for leaf in set(now) | set(before)])
+                before = now
+            self.assertLess(largest, 0.05)
+
+    def test_without_zones_one_leaf_predicts(self):
+        rng = np.random.RandomState(2)
+        index, leaves, _ = self._grown(3, 6, rng)
+        for q in rng.uniform(-0.3, 1.3, (200, 3)):
+            found, weights = index.blend(q)
+            self.assertEqual(weights, [1.0])
+            lo, hi, half = index.faces(found[0])
+            self.assertTrue(np.all(lo <= q) and np.all(q < hi) and np.all(half == 0.0))
 
     def test_depth_stays_logarithmic_whatever_the_order(self):
         """Leaves split one after the other at one end, as on a drifting stream."""

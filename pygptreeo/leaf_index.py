@@ -4,9 +4,11 @@ The tree of cuts defines the cells of the leaves, but its depth follows the
 order in which the points arrive: on a stream that drifts, every split adds a
 level. ``LeafIndex`` keeps the same leaves in a hierarchy of bounding boxes
 whose depth grows with the logarithm of their number whatever the order. It
-holds two boxes per leaf: the cell its cuts give it, used to find the leaf of
-a point, and the bounding box of its stored points, used to find the leaves
-that can hold a point's nearest neighbours.
+holds three boxes per leaf: the cell its cuts give it, used to find the leaf
+of a point; the bounding box of its stored points, used to find the leaves
+that can hold a point's nearest neighbours; and its reach, the box of its
+faces widened by a zone at each cut, used to find the leaves that take part
+in a prediction.
 """
 
 import heapq
@@ -14,30 +16,34 @@ import heapq
 import numpy as np
 
 
+ARRAYS = ('cell_lo', 'cell_hi', 'data_lo', 'data_hi', 'face_lo', 'face_hi', 'half', 'reach_lo', 'reach_hi')
+
+
 class _Group:
     """A node of the index: up to ``fanout`` leaves or groups, with their boxes
-    in the rows of four arrays."""
+    in the rows of the arrays named in ``ARRAYS``. The faces and the half
+    widths of the zones are those of leaves; a row of a group above the
+    leaves holds zeros there."""
 
-    __slots__ = ('parent', 'children', 'bottom', 'cell_lo', 'cell_hi', 'data_lo', 'data_hi')
+    __slots__ = ('parent', 'children', 'bottom') + ARRAYS
 
     def __init__(self, bottom, capacity, n_features):
         self.parent = None
         self.children = []
         self.bottom = bottom            # True if the children are leaves
-        self.cell_lo = np.empty((capacity, n_features))
-        self.cell_hi = np.empty((capacity, n_features))
-        self.data_lo = np.empty((capacity, n_features))
-        self.data_hi = np.empty((capacity, n_features))
+        for name in ARRAYS:
+            setattr(self, name, np.empty((capacity, n_features)))
 
     def boxes(self, i):
-        return self.cell_lo[i], self.cell_hi[i], self.data_lo[i], self.data_hi[i]
+        return tuple(getattr(self, name)[i] for name in ARRAYS)
 
     def put(self, i, child, boxes):
         if i == len(self.children):
             self.children.append(child)
         else:
             self.children[i] = child
-        self.cell_lo[i], self.cell_hi[i], self.data_lo[i], self.data_hi[i] = boxes
+        for name, box in zip(ARRAYS, boxes):
+            getattr(self, name)[i] = box
         if not self.bottom:
             child.parent = self
 
@@ -50,8 +56,10 @@ class _Group:
 
     def union(self):
         n = len(self.children)
+        nothing = np.zeros(self.cell_lo.shape[1])
         return (self.cell_lo[:n].min(axis=0), self.cell_hi[:n].max(axis=0),
-                self.data_lo[:n].min(axis=0), self.data_hi[:n].max(axis=0))
+                self.data_lo[:n].min(axis=0), self.data_hi[:n].max(axis=0), nothing, nothing, nothing,
+                self.reach_lo[:n].min(axis=0), self.reach_hi[:n].max(axis=0))
 
 
 class LeafIndex:
@@ -60,18 +68,26 @@ class LeafIndex:
     A cell is the half-open box ``lo <= x < hi`` (infinite where no cut bounds
     it) of the points that belong to the leaf alone: it stops short of a cut
     by half the overlap of the two children. The box of a leaf's points is
-    empty (``lo = inf``, ``hi = -inf``) while the leaf holds none. The boxes
-    of a group contain those of its children; they are not shrunk when a leaf
-    is removed.
+    empty (``lo = inf``, ``hi = -inf``) while the leaf holds none. The faces
+    of a leaf are its cuts themselves. With ``blend`` a leaf has a zone at
+    each face, half of it on either side: its width is the share ``blend`` of
+    the leaf's width along that input, measured between its faces, or to the
+    edge of its points where no cut bounds it. The reach of a leaf is the box
+    of its faces with the outer halves of its zones. The boxes of a group
+    contain those of its children; they are not shrunk when a leaf is
+    removed.
 
     Args:
         n_features (int): Number of inputs.
         fanout (int): Largest number of children of a group.
+        blend (Optional[float]): Width of the zone at a cut as a share of a
+            leaf's width; None for none.
     """
 
-    def __init__(self, n_features: int, fanout: int = 32):
+    def __init__(self, n_features: int, fanout: int = 32, blend=None):
         self.n_features = n_features
         self.fanout = fanout
+        self.blend_width = 0.0 if blend is None else float(blend)
         self.root = _Group(True, fanout + 1, n_features)
         self._group = {}                # leaf -> the group that holds it
 
@@ -93,8 +109,9 @@ class LeafIndex:
     def add(self, leaf):
         """Add the first leaf of a tree; its cell is the whole space."""
         d = self.n_features
+        everything = (np.full(d, -np.inf), np.full(d, np.inf))
         self.root.put(len(self.root.children), leaf,
-                      (np.full(d, -np.inf), np.full(d, np.inf)) + self.data_box(leaf))
+                      everything + self.data_box(leaf) + everything + (np.zeros(d),) + everything)
         self._group[leaf] = self.root
 
     def cell(self, leaf):
@@ -102,6 +119,12 @@ class LeafIndex:
         group = self._group[leaf]
         i = group.children.index(leaf)
         return group.cell_lo[i].copy(), group.cell_hi[i].copy()
+
+    def faces(self, leaf):
+        """The faces of a leaf and the half widths of its zones: ``(lo, hi, half)``."""
+        group = self._group[leaf]
+        i = group.children.index(leaf)
+        return group.face_lo[i].copy(), group.face_hi[i].copy(), group.half[i].copy()
 
     def split(self, leaf, left, right, j, position, margin=0.0):
         """Replace a leaf by its two children, cut along input ``j`` at
@@ -113,9 +136,23 @@ class LeafIndex:
         left_hi, right_lo = hi.copy(), lo.copy()
         left_hi[j] = min(hi[j], position - margin)
         right_lo[j] = max(lo[j], position + margin if margin > 0 else np.nextafter(position, np.inf))
-        group.put(i, left, (lo, left_hi) + self.data_box(left))
-        group.put(len(group.children), right, (right_lo, hi) + self.data_box(right))
+        face_lo, face_hi = group.face_lo[i].copy(), group.face_hi[i].copy()
+        # the extent of the leaf: to its faces, or to the edge of its points where it has none
+        with_points = group.data_lo[i, 0] <= group.data_hi[i, 0]
+        extent_lo = np.where(np.isfinite(face_lo), face_lo, group.data_lo[i] if with_points else position)
+        extent_hi = np.where(np.isfinite(face_hi), face_hi, group.data_hi[i] if with_points else position)
+        left_face_hi, right_face_lo = face_hi.copy(), face_lo.copy()
+        left_face_hi[j] = right_face_lo[j] = position
+        left_extent_hi, right_extent_lo = extent_hi.copy(), extent_lo.copy()
+        left_extent_hi[j] = right_extent_lo[j] = position
+        left_half = 0.5 * self.blend_width * np.maximum(left_extent_hi - extent_lo, 0.0)
+        right_half = 0.5 * self.blend_width * np.maximum(extent_hi - right_extent_lo, 0.0)
+        group.put(i, left, (lo, left_hi) + self.data_box(left)
+                  + (face_lo, left_face_hi, left_half, face_lo - left_half, left_face_hi + left_half))
+        group.put(len(group.children), right, (right_lo, hi) + self.data_box(right)
+                  + (right_face_lo, face_hi, right_half, right_face_lo - right_half, face_hi + right_half))
         self._group[left] = self._group[right] = group
+        self._grow(group)
         if len(group.children) > self.fanout:
             self._divide(group)
 
@@ -128,11 +165,21 @@ class LeafIndex:
             parent.drop(parent.children.index(group))
             group = parent
 
-    def set_cell(self, leaf, lo, hi):
-        """Give a leaf a new cell, which contains its old one."""
+    def extend(self, leaf, removed, j):
+        """Extend a leaf along input ``j`` over a leaf beside it that is about
+        to be removed: its cell and its face there become those of the
+        removed leaf, and its width the sum of the two."""
+        gone = self._group[removed]
+        k = gone.children.index(removed)
         group = self._group[leaf]
         i = group.children.index(leaf)
-        group.cell_lo[i], group.cell_hi[i] = lo, hi
+        if gone.face_lo[k, j] < group.face_lo[i, j]:
+            group.cell_lo[i, j], group.face_lo[i, j] = gone.cell_lo[k, j], gone.face_lo[k, j]
+        else:
+            group.cell_hi[i, j], group.face_hi[i, j] = gone.cell_hi[k, j], gone.face_hi[k, j]
+        group.half[i, j] += gone.half[k, j]
+        group.reach_lo[i] = group.face_lo[i] - group.half[i]
+        group.reach_hi[i] = group.face_hi[i] + group.half[i]
         self._grow(group)
 
     def grow(self, leaf, x):
@@ -214,6 +261,32 @@ class LeafIndex:
             else:
                 stack.extend([group.children[i] for i in inside])
         return None
+
+    def blend(self, q):
+        """The leaves that take part in a prediction at ``q`` and their weights,
+        which sum to 1: ``(leaves, weights)``. Before the weights are
+        normalised, that of a leaf is the product over the inputs of a
+        factor that is 1 within its faces less half a zone, falls linearly
+        to a half at a face and to 0 half a zone beyond it."""
+        leaves, weights = [], []
+        stack = [self.root]
+        while stack:
+            group = stack.pop()
+            n = len(group.children)
+            inside = np.flatnonzero(((group.reach_lo[:n] <= q) & (q < group.reach_hi[:n])).all(axis=1))
+            if not group.bottom:
+                stack.extend([group.children[i] for i in inside])
+            elif inside.size:
+                zone = 2.0 * group.half[inside]
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    rise = np.minimum((q - group.reach_lo[inside]) / zone, (group.reach_hi[inside] - q) / zone)
+                weight = np.clip(np.where(zone > 0.0, rise, 1.0), 0.0, 1.0).prod(axis=1)
+                for i, value in zip(inside, weight):
+                    if value > 0.0:
+                        leaves.append(group.children[i])
+                        weights.append(value)
+        total = sum(weights)
+        return leaves, [weight / total for weight in weights]
 
     def within(self, q, w, radius):
         """The leaves that can hold a point within ``radius`` (a squared distance)

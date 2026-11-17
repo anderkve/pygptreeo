@@ -1707,6 +1707,26 @@ class GPNode(Node):
             self.prefers_own = bool(np.mean(np.log(own / from_neighbours)) < 2.0 * np.log(OWN_MARGIN))
 
 
+    def _prior(self, Z: np.ndarray):
+        """The prior of each output at the points ``Z`` in the units of the
+        targets, before the global model: ``(covariances, means)`` with a
+        matrix and a mean per output. None unless each output has its own GP
+        and the backend gives its covariance."""
+        if self.output_model != 'independent':
+            return None
+        Zs = self._scaled_inputs(Z)
+        scaled = self.use_standard_scaling and self.X_scaler is not None
+        covariances, means = [], np.empty(self.n_outputs)
+        for i, gpr in enumerate(self.my_GPRs):
+            prior = gpr.covariance(Zs)
+            if prior is None:
+                return None
+            shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
+            covariances.append((scale ** 2 * prior[1][0]) * prior[0])
+            means[i] = shift + scale * prior[2][0]
+        return covariances, means
+
+
     def _predicted_variance(self):
         """Per output, the median of the variances that the node's GPs gave its
         last registered predictions, before calibration, or None while there
@@ -1882,13 +1902,16 @@ class GPNode(Node):
         return mu_pred, np.sqrt(var_pred)
 
 
-    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray], only_if_fitted: bool = False):
+    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray], only_if_fitted: bool = False,
+                           prediction=None):
         """ Register the residual between prediction and true value for this data point.
 
         For multi-output: tracks performance per output dimension. With
         ``only_if_fitted`` the prior prediction of a node without fitted GPs is
-        not registered. Returns the errors in units of the calibrated sigma, per
-        output, or None if nothing was registered.
+        not registered. ``prediction`` is the mean and the uncalibrated sigma
+        that the tree predicted at ``x``, each of shape (1, n_outputs), where
+        that is not the node's own prediction. Returns the errors in units of
+        the calibrated sigma, per output, or None if nothing was registered.
         """
         mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False)
         if only_if_fitted and not self._is_fitted():
@@ -1902,6 +1925,8 @@ class GPNode(Node):
 
         if self._can_condition():
             self._score_predictors(x, y[:self.n_outputs], mu_pred)
+        if prediction is not None:
+            mu_pred, sigma_pred = prediction
 
         keep_n_points = self.n_points_pred_perf - 1
 

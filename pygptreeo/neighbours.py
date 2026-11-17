@@ -10,6 +10,7 @@ that can hold them are found through the tree's index of the leaves
 from typing import Optional
 
 import numpy as np
+from scipy.linalg.lapack import dpotrf, dtrtrs
 
 
 class NeighbourSearch:
@@ -28,23 +29,29 @@ class NeighbourSearch:
         fade (Optional[float]): The noise of a neighbour grows from this
             fraction of the distance of the first stored point beyond the
             neighbours, and is infinite at that distance; None for no growth.
+        blend (Optional[float]): The kernels of the leaves on both sides of a
+            cut are mixed within a zone of this share of a leaf's width; None
+            for the kernel of the query's leaf alone.
         n_searches (int): Number of searches made so far.
         n_leaves_searched (int): Number of leaves whose points they looked at.
     """
 
     def __init__(self, tree, n_neighbours: int, consistency_limit: float = 10.0, max_leaves: Optional[int] = None,
-                 fade: Optional[float] = None):
+                 fade: Optional[float] = None, blend: Optional[float] = None):
         if n_neighbours < 1:
             raise ValueError("n_neighbours must be at least 1")
         if max_leaves is not None and max_leaves < 1:
             raise ValueError("neighbour_leaves must be at least 1")
         if fade is not None and not 0.0 <= fade < 1.0:
             raise ValueError("neighbour_fade must be at least 0 and below 1, or None")
+        if blend is not None and not 0.0 < blend <= 1.0:
+            raise ValueError("neighbour_blend must be above 0 and at most 1, or None")
         self.tree = tree
         self.n_neighbours = int(n_neighbours)
         self.consistency_limit = float(consistency_limit)
         self.max_leaves = max_leaves
         self.fade = fade
+        self.blend = blend
         self.n_searches = 0
         self.n_leaves_searched = 0
 
@@ -119,3 +126,65 @@ class NeighbourSearch:
             t = np.clip((np.sqrt(distance[nearest] / beyond) - self.fade) / (1.0 - self.fade), 0.0, 1.0)
             growth = t ** 2 / np.maximum(1.0 - t, 1e-9) ** 2
         return X[nearest], y[nearest], sigma[nearest], growth
+
+    def predict_mixed(self, x: np.ndarray, leaves, weights):
+        """The prediction at the single query ``x`` (one row) from its
+        neighbours, with the kernels of several leaves mixed.
+
+        The kernel of an output is the sum of the leaves' kernels with the
+        ``weights``, in the units of the inputs and targets. The metric of
+        the distances, the mean of the targets with the leaves' snapshots of
+        the global model, and the unit of the fading are the leaves' with the
+        same weights.
+
+        Returns the mean and sigma per output, before calibration, or None
+        where a leaf cannot give its kernel or predicts from its own points,
+        or where the neighbours do not fit the mixed kernel.
+        """
+        if any(not leaf._can_condition() or leaf.prefers_own for leaf in leaves):
+            return None
+        found = self.find(x[0], sum(weight * leaf.fit_std for weight, leaf in zip(weights, leaves)),
+                          leaf=leaves[int(np.argmax(weights))])
+        if found is None:
+            return None
+        X, y, noise_std, growth = found
+        n, n_outputs = y.shape
+        Z = np.vstack((X, x))
+        covariances = np.zeros((n_outputs, n + 1, n + 1))
+        mean = np.zeros((n + 1, n_outputs))
+        unit, without_unit = np.zeros(n_outputs), 0.0
+        for weight, leaf in zip(weights, leaves):
+            prior = leaf._prior(Z)
+            if prior is None:
+                return None
+            for i in range(n_outputs):
+                covariances[i] += weight * prior[0][i]
+            mean += weight * prior[1]
+            if leaf._fitted_global is not None:
+                mean += weight * leaf._fitted_global.predict(Z)
+            variance = leaf._predicted_variance()
+            if variance is None:
+                without_unit += weight
+            else:
+                unit += weight * variance
+        residual = y - mean[:n]
+        noise = noise_std ** 2
+        if growth is not None:
+            noise = noise + growth[:, None] * (noise + unit + without_unit * 0.01 * residual.var(axis=0))
+        mu, sigma = np.empty(n_outputs), np.empty(n_outputs)
+        for i in range(n_outputs):
+            K = covariances[i, :n, :n].copy()
+            K.flat[::n + 1] += noise[:, i]
+            L, info = dpotrf(K, lower=True, overwrite_a=True)
+            if info != 0:
+                return None
+            # L^-1 applied to the targets and to the covariances with the query at once
+            solved, info = dtrtrs(L, np.column_stack((residual[:, i], covariances[i, :n, n])), lower=True)
+            if info != 0:
+                return None
+            v, u = solved[:, 0], solved[:, 1]
+            if not v @ v / n <= self.consistency_limit:
+                return None
+            mu[i] = mean[n, i] + u @ v
+            sigma[i] = np.sqrt(max(covariances[i, n, n] - u @ u, 0.0))
+        return mu, sigma

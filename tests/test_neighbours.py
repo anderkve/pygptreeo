@@ -289,7 +289,7 @@ class TestPredictions(unittest.TestCase):
         n_outputs = kw.get('n_outputs', 1)
         Y = np.column_stack([_target(X) * (1.0 + 0.3 * k) + 0.1 * k * X[:, 0] for k in range(n_outputs)])
         out = []
-        for options in (dict(), dict(predict_from='neighbours', neighbour_consistency=0.0)):
+        for options in (dict(), dict(predict_from='neighbours', neighbour_consistency=0.0, neighbour_blend=None)):
             np.random.seed(3)
             gpt = GPTree(Nbar=50, retrain_every_n_points=10, **options, **kw)
             preds = []
@@ -356,7 +356,7 @@ class TestPredictions(unittest.TestCase):
         for mode in ('leaf', 'neighbours'):
             np.random.seed(6)
             trees[mode] = GPTree(Nbar=50, retrain_every_n_points=25, predict_from=mode, use_calibrated_sigma=False,
-                                 neighbour_fade=None)
+                                 neighbour_fade=None, neighbour_blend=None)
             _stream(trees[mode], X, y, sigma=1e-4)
         X_test = rng.rand(400, 2)
         X_test = X_test[np.abs(X_test[:, 0] - 0.5) > 0.02]
@@ -393,12 +393,12 @@ class TestPredictions(unittest.TestCase):
             leaf = _leaf_of(gpt, x)
             if leaf.merge_candidate(x) is None:
                 continue
-            before, n_merges = leaf.predict(x, return_std=False), leaf.n_merges
+            before, n_merges = gpt.predict(x)[0], leaf.n_merges
             gpt.update_tree(x, np.array([[_target(x)[0] + 0.5]]), 1e-3)
             self.assertEqual(leaf.n_merges, n_merges + 1)
             merged += 1
             np.testing.assert_allclose(leaf.mu_preds_list[0][0], np.ravel(before)[0])
-            moved += not np.allclose(leaf.predict(x, return_std=False), before)
+            moved += not np.allclose(gpt.predict(x)[0], before)
         self.assertGreater(merged, 5)
         self.assertGreater(moved, 0)        # the merged point is among the neighbours afterwards
 
@@ -454,6 +454,184 @@ class TestPredictions(unittest.TestCase):
             loaded = joblib.load(path)
         self.assertIs(loaded.neighbours.tree, loaded)
         np.testing.assert_allclose(loaded.predict(X_test)[0], mean, rtol=1e-12)
+
+
+class TestBlend(unittest.TestCase):
+    """Predictions within the zones at the cuts (``neighbour_blend``)."""
+
+    @classmethod
+    def setUpClass(cls):
+        np.random.seed(11)
+        rng = np.random.RandomState(11)
+        cls.gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
+                         neighbour_leaves=None, neighbour_consistency=np.inf, use_calibrated_sigma=False)
+        cls.X = rng.rand(700, 2)
+        _stream(cls.gpt, cls.X, sigma=1e-3)
+        cls.queries = rng.rand(400, 2)
+
+    def _in_zones(self, gpt, queries, n_leaves=2):
+        for q in queries:
+            leaves, weights = gpt._leaves_of(q[None, :])
+            if len(leaves) >= n_leaves and all(leaf._can_condition() and not leaf.prefers_own for leaf in leaves):
+                yield q[None, :], leaves, np.array(weights)
+
+    def test_the_covariance_of_the_backend(self):
+        rng = np.random.RandomState(0)
+        X, Z = rng.rand(40, 2), rng.rand(6, 2)
+        Y = np.column_stack((np.sin(3 * X[:, 0]), 40.0 * X[:, 1] + 100.0))
+        for normalize_y in (False, True):
+            gpr = Default_GPR(normalize_y=normalize_y)
+            self.assertIsNone(gpr.covariance(Z))
+            gpr.set_observation_noise(np.full(40, 1e-6))
+            gpr.fit(X, Y)
+            K, scale, mean = gpr.covariance(Z)
+            np.testing.assert_allclose(K, gpr.sklearn_gpr.kernel_(Z))
+            np.testing.assert_allclose(scale, Y.std(axis=0) ** 2 if normalize_y else np.ones(2))
+            np.testing.assert_allclose(mean, Y.mean(axis=0) if normalize_y else np.zeros(2), atol=1e-12)
+        self.assertIsNone(GPRegressorInterface.covariance(gpr, Z))
+
+    def test_equal_a_gp_with_the_sum_of_the_kernels(self):
+        gpt = self.gpt
+        X, y, sigma = _stored_points(gpt)
+        k, fade, checked, three = gpt.neighbours.n_neighbours, gpt.neighbours.fade, 0, 0
+        for x, leaves, weights in self._in_zones(gpt, self.queries):
+            metric = sum(w * leaf.fit_std for w, leaf in zip(weights, leaves))
+            distance = np.sqrt((((X - x[0]) / metric) ** 2).sum(axis=1))
+            order = np.argsort(distance)
+            idx = order[:k]
+            Z = np.vstack((X[idx], x))
+            K, mean0, unit = np.zeros((k + 1, k + 1)), 0.0, 0.0
+            for w, leaf in zip(weights, leaves):
+                xs, ys = leaf.X_scaler, leaf.y_scalers[0]
+                K += w * ys.scale_[0] ** 2 * leaf.my_GPRs[0].sklearn_gpr.kernel_(xs.transform(Z))
+                mean0 += w * ys.mean_[0]
+                unit += w * leaf._predicted_variance()[0]
+            t = np.clip((distance[idx] / distance[order[k]] - fade) / (1.0 - fade), 0.0, 1.0)
+            noise = sigma[idx, 0] ** 2
+            noise = noise + t ** 2 / (1.0 - t) ** 2 * (noise + unit)
+            A = K[:k, :k] + np.diag(noise)
+            ref_mean = mean0 + K[:k, k] @ np.linalg.solve(A, y[idx, 0] - mean0)
+            ref_std = np.sqrt(K[k, k] - K[:k, k] @ np.linalg.solve(A, K[:k, k]))
+            mean, std = gpt.predict(x)
+            np.testing.assert_allclose(mean[0, 0], ref_mean, rtol=1e-6, atol=1e-8)
+            np.testing.assert_allclose(std[0, 0], ref_std, rtol=1e-4, atol=1e-8)
+            np.testing.assert_array_equal(gpt.predict(x, mode='loop')[0], mean)
+            checked += 1
+            three += len(leaves) > 2
+        self.assertGreater(checked, 40)
+        self.assertGreater(three, 0)
+
+    def test_one_leaf_alone_is_its_own_prediction(self):
+        gpt = self.gpt
+        alone = 0
+        for q in self.queries[:150]:
+            x = q[None, :]
+            leaves, weights = gpt._leaves_of(x)
+            if len(leaves) > 1 or not leaves[0]._can_condition() or leaves[0].prefers_own:
+                continue
+            mixed = gpt.neighbours.predict_mixed(x, leaves, np.array(weights))
+            mean, std = leaves[0].predict(x, return_std=True, use_calibrated_sigma=False)
+            np.testing.assert_allclose(mixed[0], mean[0], rtol=1e-8, atol=1e-10)
+            np.testing.assert_allclose(mixed[1], std[0], rtol=1e-6, atol=1e-10)
+            alone += 1
+        self.assertGreater(alone, 30)
+
+    def test_no_step_at_a_cut(self):
+        """Along a path through a cut the mean steps where the leaf changes, unless the kernels are mixed."""
+        gpt = self.gpt
+        index = gpt.leaf_index
+        compared = 0
+        for leaf in gpt.root.leaves:
+            lo, hi, half = index.faces(leaf)
+            data_lo, data_hi = index.data_box(leaf)
+            for j in range(2):
+                if not (np.isfinite(hi[j]) and half[j] > 0.0 and leaf._can_condition()):
+                    continue
+                # through the upper face along input j, at the middle of the leaf along the other input
+                centre = 0.5 * (np.where(np.isfinite(lo), lo, data_lo) + np.where(np.isfinite(hi), hi, data_hi))
+                path = np.tile(centre, (2000, 1))
+                path[:, j] = np.linspace(hi[j] - 4 * half[j], hi[j] + 4 * half[j], 2000)
+                largest = {}
+                for blend in (None, 0.1):
+                    gpt.neighbours.blend = blend
+                    step = np.diff(gpt.predict(path)[0][:, 0])
+                    largest[blend] = np.abs(step[1:-1] - 0.5 * (step[:-2] + step[2:])).max()
+                if largest[None] > 1e-5:
+                    self.assertLess(largest[0.1], 0.1 * largest[None])
+                    compared += 1
+        self.assertGreater(compared, 8)
+
+    def test_a_leaf_that_predicts_from_its_own_points(self):
+        """In its zones the predictions of the leaves are mixed."""
+        gpt = self.gpt
+        checked = 0
+        for x, leaves, weights in self._in_zones(gpt, self.queries[:120]):
+            leaves[0].prefers_own = True
+            try:
+                self.assertIsNone(gpt.neighbours.predict_mixed(x, leaves, weights))
+                parts = [leaf.predict(x, return_std=True, use_calibrated_sigma=False) for leaf in leaves]
+                mean = sum(w * mu[0, 0] for w, (mu, _) in zip(weights, parts))
+                variance = sum(w * (sd[0, 0] ** 2 + (mu[0, 0] - mean) ** 2) for w, (mu, sd) in zip(weights, parts))
+                predicted = gpt.predict(x)
+                np.testing.assert_allclose(predicted[0][0, 0], mean, rtol=1e-9)
+                np.testing.assert_allclose(predicted[1][0, 0], np.sqrt(variance), rtol=1e-9)
+            finally:
+                leaves[0].prefers_own = False
+            checked += 1
+        self.assertGreater(checked, 10)
+
+    def test_sigma_is_calibrated_on_the_prediction_of_the_zone(self):
+        np.random.seed(12)
+        rng = np.random.RandomState(12)
+        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours')
+        _stream(gpt, rng.rand(500, 2))
+        in_zone = 0
+        for x in rng.rand(150, 2):
+            x = x[None, :]
+            leaves, _ = gpt._leaves_of(x)
+            before = gpt.predict(x)[0][0, 0]
+            owner = gpt.leaf_index.locate(x[0])
+            if owner is None:
+                continue
+            gpt.update_tree(x, np.array([[_target(x)[0]]]), 1e-3)
+            if owner.is_leaf:
+                np.testing.assert_allclose(owner.mu_preds_list[0][0], before, rtol=1e-9)
+                in_zone += len(leaves) > 1
+        self.assertGreater(in_zone, 20)
+
+    def test_other_output_models_mix_the_predictions(self):
+        rng = np.random.RandomState(13)
+        X = rng.rand(300, 2)
+        Y = np.column_stack([_target(X) * (1.0 + 0.3 * k) + 0.1 * k * X[:, 0] for k in range(3)])
+        for kw in (dict(output_model='shared'), dict(output_model='pca', output_basis_components=2), dict()):
+            np.random.seed(13)
+            gpt = GPTree(Nbar=50, retrain_every_n_points=10, n_outputs=3, predict_from='neighbours', **kw)
+            _stream(gpt, X, Y)
+            mixed = 0
+            for x, leaves, weights in self._in_zones(gpt, self.queries[:200]):
+                result = gpt.neighbours.predict_mixed(x, leaves, weights)
+                self.assertEqual(result is None, bool(kw))
+                mean, std = gpt.predict(x)
+                self.assertTrue(np.all(np.isfinite(mean)) and np.all(std > 0.0))
+                mixed += 1
+            self.assertGreater(mixed, 5)
+
+    def test_the_options(self):
+        for blend in (0.0, 1.5, -0.1):
+            with self.assertRaises(ValueError):
+                GPTree(predict_from='neighbours', neighbour_blend=blend)
+        np.random.seed(14)
+        rng = np.random.RandomState(14)
+        plain = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', neighbour_blend=None)
+        leaf_tree = GPTree(Nbar=40, retrain_every_n_points=10)
+        X = rng.rand(300, 2)
+        _stream(plain, X)
+        _stream(leaf_tree, X)
+        for gpt in (plain, leaf_tree):
+            self.assertFalse(gpt._blends())
+            self.assertTrue(all(np.all(gpt.leaf_index.faces(leaf)[2] == 0.0) for leaf in gpt.root.leaves))
+            self.assertTrue(all(len(gpt._leaves_of(q[None, :])[0]) == 1 for q in self.queries[:100]))
+        self.assertTrue(self.gpt._blends())
 
 
 class TestChoice(unittest.TestCase):

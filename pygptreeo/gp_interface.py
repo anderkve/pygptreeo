@@ -190,6 +190,16 @@ class GPRegressorInterface(ABC):
         """
         return False
 
+    def covariance(self, X: np.ndarray):
+        """The prior of the fitted GP at the points ``X``, in the units of the
+        targets given to ``fit``.
+
+        Returns ``(K, scale, mean)``: the covariance of target ``t`` between
+        the points is ``scale[t] * K`` and its mean ``mean[t]``. Returns None
+        if there is no fit or the backend cannot.
+        """
+        return None
+
     def condition(self, X: np.ndarray, y: np.ndarray, noise: np.ndarray, X_query: np.ndarray):
         """The posterior at ``X_query`` of a GP with the fitted hyperparameters,
         given the points ``(X, y)`` in place of the points of the fit.
