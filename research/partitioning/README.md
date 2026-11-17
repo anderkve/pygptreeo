@@ -27,7 +27,7 @@ Records go to `results/` (not in the repository).
 | `drift_bench.py` | Cost along a steadily drifting stream |
 | `time_predict.py` | Update and prediction times with one process |
 | `time_scaling.py` | The same at checkpoints along one long stream |
-| `index_scaling.py` | The search for the nearest leaves up to a million points, without GPs |
+| `index_scaling.py` | The search for the nearest leaves, and the leaves of a prediction with zones at the cuts, up to a million points, without GPs |
 | `profile_search.py` | The parts of a neighbour search on a growing tree |
 
 ```bash

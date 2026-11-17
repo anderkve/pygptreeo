@@ -1455,3 +1455,40 @@ divided by that of the default tree, for the two seeds.
 * **The coverage is 0.719** against 0.709 for the default tree, and 1.51% of
   the predictions are off by more than 5 sigma, against 1.95% for the
   default tree, 1.76% with fading alone and 2.02% with neither.
+
+Along a 200 000-point stream (`GaussianPeaks`, d = 6, uniform; one process,
+the three settings one after the other on the machine of the cost table
+above), as in section 8.12: milliseconds per update since the previous row
+and per prediction at the points that follow, and the RMSE of those
+predictions.
+
+| points | leaves | default tree: update / predict | RMSE | fading alone: update / predict | RMSE | fading and mixing: update / predict | RMSE |
+|---|---|---|---|---|---|---|---|
+| 5000 | 71 | 2.13 / 0.17 | 0.459 | 3.00 / 0.71 | 0.328 | 3.07 / 0.82 | 0.328 |
+| 20 000 | 289 | 2.08 / 0.17 | 0.282 | 3.05 / 0.72 | 0.177 | 3.32 / 0.90 | 0.175 |
+| 50 000 | 730 | 2.03 / 0.16 | 0.237 | 3.22 / 0.81 | 0.134 | 3.47 / 0.83 | 0.134 |
+| 100 000 | 1465 | 2.19 / 0.17 | 0.162 | 3.20 / 0.79 | 0.106 | 3.67 / 1.10 | 0.104 |
+| 200 000 | 2917 | 2.26 / 0.18 | 0.129 | 3.26 / 0.79 | 0.069 | 3.79 / 1.06 | 0.067 |
+
+The leaves of a prediction in the index alone, without GPs
+(`research/partitioning/index_scaling.py` with zones of 0.1, uniform stream,
+500 queries): their mean number, and the time to find them with their
+weights.
+
+| points | leaves | d = 3: leaves per prediction | ms | d = 6 | ms | d = 10 | ms |
+|---|---|---|---|---|---|---|---|
+| 5000 | 70 | 1.25 | 0.03 | 1.30 | 0.03 | 1.40 | 0.03 |
+| 20 000 | 290 | 1.25 | 0.03 | 1.37 | 0.04 | 1.47 | 0.03 |
+| 100 000 | 1450 | 1.30 | 0.04 | 1.41 | 0.05 | 1.52 | 0.04 |
+| 400 000 | 5800 | 1.30 | 0.04 | 1.43 | 0.05 | 1.60 | 0.05 |
+| 1 000 000 | 14 500 | 1.33 | 0.05 | 1.47 | 0.09 | 1.65 | 0.06 |
+
+* **With the mixing the cost of a point grows slowly with the stream**: from
+  the first 5000 points to 200 000, an update by 23% and a prediction by 29%
+  (with a spread of a tenth between the rows), where fading alone grows by
+  9 and 12% and the default tree by 6 and 4%.
+* **The number of leaves in a prediction grows by a tenth to a fifth from
+  5000 points to a million**, towards the `1.1^d` of leaves with two faces
+  along every input, and the search for them stays below 0.1 ms.
+* **The error at 200 000 points is 0.52 of the default tree's**, against
+  0.54 with fading alone.

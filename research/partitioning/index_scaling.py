@@ -3,7 +3,9 @@
     python index_scaling.py d N [uniform|walker]
 
 Leaves of 100 points are cut at the median along a random input. Prints, per
-checkpoint, the time of ``LeafIndex.nearest(q, w, 16)`` and the groups it opens.
+checkpoint, the time of ``LeafIndex.nearest(q, w, 16)`` and the groups it opens
+and, with the environment variable BLEND (the width of the zones at the cuts),
+the number of leaves in a prediction.
 """
 import os
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -65,7 +67,7 @@ else:                                   # a random walk reflected into the unit 
     X = np.cumsum(0.01 * rng.randn(N, d), axis=0) + 0.5
     X = np.abs(np.mod(X, 2.0) - 1.0)
 X = X * np.logspace(0, float(os.environ.get('DECADES', 0)), d)    # inputs in different units
-index = leaf_index.LeafIndex(d)
+index = leaf_index.LeafIndex(d, blend=float(os.environ['BLEND'])) if 'BLEND' in os.environ else leaf_index.LeafIndex(d)
 root = Leaf(d)
 index.add(root)
 checkpoints = [n for n in (5000, 20000, 100000, 400000, 1000000) if n <= N]
@@ -100,5 +102,10 @@ for i in range(N):
         for q in Q:
             index.locate(q)
         t_loc = (time.perf_counter() - t0) / len(Q)
-        print(f"d={d:2d} {kind:8s} N={i + 1:8d}  leaves {len(index):6d}  index depth {index.depth()}  "
+        zones = ''
+        if 'BLEND' in os.environ:       # the leaves of a prediction with zones at the cuts
+            t0 = time.perf_counter()
+            counts = [len(index.blend(q)[0]) for q in Q]
+            zones = f"  leaves per prediction {np.mean(counts):.2f} (most {max(counts)})  blend {1e3 * (time.perf_counter() - t0) / len(Q):.3f} ms"
+        print(f"d={d:2d} {kind:8s} N={i + 1:8d}  leaves {len(index):6d}  index depth {index.depth()}{zones}  "
               f"groups opened {CountingHeap.pops / len(Q):6.1f}  nearest {1e3 * t:.3f} ms  locate {1e3 * t_loc:.3f} ms", flush=True)
