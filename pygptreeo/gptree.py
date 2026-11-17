@@ -84,7 +84,11 @@ class GPTree:
 
     Methods:
         fit(X_train, y_train, show_progress=False, shuffle=True, forward_GPR_to_next_leaf=False):
-            Constructs the tree from a batch of training data.
+            Constructs the tree from a batch of training data. Only for a tree
+            without points.
+        batch_update_tree(X, y, sigma):
+            Adds a batch of data points to the tree, one after the other as
+            `update_tree` does.
         update_tree(x, y, allow_training=True):
             Adds a single data point to the tree, potentially causing node
             splits and GPR retraining.
@@ -300,7 +304,7 @@ class GPTree:
         self.aggregation = aggregation
 
         # The fits that update_tree(defer_fits=True) handed out and whose results
-        # are still to come: task id -> the node the task was made for
+        # are still to come: task id -> (the node the task was made for, the frame of the task)
         self._fit_tasks = {}
         self._n_fit_tasks = 0
 
@@ -459,16 +463,61 @@ class GPTree:
         return task
 
 
+    def batch_update_tree(self, X: np.ndarray, y: np.ndarray, sigma: Union[float, np.ndarray],
+                          defer_fits=False, show_progress=False) -> list:
+        """Updates the tree with a batch of points, one after the other as `update_tree` does.
+
+        Args:
+            X (np.ndarray): The inputs, of shape (N, n_features).
+            y (np.ndarray): The targets, of shape (N, n_outputs), or (N,) for a
+                single output.
+            sigma (float or np.ndarray): The uncertainties (standard deviations)
+                of the targets: one number for all of them, or an array of
+                shape (N,) or (N, n_outputs).
+            defer_fits (bool): As for `update_tree`. Defaults to False.
+            show_progress (bool): Display a progress bar. Defaults to False.
+
+        Returns:
+            The fit tasks handed out, as a list. It is empty without `defer_fits`.
+        """
+        X = np.array(X, dtype=float)
+        y = np.array(y, dtype=float)
+        sigma = np.array(sigma, dtype=float)
+        if X.ndim != 2:
+            raise ValueError(f"X must have shape (N, n_features), not {X.shape}")
+        if not self.first_point and X.shape[1] != self.n_features:
+            raise ValueError(f"X has {X.shape[1]} features, and the points of the tree have {self.n_features}")
+        N = X.shape[0]
+        if y.ndim == 1:
+            y = y[:, None]
+        if y.shape != (N, self.n_outputs):
+            raise ValueError(f"y must have one row of {self.n_outputs} target(s) for each of the {N} rows of X, not shape {y.shape}")
+        if sigma.ndim == 1:
+            sigma = sigma[:, None]
+        if sigma.ndim == 2 and sigma.shape not in ((N, 1), (N, self.n_outputs)) or sigma.ndim > 2:
+            raise ValueError(f"sigma must be a number or have shape ({N},) or ({N}, {self.n_outputs}), not {sigma.shape}")
+        sigma = np.array(np.broadcast_to(sigma, (N, self.n_outputs)))
+
+        tasks = []
+        for i in tqdm(range(N), disable=not show_progress, desc="Updating the tree"):
+            task = self.update_tree(X[i:i+1], y[i:i+1], sigma[i:i+1], defer_fits=defer_fits)
+            if task is not None:
+                tasks.append(task)
+        return tasks
+
+
     def _fit_task(self, node: GPNode):
         """The fit that `node` is due as a task to hand out, or None if it is not
         due one, waits for the result of one, or has to be fitted in place."""
         if node.fit_task_id in self._fit_tasks or not node.fit_due():
             return None
-        task = node.fit_task()
-        if task is not None:
-            self._n_fit_tasks += 1
-            task['id'] = node.fit_task_id = self._n_fit_tasks
-            self._fit_tasks[task['id']] = node
+        made = node.fit_task()
+        if made is None:
+            return None
+        task, frame = made
+        self._n_fit_tasks += 1
+        task['id'] = node.fit_task_id = self._n_fit_tasks
+        self._fit_tasks[task['id']] = (node, frame)
         return task
 
 
@@ -476,19 +525,24 @@ class GPTree:
         """Take the result of `solve_fit_task` for a task from `update_tree`.
 
         The leaf of the task is refitted to the points it holds now, with the
-        hyperparameters found and without optimising. If the leaf has split
-        since, the leaves under it are refitted. A result with
-        ``hyperparameters=None``, for a fit that failed, only lets the leaf be
-        handed a new task. Returns False if no leaf was refitted: the fit
-        failed, the leaf was removed, or the tree was saved and loaded since.
+        hyperparameters found and the scaling of the task, without optimising.
+        If the leaf has split since, the leaves under it are refitted. A
+        result with ``hyperparameters=None``, for a fit that failed, only lets
+        the leaf be handed a new task. Returns False if no leaf was refitted:
+        the fit failed, the leaf was removed, the global model has a new
+        version since the task was made, or the tree was saved and loaded
+        since.
         """
-        node = self._fit_tasks.pop(result['id'], None)
+        node, frame = self._fit_tasks.pop(result['id'], (None, None))
         if node is None or result['hyperparameters'] is None:
+            return False
+        # The leaves have refitted to a newer snapshot of the global model, or will with their next prediction
+        if self.global_mean is not None and self.global_mean.current is not frame[1]:
             return False
         # A node that was removed from the tree has no parent, or lost its children
         leaves = [leaf for leaf in node.leaves if leaf.is_leaf and (leaf.parent is not None or leaf is self.root)]
         for leaf in leaves:
-            leaf.apply_hyperparameters(result['hyperparameters'])
+            leaf.apply_fit(result['hyperparameters'], frame)
             if self.max_memory_mb is not None:
                 self._account(leaf)
         if self.max_memory_mb is not None:
@@ -636,6 +690,9 @@ class GPTree:
         """
         Construct the binary tree by assigning a set of training samples to nodes and train the leaf-node GPs.
 
+        Only for a tree without points; a tree that holds points takes more with
+        `batch_update_tree` or `update_tree`.
+
         Arguments
         ----------
         X_train: np.ndarray
@@ -665,6 +722,9 @@ class GPTree:
         use_calibrated_sigma. With a global model the leaves are fitted against each
         of its versions while the tree is built, and their predictions are used.
         """
+        if not self.first_point:
+            raise ValueError("fit builds a tree from scratch, and this tree holds points already. "
+                             "Use batch_update_tree to add points to it, or fit a new GPTree.")
         self.n_features = X_train.shape[1]
         N = X_train.shape[0]
         self.root.init_data_set(self.n_features)

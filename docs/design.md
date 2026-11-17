@@ -2,8 +2,8 @@
 
 Why the tree has a global model, how the mechanism works, how the tree stays
 within a fixed size, how a point reaches a leaf's GP between two fits, how a
-fit can run in another process, what was tried and dropped, and what is still
-open. The measurements are in
+fit can run in another process, how a batch of points is added, what was tried
+and dropped, and what is still open. The measurements are in
 [`benchmarks.md`](benchmarks.md).
 
 ## What is global and what is local
@@ -172,6 +172,15 @@ its result to the tree. The tree has no part in sending them.
   to the points it holds when the result arrives, which include those that
   arrived in the meantime. A GP fitted by the worker would lack them. Applied
   at once, the result gives the same leaf as a fit in place.
+* **The result is applied in the frame of its task.** The hyperparameters
+  belong to the scaling of the points they were found for, so the tree keeps
+  the scalers of a task until its result arrives and the leaf takes them with
+  the hyperparameters. The leaf is then as fitted in place when the task was
+  made, with the points since then appended. Scalers fitted to the leaf's
+  points at that moment would differ once it has split: a result applied to
+  six leaves two splits below its task gave twice the error. The residual of
+  a task is that of one snapshot of the global model, so a result is dropped
+  if there is a newer snapshot.
 * **A task is self-contained.** It holds an unfitted copy of each GP of the
   leaf with the scaled inputs, targets and noise, about 7 kB for 100 points in
   six dimensions, so a worker needs no tree and no settings. The result is the
@@ -186,6 +195,22 @@ its result to the tree. The tree has no part in sending them.
   refits every leaf under the node the task was made for.
 * **Tasks that are out are not saved with the tree.** A loaded tree has none,
   and a leaf of it asks again with its next full retrain buffer.
+
+## A batch of points
+
+* **`batch_update_tree` adds the points one by one**, whatever the tree
+  holds. Point by point is the most accurate way into a tree with points in
+  every case measured (`docs/benchmarks.md`, section 8.2), and it keeps the
+  calibration, which needs the prediction of each point before it is added.
+* **It does not use `fit` for a tree without points.** `fit` is about 2.5
+  times as fast there at about the same error, but its sigma is not
+  calibrated, it shuffles the points and it hands no fits out, so the same
+  call would behave differently with the state of the tree. A tree of ten
+  points that takes 5000 is also in the situation of a tree without points:
+  what matters is the size of the batch against that of the tree. The choice
+  is the caller's.
+* **`fit` is for a tree without points.** It sets the root up anew, so it
+  raises an error for a tree that holds points.
 
 ## Tried and dropped
 

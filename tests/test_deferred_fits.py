@@ -222,6 +222,57 @@ class TestDeferredFits(unittest.TestCase):
         tasks = [task for task in (_update(gpt, X, Y, i, defer_fits=True) for i in range(100, 200)) if task is not None]
         self.assertGreater(len(tasks), 1)
 
+    def test_a_result_is_applied_in_the_scaling_of_its_task(self):
+        """The hyperparameters belong to the scaling of the points they were found for."""
+        X, Y = _data(100)
+        gpt = GPTree(Nbar=40, retrain_every_n_points=15)
+        task = None
+        for i in range(40):
+            if task is not None:
+                gpt.apply_fit_result(_solve(task))
+            task = _update(gpt, X, Y, i, defer_fits=True)
+        for i in range(40, 100):
+            _update(gpt, X, Y, i, defer_fits=True)
+        # What a fit in place of the 40 points of the task would have set
+        mean, scale = X[:40].mean(axis=0), X[:40].std(axis=0)
+        self.assertTrue(gpt.apply_fit_result(_solve(task)))
+        leaves = gpt.root.leaves
+        self.assertGreater(len(leaves), 2)
+        for leaf in leaves:
+            np.testing.assert_allclose(leaf.X_scaler.mean_, mean)
+            np.testing.assert_allclose(leaf.X_scaler.scale_, scale)
+            own = np.vstack((leaf.my_X_data, leaf.shared_X_data))
+            self.assertFalse(np.allclose(own.mean(axis=0), mean, rtol=0.05))
+        # The next fit of a leaf is in the scaling of its own points
+        tasks = []
+        X_more, Y_more = _data(60, seed=3)
+        for i in range(60):
+            tasks.append(_update(gpt, X_more, Y_more, i, defer_fits=True))
+        task = next(task for task in tasks if task is not None)
+        node, (scalers, snapshot) = gpt._fit_tasks[task['id']]
+        self.assertFalse(np.allclose(scalers[0].mean_, mean, rtol=0.05))
+        self.assertIsNone(snapshot)
+
+    def test_a_result_is_dropped_after_a_new_version_of_the_global_model(self):
+        X, Y = _data(60)
+        gpt = GPTree(Nbar=100, retrain_every_n_points=20, global_mean=SteppingLearner())
+        tasks = [task for task in (_update(gpt, X, Y, i, defer_fits=True) for i in range(25)) if task is not None]
+        self.assertEqual(len(tasks), 1)
+        for i in range(25, 35):                        # the first snapshot comes with point 30
+            self.assertIsNone(_update(gpt, X, Y, i, defer_fits=True))
+        self.assertIsNotNone(gpt.global_mean.current)
+        # The leaf has refitted to the snapshot before predicting, and keeps that fit
+        self.assertIs(gpt.root._fitted_global, gpt.global_mean.current)
+        theta = gpt.root.my_GPR.get_hyperparameters()
+        self.assertFalse(gpt.apply_fit_result(_solve(tasks[0])))
+        self.assertEqual(gpt._fit_tasks, {})
+        np.testing.assert_array_equal(gpt.root.my_GPR.get_hyperparameters(), theta)
+        # Its next fit is of the residual of the snapshot, and its result is taken
+        tasks = [task for task in (_update(gpt, X, Y, i, defer_fits=True) for i in range(35, 55)) if task is not None]
+        self.assertEqual(len(tasks), 1)
+        self.assertTrue(gpt.apply_fit_result(_solve(tasks[0])))
+        self.assertIs(gpt.root._fitted_global, gpt.global_mean.current)
+
     def test_fits_handed_out_are_not_saved(self):
         X, Y = _data(60)
         gpt = GPTree(Nbar=100, retrain_every_n_points=20)
