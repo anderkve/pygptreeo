@@ -135,6 +135,7 @@ class GPTree:
                  neighbour_leaves: Optional[int] = 16,
                  neighbour_fade: Optional[float] = 0.9,
                  neighbour_blend: Optional[float] = 0.1,
+                 neighbour_awake: Optional[int] = 8,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -286,6 +287,14 @@ class GPTree:
                 share of the leaf's width along the input that is cut.
                 Defaults to 0.1. With None the kernel is that of the query's
                 leaf alone, and the prediction steps at the cuts.
+            neighbour_awake (Optional[int]): For 'neighbours': the number of
+                leaves whose GPs stay awake, those that last received a point
+                or predicted from their own points. The GPs of the other
+                leaves sleep: they keep their points and their kernel, which
+                is what a prediction from neighbours needs of them, and
+                release the rest, about three quarters of a leaf's memory. A
+                sleeping leaf is woken when a point reaches it or its own GP
+                has to predict. Defaults to 8. None keeps every leaf awake.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -340,7 +349,7 @@ class GPTree:
                                  "(e.g. the scikit-learn adapter returned by Default_GPR)")
             self.neighbours = NeighbourSearch(self, n_neighbours=Nbar if n_neighbours is None else n_neighbours,
                                               consistency_limit=neighbour_consistency, max_leaves=neighbour_leaves,
-                                              fade=neighbour_fade, blend=neighbour_blend)
+                                              fade=neighbour_fade, blend=neighbour_blend, awake=neighbour_awake)
 
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
@@ -678,20 +687,38 @@ class GPTree:
         """Take a node that is no longer a leaf of the tree out of the accounts."""
         self._leaf_bytes -= self._leaves.pop(node)
         self._fitted_bytes -= self._fitted.pop(node, 0)
+        if self.neighbours is not None and self.neighbours.awake is not None:
+            self.neighbours.in_use.pop(node, None)
 
 
     def _after_update(self, node: GPNode):
-        """Account for the leaf a point went to, or the two it was split into, and
-        bring the tree back within its memory limit."""
-        if self.max_memory_mb is None:
+        """Account for the leaf a point went to, or the two it was split into, let
+        the leaves sleep that predictions from neighbours do not keep awake,
+        and bring the tree back within its memory limit."""
+        if self.max_memory_mb is not None:
+            if node.is_leaf:
+                self._account(node, updated=True)
+            else:
+                self._forget(node)
+                for child in node.children:
+                    self._account(child, updated=True)
+        elif not node.is_leaf and self.neighbours is not None and self.neighbours.awake is not None:
+            self.neighbours.in_use.pop(node, None)
+        self._let_leaves_sleep()
+        if self.max_memory_mb is not None:
+            self._enforce_memory_limit(remove=True)
+
+
+    def _let_leaves_sleep(self):
+        """With predictions from neighbours, put the leaves to sleep whose GPs are
+        not among the last ``neighbour_awake`` that were used."""
+        search = self.neighbours
+        if search is None or search.awake is None:
             return
-        if node.is_leaf:
-            self._account(node, updated=True)
-        else:
-            self._forget(node)
-            for child in node.children:
-                self._account(child, updated=True)
-        self._enforce_memory_limit(remove=True)
+        while len(search.in_use) > search.awake:
+            leaf, _ = search.in_use.popitem(last=False)
+            if leaf.is_leaf and leaf.sleep() and self.max_memory_mb is not None and leaf in self._leaves:
+                self._account(leaf)
 
 
     def _enforce_memory_limit(self, remove: bool):
@@ -833,6 +860,8 @@ class GPTree:
             leaf.fit_my_GPR(force_training=True)
             if self.max_memory_mb is not None:
                 self._account(leaf)
+            self._let_leaves_sleep()
+            if self.max_memory_mb is not None:
                 self._enforce_memory_limit(remove=False)
             # No prediction of a fitted GP was registered: sigma is the GP's own
             if leaf.residuals_list[0].shape[0] == 0:
@@ -948,6 +977,7 @@ class GPTree:
 
         for i, x in tqdm(enumerate(X_test), total=X_test.shape[0], disable=not show_progress, desc="Predicting"):
             x = x.reshape((1, x.shape[0]))
+            self._let_leaves_sleep()
 
             leaves, pred_leaf_probs = self._prediction_leaves(x)
 
@@ -1003,6 +1033,7 @@ class GPTree:
 
             # print(f"DEBUG: mean_DLGP: {mean_DLGP}  var_DLGP: {var_DLGP}")
 
+        self._let_leaves_sleep()
         if return_leaf_names:
             leaf_names = [leaf.name for leaf in leaves]
             return mean_DLGP, np.sqrt(var_DLGP), leaf_names
@@ -1080,7 +1111,9 @@ class GPTree:
             if self._blends():
                 # the zones at the cuts are those of the leaf index, which 'recursive' follows
                 return self.predict_recursive(X_test, show_progress=show_progress)
-            return self.predict_loop(X_test, show_progress=show_progress)
+            result = self.predict_loop(X_test, show_progress=show_progress)
+            self._let_leaves_sleep()
+            return result
         elif mode == 'each':
             return self.predict_each(X_test, show_progress=show_progress)
         else:

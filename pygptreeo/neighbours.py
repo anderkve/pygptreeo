@@ -7,6 +7,7 @@ that can hold them are found through the tree's index of the leaves
 (``LeafIndex``).
 """
 
+from collections import OrderedDict
 from typing import Optional
 
 import numpy as np
@@ -32,16 +33,21 @@ class NeighbourSearch:
         blend (Optional[float]): The kernels of the leaves on both sides of a
             cut are mixed within a zone of this share of a leaf's width; None
             for the kernel of the query's leaf alone.
+        awake (Optional[int]): Number of leaves whose GPs stay awake, those
+            used last; None for all of them.
+        in_use (OrderedDict): The leaves whose GPs were fitted or woken, the
+            last one used last. The tree puts those beyond ``awake`` to sleep.
         n_searches (int): Number of searches made so far.
         n_leaves_searched (int): Number of leaves whose points they looked at.
     """
     # for a search saved before these existed
     fade = None
     blend = None
+    awake = None
 
 
     def __init__(self, tree, n_neighbours: int, consistency_limit: float = 10.0, max_leaves: Optional[int] = None,
-                 fade: Optional[float] = None, blend: Optional[float] = None):
+                 fade: Optional[float] = None, blend: Optional[float] = None, awake: Optional[int] = None):
         if n_neighbours < 1:
             raise ValueError("n_neighbours must be at least 1")
         if max_leaves is not None and max_leaves < 1:
@@ -50,14 +56,24 @@ class NeighbourSearch:
             raise ValueError("neighbour_fade must be at least 0 and below 1, or None")
         if blend is not None and not 0.0 < blend <= 1.0:
             raise ValueError("neighbour_blend must be above 0 and at most 1, or None")
+        if awake is not None and awake < 1:
+            raise ValueError("neighbour_awake must be at least 1, or None")
         self.tree = tree
         self.n_neighbours = int(n_neighbours)
         self.consistency_limit = float(consistency_limit)
         self.max_leaves = max_leaves
         self.fade = fade
         self.blend = blend
+        self.awake = awake
+        self.in_use = OrderedDict()
         self.n_searches = 0
         self.n_leaves_searched = 0
+
+    def used(self, leaf):
+        """Note that the GPs of a leaf were fitted or woken just now."""
+        if self.awake is not None:
+            self.in_use[leaf] = None
+            self.in_use.move_to_end(leaf)
 
     def find(self, q: np.ndarray, w: np.ndarray, leaf=None):
         """The ``n_neighbours`` stored points nearest to ``q``.

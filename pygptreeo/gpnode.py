@@ -514,6 +514,7 @@ class GPNode(Node):
         for child in self.children:
             child._scores = deque(self._scores or (), maxlen=N_SCORES)
             child.prefers_own = self.prefers_own
+            child._used()       # its GPs are copies of the parent's, fit and all
 
 
     def delete_point(self, index=-1, shared_point=True):
@@ -1033,6 +1034,7 @@ class GPNode(Node):
 
         self._fitted_global = snapshot
         self.asleep = False
+        self._used()
         self._set_fit_statistics(X_train)
         if self.n_outputs == 1:
             self.my_GPR = self.my_GPRs[0]
@@ -1067,6 +1069,7 @@ class GPNode(Node):
                 return False
         self._fitted_global = snapshot
         self.asleep = False
+        self._used()
         self._set_fit_statistics(X_train)
         return True
 
@@ -1136,13 +1139,21 @@ class GPNode(Node):
 
 
     def wake(self):
-        """Restore the GPs of a sleeping node."""
+        """Restore the GPs of a sleeping node, and count them as used."""
+        self._used()
         if not self.asleep:
             return
         if all([gpr.restore() for gpr in self.my_GPRs]):
             self.asleep = False
         else:
             self.fit_my_GPR(force_training=True)
+
+
+    def _used(self):
+        """Tell a tree that predicts from neighbours that the node's GPs hold
+        their fit in full: it keeps only the last ones used awake."""
+        if self.neighbours is not None:
+            self.neighbours.used(self)
 
 
     def nbytes_points(self):
