@@ -1406,3 +1406,52 @@ without and with the mixing, and the mean number of leaves in a prediction.
   update 4 to 10%. About 1.3 to 1.4 leaves take part in a prediction
   whatever the number of inputs: a leaf of a tree this size has seen eight
   or nine cuts, so most of its faces in ten dimensions are still open.
+
+The 150 runs of section 8.4 with the package as it is (neighbours that fade
+out, kernels mixed in zones of 0.1): the NRMSE of the last 5000 predictions
+divided by that of the default tree, for the two seeds.
+
+| target | d | uniform | walker | sweeping | focusing |
+|---|---|---|---|---|---|
+| `active_peaks` | 10 | 0.74 / 0.77 | 0.69 / 0.72 | 0.65 / 0.84 | 0.59 / 0.61 |
+| `branching_ratio` | 5 | 1.11 / 0.84 | 0.89 / 0.95 | 1.11 / 0.93 |  |
+| `chirp` | 4 | 0.91 / 0.90 | 0.72 / 0.68 | 0.69 / 0.70 | 0.37 / 0.37 |
+| `diagonal_ridge` | 4 | 0.61 / 0.64 | 0.73 / 0.67 | 0.73 / 0.75 | 0.66 / 0.69 |
+| `dilepton_spectrum` | 4 | 0.89 / 0.85 | 0.94 / 0.85 | 0.73 / 0.79 | 0.93 / 0.83 |
+| `eft_signal_strength` | 6 | 0.42 / 0.44 | 0.43 / 0.39 | 0.65 / 0.48 | 0.95 / 0.95 |
+| `eggholder` | 3 | 0.87 / 0.88 | 0.82 / 0.86 | 0.90 / 0.90 | 0.83 / 0.83 |
+| `gaussian_peaks` | 6 | 0.64 / 0.67 | 0.41 / 0.48 | 0.53 / 0.48 | 0.49 / 0.58 |
+| `global_fit_loglike` | 10 | 0.95 / 0.93 | 0.86 / 0.86 | 0.94 / 0.93 | 0.20 / 1.00 |
+| `jet_spectrum` | 4 | 0.74 / 0.80 | 1.00 / 0.76 | 0.72 / 0.75 | 0.44 / 0.44 |
+| `loop_decay_width` | 4 | 0.86 / 0.79 | 0.84 / 0.90 | 0.38 / 0.17 | 0.28 / 0.27 |
+| `michalewicz` | 5 | 0.98 / 1.00 | 0.78 / 0.92 | 0.99 / 0.98 | 0.81 / 0.81 |
+| `neutralino_mass` | 4 | 0.82 / 0.77 | 0.98 / 0.24 | 0.82 / 0.96 | 0.52 / 0.44 |
+| `oscillation_probability` | 5 | 0.63 / 0.55 | 0.63 / 1.02 | 0.93 / 0.94 | 0.84 / 0.90 |
+| `relic_density` | 4 | 0.88 / 0.80 | 0.92 / 0.96 | 0.86 / 0.74 | 0.91 / 0.95 |
+| `resonance_xsec` | 4 | 0.88 / 0.96 | 0.65 / 0.96 | 0.97 / 0.85 | 0.71 / 0.72 |
+| `rotated_rosenbrock` | 6 | 0.53 / 0.51 | 0.56 / 0.51 | 0.48 / 0.67 | 0.48 / 0.49 |
+| `signal_yield_mc` | 4 | 0.82 / 0.82 | 0.86 / 0.86 | 0.50 / 0.54 | 0.94 / 0.93 |
+| `step_ridge` | 6 | 0.90 / 0.85 | 0.93 / 0.89 | 0.85 / 0.89 | 0.84 / 0.86 |
+| geometric mean | | 0.77 | 0.74 | 0.72 | 0.63 |
+| fading alone (section 8.15) | | 0.79 | 0.75 | 0.73 | 0.65 |
+| neither (section 8.4) | | 0.78 | 0.74 | 0.71 | 0.61 |
+
+* **0.71 of the default tree's error** as the geometric mean over the 150
+  runs, from 0.17 to 1.11, against 0.73 with fading alone. 142 runs are
+  more than 2% better than the default tree and 2 more than 2% worse, both
+  by 11%: `branching_ratio` with one seed on the uniform and on the sweeping
+  stream. `eft_signal_strength` on the focusing stream, 4 to 5% worse
+  before, is 5% better.
+* **Run by run the error is 2.3% below that with fading alone** (1.7% in
+  the median; 0.86 to 1.13), with 68 runs more than 2% better and 3 worse:
+  `jet_spectrum` and `branching_ratio` on the sweeping stream by 13% and
+  `resonance_xsec` on the walker by 6%. Against the neighbours without
+  fading or mixing it is 0.7% lower in the median run and 0.9% higher in the
+  mean.
+* **The rest of the error distribution**: the mean absolute error is 0.75 of
+  the default tree's, the median 0.78, the 99% quantile 0.71 and the largest
+  error of a run 0.66; 0.74 on points held out of the stream and 0.83 on
+  uniform test points.
+* **The coverage is 0.719** against 0.709 for the default tree, and 1.51% of
+  the predictions are off by more than 5 sigma, against 1.95% for the
+  default tree, 1.76% with fading alone and 2.02% with neither.
