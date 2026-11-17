@@ -140,6 +140,29 @@ The tree then keeps its own estimate of its size, available as `gpt.memory_mb`, 
 - It puts leaves to sleep, starting with the leaf that has gone unused for the longest time. A sleeping leaf keeps its data points and its kernel hyperparameters, but releases the Cholesky factor of its GP, which takes most of the memory of a leaf. The factor is computed again when the leaf is next used, so the predictions do not change.
 - When putting leaves to sleep is no longer enough, it removes the leaf that has gone longest without receiving a data point, together with its data points and its GP. The leaf's sibling in the tree takes over its region.
 
+## Fitting the leaves in other processes (optional)
+
+Most of the time of an update is spent on optimising the kernel hyperparameters of a leaf. This step can be carried out in other processes, for instance by MPI workers, while one process holds the tree:
+
+```python
+from pygptreeo import GPTree, solve_fit_task
+
+gpt = GPTree(Nbar=100)
+
+# In the process that holds the tree
+task = gpt.update_tree(x, y, sigma, defer_fits=True)   # a fit task, or None
+if task is not None:
+    send_to_a_worker(task)
+gpt.apply_fit_result(result)                           # for each result that comes back
+
+# In a worker process
+result = solve_fit_task(task)
+```
+
+With `defer_fits=True` a leaf that is due a fit is not fitted in `update_tree`. The fit is returned as a task: a small dictionary that can be pickled, with the data points of the leaf. `solve_fit_task` optimises the hyperparameters and returns them, and `apply_fit_result` refits the leaf with these hyperparameters to the data points that it holds by then. Until the result is applied the leaf keeps its previous hyperparameters, and new data points are added to its GP as usual.
+
+pyGPTreeO only creates the tasks and applies the results. Sending them between processes is left to the user. `examples/mpi_fit_workers.py` is a complete example with `mpi4py`, in which the process that holds the tree handled 2.5 times as many data points per second with three fit workers. Note that this option requires the scikit-learn interface and, for multi-output targets, `output_model='independent'`. Otherwise the leaves are fitted in `update_tree` as before.
+
 ## Using GPyTorch
 
 By default the leaf GPs are scikit-learn GP regressors. GPyTorch can be used instead via the `GPyTorchAdapter`:

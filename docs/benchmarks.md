@@ -586,3 +586,45 @@ predicted by one leaf, chosen by the cuts without overlap.
   error is 1.02 times that of the default tree and the largest error 1.00
   times, and 2.0% of the predictions are off by more than 5 sigma, against
   2.1%.
+
+
+## 8. Leaf fits by other processes (`defer_fits`)
+
+`examples/mpi_fit_workers.py`: `GaussianPeaks` in six dimensions, 12 000
+points, `Nbar=100`, a fit every 25 points, one seed. One MPI process holds the
+tree (the trainer) and hands the leaf fits to the fit workers, on a machine
+with four cores. The trainer takes the points as fast as it can, so a result
+arrives after as many points as it ever would. Its time per point is that of
+`update_tree`, of sending the tasks and of applying the results. NRMSE and
+coverage are those of the last 3000 predictions, each made before the point
+was added.
+
+| stream | fit workers | trainer ms per point | points per second | fits | points until the result, mean | NRMSE | coverage |
+|---|---|---|---|---|---|---|---|
+| focusing | none, fits in place | 2.07 | 483 | | | 0.0033 | 0.69 |
+| focusing | 1 | 0.70 | 1433 | 219 | 999 | 0.0040 | 0.70 |
+| focusing | 2 | 0.78 | 1280 | 410 | 99 | 0.0029 | 0.69 |
+| focusing | 3 | 0.76 | 1308 | 386 | 57 | 0.0027 | 0.69 |
+| sweeping | none, fits in place | 2.21 | 452 | | | 0.0119 | 0.70 |
+| sweeping | 1 | 1.01 | 993 | 285 | 386 | 0.0153 | 0.70 |
+| sweeping | 2 | 0.79 | 1264 | 405 | 71 | 0.0140 | 0.70 |
+| sweeping | 3 | 0.87 | 1150 | 408 | 53 | 0.0126 | 0.70 |
+
+* **The trainer takes 2.5 to 2.7 times as many points per second** with three
+  fit workers.
+* **With two or three workers the error is close to that of fits in place**:
+  lower on the focusing stream and 6 to 18% higher on the sweeping stream. The
+  runs differ in the order in which the results arrive, so two runs do not
+  give the same numbers.
+* **One worker is too few for a trainer at this speed.** The results arrive
+  400 to 1000 points late, the leaves get half to two thirds as many fits and
+  the error is 21 to 29% higher. Nothing queues up: a leaf waits for its
+  result before it is handed another task.
+* **The fits take 2.3 to 2.5 ms of a worker's time per point of the stream**
+  (65 to 77 ms each, in a single-process run with the same settings), so a
+  trainer at 1000 points per second keeps two to three workers busy.
+* **A task for a leaf of 100 points is a pickle of 7.3 kB, its result one of
+  236 bytes.**
+* **A result applied at once gives the leaf of a fit in place**: until the
+  first split the predictions are equal to the last bit
+  (`tests/test_deferred_fits.py`).
