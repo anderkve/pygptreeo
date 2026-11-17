@@ -84,6 +84,8 @@ class LeafIndex:
             leaf's width; None for none.
     """
 
+    blend_width = 0.0       # for an index saved before the zones existed
+
     def __init__(self, n_features: int, fanout: int = 32, blend=None):
         self.n_features = n_features
         self.fanout = fanout
@@ -137,16 +139,21 @@ class LeafIndex:
         left_hi[j] = min(hi[j], position - margin)
         right_lo[j] = max(lo[j], position + margin if margin > 0 else np.nextafter(position, np.inf))
         face_lo, face_hi = group.face_lo[i].copy(), group.face_hi[i].copy()
-        # the extent of the leaf: to its faces, or to the edge of its points where it has none
-        with_points = group.data_lo[i, 0] <= group.data_hi[i, 0]
-        extent_lo = np.where(np.isfinite(face_lo), face_lo, group.data_lo[i] if with_points else position)
-        extent_hi = np.where(np.isfinite(face_hi), face_hi, group.data_hi[i] if with_points else position)
         left_face_hi, right_face_lo = face_hi.copy(), face_lo.copy()
         left_face_hi[j] = right_face_lo[j] = position
-        left_extent_hi, right_extent_lo = extent_hi.copy(), extent_lo.copy()
-        left_extent_hi[j] = right_extent_lo[j] = position
-        left_half = 0.5 * self.blend_width * np.maximum(left_extent_hi - extent_lo, 0.0)
-        right_half = 0.5 * self.blend_width * np.maximum(extent_hi - right_extent_lo, 0.0)
+        # the extent of the leaf: to its faces, or to the edge of its points where it has none
+        with_points = group.data_lo[i, 0] <= group.data_hi[i, 0]
+        extent_lo = np.where(np.isfinite(face_lo), face_lo, group.data_lo[i] if with_points else np.nan)
+        extent_hi = np.where(np.isfinite(face_hi), face_hi, group.data_hi[i] if with_points else np.nan)
+        left_width, right_width = extent_hi - extent_lo, extent_hi - extent_lo
+        left_width[j], right_width[j] = position - extent_lo[j], extent_hi[j] - position
+        left_width, right_width = (np.nan_to_num(np.maximum(width, 0.0)) for width in (left_width, right_width))
+        # a child without a width along the cut has its sibling's zone there, for weights without a step
+        if left_width[j] == 0.0:
+            left_width[j] = right_width[j]
+        elif right_width[j] == 0.0:
+            right_width[j] = left_width[j]
+        left_half, right_half = 0.5 * self.blend_width * left_width, 0.5 * self.blend_width * right_width
         group.put(i, left, (lo, left_hi) + self.data_box(left)
                   + (face_lo, left_face_hi, left_half, face_lo - left_half, left_face_hi + left_half))
         group.put(len(group.children), right, (right_lo, hi) + self.data_box(right)
@@ -165,15 +172,16 @@ class LeafIndex:
             parent.drop(parent.children.index(group))
             group = parent
 
-    def extend(self, leaf, removed, j):
+    def extend(self, leaf, removed, j, lower):
         """Extend a leaf along input ``j`` over a leaf beside it that is about
-        to be removed: its cell and its face there become those of the
-        removed leaf, and its width the sum of the two."""
+        to be removed, on its ``lower`` side or the other: its cell and its
+        face there become those of the removed leaf, and its width the sum of
+        the two."""
         gone = self._group[removed]
         k = gone.children.index(removed)
         group = self._group[leaf]
         i = group.children.index(leaf)
-        if gone.face_lo[k, j] < group.face_lo[i, j]:
+        if lower:
             group.cell_lo[i, j], group.face_lo[i, j] = gone.cell_lo[k, j], gone.face_lo[k, j]
         else:
             group.cell_hi[i, j], group.face_hi[i, j] = gone.cell_hi[k, j], gone.face_hi[k, j]

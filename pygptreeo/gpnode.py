@@ -1609,6 +1609,19 @@ class GPNode(Node):
         return ptilde
 
 
+    def _refresh_global(self):
+        """Refit a leaf whose snapshot of the global model is older than the
+        current one: a leaf that stops receiving points would otherwise keep
+        an outdated snapshot whose error its residual GP cannot correct."""
+        if self.global_mean is not None and self.is_leaf and self.n_points > 0:
+            current = self.global_mean.current
+            if current is not None and (self._fitted_global is None
+                                        or self._fitted_global.version < current.version):
+                if not (getattr(self.global_mean, 'cheap_leaf_refresh', False)
+                        and self._refit_on_snapshot(current)):
+                    self.fit_my_GPR(force_training=True)
+
+
     def predict(self, x: np.ndarray, return_std=True, use_calibrated_sigma=False):
         """Evaluates the prediction from this node's GPR(s) at input point(s) x.
 
@@ -1648,16 +1661,7 @@ class GPNode(Node):
                   a global model it also includes the global model's own
                   estimated (epistemic) error, see ``global_mean``.
         """
-        # Never predict with a global snapshot older than the current one: a leaf
-        # that stops receiving points would otherwise keep an outdated snapshot whose
-        # error its residual GP cannot correct.
-        if self.global_mean is not None and self.is_leaf and self.n_points > 0:
-            current = self.global_mean.current
-            if current is not None and (self._fitted_global is None
-                                        or self._fitted_global.version < current.version):
-                if not (getattr(self.global_mean, 'cheap_leaf_refresh', False)
-                        and self._refit_on_snapshot(current)):
-                    self.fit_my_GPR(force_training=True)
+        self._refresh_global()
         if self._can_condition() and not self.prefers_own:
             mu_pred, sigma_pred = self._predict_from_neighbours(x)
         else:
@@ -1709,14 +1713,15 @@ class GPNode(Node):
 
     def _prior(self, Z: np.ndarray):
         """The prior of each output at the points ``Z`` in the units of the
-        targets, before the global model: ``(covariances, means)`` with a
-        matrix and a mean per output. None unless each output has its own GP
-        and the backend gives its covariance."""
+        targets, before the global model: ``(covariances, means, scales)``
+        with a matrix and a mean per output, and the factor by which the GP
+        of an output scales the noise variance it is given. None unless each
+        output has its own GP and the backend gives its covariance."""
         if self.output_model != 'independent':
             return None
         Zs = self._scaled_inputs(Z)
         scaled = self.use_standard_scaling and self.X_scaler is not None
-        covariances, means = [], np.empty(self.n_outputs)
+        covariances, means, scales = [], np.empty(self.n_outputs), np.empty(self.n_outputs)
         for i, gpr in enumerate(self.my_GPRs):
             prior = gpr.covariance(Zs)
             if prior is None:
@@ -1724,7 +1729,8 @@ class GPNode(Node):
             shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
             covariances.append((scale ** 2 * prior[1][0]) * prior[0])
             means[i] = shift + scale * prior[2][0]
-        return covariances, means
+            scales[i] = prior[1][0]
+        return covariances, means, scales
 
 
     def _predicted_variance(self):

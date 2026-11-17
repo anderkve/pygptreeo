@@ -35,6 +35,10 @@ class NeighbourSearch:
         n_searches (int): Number of searches made so far.
         n_leaves_searched (int): Number of leaves whose points they looked at.
     """
+    # for a search saved before these existed
+    fade = None
+    blend = None
+
 
     def __init__(self, tree, n_neighbours: int, consistency_limit: float = 10.0, max_leaves: Optional[int] = None,
                  fade: Optional[float] = None, blend: Optional[float] = None):
@@ -134,14 +138,16 @@ class NeighbourSearch:
         The kernel of an output is the sum of the leaves' kernels with the
         ``weights``, in the units of the inputs and targets. The metric of
         the distances, the mean of the targets with the leaves' snapshots of
-        the global model, and the unit of the fading are the leaves' with the
-        same weights.
+        the global model and its error, and the unit of the fading are the
+        leaves' with the same weights.
 
         Returns the mean and sigma per output, before calibration, or None
         where a leaf cannot give its kernel or predicts from its own points,
         or where the neighbours do not fit the mixed kernel.
         """
-        if any(not leaf._can_condition() or leaf.prefers_own for leaf in leaves):
+        for leaf in leaves:
+            leaf._refresh_global()
+        if any(not leaf._can_condition() or leaf.prefers_own or leaf.output_model != 'independent' for leaf in leaves):
             return None
         found = self.find(x[0], sum(weight * leaf.fit_std for weight, leaf in zip(weights, leaves)),
                           leaf=leaves[int(np.argmax(weights))])
@@ -152,7 +158,8 @@ class NeighbourSearch:
         Z = np.vstack((X, x))
         covariances = np.zeros((n_outputs, n + 1, n + 1))
         mean = np.zeros((n + 1, n_outputs))
-        unit, without_unit = np.zeros(n_outputs), 0.0
+        scale, unit, without_unit = np.zeros(n_outputs), np.zeros(n_outputs), 0.0
+        global_error = np.zeros(n_outputs)      # squared error of the global model, from the leaves that use it
         for weight, leaf in zip(weights, leaves):
             prior = leaf._prior(Z)
             if prior is None:
@@ -160,8 +167,12 @@ class NeighbourSearch:
             for i in range(n_outputs):
                 covariances[i] += weight * prior[0][i]
             mean += weight * prior[1]
+            scale += weight * prior[2]
             if leaf._fitted_global is not None:
                 mean += weight * leaf._fitted_global.predict(Z)
+                error = getattr(leaf.global_mean, 'error_scale', None)
+                if error is not None:
+                    global_error += weight * np.asarray(error, dtype=float).reshape(-1) ** 2
             variance = leaf._predicted_variance()
             if variance is None:
                 without_unit += weight
@@ -171,6 +182,7 @@ class NeighbourSearch:
         noise = noise_std ** 2
         if growth is not None:
             noise = noise + growth[:, None] * (noise + unit + without_unit * 0.01 * residual.var(axis=0))
+        noise = noise * scale
         mu, sigma = np.empty(n_outputs), np.empty(n_outputs)
         for i in range(n_outputs):
             K = covariances[i, :n, :n].copy()
@@ -186,5 +198,5 @@ class NeighbourSearch:
             if not v @ v / n <= self.consistency_limit:
                 return None
             mu[i] = mean[n, i] + u @ v
-            sigma[i] = np.sqrt(max(covariances[i, n, n] - u @ u, 0.0))
+            sigma[i] = np.sqrt(max(covariances[i, n, n] - u @ u, 0.0) + global_error[i])
         return mu, sigma

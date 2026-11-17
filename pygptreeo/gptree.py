@@ -535,6 +535,8 @@ class GPTree:
     def __setstate__(self, state):
         nodes, links = state.pop('_saved_nodes', ()), state.pop('_saved_links', ())
         self.__dict__.update(state)
+        if self.leaf_index is not None and not hasattr(self.leaf_index.root, 'face_lo'):
+            self.leaf_index = None      # an index saved without the faces of the leaves: the cuts are followed
         for node, first in zip(nodes, links):
             if first is not None:
                 node.left, node.right = nodes[first], nodes[first + 1]
@@ -555,6 +557,17 @@ class GPTree:
         while not node.is_leaf:
             node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
         return node
+
+
+    def _prediction_leaves(self, x: np.ndarray):
+        """The leaves of ``_leaves_of`` and their weights, of which no more than
+        ``max_n_pred_leaves`` are kept, those with the largest weights."""
+        leaves, weights = self._leaves_of(x)
+        if self.max_n_pred_leaves:
+            ordering = np.argsort(weights)[::-1][:self.max_n_pred_leaves]
+            kept = np.array(weights)[ordering]
+            leaves, weights = [leaves[idx] for idx in ordering], list(kept / kept.sum())
+        return leaves, weights
 
 
     def _blends(self) -> bool:
@@ -720,7 +733,7 @@ class GPTree:
             while along:
                 node = along.pop()
                 if node.is_leaf:
-                    self.leaf_index.extend(node, leaf, axis)
+                    self.leaf_index.extend(node, leaf, axis, leaf.is_left)
                 elif node.cut_axis() == axis:
                     along.append(node.left if leaf.is_left else node.right)
                 else:
@@ -838,9 +851,9 @@ class GPTree:
         the node's sigma scaler and, beyond SIGMA_DISTANCE_START, for the slope
         of sigma with the distance from the node's fitted points."""
         prediction = None
-        if self._blends() and not self.first_point:
+        if self._blends() and not self.first_point and (allow_training or node._is_fitted()):
             # within the zones of several leaves the prediction to calibrate is theirs together
-            leaves, weights = self._leaves_of(x)
+            leaves, weights = self._prediction_leaves(x)
             if len(leaves) > 1:
                 mu, sigma = self._predict_blended(x, leaves, weights, calibrated=False)
                 prediction = mu[None, :], sigma[None, :]
@@ -890,10 +903,8 @@ class GPTree:
         the leaf's fitted points. Under a memory limit this counts as a use of the
         leaf's GPs, and if the leaf had to be woken another one is put to sleep.
         Without ``calibrated`` sigma is that of the GPs."""
-        if not calibrated:
-            return leaf.predict(x, return_std=True, use_calibrated_sigma=False)
-        mu, sigma = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
-        if self._sigma_slope > 0.0:
+        mu, sigma = leaf.predict(x, return_std=True, use_calibrated_sigma=calibrated and self.use_calibrated_sigma)
+        if calibrated and self._sigma_slope > 0.0:
             beyond = np.maximum(leaf.distance_from_fit(x) - SIGMA_DISTANCE_START, 0.0)
             sigma = sigma * (1.0 + self._sigma_slope * beyond)[:, None]
         if self.max_memory_mb is not None and not self.first_point:
@@ -938,21 +949,7 @@ class GPTree:
         for i, x in tqdm(enumerate(X_test), total=X_test.shape[0], disable=not show_progress, desc="Predicting"):
             x = x.reshape((1, x.shape[0]))
 
-            leaves, pred_leaf_probs = self._leaves_of(x)
-
-            # Limit the number of leaves used?
-            if self.max_n_pred_leaves:
-                pred_leaf_probs = np.array(pred_leaf_probs)
-                ordering = np.argsort(pred_leaf_probs)[::-1]
-
-                pred_leaf_probs = pred_leaf_probs[ordering]
-                leaves = [leaves[idx] for idx in ordering]
-
-                pred_leaf_probs = pred_leaf_probs[:self.max_n_pred_leaves]
-                pred_leaf_probs = pred_leaf_probs / np.sum(pred_leaf_probs)
-                pred_leaf_probs = list(pred_leaf_probs)
-
-                leaves = leaves[:self.max_n_pred_leaves]
+            leaves, pred_leaf_probs = self._prediction_leaves(x)
 
             if len(leaves) > 1 and self._blends():
                 mu, sigma = self._predict_blended(x, leaves, pred_leaf_probs)

@@ -124,7 +124,7 @@ class TestIndex(unittest.TestCase):
                     rest = [k for k in range(d) if k != j]
                     if np.all(other_lo[rest] == lo[rest]) and np.all(other_hi[rest] == hi[rest]) \
                             and (other_hi[j] == lo[j] or other_lo[j] == hi[j]):
-                        index.extend(other, leaf, j)
+                        index.extend(other, leaf, j, lower=other_lo[j] == hi[j])
                         index.remove(leaf)
                         leaves.remove(leaf)
                         removed += 1
@@ -212,6 +212,34 @@ class TestIndex(unittest.TestCase):
                 largest = max([largest] + [abs(now.get(leaf, 0.0) - before.get(leaf, 0.0)) for leaf in set(now) | set(before)])
                 before = now
             self.assertLess(largest, 0.05)
+
+    def test_a_leaf_without_width(self):
+        """Inputs with repeated values: a child cut again at its own face, and a cut at the edge of the points."""
+        index = LeafIndex(1, blend=0.2)
+        first = _Leaf(np.array([[0.0], [1.0], [1.0], [1.0], [2.0], [3.0]]))
+        index.add(first)
+        left, right = _Leaf(np.array([[0.0]])), _Leaf(np.array([[1.0], [1.0], [1.0], [2.0], [3.0]]))
+        index.split(first, left, right, 0, 1.0)
+        none, rest = _Leaf(np.empty((0, 1))), _Leaf(right.my_X_data)
+        index.split(right, none, rest, 0, 1.0)               # between the cut at 1 and itself
+        np.testing.assert_array_equal(index.faces(none)[:2], ([1.0], [1.0]))
+        index.extend(rest, none, 0, lower=True)
+        index.remove(none)
+        lo, hi, half = index.faces(rest)
+        self.assertEqual((lo[0], hi[0]), (1.0, np.inf))
+        self.assertIs(index.locate(np.array([1.5])), rest)
+        self.assertIs(index.locate(np.array([0.5])), left)
+        # the leaf whose points end at the cut has the zone of its sibling there
+        index = LeafIndex(1, blend=0.2)
+        first = _Leaf(np.array([[0.0], [1.0], [1.0], [1.0]]))
+        index.add(first)
+        left, right = _Leaf(np.array([[0.0]])), _Leaf(np.array([[1.0], [1.0], [1.0]]))
+        index.split(first, left, right, 0, 1.0)
+        self.assertEqual(index.faces(right)[2][0], index.faces(left)[2][0])
+        self.assertGreater(index.faces(left)[2][0], 0.0)
+        below, at = dict(zip(*index.blend(np.array([1.0 - 1e-9])))), dict(zip(*index.blend(np.array([1.0]))))
+        self.assertAlmostEqual(below[left], 0.5, places=6)
+        self.assertAlmostEqual(at[left], 0.5, places=6)
 
     def test_without_zones_one_leaf_predicts(self):
         rng = np.random.RandomState(2)
@@ -348,6 +376,46 @@ class TestTree(unittest.TestCase):
         _stream(loaded, X[-1:] + 0.01 * np.arange(1, 41)[:, None])
         self._check_tree(loaded, 2, rng, n_queries=100)
 
+    def test_whole_numbers_and_a_memory_limit(self):
+        """Leaves between a cut and itself are removed, and the index still finds the leaves."""
+        rng = np.random.RandomState(8)
+        np.random.seed(8)
+        for options in (dict(), dict(predict_from='neighbours', n_neighbours=10)):
+            gpt = _tree(2, Nbar=30, max_memory_mb=0.35, **options)
+            X = np.column_stack((rng.randint(0, 6, 1500).astype(float), rng.rand(1500)))
+            _stream(gpt, X)
+            self.assertLess(sum(leaf.n_points for leaf in gpt.root.leaves), 1500)
+            located = 0
+            for q in np.column_stack((rng.uniform(0.0, 5.0, 300), rng.rand(300))):
+                expected = _by_the_cuts(gpt, q[None, :])
+                if expected is not None:
+                    self.assertIs(gpt.leaf_index.locate(q), expected)
+                    located += 1
+                    if options:
+                        self.assertIn(expected, gpt._leaves_of(q[None, :])[0])
+            self.assertGreater(located, 250)
+
+    def test_an_index_saved_without_faces_is_dropped(self):
+        rng = np.random.RandomState(9)
+        np.random.seed(9)
+        gpt = _tree(2, predict_from='neighbours', n_neighbours=10)
+        X = rng.rand(200, 2)
+        _stream(gpt, X)
+        index, gpt.leaf_index = gpt.leaf_index, _IndexWithoutFaces()
+        try:
+            saved = pickle.dumps(gpt)
+        finally:
+            gpt.leaf_index = index
+        loaded = pickle.loads(saved)
+        self.assertIsNone(loaded.leaf_index)
+        self.assertFalse(loaded._blends())
+        self.assertTrue(np.all(np.isfinite(loaded.predict(X[:20])[0])))
+        _stream(loaded, rng.rand(60, 2))
+        search = NeighbourSearch.__new__(NeighbourSearch)
+        self.assertIsNone(search.blend)
+        self.assertIsNone(search.fade)
+        self.assertEqual(LeafIndex.__new__(LeafIndex).blend_width, 0.0)
+
     def test_a_tree_without_an_index(self):
         """As one saved before the index existed: the cuts are followed."""
         rng = np.random.RandomState(5)
@@ -424,6 +492,11 @@ class TestTree(unittest.TestCase):
             w = rng.uniform(0.05, 1.0, 3)
             np.testing.assert_allclose(np.sort((((search.find(q, w)[0] - q) / w) ** 2).sum(axis=1)),
                                        np.sort((((plain.find(q, w)[0] - q) / w) ** 2).sum(axis=1)), rtol=1e-12)
+
+
+class _IndexWithoutFaces:
+    """As an index saved before the leaves had faces."""
+    root = None
 
 
 class _without_index:

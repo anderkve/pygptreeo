@@ -580,6 +580,92 @@ class TestBlend(unittest.TestCase):
             checked += 1
         self.assertGreater(checked, 10)
 
+    def _alone_equals_the_leaf(self, gpt, queries, minimum=20):
+        """With one leaf and weight 1 the mixed prediction is the leaf's own from its neighbours."""
+        checked = 0
+        for q in queries:
+            x = q[None, :]
+            leaf = gpt.leaf_index.locate(q)
+            if leaf is None or not leaf._can_condition() or leaf.prefers_own:
+                continue
+            mean, std = leaf.predict(x, return_std=True, use_calibrated_sigma=False)
+            mixed = gpt.neighbours.predict_mixed(x, [leaf], np.array([1.0]))
+            if mixed is None:
+                continue
+            np.testing.assert_allclose(mixed[0], mean[0], rtol=1e-7, atol=1e-9)
+            np.testing.assert_allclose(mixed[1], std[0], rtol=1e-6, atol=1e-9)
+            checked += 1
+        self.assertGreater(checked, minimum)
+
+    def test_targets_normalised_by_the_gp_without_scaling(self):
+        np.random.seed(15)
+        rng = np.random.RandomState(15)
+        X = rng.rand(400, 2)
+        for scaling in (True, False):
+            gpt = GPTree(GPR=Default_GPR(normalize_y=True), Nbar=40, retrain_every_n_points=10, predict_from='neighbours',
+                         n_neighbours=30, neighbour_consistency=np.inf, use_standard_scaling=scaling)
+            _stream(gpt, X, 50.0 + 20.0 * _target(X), sigma=2.0)
+            self._alone_equals_the_leaf(gpt, self.queries[:120])
+
+    def test_with_a_global_model_in_the_zones(self):
+        """The error of the global model is in sigma, and no leaf predicts with an outdated snapshot."""
+        np.random.seed(16)
+        rng = np.random.RandomState(16)
+        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
+                     neighbour_consistency=np.inf, global_mean='additive_gp',
+                     global_mean_kwargs=dict(reservoir_size=40, min_points=60, n_restarts_optimizer=0, random_state=0))
+        X = rng.rand(400, 2)
+        _stream(gpt, X, _target(X) + 0.3 * np.sin(25.0 * X[:, 0] * X[:, 1]))        # not a sum of functions of one input
+        self.assertIsNotNone(gpt.global_mean.current)
+        self.assertGreater(float(np.max(gpt.global_mean.error_scale)), 0.0)
+        self._alone_equals_the_leaf(gpt, self.queries[:120])
+        gpt.global_mean.fit()
+        current, refreshed = gpt.global_mean.current.version, 0
+        for x, leaves, weights in self._in_zones(gpt, self.queries[:150]):
+            if any(leaf._fitted_global is None or leaf._fitted_global.version < current for leaf in leaves):
+                gpt.predict(x)
+                self.assertTrue(all(leaf._fitted_global.version == current for leaf in leaves))
+                refreshed += 1
+        self.assertGreater(refreshed, 0)
+
+    def test_a_memory_limit_with_leaves_that_predict_themselves(self):
+        """Leaves woken for the prediction of a zone are counted, so that the limit holds."""
+        np.random.seed(17)
+        rng = np.random.RandomState(17)
+        gpt = GPTree(Nbar=100, retrain_every_n_points=25, predict_from='neighbours', n_neighbours=40, max_memory_mb=1.2)
+        X = rng.rand(1500, 2)
+        y = np.sin(3.0 * X[:, 0]) + X[:, 1] + 3.0 * (X[:, 0] > 0.5)
+        for i in range(len(X)):
+            gpt.update_tree(X[i:i + 1], y[i:i + 1, None], 1e-3)
+            if i % 50 == 49:
+                awake = [leaf for leaf in gpt.root.leaves if leaf._is_fitted() and not leaf.asleep]
+                self.assertTrue(all(leaf in gpt._fitted for leaf in awake))
+                self.assertLessEqual(sum(gpt._leaf_size(leaf)[0] for leaf in gpt.root.leaves), 1.2e6)
+        self.assertTrue(any(leaf.asleep for leaf in gpt.root.leaves))
+
+    def test_no_more_leaves_than_allowed(self):
+        np.random.seed(18)
+        rng = np.random.RandomState(18)
+        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', max_n_pred_leaves=1)
+        _stream(gpt, rng.rand(400, 2))
+        in_zone = 0
+        for x in rng.rand(120, 2):
+            x = x[None, :]
+            several = len(gpt._leaves_of(x)[0]) > 1
+            self.assertEqual(len(gpt._prediction_leaves(x)[0]), 1)
+            before = gpt.predict(x)[0][0, 0]
+            owner = gpt.leaf_index.locate(x[0])
+            gpt.update_tree(x, np.array([[_target(x)[0]]]), 1e-3)
+            if owner is not None and owner.is_leaf and gpt._prediction_leaves(x)[0][0] is owner:
+                in_zone += several
+        self.assertGreater(in_zone, 10)
+        # a batch fit registers nothing before the leaves are fitted, and predicts nothing for it
+        fresh = GPTree(Nbar=40, predict_from='neighbours')
+        with mock.patch.object(fresh, '_predict_blended', wraps=fresh._predict_blended) as blended:
+            X = rng.rand(300, 2)
+            fresh.fit(X, _target(X)[:, None], np.full(300, 1e-3))
+        self.assertEqual(blended.call_count, 0)
+
     def test_sleeping_leaves_stay_asleep(self):
         gpt = self.gpt
         checked = 0
