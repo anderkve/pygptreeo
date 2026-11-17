@@ -636,25 +636,43 @@ was added.
 
 ### 8.2 A batch of points
 
-The same target and settings, one process: a tree of the first 6000 points of
-the focusing stream takes the next points as one batch. The NRMSE is that of
-the 1000 points that follow the batch, predicted after it.
+The same target and settings, one process: a tree of the first points of the
+focusing stream takes the next points as one batch. The NRMSE is that of the
+1000 points that follow the batch, predicted after it.
 
-| batch | how it is added | fits | seconds | NRMSE |
-|---|---|---|---|---|
-| 300 points | not added | | | 0.0097 |
-| 300 points | `update_tree` per point | 4 | 0.35 | 0.0088 |
-| 300 points | `allow_training=False`, then a fit of every leaf that took a point | 53 | 2.56 | 0.0091 |
-| 300 points | `defer_fits=True`, the tasks solved and applied after the batch | 4 | 0.34 | 0.0088 |
-| 2000 points | not added | | | 0.0114 |
-| 2000 points | `update_tree` per point | 69 | 4.97 | 0.0053 |
-| 2000 points | `allow_training=False`, then a fit of every leaf that took a point | 88 | 5.05 | 0.0058 |
-| 2000 points | `defer_fits=True`, the tasks solved and applied after the batch | 30 | 2.84 | 0.0054 |
+| tree | batch | how it is added | fits | seconds | NRMSE |
+|---|---|---|---|---|---|
+| 6000 points | 300 | not added | | | 0.0097 |
+| 6000 points | 300 | `update_tree` per point | 4 | 0.35 | 0.0088 |
+| 6000 points | 300 | `allow_training=False`, then a fit of every leaf that took a point | 53 | 2.56 | 0.0091 |
+| 6000 points | 300 | `defer_fits=True`, the tasks solved and applied after the batch | 4 | 0.34 | 0.0088 |
+| 6000 points | 2000 | not added | | | 0.0114 |
+| 6000 points | 2000 | `update_tree` per point | 69 | 4.97 | 0.0053 |
+| 6000 points | 2000 | `allow_training=False`, then a fit of every leaf that took a point | 88 | 5.05 | 0.0058 |
+| 6000 points | 2000 | `defer_fits=True`, the tasks solved and applied after the batch | 30 | 2.84 | 0.0054 |
+| 1000 points | 5000 | `update_tree` per point | 175 | 10.06 | 0.0106 |
+| 1000 points | 5000 | `allow_training=False`, then a fit of every leaf that took a point | 88 | 7.37 | 0.0168 |
+| 1000 points | 5000 | `defer_fits=True`, the tasks solved and applied after the batch | 15 | 4.97 | 0.0189 |
+| 1000 points | 5000 | `defer_fits=True`, the tasks solved and applied every 250 points | 174 | 11.50 | 0.0110 |
+| empty | 5000 | `update_tree` per point | 172 | 9.77 | 0.0144 |
+| empty | 5000 | `fit` | 70 | 3.69 | 0.0148 |
+| empty | 5000 | `defer_fits=True`, the tasks solved and applied after the batch | 1 | 1.35 | 0.0589 |
 
-* **Fitting the leaves once after the batch does not save fits.** Without
-  training a point is stored but not appended, so every leaf that took a point
-  needs a fit, and the 300 points went to 53 leaves. Point by point a leaf is
-  fitted with every 25th point and the others are appended.
-* **With `defer_fits` a leaf and the leaves it splits into ask for one fit
-  until its result is applied**, so a batch costs at most one fit per leaf it
-  started in: 30 for the 2000 points against 69, at the same error.
+* **Point by point is the most accurate way into a tree that exists**, in
+  every row. On a uniform stream the tree of 1000 points gives 0.0128 point by
+  point, 0.0161 with the leaves fitted after the batch and 0.0161 with the
+  results applied after it.
+* **Fitting the leaves once after the batch does not save fits on a large
+  tree.** Without training a point is stored but not appended, so every leaf
+  that took a point needs a fit, and the 300 points went to 53 leaves. Point
+  by point a leaf is fitted with every 25th point and the others are appended.
+* **Results applied after the batch are for a batch that is small compared
+  with the tree.** A leaf and the leaves it splits into ask for one fit until
+  its result is applied, so the batch costs at most one fit per leaf it
+  started in. At a third of the tree's points that is half the fits at the
+  same error. At five times its points every new leaf has the hyperparameters
+  of a leaf of the old tree, and the error is 78% higher; on an empty tree
+  there is one fit and four times the error.
+* **`fit` is the way into an empty tree**: 2.6 times as fast as point by point
+  at about the same error. Its sigma is not calibrated: it covers 0.91 of the
+  errors (0.83 on the uniform stream) where point by point gives 0.71.
