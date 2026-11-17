@@ -161,7 +161,7 @@ result = solve_fit_task(task)
 
 With `defer_fits=True` a leaf that is due a fit is not fitted in `update_tree`. The fit is returned as a task: a small dictionary that can be pickled, with the data points of the leaf. `solve_fit_task` optimises the hyperparameters and returns them, and `apply_fit_result` refits the leaf with these hyperparameters to the data points that it holds by then. Until the result is applied the leaf keeps its previous hyperparameters, and new data points are added to its GP as usual.
 
-pyGPTreeO only creates the tasks and applies the results. Sending them between processes is left to the user. `examples/mpi_fit_workers.py` is a complete example with `mpi4py`, in which the process that holds the tree handled 2.5 times as many data points per second with three fit workers. Note that this option requires the scikit-learn interface and, for multi-output targets, `output_model='independent'`. Otherwise the leaves are fitted in `update_tree` as before.
+pyGPTreeO only creates the tasks and applies the results. Sending them between processes is left to the user. `examples/mpi_fit_workers.py` is a complete example with `mpi4py`, in which the process that holds the tree handled around three times as many data points per second with fit workers. Note that this option requires the scikit-learn interface and, for multi-output targets, `output_model='independent'`. Otherwise the leaves are fitted in `update_tree` as before.
 
 ## Using GPyTorch
 

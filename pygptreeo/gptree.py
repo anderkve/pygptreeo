@@ -300,7 +300,7 @@ class GPTree:
         self.aggregation = aggregation
 
         # The fits that update_tree(defer_fits=True) handed out and whose results
-        # are still to come: task id -> the node the task was made for
+        # are still to come: task id -> (the node the task was made for, the frame of the task)
         self._fit_tasks = {}
         self._n_fit_tasks = 0
 
@@ -464,11 +464,13 @@ class GPTree:
         due one, waits for the result of one, or has to be fitted in place."""
         if node.fit_task_id in self._fit_tasks or not node.fit_due():
             return None
-        task = node.fit_task()
-        if task is not None:
-            self._n_fit_tasks += 1
-            task['id'] = node.fit_task_id = self._n_fit_tasks
-            self._fit_tasks[task['id']] = node
+        made = node.fit_task()
+        if made is None:
+            return None
+        task, frame = made
+        self._n_fit_tasks += 1
+        task['id'] = node.fit_task_id = self._n_fit_tasks
+        self._fit_tasks[task['id']] = (node, frame)
         return task
 
 
@@ -476,19 +478,24 @@ class GPTree:
         """Take the result of `solve_fit_task` for a task from `update_tree`.
 
         The leaf of the task is refitted to the points it holds now, with the
-        hyperparameters found and without optimising. If the leaf has split
-        since, the leaves under it are refitted. A result with
-        ``hyperparameters=None``, for a fit that failed, only lets the leaf be
-        handed a new task. Returns False if no leaf was refitted: the fit
-        failed, the leaf was removed, or the tree was saved and loaded since.
+        hyperparameters found and the scaling of the task, without optimising.
+        If the leaf has split since, the leaves under it are refitted. A
+        result with ``hyperparameters=None``, for a fit that failed, only lets
+        the leaf be handed a new task. Returns False if no leaf was refitted:
+        the fit failed, the leaf was removed, the global model has a new
+        version since the task was made, or the tree was saved and loaded
+        since.
         """
-        node = self._fit_tasks.pop(result['id'], None)
+        node, frame = self._fit_tasks.pop(result['id'], (None, None))
         if node is None or result['hyperparameters'] is None:
+            return False
+        # The leaves have refitted to a newer snapshot of the global model, or will with their next prediction
+        if self.global_mean is not None and self.global_mean.current is not frame[1]:
             return False
         # A node that was removed from the tree has no parent, or lost its children
         leaves = [leaf for leaf in node.leaves if leaf.is_leaf and (leaf.parent is not None or leaf is self.root)]
         for leaf in leaves:
-            leaf.apply_hyperparameters(result['hyperparameters'])
+            leaf.apply_fit(result['hyperparameters'], frame)
             if self.max_memory_mb is not None:
                 self._account(leaf)
         if self.max_memory_mb is not None:

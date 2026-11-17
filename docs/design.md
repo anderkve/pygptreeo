@@ -172,6 +172,15 @@ its result to the tree. The tree has no part in sending them.
   to the points it holds when the result arrives, which include those that
   arrived in the meantime. A GP fitted by the worker would lack them. Applied
   at once, the result gives the same leaf as a fit in place.
+* **The result is applied in the frame of its task.** The hyperparameters
+  belong to the scaling of the points they were found for, so the tree keeps
+  the scalers of a task until its result arrives and the leaf takes them with
+  the hyperparameters. The leaf is then as fitted in place when the task was
+  made, with the points since then appended. Scalers fitted to the leaf's
+  points at that moment would differ once it has split: a result applied to
+  six leaves two splits below its task gave twice the error. The residual of
+  a task is that of one snapshot of the global model, so a result is dropped
+  if there is a newer snapshot.
 * **A task is self-contained.** It holds an unfitted copy of each GP of the
   leaf with the scaled inputs, targets and noise, about 7 kB for 100 points in
   six dimensions, so a worker needs no tree and no settings. The result is the
