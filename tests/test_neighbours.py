@@ -580,6 +580,23 @@ class TestBlend(unittest.TestCase):
             checked += 1
         self.assertGreater(checked, 10)
 
+    def test_sleeping_leaves_stay_asleep(self):
+        gpt = self.gpt
+        checked = 0
+        for x, leaves, weights in self._in_zones(gpt, self.queries[:80]):
+            before = gpt.predict(x)
+            asleep = [leaf for leaf in leaves if leaf.sleep()]
+            try:
+                after = gpt.predict(x)
+                self.assertTrue(asleep and all(leaf.asleep for leaf in asleep))
+                np.testing.assert_allclose(after[0], before[0], rtol=1e-12)
+                np.testing.assert_allclose(after[1], before[1], rtol=1e-12)
+            finally:
+                for leaf in asleep:
+                    leaf.wake()
+            checked += 1
+        self.assertGreater(checked, 5)
+
     def test_sigma_is_calibrated_on_the_prediction_of_the_zone(self):
         np.random.seed(12)
         rng = np.random.RandomState(12)
