@@ -35,5 +35,7 @@ for v in VARIANTS:
     P = np.array([m.predict(X[i:i + 1])[0][0, 0] for i in range(N, N + 1000)])
     t_pred = (time.perf_counter() - t0) / 1000
     extra = f"  leaves searched {m.neighbours.n_leaves_searched / max(m.neighbours.n_searches, 1):5.1f}" if m.neighbours is not None else ''
+    if getattr(m, '_blends', lambda: False)():
+        extra += f"  leaves per prediction {np.mean([len(m._leaves_of(X[i:i + 1])[0]) for i in range(N, N + 1000)]):.2f}"
     print(f"{sys.argv[1]:8s} {target} {stream} N={N} {v:22s} predict {1e3 * t_pred:.3f} ms  update {1e3 * t_upd:.2f} ms  "
           f"rmse {np.sqrt(np.mean((P - data['y'][N:N + 1000]) ** 2)):.4f}  leaves {len(m.root.leaves)}{extra}", flush=True)

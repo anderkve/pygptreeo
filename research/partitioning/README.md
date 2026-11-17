@@ -18,7 +18,7 @@ Records go to `results/` (not in the repository).
 | `multires.py` | A model in every node: descendants fit the residual of their ancestors' frozen GPs |
 | `anchored.py` | Neighbours of one of a few cells per leaf, shared by the queries of the cell |
 | `tapered.py` | The prototype of `neighbour_fade`: neighbours whose noise grows towards the edge of their set |
-| `blended.py` | Predictions blended, or the leaves' kernels mixed, in a zone around each cut |
+| `blended.py` | The prototypes of `neighbour_blend`: predictions blended, or the leaves' kernels mixed, in a zone around each cut |
 | `jitter.py` | Steps of the predicted mean along short paths |
 | `knn.py` | The first version of the neighbours (brute-force search, optional far points and per-level samples) |
 | `diag_knn.py`, `diag_batch.py`, `diag_knn_report.py` | Replay: the leaf's prediction against that of its kernel on the nearest points, for every size of the neighbour set, and rules for the test against the kernel |

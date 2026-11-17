@@ -1,4 +1,4 @@
-"""Predictions blended across the cuts.
+"""Predictions blended across the cuts: the prototypes of ``GPTree(neighbour_blend=...)``.
 
 Within a zone around each cut, whose width is the share ``blend`` of the
 spread of the node's points along the cut, a query is predicted with the
@@ -39,7 +39,8 @@ class BlendedTree(GPTree):
 
 
 def blended_tree(blend=0.1, **tree_kwargs):
-    gpt = GPTree(predict_from='neighbours', **tree_kwargs)
+    # the package's own zones (``neighbour_blend``) are off: these are the prototypes of them
+    gpt = GPTree(predict_from='neighbours', neighbour_blend=None, **tree_kwargs)
     gpt.__class__ = BlendedTree
     gpt.blend = blend
     return gpt
