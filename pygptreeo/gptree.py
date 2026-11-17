@@ -88,6 +88,9 @@ class GPTree:
         update_tree(x, y, allow_training=True):
             Adds a single data point to the tree, potentially causing node
             splits and GPR retraining.
+        apply_fit_result(result):
+            Gives the result of a fit that `update_tree(defer_fits=True)`
+            handed out, and `solve_fit_task` carried out, to its leaf.
         predict(X_test, mode='recursive', show_progress=False):
             Predicts target values for X_test using the ensemble of GPRs in
             the leaf nodes.
@@ -296,10 +299,21 @@ class GPTree:
 
         self.aggregation = aggregation
 
+        # The fits that update_tree(defer_fits=True) handed out and whose results
+        # are still to come: task id -> the node the task was made for
+        self._fit_tasks = {}
+        self._n_fit_tasks = 0
+
         self.first_point = True
 
 
-    def update_tree(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray], allow_training=True):
+    def __getstate__(self):
+        # The fits handed out are not saved: their results cannot reach a loaded tree
+        return {**self.__dict__, '_fit_tasks': {}}
+
+
+    def update_tree(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray],
+                    allow_training=True, defer_fits=False):
         """Updates the tree structure and node GPRs with a new data point (x, y, sigma).
 
         This method implements a process similar to Algorithm 1 in the DLGP
@@ -328,6 +342,18 @@ class GPTree:
                 is suppressed during this update. This is useful, for example,
                 during the initial `fit` method where tree construction is the
                 priority before a final training pass on all leaves.
+            defer_fits (bool): If True, a leaf that is due a fit is not fitted
+                here. The fit is returned as a task for `solve_fit_task`,
+                which can run in another process, and `apply_fit_result`
+                takes its result. Until then the leaf keeps its
+                hyperparameters and takes its points as appended points, and
+                neither it nor the leaves it splits into are handed another
+                task. A leaf that cannot hand its fit out is fitted here (see
+                `GPNode.fit_task`). Defaults to False.
+
+        Returns:
+            With `defer_fits`, the fit task if the leaf became due one: a dict
+            that can be pickled. None otherwise.
         """
 
         # The first input point is used to determine self.n_features
@@ -374,8 +400,12 @@ class GPTree:
         self._register_prediction(node, x, y, allow_training)
 
         # Retrain GP? The node will decide based Nbar and/or its buffer of training points
+        task = None
         if allow_training:
-            did_retrain = node.fit_my_GPR()
+            if defer_fits:
+                task = self._fit_task(node)
+            # A node with a fit handed out waits for its result
+            did_retrain = node.fit_task_id not in self._fit_tasks and node.fit_my_GPR()
             # Between two fits the point is added to the fitted GPs as they are
             if self.append_points_between_fits and not did_retrain:
                 node.append_point(x, y, sigma)
@@ -426,6 +456,44 @@ class GPTree:
             node.delete_my_GPR()
 
         self._after_update(node)
+        return task
+
+
+    def _fit_task(self, node: GPNode):
+        """The fit that `node` is due as a task to hand out, or None if it is not
+        due one, waits for the result of one, or has to be fitted in place."""
+        if node.fit_task_id in self._fit_tasks or not node.fit_due():
+            return None
+        task = node.fit_task()
+        if task is not None:
+            self._n_fit_tasks += 1
+            task['id'] = node.fit_task_id = self._n_fit_tasks
+            self._fit_tasks[task['id']] = node
+        return task
+
+
+    def apply_fit_result(self, result: dict) -> bool:
+        """Take the result of `solve_fit_task` for a task from `update_tree`.
+
+        The leaf of the task is refitted to the points it holds now, with the
+        hyperparameters found and without optimising. If the leaf has split
+        since, the leaves under it are refitted. A result with
+        ``hyperparameters=None``, for a fit that failed, only lets the leaf be
+        handed a new task. Returns False if no leaf was refitted: the fit
+        failed, the leaf was removed, or the tree was saved and loaded since.
+        """
+        node = self._fit_tasks.pop(result['id'], None)
+        if node is None or result['hyperparameters'] is None:
+            return False
+        # A node that was removed from the tree has no parent, or lost its children
+        leaves = [leaf for leaf in node.leaves if leaf.is_leaf and (leaf.parent is not None or leaf is self.root)]
+        for leaf in leaves:
+            leaf.apply_hyperparameters(result['hyperparameters'])
+            if self.max_memory_mb is not None:
+                self._account(leaf)
+        if self.max_memory_mb is not None:
+            self._enforce_memory_limit(remove=False)
+        return bool(leaves)
 
 
     @property
@@ -928,3 +996,14 @@ class GPTree:
             path (str): The file path where the GPTree object will be saved.
         """
         joblib.dump(self, path)
+
+
+def solve_fit_task(task: dict) -> dict:
+    """Carry out a fit task from `GPTree.update_tree(defer_fits=True)`: optimise
+    the hyperparameters of its GPs. Needs no tree, so it can run in any process.
+    `GPTree.apply_fit_result` takes the result, which can be pickled."""
+    hyperparameters = []
+    for gpr, y in zip(task['gprs'], task['y']):
+        gpr.fit(task['X'], y)
+        hyperparameters.append(gpr.get_hyperparameters())
+    return {'id': task['id'], 'hyperparameters': hyperparameters}

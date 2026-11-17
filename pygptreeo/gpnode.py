@@ -271,6 +271,9 @@ class GPNode(Node):
         self.n_points = 0
         self.n_points_since_retrain = 0
         self.asleep = False
+        # The last fit task that GPTree.update_tree(defer_fits=True) handed out for
+        # this node or, until it has one of its own, for the node it was split from
+        self.fit_task_id = None
 
         self.my_X_data = None
         self.my_y_data = None
@@ -466,6 +469,7 @@ class GPNode(Node):
         self.right._fitted_global = self._fitted_global
         self.left.fit_mean = self.right.fit_mean = self.fit_mean
         self.left.fit_std = self.right.fit_std = self.fit_std
+        self.left.fit_task_id = self.right.fit_task_id = self.fit_task_id
 
 
     def delete_point(self, index=-1, shared_point=True):
@@ -843,39 +847,32 @@ class GPNode(Node):
         self.y_common_scaler = (mu, scale)
         return mu, scale
 
-    def _fit_scalers(self, X: np.ndarray, y: np.ndarray):
-        """Fits StandardScalers on the combined training data.
+    def _independent_fit_inputs(self, X: np.ndarray, y: np.ndarray, sigma: np.ndarray):
+        """What the GPs of output_model='independent' are fitted to, for the points
+        ``(X, y, sigma)``: the inputs and, per output, the targets and the noise
+        variances. With ``use_standard_scaling`` they are standardised, and the
+        scalers ``(X_scaler, y_scalers)`` are returned last, else None. The node
+        is not changed."""
+        outputs = range(self.n_outputs)
+        if not self.use_standard_scaling:
+            return X, [y[:, i:i+1] for i in outputs], [sigma[:, i] ** 2 for i in outputs], None
+        X_scaler = StandardScaler().fit(X)
+        y_scalers = [StandardScaler().fit(y[:, i:i+1]) for i in outputs]
+        targets = [y_scalers[i].transform(y[:, i:i+1]) for i in outputs]
+        # Noise std in scaled units is sigma / y_scale; the GP takes variances
+        noise = [(sigma[:, i] / y_scalers[i].scale_[0]) ** 2 for i in outputs]
+        return X_scaler.transform(X), targets, noise, (X_scaler, y_scalers)
 
-        This method creates and fits separate StandardScaler instances for
-        the feature data (X) and target data (y). These scalers are stored
-        in the node and used to transform data before GP training and to
-        inverse transform predictions.
+    def _set_scalers(self, scalers):
+        """Take the scalers that ``_independent_fit_inputs`` returned."""
+        if scalers is not None:
+            self.X_scaler, self.y_scalers = scalers
+            if self.n_outputs == 1:
+                self.y_scaler = self.y_scalers[0]
 
-        For multi-output: creates one scaler per output dimension.
-
-        Args:
-            X (np.ndarray): Feature data to fit the X scaler on.
-                Shape: (n_samples, n_features)
-            y (np.ndarray): Target data to fit the y scaler on.
-                Shape: (n_samples, n_outputs)
-
-        Note:
-            StandardScaler handles edge cases automatically:
-            - Single point: sets scale=1, mean=point_value
-            - Zero variance in a dimension: sets scale=1 for that dimension
-        """
-        # Fit X scaler (per-feature standardization)
-        self.X_scaler = StandardScaler()
-        self.X_scaler.fit(X)
-
-        # Fit y scalers (one per output)
-        for i in range(self.n_outputs):
-            self.y_scalers[i] = StandardScaler()
-            self.y_scalers[i].fit(y[:, i:i+1])  # Fit on column i
-
-        # Also update single y_scaler for backward compatibility
-        if self.n_outputs == 1:
-            self.y_scaler = self.y_scalers[0]
+    def fit_due(self) -> bool:
+        """True if the retrain buffer or the node is full."""
+        return self.n_points_since_retrain >= self.retrain_every_n_points or self.n_points >= self.Nbar
 
 
     def fit_my_GPR(self, force_training=False):
@@ -899,8 +896,7 @@ class GPNode(Node):
             bool: True if the GPR was trained in this call, False otherwise.
         """
         # Only train the GP if the buffer is full, the node is full, or if force_training=True
-        if not ((self.n_points_since_retrain >= self.retrain_every_n_points)
-                or (self.n_points >= self.Nbar) or force_training):
+        if not (self.fit_due() or force_training):
             return False
 
         # Combine own points and shared points
@@ -930,19 +926,11 @@ class GPNode(Node):
 
         if self.output_model == 'independent':
             # One GP per output, per-output standardisation of y
-            if self.use_standard_scaling:
-                self._fit_scalers(X_train, y_train)
-                X_fit = self.X_scaler.transform(X_train)
-                for i in range(self.n_outputs):
-                    y_scale_i = self.y_scalers[i].scale_[0]
-                    y_fit_i = self.y_scalers[i].transform(y_train[:, i:i+1])
-                    # Noise std in scaled units is sigma / y_scale; the GP takes variances
-                    self._set_noise(self.my_GPRs[i], (sigma_train[:, i] / y_scale_i) ** 2)
-                    self.my_GPRs[i].fit(X_fit, y_fit_i)
-            else:
-                for i in range(self.n_outputs):
-                    self._set_noise(self.my_GPRs[i], sigma_train[:, i] ** 2)
-                    self.my_GPRs[i].fit(X_train, y_train[:, i:i+1])
+            X_fit, targets, noise, scalers = self._independent_fit_inputs(X_train, y_train, sigma_train)
+            self._set_scalers(scalers)
+            for i, gpr in enumerate(self.my_GPRs):
+                self._set_noise(gpr, noise[i])
+                gpr.fit(X_fit, targets[i])
 
         elif self.output_model == 'shared':
             # One GP with one shared kernel for all outputs (2-D target). The backend
@@ -996,36 +984,82 @@ class GPNode(Node):
         return True
 
 
-    def _refit_on_snapshot(self, snapshot):
-        """Refit the GPs on the residual of ``snapshot`` with their hyperparameters kept.
+    def _points(self, snapshot=None):
+        """The node's own and shared points: inputs, targets (their residual of
+        ``snapshot``, if given) and sigmas."""
+        X = np.vstack((self.my_X_data, self.shared_X_data))
+        y = np.vstack((self.my_y_data, self.shared_y_data))
+        if snapshot is not None and X.shape[0] > 0:
+            y = y - snapshot.predict(X)
+        return X, y, np.vstack((self.my_sigma_data, self.shared_sigma_data))
 
-        Used by global models with ``cheap_leaf_refresh``. The retrain buffer is left
-        as is, so the hyperparameters are optimised on the usual schedule. Returns
-        False if this node or its GP backend cannot do it.
+
+    def _refit_on_snapshot(self, snapshot, hyperparameters=None):
+        """Refit the GPs on the residual of ``snapshot`` (the targets, if None)
+        without optimising: with ``hyperparameters``, one set per GP, or with
+        those the GPs have.
+
+        Used by global models with ``cheap_leaf_refresh`` and by
+        ``apply_hyperparameters``. The retrain buffer is left as is, so the
+        hyperparameters are optimised on the usual schedule. Returns False if
+        this node or its GP backend cannot do it.
         """
-        if self.output_model != 'independent' or not all(gpr.is_trained() for gpr in self.my_GPRs):
+        if self.output_model != 'independent':
             return False
-        X_train = np.vstack((self.my_X_data, self.shared_X_data))
+        if hyperparameters is None and not all(gpr.is_trained() for gpr in self.my_GPRs):
+            return False
+        X_train, y_train, sigma_train = self._points(snapshot)
         if X_train.shape[0] == 0:
             return False
-        y_train = np.vstack((self.my_y_data, self.shared_y_data)) - snapshot.predict(X_train)
-        sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))
-        if self.use_standard_scaling:
-            self._fit_scalers(X_train, y_train)
-            X_fit = self.X_scaler.transform(X_train)
-        for i in range(self.n_outputs):
-            if self.use_standard_scaling:
-                self._set_noise(self.my_GPRs[i], (sigma_train[:, i] / self.y_scalers[i].scale_[0]) ** 2)
-                done = self.my_GPRs[i].refit_fixed(X_fit, self.y_scalers[i].transform(y_train[:, i:i+1]))
+        X_fit, targets, noise, scalers = self._independent_fit_inputs(X_train, y_train, sigma_train)
+        self._set_scalers(scalers)
+        for i, gpr in enumerate(self.my_GPRs):
+            self._set_noise(gpr, noise[i])
+            if hyperparameters is None:
+                done = gpr.refit_fixed(X_fit, targets[i])
             else:
-                self._set_noise(self.my_GPRs[i], sigma_train[:, i] ** 2)
-                done = self.my_GPRs[i].refit_fixed(X_train, y_train[:, i:i+1])
+                done = gpr.refit_fixed(X_fit, targets[i], hyperparameters[i])
             if not done:
                 return False
         self._fitted_global = snapshot
         self.asleep = False
         self._set_fit_statistics(X_train)
         return True
+
+
+    def fit_task(self):
+        """The fit of the node as a task for another process: unfitted copies of
+        its GPs with the inputs and targets they are to be fitted to.
+
+        ``solve_fit_task`` carries the task out and ``apply_hyperparameters``
+        takes what it finds. The node's GPs stay as they are, and the retrain
+        buffer is emptied. Returns None if the node has no points, or if it or
+        its GP backend cannot hand a fit out (it is then fitted in place):
+        this needs output_model='independent' and a backend with
+        ``unfitted_copy`` (the scikit-learn adapter).
+        """
+        if self.output_model != 'independent':
+            return None
+        gprs = [gpr.unfitted_copy() for gpr in self.my_GPRs]
+        if any(gpr is None for gpr in gprs):
+            return None
+        snapshot = self.global_mean.current if self.global_mean is not None else None
+        X_train, y_train, sigma_train = self._points(snapshot)
+        if X_train.shape[0] == 0:
+            return None
+        X_fit, targets, noise, _ = self._independent_fit_inputs(X_train, y_train, sigma_train)
+        for gpr, alpha in zip(gprs, noise):
+            self._set_noise(gpr, alpha)
+        self.n_points_since_retrain = 0
+        return {'X': X_fit, 'y': targets, 'gprs': gprs}
+
+
+    def apply_hyperparameters(self, hyperparameters):
+        """Refit the GPs to the points the node holds now, with the given
+        hyperparameters: one set per GP, as ``solve_fit_task`` returns them."""
+        snapshot = self.global_mean.current if self.global_mean is not None else None
+        if not self._refit_on_snapshot(snapshot, hyperparameters):
+            self.fit_my_GPR(force_training=True)
 
 
     def _set_fit_statistics(self, X_train: np.ndarray):

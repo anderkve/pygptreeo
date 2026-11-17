@@ -11,6 +11,7 @@ import numpy as np
 from copy import deepcopy
 
 from scipy.linalg import cho_solve, cholesky, solve_triangular
+from sklearn.base import clone as sklearn_clone
 from sklearn.gaussian_process import GaussianProcessRegressor
 
 from ..gp_interface import GPRegressorInterface
@@ -257,18 +258,32 @@ class SklearnGPAdapter(GPRegressorInterface):
             return None
         return np.min(np.vstack(ls_arrays), axis=0)
 
-    def refit_fixed(self, X: np.ndarray, y: np.ndarray) -> bool:
-        """Fit with the fitted kernel kept (no hyperparameter optimisation)."""
+    def refit_fixed(self, X: np.ndarray, y: np.ndarray, hyperparameters=None) -> bool:
+        """Fit without optimising: with the kernel at ``hyperparameters`` (its
+        ``theta``), or with the fitted kernel."""
         sk = self._gpr
-        if not hasattr(sk, 'kernel_'):
+        if hyperparameters is not None:
+            self._ensure_kernel(np.asarray(X).shape[1])
+            fixed = sk.kernel.clone_with_theta(np.asarray(hyperparameters, dtype=float))
+        elif hasattr(sk, 'kernel_'):
+            fixed = sk.kernel_
+        else:
             return False
         optimizer, kernel = sk.optimizer, sk.kernel
-        sk.optimizer, sk.kernel = None, sk.kernel_
+        sk.optimizer, sk.kernel = None, fixed
         try:
             sk.fit(X, y)
         finally:
             sk.optimizer, sk.kernel = optimizer, kernel
         return True
+
+    def get_hyperparameters(self):
+        """The ``theta`` of the fitted kernel: the logarithms of its free hyperparameters."""
+        return self._gpr.kernel_.theta.copy() if self.is_trained() else None
+
+    def unfitted_copy(self) -> 'SklearnGPAdapter':
+        """The regressor with its settings and its initial kernel, without a fit."""
+        return SklearnGPAdapter(sklearn_clone(self._gpr), kernel_factory=self._kernel_factory)
 
     def append(self, x: np.ndarray, y, noise: float) -> bool:
         """One more row for the Cholesky factor: the factor of the kernel matrix

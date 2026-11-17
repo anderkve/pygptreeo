@@ -1,8 +1,9 @@
 # Design notes
 
 Why the tree has a global model, how the mechanism works, how the tree stays
-within a fixed size, how a point reaches a leaf's GP between two fits, what
-was tried and dropped, and what is still open. The measurements are in
+within a fixed size, how a point reaches a leaf's GP between two fits, how a
+fit can run in another process, what was tried and dropped, and what is still
+open. The measurements are in
 [`benchmarks.md`](benchmarks.md).
 
 ## What is global and what is local
@@ -156,6 +157,36 @@ fixed size: a fitted leaf takes 40 kB at `Nbar=50` in three dimensions and
   hyperparameters change slowly, and what a leaf lacked between two fits was
   the points themselves.
 
+## Fits in other processes
+
+`update_tree(defer_fits=True)` returns the fit that a leaf is due as a task,
+`solve_fit_task` carries it out in any process, and `apply_fit_result` gives
+its result to the tree. The tree has no part in sending them.
+
+* **A fitted leaf is its points and its hyperparameters.** Optimising the
+  hyperparameters takes 60 ms for 100 points in six dimensions, and three
+  quarters of the time of an update. The factorisation that follows from the
+  points and the hyperparameters takes 1.3 ms. So the points stay with the
+  tree and only the optimisation is handed out.
+* **The result is the hyperparameters alone.** The leaf is refitted with them
+  to the points it holds when the result arrives, which include those that
+  arrived in the meantime. A GP fitted by the worker would lack them. Applied
+  at once, the result gives the same leaf as a fit in place.
+* **A task is self-contained.** It holds an unfitted copy of each GP of the
+  leaf with the scaled inputs, targets and noise, about 7 kB for 100 points in
+  six dimensions, so a worker needs no tree and no settings. The result is the
+  task's number and one array per GP.
+* **A leaf waits for its result.** It is handed no other task before the
+  result is applied, so no more tasks are out than the tree has leaves, and
+  results cannot arrive in the wrong order. Under load a leaf is refitted
+  less often and nothing queues up. A worker has to answer every task, with
+  `hyperparameters=None` for a fit that failed.
+* **A full leaf splits without its fit.** It asks for the fit and splits with
+  the hyperparameters it has. Its children inherit the wait, and the result
+  refits every leaf under the node the task was made for.
+* **Tasks that are out are not saved with the tree.** A loaded tree has none,
+  and a leaf of it asks again with its next full retrain buffer.
+
 ## Tried and dropped
 
 * **Neural-linear leaves**: a Bayesian linear regression per leaf on the
@@ -278,6 +309,10 @@ fixed size: a fitted leaf takes 40 kB at `Nbar=50` in three dimensions and
   the same way as far from the data.
 * **GPyTorch leaves do not sleep.** The adapter cannot release and restore a
   fit, so a memory limit is met by removing leaves only.
+* **Not every fit can be handed out.** GPyTorch leaves and the leaves of the
+  `'shared'` and `'pca'` output models are fitted in place also with
+  `defer_fits`. So is a leaf that meets a new version of the additive global
+  GP: it refits before its next prediction.
 * **Calibration after a new network version.** Coverage can dip for a batch
   until the per-leaf calibration catches up with the shifted residual.
 
