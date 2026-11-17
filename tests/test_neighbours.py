@@ -740,8 +740,9 @@ class TestAsleep(unittest.TestCase):
     """Leaves whose GPs sleep unless they were used last (``neighbour_awake``)."""
 
     @staticmethod
-    def _awake(gpt):
-        return [leaf for leaf in gpt.root.leaves if leaf._is_fitted() and not leaf.asleep]
+    def _awake(gpt, own=True):
+        """The leaves with GPs awake; without ``own``, less those that predict from their own points."""
+        return [leaf for leaf in gpt.root.leaves if leaf._is_fitted() and not leaf.asleep and (own or not leaf.prefers_own)]
 
     def _stream_with_predictions(self, X, y, **kw):
         np.random.seed(20)
@@ -750,7 +751,7 @@ class TestAsleep(unittest.TestCase):
         for i in range(len(X)):
             predictions.append(np.hstack(gpt.predict(X[i:i + 1])).ravel())
             gpt.update_tree(X[i:i + 1], y[i:i + 1, None], 1e-3)
-            most_awake = max(most_awake, len(self._awake(gpt)))
+            most_awake = max(most_awake, len(self._awake(gpt, own=False)))
         return gpt, np.array(predictions), most_awake
 
     def test_the_same_predictions_from_less_memory(self):
@@ -766,7 +767,9 @@ class TestAsleep(unittest.TestCase):
         self.assertGreater(len(asleep.root.leaves), 25)
         np.testing.assert_allclose(sleeping, awake, rtol=1e-5, atol=1e-7)
         self.assertLess(asleep.memory_mb, 0.8 * all_awake.memory_mb)
-        self.assertGreater(sum(leaf.prefers_own for leaf in asleep.root.leaves), 0)
+        own = [leaf for leaf in asleep.root.leaves if leaf.prefers_own]
+        self.assertGreater(len(own), 0)
+        self.assertFalse(any(leaf.asleep for leaf in own))         # a leaf that predicts from its own points stays awake
 
     def test_the_leaves_awake_are_those_used_last(self):
         rng = np.random.RandomState(21)
@@ -779,7 +782,7 @@ class TestAsleep(unittest.TestCase):
             owner = gpt.leaf_index.locate(x[0])
             gpt.update_tree(x, np.array([[_target(x)[0]]]), 1e-3)
             awake = self._awake(gpt)
-            self.assertLessEqual(len(awake), 2)
+            self.assertLessEqual(len(self._awake(gpt, own=False)), 2)
             if owner is not None and owner.is_leaf:
                 self.assertIn(owner, awake)
         # a leaf that has to predict from its own points is woken, and sleeps again when others are used
@@ -793,7 +796,7 @@ class TestAsleep(unittest.TestCase):
             x = other.my_X_data[:1]
             gpt.update_tree(x, np.array([[_target(x)[0]]]), 1e-3)
         self.assertTrue(leaf.asleep)
-        self.assertLessEqual(len(self._awake(gpt)), 2)
+        self.assertLessEqual(len(self._awake(gpt, own=False)), 2)
 
     def test_a_memory_limit_removes_leaves_only_when_they_all_sleep(self):
         rng = np.random.RandomState(22)
@@ -812,7 +815,7 @@ class TestAsleep(unittest.TestCase):
                     self.assertTrue(all(leaf in gpt._fitted for leaf in self._awake(gpt)))
             sizes[limit] = gpt.memory_mb
             kept = sum(leaf.n_points for leaf in gpt.root.leaves)
-            self.assertLessEqual(len(self._awake(gpt)), 8)
+            self.assertLessEqual(len(self._awake(gpt, own=False)), 8)
             if limit is None or limit > sizes[None]:
                 self.assertEqual(kept, 1500)            # the sleeping tree fits: nothing is removed
             else:
@@ -831,10 +834,10 @@ class TestAsleep(unittest.TestCase):
             gpt.save(path)
             loaded = joblib.load(path)
         self.assertEqual(sum(leaf.asleep for leaf in loaded.root.leaves), sum(leaf.asleep for leaf in gpt.root.leaves))
-        self.assertTrue(all(leaf in loaded.neighbours.in_use for leaf in self._awake(loaded)))
+        self.assertTrue(all(leaf in loaded.neighbours.in_use for leaf in self._awake(loaded, own=False)))
         np.testing.assert_allclose(loaded.predict(X_test)[0], mean, rtol=1e-9)
         _stream(loaded, rng.rand(120, 2))
-        self.assertLessEqual(len(self._awake(loaded)), 8)
+        self.assertLessEqual(len(self._awake(loaded, own=False)), 8)
         self.assertTrue(np.all(np.isfinite(loaded.predict(X_test)[0])))
 
     def test_after_a_batch_fit(self):
@@ -843,10 +846,10 @@ class TestAsleep(unittest.TestCase):
         np.random.seed(24)
         gpt = GPTree(Nbar=40, predict_from='neighbours', neighbour_awake=3)
         gpt.fit(X, _target(X)[:, None], np.full(600, 1e-3))
-        self.assertLessEqual(len(self._awake(gpt)), 3)
+        self.assertLessEqual(len(self._awake(gpt, own=False)), 3)
         X_test = rng.rand(50, 2)
         self.assertLess(np.sqrt(np.mean((gpt.predict(X_test)[0][:, 0] - _target(X_test)) ** 2)), 0.02)
-        self.assertLessEqual(len(self._awake(gpt)), 3)
+        self.assertLessEqual(len(self._awake(gpt, own=False)), 3)
 
     def test_the_options(self):
         for awake in (0, -1):

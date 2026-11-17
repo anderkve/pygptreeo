@@ -294,7 +294,8 @@ class GPTree:
                 is what a prediction from neighbours needs of them, and
                 release the rest, about three quarters of a leaf's memory. A
                 sleeping leaf is woken when a point reaches it or its own GP
-                has to predict. Defaults to 8. None keeps every leaf awake.
+                has to predict, and a leaf that predicts from its own points
+                stays awake. Defaults to 8. None keeps every leaf awake.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -711,13 +712,15 @@ class GPTree:
 
     def _let_leaves_sleep(self):
         """With predictions from neighbours, put the leaves to sleep whose GPs are
-        not among the last ``neighbour_awake`` that were used."""
+        not among the last ``neighbour_awake`` that were used. A leaf that
+        predicts from its own points keeps its GPs awake."""
         search = self.neighbours
         if search is None or search.awake is None:
             return
         while len(search.in_use) > search.awake:
             leaf, _ = search.in_use.popitem(last=False)
-            if leaf.is_leaf and leaf.sleep() and self.max_memory_mb is not None and leaf in self._leaves:
+            if leaf.is_leaf and not leaf.prefers_own and leaf.sleep() \
+                    and self.max_memory_mb is not None and leaf in self._leaves:
                 self._account(leaf)
 
 
