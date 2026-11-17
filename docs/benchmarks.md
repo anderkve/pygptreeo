@@ -1524,3 +1524,26 @@ predictions are the same to the last digit.
   where its own GP predicts because the neighbours fail the test or the leaf
   prefers it, and for 38% on `resonance_xsec`, where a fifth of the leaves
   prefer their own GP.
+
+A memory limit with predictions from neighbours, as the package is
+(`research/partitioning/memory_limit.py`; `GaussianPeaks`, 20 000 points,
+four runs at a time): the RMSE of the predictions made before each of the
+last 5000 points.
+
+| stream | `max_memory_mb` | leaves (asleep) | points kept | from the leaves: RMSE | from neighbours: RMSE |
+|---|---|---|---|---|---|
+| uniform | none (37.3 MB) | 279 (0) | 20 000 | 0.309 | 0.198 |
+| | 12 | 194 (139) | 13 700 | 0.374 | 0.240 |
+| | 6 | 98 (70) | 6900 | 0.511 | 0.325 |
+| walker | none (37.8 MB) | 289 (0) | 20 000 | 0.122 | 0.050 |
+| | 12 | 195 (138) | 13 400 | 0.152 | 0.058 |
+| | 6 | 97 (69) | 6700 | 0.196 | 0.082 |
+
+* **The limit holds with neighbours as it does without**: the size the tree
+  reports and the size counted from its leaves are at the limit, and as many
+  leaves sleep and are removed. The error with neighbours is 0.42 to 0.64
+  of that of the leaves at the same limit.
+* **Leaves are removed while half of the leaves' memory is left to the GPs
+  that are awake** (`FITTED_SHARE`), which predictions from neighbours do
+  not need: at 12 MB a third of the points are gone and the error is 17 to
+  21% higher, where the whole tree asleep takes 9.7 to 10.8 MB.
