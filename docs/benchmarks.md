@@ -590,11 +590,12 @@ predicted by one leaf, chosen by the cuts without overlap.
 
 ## 8. Other ways to partition the data
 
-Sections 8.2 to 8.13 were measured with neighbours that all count alike and
-with the kernel of the query's leaf alone (`neighbour_fade=None`,
-`neighbour_blend=None`). Section 8.15 has the neighbours that fade out and
-section 8.17 the kernels mixed across the cuts, which are the defaults of
-`predict_from='neighbours'`.
+Sections 8.2 to 8.13 were measured with neighbours that all count alike,
+with the kernel of the query's leaf alone and with every leaf awake
+(`neighbour_fade=None`, `neighbour_blend=None`, `neighbour_awake=None`).
+Section 8.15 has the neighbours that fade out, section 8.17 the kernels
+mixed across the cuts and section 8.19 the leaves asleep, which are the
+defaults of `predict_from='neighbours'`.
 
 Sections 8.1 to 8.3: eleven targets (`GaussianPeaks` and `RotatedRosenbrock`
 in six dimensions, `Eggholder` in three, `Chirp` in four, a four-dimensional
@@ -1493,7 +1494,7 @@ weights.
 * **The error at 200 000 points is 0.52 of the default tree's**, against
   0.54 with fading alone.
 
-### 8.18 Leaves asleep by default with neighbours (not in the code)
+### 8.18 Leaves asleep by default with neighbours: the prototype
 
 A prediction from neighbours needs the kernel and the scalers of a leaf, not
 the factor of its kernel matrix, which is what a sleeping leaf releases
@@ -1525,9 +1526,9 @@ predictions are the same to the last digit.
   prefers it, and for 38% on `resonance_xsec`, where a fifth of the leaves
   prefer their own GP.
 
-A memory limit with predictions from neighbours, as the package is
-(`research/partitioning/memory_limit.py`; `GaussianPeaks`, 20 000 points,
-four runs at a time): the RMSE of the predictions made before each of the
+A memory limit with predictions from neighbours and every leaf awake, as the
+package was (`research/partitioning/memory_limit.py`; `GaussianPeaks`,
+20 000 points, four runs at a time): the RMSE of the predictions made before each of the
 last 5000 points.
 
 | stream | `max_memory_mb` | leaves (asleep) | points kept | from the leaves: RMSE | from neighbours: RMSE |
@@ -1547,3 +1548,50 @@ last 5000 points.
   that are awake** (`FITTED_SHARE`), which predictions from neighbours do
   not need: at 12 MB a third of the points are gone and the error is 17 to
   21% higher, where the whole tree asleep takes 9.7 to 10.8 MB.
+
+### 8.19 Leaves asleep by default (`neighbour_awake`)
+
+In the package the leaves whose GPs were fitted or woken last stay awake, 8
+by default, and so does a leaf that predicts from its own points. Two trees
+side by side in one process, each point given to both in turn
+(`research/partitioning/time_paired.py`), 20 000 points: the times with the
+leaves asleep divided by those with every leaf awake.
+
+| target, stream | leaves asleep | memory MB, every leaf awake | leaves asleep | update time | prediction time |
+|---|---|---|---|---|---|
+| `GaussianPeaks`, uniform | 272 of 281 | 37.2 | 10.1 | 1.11 | 1.00 |
+| `GaussianPeaks`, walker | 282 of 293 | 38.7 | 10.5 | 1.03 | 1.01 |
+| `resonance_xsec`, uniform | 226 of 286 | 36.6 | 14.1 | 1.06 | 1.06 |
+| `global_fit_loglike`, uniform | 151 of 293 | 40.4 | 25.5 | | |
+
+* **The tree takes 27 to 63% of the memory.** On `global_fit_loglike` half
+  of the leaves predict from their own points and stay awake.
+* **An update takes 3 to 11% longer**, most on a uniform stream, where
+  nearly every point wakes its leaf. **A prediction takes up to 6% longer.**
+  With the leaves that predict from their own points asleep too, a
+  prediction on `resonance_xsec` took 17% longer and an update 9%, for 9.1
+  MB in place of 14.1.
+* **The predictions are the same**: on the 33 runs of 5000 points the RMSE
+  agrees to four digits in every run, and the largest difference of a single
+  prediction is 4e-7 of the target's range (a factor that is computed again
+  differs in its last digits from one that grew point by point).
+* **Against the default tree** (side by side as above, where the default
+  tree's short predictions lose more to the other tree than they would
+  alone): an update takes 1.3 to 1.7 times as long and a prediction 3.0 to
+  3.4 times, on `Eggholder` (walker), `GaussianPeaks`, `resonance_xsec` and
+  `global_fit_loglike` (uniform).
+
+A memory limit, as in the table of section 8.18 (`GaussianPeaks`, 20 000
+points):
+
+| stream | `max_memory_mb` | leaves (asleep) | points kept | RMSE | with every leaf awake (section 8.18): points kept | RMSE |
+|---|---|---|---|---|---|---|
+| uniform | none (10.7 MB) | 279 (264) | 20 000 | 0.198 | 20 000 | 0.198 |
+| | 12 | 279 (264) | 20 000 | 0.198 | 13 700 | 0.240 |
+| | 6 | 151 (141) | 10 100 | 0.263 | 6900 | 0.325 |
+| walker | none (10.7 MB) | 289 (276) | 20 000 | 0.050 | 20 000 | 0.050 |
+| | 12 | 289 (276) | 20 000 | 0.050 | 13 400 | 0.058 |
+| | 6 | 157 (149) | 10 800 | 0.066 | 6700 | 0.082 |
+
+* **At 12 MB nothing is removed**, and at 6 MB half of the points are kept
+  where a third was, with an error 19 to 20% lower.

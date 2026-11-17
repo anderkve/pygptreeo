@@ -266,6 +266,22 @@ section 8.
   zones of several leaves is registered, for the sigma scaler of the leaf it
   is stored in, with the mixed prediction. A leaf's choice between its own
   GP and the neighbours still compares the two with its own kernel.
+* **Most leaves sleep** (`neighbour_awake`, 8). A prediction from neighbours
+  uses a leaf's kernel, scalers and points and never the factor of its
+  kernel matrix, which is three quarters of a leaf's memory. The factor is
+  needed where a point arrives, for the leaf's own prediction of it and to
+  append it, and where the leaf's own GP predicts. So only the leaves whose
+  GPs were fitted or woken last stay awake, and a leaf that predicts from
+  its own points (`prefers_own`), which would otherwise be woken for every
+  query. The predictions are the same to a part in a million; the tree
+  takes 27 to 63% of the memory, the more the more leaves predict from
+  their own points; an update takes 3 to 11% longer, for the factor of the
+  leaf that is woken, and a prediction up to 6%.
+* **A memory limit removes leaves later.** With the leaves asleep already,
+  `max_memory_mb` has only leaves to remove once it is reached, and it is
+  reached about three times later. With every leaf awake it removes leaves
+  while half of their memory is left to the GPs awake (`FITTED_SHARE`),
+  which suits predictions from the leaves and not those from neighbours.
 * **A point is not its own neighbour.** The prediction registered for the
   calibration is made before the point is stored.
 * **The search.** The 16 leaves whose points' boxes are nearest to the query
@@ -281,8 +297,9 @@ section 8.
   part: 0.7 to 0.9 ms against about 0.2 ms with 100 neighbours. The leaf's
   own GP is still fitted and extended with each point, for the queries it
   predicts itself, and each new point is predicted both ways before it is
-  stored, and a third time within a zone, so an update takes 35 to 50%
-  longer. Both times grow slowly with the stream, by about a quarter from
+  stored, and a third time within a zone, and its leaf is woken for it, so
+  an update takes 40 to 70% longer. Both times grow slowly with the stream,
+  by about a quarter from
   5000 to 200 000 points, as leaves get faces along more inputs
   (`docs/benchmarks.md`, section 8.17).
 
@@ -544,13 +561,6 @@ section 8.
   section 8.1). A leaf could try both kinds of cut on its own points when it
   splits and keep the better, as `enable_split_evaluation` does for the
   input of an axis-aligned cut.
-* **Leaves asleep by default with predictions from neighbours.** Such a
-  prediction uses a leaf's kernel and scalers and never the factor of its
-  kernel matrix, so only the leaf that receives a point needs its factor,
-  and a leaf whose own GP has to predict. With all other leaves asleep a
-  prototype took a quarter of the memory with the same predictions, for 2
-  to 6% more time per update (`docs/benchmarks.md`, section 8.18). Today a
-  leaf sleeps only under `max_memory_mb`.
 * **A kernel for the neighbours.** The leaf's kernel was fitted at the scale
   of the leaf, and the neighbours of a query in a dense region lie within a
   small part of it. A few steps of the hyperparameter optimisation on the

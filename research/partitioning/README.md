@@ -20,7 +20,7 @@ Records go to `results/` (not in the repository).
 | `tapered.py` | The prototype of `neighbour_fade`: neighbours whose noise grows towards the edge of their set |
 | `blended.py` | The prototypes of `neighbour_blend`: predictions blended, or the leaves' kernels mixed, in a zone around each cut |
 | `jitter.py` | Steps of the predicted mean along short paths |
-| `sleepy.py` | Leaves asleep by default with predictions from neighbours: memory, time and wake-ups |
+| `sleepy.py` | The prototype of `neighbour_awake`: leaves asleep by default with predictions from neighbours |
 | `memory_limit.py` | `max_memory_mb` with predictions from the leaves and from neighbours |
 | `knn.py` | The first version of the neighbours (brute-force search, optional far points and per-level samples) |
 | `diag_knn.py`, `diag_batch.py`, `diag_knn_report.py` | Replay: the leaf's prediction against that of its kernel on the nearest points, for every size of the neighbour set, and rules for the test against the kernel |
@@ -29,6 +29,7 @@ Records go to `results/` (not in the repository).
 | `drift_bench.py` | Cost along a steadily drifting stream |
 | `time_predict.py` | Update and prediction times with one process |
 | `time_scaling.py` | The same at checkpoints along one long stream |
+| `time_paired.py` | Two settings timed side by side, point by point |
 | `index_scaling.py` | The search for the nearest leaves, and the leaves of a prediction with zones at the cuts, up to a million points, without GPs |
 | `profile_search.py` | The parts of a neighbour search on a growing tree |
 
