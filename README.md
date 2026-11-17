@@ -158,7 +158,7 @@ The tree then keeps its own estimate of its size, available as `gpt.memory_mb`, 
 - It puts leaves to sleep, starting with the leaf that has gone unused for the longest time. A sleeping leaf keeps its data points and its kernel hyperparameters, but releases the Cholesky factor of its GP, which takes most of the memory of a leaf. The factor is computed again when the leaf is next used, so the predictions do not change.
 - When putting leaves to sleep is no longer enough, it removes the leaf that has gone longest without receiving a data point, together with its data points and its GP. The leaf's sibling in the tree takes over its region.
 
-With `predict_from='neighbours'` most leaves are asleep already (see above), so a tree of a given size holds about three times as many data points before the limit is reached, and leaves are only removed once the tree with its leaves asleep exceeds the limit.
+With `predict_from='neighbours'` most leaves are asleep already (see above). The limit is then reached later, and leaves are only removed once the tree with its leaves asleep exceeds the limit. In our tests the tree kept about 50% more data points at the same limit than with all leaves awake.
 
 ## Using GPyTorch
 

@@ -278,10 +278,11 @@ section 8.
   their own points; an update takes 3 to 11% longer, for the factor of the
   leaf that is woken, and a prediction up to 6%.
 * **A memory limit removes leaves later.** With the leaves asleep already,
-  `max_memory_mb` has only leaves to remove once it is reached, and it is
-  reached about three times later. With every leaf awake it removes leaves
-  while half of their memory is left to the GPs awake (`FITTED_SHARE`),
-  which suits predictions from the leaves and not those from neighbours.
+  `max_memory_mb` has only leaves to remove once it is reached. With every
+  leaf awake it removes leaves while half of their memory is left to the
+  GPs awake (`FITTED_SHARE`), which suits predictions from the leaves and
+  not those from neighbours: at 6 MB the tree kept a third of 20 000 points
+  that way, and keeps half of them now.
 * **A point is not its own neighbour.** The prediction registered for the
   calibration is made before the point is stored.
 * **The search.** The 16 leaves whose points' boxes are nearest to the query
