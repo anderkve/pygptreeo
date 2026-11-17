@@ -590,9 +590,11 @@ predicted by one leaf, chosen by the cuts without overlap.
 
 ## 8. Other ways to partition the data
 
-Sections 8.2 to 8.13 were measured with neighbours that all count alike
-(`neighbour_fade=None`). Section 8.15 has the neighbours that fade out, which
-are the default of `predict_from='neighbours'`.
+Sections 8.2 to 8.13 were measured with neighbours that all count alike and
+with the kernel of the query's leaf alone (`neighbour_fade=None`,
+`neighbour_blend=None`). Section 8.15 has the neighbours that fade out and
+section 8.17 the kernels mixed across the cuts, which are the defaults of
+`predict_from='neighbours'`.
 
 Sections 8.1 to 8.3: eleven targets (`GaussianPeaks` and `RotatedRosenbrock`
 in six dimensions, `Eggholder` in three, `Chirp` in four, a four-dimensional
@@ -1284,7 +1286,7 @@ The 150 runs of section 8.4 with the package as it is: the NRMSE of the last
   tree, and an update 2.53, 2.46 and 1.82 ms; on `resonance_xsec` 0.60, 0.46
   and 0.14 ms, and 3.61, 3.58 and 2.95 ms.
 
-### 8.16 Blending across the cuts (not in the code)
+### 8.16 Blending across the cuts: the prototypes
 
 What is left of the steps of section 8.15 is where a query passes into
 another leaf, whose kernel, scaling of the inputs and targets, metric of the
@@ -1342,3 +1344,65 @@ relative to the neighbours that fade out run by run:
   walking the cuts for every query): a prediction with the kernels mixed
   takes 1.04 and 1.07 times as long as with fading alone in zones of 0.05
   and 0.1, and 1.24 and 1.86 times with the predictions blended.
+
+### 8.17 Kernels mixed across the cuts (`neighbour_blend`)
+
+In the package the kernels are mixed as in section 8.16, with two
+differences. The zone at a face of a leaf is a share of the leaf's own width
+along that input, where the prototype took a share of the spread of the node
+that was cut; and a leaf's sigma scaler is calibrated on the mixed
+prediction. The 33 runs of sections 8.1 to 8.3, relative to the default tree
+and, run by run, to the neighbours that fade out without mixing:
+
+| | 5000 points: all runs (range) | against fading alone, mean / median (range) | 20 000 points: all runs (range) | against fading alone, mean / median (range) | coverage at 20 000 | off by more than 5 sigma |
+|---|---|---|---|---|---|---|
+| neighbours without fading or mixing | 0.75 (0.45 to 1.04) | | 0.69 (0.38 to 0.98) | 0.977 / 0.993 (0.88 to 1.01) | 0.686 | 1.52% |
+| fading alone | 0.77 (0.49 to 1.04) | 1 | 0.71 (0.39 to 0.99) | 1 | 0.686 | 1.52% |
+| prototype, zone 0.05 of the node | 0.75 (0.48 to 1.04) | 0.976 / 0.992 (0.82 to 1.03) | 0.69 (0.38 to 0.97) | 0.977 / 0.985 (0.86 to 1.03) | 0.710 | 1.08% |
+| prototype, zone 0.1 of the node | 0.72 (0.27 to 1.05) | 0.939 / 0.983 (0.31 to 1.05) | 0.67 (0.38 to 0.97) | 0.943 / 0.976 (0.51 to 1.08) | 0.733 | 0.80% |
+| package, zone 0.05 of the leaf | 0.76 (0.48 to 1.04) | 0.985 / 0.998 (0.82 to 1.02) | | | | |
+| **package, zone 0.1 of the leaf** | 0.74 (0.38 to 1.04) | 0.962 / 0.992 (0.43 to 1.03) | 0.69 (0.38 to 0.98) | 0.983 / 0.990 (0.86 to 1.06) | 0.692 | 1.34% |
+| package, zone 0.2 of the leaf | 0.73 (0.38 to 1.04) | 0.952 / 0.988 (0.44 to 1.02) | 0.68 (0.38 to 0.97) | 0.967 / 0.980 (0.80 to 1.07) | 0.700 | 1.21% |
+
+The steps of the mean after 20 000 points, as in section 8.13, for
+`GaussianPeaks` on the uniform stream / `Eggholder` on the walker stream /
+`resonance_xsec` on the uniform stream:
+
+| | steps above 0.1 sigma | their sum in sigma | largest step, median |
+|---|---|---|---|
+| the default tree | 3.9 / 3.9 / 4.8 | 4.3 / 4.8 / 13.7 | 0.89 / 1.26 / 1.36 |
+| fading alone | 4.8 / 2.5 / 5.5 | 2.1 / 2.2 / 12.7 | 0.26 / 0.32 / 1.08 |
+| **package, zone 0.1 of the leaf** | 3.0 / 0.5 / 3.6 | 1.3 / 0.9 / 4.4 | 0.11 / 0.04 / 0.11 |
+| package, zone 0.2 of the leaf | 2.6 / 0.5 / 3.0 | 1.2 / 0.8 / 3.0 | 0.11 / 0.03 / 0.07 |
+
+Cost after 20 000 points, one process (a slower machine than that of
+sections 8.7, 8.12 and 8.15): milliseconds per prediction and per update
+without and with the mixing, and the mean number of leaves in a prediction.
+
+| target, stream | d | default tree: predict / update | fading alone | kernels mixed, zone 0.1 | leaves per prediction |
+|---|---|---|---|---|---|
+| `Eggholder`, walker | 3 | 0.22 / 1.91 | 0.70 / 2.66 | 0.78 / 2.76 | 1.28 |
+| `resonance_xsec`, uniform | 4 | 0.17 / 3.24 | 0.62 / 4.15 | 0.75 / 4.56 | 1.32 |
+| `GaussianPeaks`, uniform | 6 | 0.17 / 2.09 | 0.71 / 2.93 | 0.79 / 3.11 | 1.43 |
+| `global_fit_loglike`, uniform | 10 | 0.16 / 3.83 | 0.50 / 4.76 | 0.69 / 5.16 | 1.34 |
+| `ActiveSubspacePeaks`, uniform | 10 | 0.16 / 3.16 | 0.76 / 4.21 | 0.93 / 4.36 | 1.35 |
+
+* **The steps at the cuts are gone as in the prototype**: the largest step
+  of a path is 0.04 to 0.11 sigma, against 0.26 to 1.08 with fading alone.
+  On `resonance_xsec`, where leaves keep to their own GP or the neighbours
+  fail the test more often, 0.9 steps of more than a sigma remain on a path,
+  against 1.6.
+* **The error is 2% lower than with fading alone at 20 000 points** (1% in
+  the median run; 8 runs more than 2% better and one worse, by 6%), which
+  takes back most of what the fading costs: 0.69 of the default tree's
+  error, as the neighbours without fading. The zones of the leaves are
+  narrower than those of the prototype, whose 6% came with zones of old
+  cuts that reach across many leaves.
+* **The coverage stays at 0.69** with the sigma scaler calibrated on the
+  mixed prediction, where the prototype had 0.73.
+* **Twice the zone** gives another 2% at 20 000 points, with 1.9 leaves in
+  a prediction on `GaussianPeaks` and 0.96 ms per prediction against 0.79.
+* **A prediction takes 11 to 37% longer** than with fading alone and an
+  update 4 to 10%. About 1.3 to 1.4 leaves take part in a prediction
+  whatever the number of inputs: a leaf of a tree this size has seen eight
+  or nine cuts, so most of its faces in ten dimensions are still open.

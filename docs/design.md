@@ -228,6 +228,44 @@ section 8.
   to a half of that variance on noise-free targets, and far less under a
   kernel that claims more uncertainty than there is: the fading then takes
   place within the last hundredths of the radius, and is a step again.
+* **The kernels of neighbouring leaves are mixed across a cut**
+  (`neighbour_blend`, 0.1). The kernel, the scaling of the inputs and
+  targets, the metric of the distances and the calibration are those of a
+  leaf, so a prediction would step where the query passes into the next
+  leaf. Each leaf therefore has a zone at each of its faces, half of it on
+  either side of the cut, and a weight that is 1 within its faces less half
+  a zone, a half at a face and 0 half a zone beyond it; with several inputs
+  the weight is the product over them, and the weights of the leaves at a
+  query are scaled to sum to 1. Within a zone the prediction is conditioned
+  once, on the query's neighbours, with the weighted sum of the leaves'
+  kernels in the units of the inputs and targets, and with their metrics,
+  target means, snapshots of the global model, units of the fading and sigma
+  scalers averaged with the same weights.
+* **A sum of kernels, not an average of hyperparameters.** Each leaf scales
+  its inputs and targets itself, so its hyperparameters mean something only
+  with its scalers, and an average over leaves has no meaning for a kernel
+  that is not of the default form. A weighted sum of kernels is a kernel
+  whatever the leaves' kernels and scalers are, and it changes continuously
+  with the weights.
+* **The width of a zone is a share of the leaf's own width** along the
+  input that is cut: the distance between its faces, or to the edge of its
+  points where no cut bounds it. So a zone stays local however deep the tree
+  grows. Measured against the node that was cut, as in the first version,
+  the zone of an old cut covers leaves that have since become far smaller
+  than it: the deeper the tree, the more zones a query lies in, and its
+  prediction mixes in the kernels of leaves that are not beside it. The
+  width needs no change with the number of inputs. At 20 000 points 1.3 to
+  1.4 leaves take part in a prediction in three to ten dimensions; the
+  number grows slowly with the tree, to at most `1.1^d` once every leaf has
+  two faces along every input.
+* **Where the kernels cannot be mixed** the predictions of the leaves are,
+  with the same weights: where a leaf predicts from its own points or the
+  neighbours do not fit the mixed kernel, and for the output models with a
+  shared kernel or a basis, whose kernels are not those of single outputs.
+* **Sigma is calibrated on the prediction that is made.** A point within the
+  zones of several leaves is registered, for the sigma scaler of the leaf it
+  is stored in, with the mixed prediction. A leaf's choice between its own
+  GP and the neighbours still compares the two with its own kernel.
 * **A point is not its own neighbour.** The prediction registered for the
   calibration is made before the point is stored.
 * **The search.** The 16 leaves whose points' boxes are nearest to the query
@@ -267,17 +305,20 @@ section 8.
   few groups however many there are: 5 at 20 000 points and 9 at a million
   for the 16 nearest leaves in six dimensions (`docs/benchmarks.md`,
   section 8.9).
-* **Two boxes per leaf.** The cell that the cuts give the leaf, which finds
-  the leaf of a point, and the bounding box of its stored points, which
+* **Three boxes per leaf.** The cell that the cuts give the leaf, which
+  finds the leaf of a point; the bounding box of its stored points, which
   bounds the distance from a query to the leaf's points for the neighbour
-  search. The cells are those of the tree of cuts, so the predictions do not
+  search; and its reach, the box of its faces with the outer halves of its
+  zones, which finds the leaves that take part in a prediction. The cells
+  are those of the tree of cuts, so the predictions from the leaves do not
   change.
 * **Within an overlap the cuts are followed.** A cell stops half an overlap
   short of a cut. A point in no cell lies in the overlap of two children, or
   on a cut that has none, and is given to a leaf, or predicted by several,
   through `prob_func` as before.
 * **A removed leaf.** The leaves along the removed cut extend their cells
-  over the cell of the removed leaf, as they do in the tree of cuts.
+  over the cell of the removed leaf, as they do in the tree of cuts, and
+  their faces and widths with them.
 * **Saving.** The nodes are saved as a list with their links as positions in
   it, so that saving does not recurse through the levels. A node that is
   pickled or copied on its own, without its tree, comes back without its
@@ -474,10 +515,10 @@ section 8.
 * **GPyTorch leaves predict from their own points.** The adapter cannot
   condition a fitted kernel on other points, so `predict_from='neighbours'`
   needs the scikit-learn adapter.
-* **Predictions from neighbours step where the query's leaf changes**, as
-  the leaves' own predictions do: the kernel, the metric of the distances
-  and the calibration are those of the leaf. They also step, by less, where
-  the 16 leaves that are searched change.
+* **Predictions from neighbours still step, by a tenth of a sigma or
+  less,** where the 16 leaves that are searched change, where a leaf that
+  predicts from its own points takes part, and where the neighbours stop
+  fitting the mixed kernel.
 * **A global model is evaluated at the neighbours of every query.** With
   `predict_from='neighbours'` the residuals of the neighbours are computed
   for each prediction, which is slow with the additive global GP.
@@ -500,18 +541,6 @@ section 8.
   section 8.1). A leaf could try both kinds of cut on its own points when it
   splits and keep the better, as `enable_split_evaluation` does for the
   input of an axis-aligned cut.
-* **The kernels of neighbouring leaves mixed across a cut.** Within a zone
-  around each cut a prediction from neighbours would use the weighted sum of
-  the kernels of the leaves on both sides, with their metrics, target means
-  and sigma scalers averaged alike, so that the hyperparameters pass from
-  one leaf to the next gradually. A sum of kernels is a kernel, whatever
-  the leaves' scalings, which an average of their hyperparameters is not.
-  In a prototype the largest step along a path fell from 0.3 to 1.1 sigma
-  to 0.1 sigma or less and the error by 2 to 6%, for 4 to 7% more time per
-  prediction (`docs/benchmarks.md`, section 8.16). The package would need
-  the zones in the index of the leaves, the kernel matrices from the GP
-  backend, the output models and the global model, and a calibration of
-  sigma on the mixed predictions.
 * **A kernel for the neighbours.** The leaf's kernel was fitted at the scale
   of the leaf, and the neighbours of a query in a dense region lie within a
   small part of it. A few steps of the hyperparameter optimisation on the
