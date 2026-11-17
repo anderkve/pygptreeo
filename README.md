@@ -67,6 +67,23 @@ for i in range(len(X_test)):
 # print(gpt.root)
 ```
 
+## Adding many points at once
+
+`update_tree` takes a single data point. A set of data points can be passed to `batch_update_tree`, which adds them to the tree one by one in the same way:
+
+```python
+gpt.batch_update_tree(X_train, y_train, sigma_train)   # arrays of shape (N, d), (N,) and (N,)
+```
+
+For a tree without data points there is also `fit`, which first builds the tree from all the data points and then trains each leaf GP once:
+
+```python
+gpt = GPTree(Nbar=50)
+gpt.fit(X_train, y_train, sigma_train)
+```
+
+This is faster, by a factor of about 2.5 for 5000 points in our tests, with a similar accuracy. However, the uncertainty calibration is based on the predictions made for each point before it is added to the tree, so after `fit` the predicted uncertainties are the uncalibrated GP uncertainties. They become calibrated as further points are added with `update_tree` or `batch_update_tree`. `fit` raises an error for a tree that already holds data points.
+
 ## Selecting a leaf kernel
 
 By default each leaf GP uses an anisotropic Matérn kernel, `ConstantKernel() * Matern(nu=1.5)`, with one length scale per input dimension. The fitted length scales also determine the split dimension: with the default setting `split_dimension_criteria='min_lengthscale'` a leaf is split along the dimension with the smallest length scale, i.e. the dimension along which the target function varies fastest. For kernels without per-dimension length scales the dimension with the largest spread in the data points is used instead.
@@ -99,7 +116,7 @@ gpt.fit(X_train, Y_train, sigma_train)    # Y_train has shape (N, 100)
 Y_pred, Y_std = gpt.predict(X_test)
 ```
 
-In this example the tree is trained in batch mode with `fit`. Note that the uncertainty calibration is based on the predictions made for each point before it is added to the tree in `update_tree`, so after a batch fit the predicted uncertainties are the uncalibrated GP uncertainties. See `examples/multioutput_function_learning_pca.py` for a comparison of the three options.
+In this example the tree is trained in batch mode with `fit`, so the predicted uncertainties are the uncalibrated GP uncertainties (see the section on adding many points at once). See `examples/multioutput_function_learning_pca.py` for a comparison of the three options.
 
 ## Global models (optional)
 
@@ -159,7 +176,7 @@ gpt.apply_fit_result(result)                           # for each result that co
 result = solve_fit_task(task)
 ```
 
-With `defer_fits=True` a leaf that is due a fit is not fitted in `update_tree`. The fit is returned as a task: a small dictionary that can be pickled, with the data points of the leaf. `solve_fit_task` optimises the hyperparameters and returns them, and `apply_fit_result` refits the leaf with these hyperparameters to the data points that it holds by then. Until the result is applied the leaf keeps its previous hyperparameters, and new data points are added to its GP as usual.
+With `defer_fits=True` a leaf that is due a fit is not fitted in `update_tree`. The fit is returned as a task: a small dictionary that can be pickled, with the data points of the leaf. `solve_fit_task` optimises the hyperparameters and returns them, and `apply_fit_result` refits the leaf with these hyperparameters to the data points that it holds by then. Until the result is applied the leaf keeps its previous hyperparameters, and new data points are added to its GP as usual. For a set of data points, `batch_update_tree(X, y, sigma, defer_fits=True)` returns the list of tasks.
 
 pyGPTreeO only creates the tasks and applies the results. Sending them between processes is left to the user. `examples/mpi_fit_workers.py` is a complete example with `mpi4py`, in which the process that holds the tree handled around three times as many data points per second with fit workers. Note that this option requires the scikit-learn interface and, for multi-output targets, `output_model='independent'`. Otherwise the leaves are fitted in `update_tree` as before.
 

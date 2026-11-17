@@ -659,7 +659,7 @@ focusing stream takes the next points as one batch. The NRMSE is that of the
 | empty | 5000 | `defer_fits=True`, the tasks solved and applied after the batch | 1 | 1.35 | 0.0589 |
 
 * **Point by point is the most accurate way into a tree that exists**, in
-  every row. On a uniform stream the tree of 1000 points gives 0.0128 point by
+  every row, and what `batch_update_tree` does. On a uniform stream the tree of 1000 points gives 0.0128 point by
   point, 0.0161 with the leaves fitted after the batch and 0.0161 with the
   results applied after it.
 * **Fitting the leaves once after the batch does not save fits on a large

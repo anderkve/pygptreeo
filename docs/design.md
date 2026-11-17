@@ -2,8 +2,8 @@
 
 Why the tree has a global model, how the mechanism works, how the tree stays
 within a fixed size, how a point reaches a leaf's GP between two fits, how a
-fit can run in another process, what was tried and dropped, and what is still
-open. The measurements are in
+fit can run in another process, how a batch of points is added, what was tried
+and dropped, and what is still open. The measurements are in
 [`benchmarks.md`](benchmarks.md).
 
 ## What is global and what is local
@@ -195,6 +195,22 @@ its result to the tree. The tree has no part in sending them.
   refits every leaf under the node the task was made for.
 * **Tasks that are out are not saved with the tree.** A loaded tree has none,
   and a leaf of it asks again with its next full retrain buffer.
+
+## A batch of points
+
+* **`batch_update_tree` adds the points one by one**, whatever the tree
+  holds. Point by point is the most accurate way into a tree with points in
+  every case measured (`docs/benchmarks.md`, section 8.2), and it keeps the
+  calibration, which needs the prediction of each point before it is added.
+* **It does not use `fit` for a tree without points.** `fit` is about 2.5
+  times as fast there at about the same error, but its sigma is not
+  calibrated, it shuffles the points and it hands no fits out, so the same
+  call would behave differently with the state of the tree. A tree of ten
+  points that takes 5000 is also in the situation of a tree without points:
+  what matters is the size of the batch against that of the tree. The choice
+  is the caller's.
+* **`fit` is for a tree without points.** It sets the root up anew, so it
+  raises an error for a tree that holds points.
 
 ## Tried and dropped
 
