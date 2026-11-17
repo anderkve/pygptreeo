@@ -20,6 +20,7 @@ Records go to `results/` (not in the repository).
 | `tapered.py` | The prototype of `neighbour_fade`: neighbours whose noise grows towards the edge of their set |
 | `blended.py` | The prototypes of `neighbour_blend`: predictions blended, or the leaves' kernels mixed, in a zone around each cut |
 | `jitter.py` | Steps of the predicted mean along short paths |
+| `sleepy.py` | Leaves asleep by default with predictions from neighbours: memory, time and wake-ups |
 | `knn.py` | The first version of the neighbours (brute-force search, optional far points and per-level samples) |
 | `diag_knn.py`, `diag_batch.py`, `diag_knn_report.py` | Replay: the leaf's prediction against that of its kernel on the nearest points, for every size of the neighbour set, and rules for the test against the kernel |
 | `diag_kernel.py`, `diag_kernel_report.py` | Replay: which leaf's kernel the neighbours should use |

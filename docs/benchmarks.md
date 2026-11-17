@@ -1492,3 +1492,35 @@ weights.
   along every input, and the search for them stays below 0.1 ms.
 * **The error at 200 000 points is 0.52 of the default tree's**, against
   0.54 with fading alone.
+
+### 8.18 Leaves asleep by default with neighbours (not in the code)
+
+A prediction from neighbours needs the kernel and the scalers of a leaf, not
+the factor of its kernel matrix, which is what a sleeping leaf releases
+(section 6). In a prototype (`research/partitioning/sleepy.py`) every leaf
+sleeps except the last few that fitted or were woken, for a point or for a
+prediction from their own points. 20 000 points, three runs at a time; the
+predictions are the same to the last digit.
+
+| target, stream | leaves awake | memory MB (of it the GPs) | update ms | predict ms | leaves woken per 1000 updates | per 1000 predictions |
+|---|---|---|---|---|---|---|
+| `GaussianPeaks`, uniform | all 281 | 37.2 (29.8) | 3.36 | 0.86 | | |
+| | 1 | 9.7 (2.3) | 3.55 | 0.79 | 956 | 37 |
+| | 8 | 10.3 (2.9) | 3.49 | 0.85 | 850 | 13 |
+| | 32 | 12.7 (5.3) | 3.51 | 0.81 | 621 | 10 |
+| `GaussianPeaks`, walker | all 293 | 38.7 (30.9) | 3.54 | 0.88 | | |
+| | 1 | 10.8 (3.1) | 3.60 | 0.85 | 525 | 33 |
+| | 8 | 11.4 (3.7) | 3.50 | 0.86 | 236 | 4 |
+| `resonance_xsec`, uniform | all 286 | 36.6 (29.5) | 4.58 | 0.98 | | |
+| | 1 | 8.9 (1.8) | 4.73 | 0.85 | 1018 | 375 |
+
+* **The tree takes a quarter of the memory**: about 34 kB per leaf in place
+  of 132 kB.
+* **An update takes 2 to 6% longer**, for the factor of the leaf that
+  receives the point: its own prediction is compared with the neighbours'
+  and the point is appended to it. The prediction time does not change
+  beyond the spread of the measurement.
+* **A leaf is woken for 1 to 4% of the predictions** on `GaussianPeaks`,
+  where its own GP predicts because the neighbours fail the test or the leaf
+  prefers it, and for 38% on `resonance_xsec`, where a fifth of the leaves
+  prefer their own GP.

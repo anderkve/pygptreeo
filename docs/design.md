@@ -544,6 +544,13 @@ section 8.
   section 8.1). A leaf could try both kinds of cut on its own points when it
   splits and keep the better, as `enable_split_evaluation` does for the
   input of an axis-aligned cut.
+* **Leaves asleep by default with predictions from neighbours.** Such a
+  prediction uses a leaf's kernel and scalers and never the factor of its
+  kernel matrix, so only the leaf that receives a point needs its factor,
+  and a leaf whose own GP has to predict. With all other leaves asleep a
+  prototype took a quarter of the memory with the same predictions, for 2
+  to 6% more time per update (`docs/benchmarks.md`, section 8.18). Today a
+  leaf sleeps only under `max_memory_mb`.
 * **A kernel for the neighbours.** The leaf's kernel was fitted at the scale
   of the leaf, and the neighbours of a query in a dense region lie within a
   small part of it. A few steps of the hyperparameter optimisation on the
