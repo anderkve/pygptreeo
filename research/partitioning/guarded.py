@@ -9,8 +9,8 @@ their consistency with the kernel is at most `limit`. A query is outside by
   'nearest'   the nearest neighbour is further than `far` of the leaf's spreads
 """
 import numpy as np
-from pygptreeo import GPTree
 from pygptreeo.neighbours import NeighbourSearch
+from variants import neighbour_tree
 
 
 class GuardedSearch(NeighbourSearch):
@@ -51,4 +51,4 @@ def guard(tree, measure='centroid', far=0.65, limit=3.0):
 
 
 def guarded_tree(measure='centroid', far=0.65, limit=3.0, **kw):
-    return guard(GPTree(predict_from='neighbours', **kw), measure=measure, far=far, limit=limit)
+    return guard(neighbour_tree(**kw), measure=measure, far=far, limit=limit)

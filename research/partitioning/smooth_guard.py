@@ -1,10 +1,10 @@
 """A gradual change from the neighbours' prediction to the leaf's own.
 
-The prototype of `neighbour_transition` and `neighbour_consistency_outside`:
+The prototype of the package's NEIGHBOUR_TRANSITION and NEIGHBOUR_CONSISTENCY_OUTSIDE:
 the two predictions are mixed with a weight for the neighbours
 that falls from 1 to 0 as their consistency with the kernel rises from
 `limit / width` to `limit * width`, linearly in its logarithm. The limit
-itself slides from `neighbour_consistency` to `far` as the centre of the
+itself slides from the package's NEIGHBOUR_CONSISTENCY to `far` as the centre of the
 neighbours moves from `inside` to `outside` of the distance of the furthest
 one. Where the kernels of several leaves are mixed, the other prediction is
 the mixture of the leaves' predictions.
@@ -16,6 +16,7 @@ import numpy as np
 from pygptreeo import GPTree
 from pygptreeo.gpnode import GPNode
 from pygptreeo.neighbours import NeighbourSearch
+from variants import neighbour_tree
 
 
 class _Seen:
@@ -62,7 +63,7 @@ class SmoothSearch(NeighbourSearch):
     def consistency_limit(self, value):
         self.__dict__['consistency_limit'] = value
 
-    def share(self, seen):
+    def prototype_share(self, seen):
         """The weight of the neighbours' prediction after the last search."""
         if not seen.values:
             return 0.0
@@ -96,7 +97,7 @@ def _predict_from_neighbours(self, x):
             try:
                 self._condition_on(found, x[r:r + 1], mu[r], sigma[r])
                 if not np.isnan(mu[r]).any():
-                    share[r] = search.share(search._seen)
+                    share[r] = search.prototype_share(search._seen)
             finally:
                 search._seen = outer
     rows = share < 1.0
@@ -120,7 +121,7 @@ def _predict_blended(self, x, leaves, weights, calibrated=True):
         search._seen = None
     if not search._mixed:
         return mu, sigma            # the mixture of the leaves' predictions already
-    share = search.share(seen)
+    share = search.prototype_share(seen)
     if share >= 1.0:
         return mu, sigma
     search._skip_mixed = True
@@ -145,4 +146,4 @@ def smooth(tree, **settings):
 
 
 def smooth_tree(inside=0.5, outside=0.8, far=3.0, width=2.0, **kw):
-    return smooth(GPTree(predict_from='neighbours', **kw), inside=inside, outside=outside, far=far, width=width)
+    return smooth(neighbour_tree(**kw), inside=inside, outside=outside, far=far, width=width)

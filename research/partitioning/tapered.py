@@ -1,6 +1,5 @@
 """Neighbours that fade out towards the edge of their set: the prototype of
-``GPTree(neighbour_fade=...)``, for a copy of the package from before that
-option (``NeighbourSearch.find`` returned three arrays then).
+the package's NEIGHBOUR_FADE, for a copy of the package from before it (``NeighbourSearch.find`` returned three arrays then).
 
 The noise of a neighbour grows with its distance from the query, relative to
 the distance of the first stored point that is not a neighbour, and is

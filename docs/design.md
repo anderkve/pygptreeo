@@ -175,6 +175,11 @@ section 8.
   from the neighbours grows with that distance: none for those 4%, 23%
   between 1.25 and 1.75 standard deviations (45% of the queries) and 32%
   beyond 2.5.
+* **One option, `n_neighbours`.** The other settings are constants of
+  `pygptreeo/neighbours.py`, named `NEIGHBOUR_...` below, with the values
+  of the benchmarks. A tree keeps those it was built with on its
+  `NeighbourSearch`, so a saved tree predicts as it did whatever the
+  constants are later.
 * **The leaf supplies the kernel.** The hyperparameters, the scaling of the
   inputs and targets, the calibration of sigma and the global-model snapshot
   are those of the query's leaf. Leaves are fitted, split, put to sleep and
@@ -191,10 +196,10 @@ section 8.
   conditioned on. The mean squared target of the neighbours after
   whitening with the kernel matrix, `y^T K^-1 y / k`, is about 1 where the
   kernel describes them and in the hundreds or thousands in these cases.
-  Above `neighbour_consistency` (10) the leaf's own GP predicts, as in the
+  Above `NEIGHBOUR_CONSISTENCY` (10) the leaf's own GP predicts, as in the
   tree without neighbours. Limits from 5 to 100 give the same error, and the
   number comes with the factorisation that the prediction needs anyway.
-* **The change to the leaf's own GP is gradual** (`neighbour_transition`,
+* **The change to the leaf's own GP is gradual** (`NEIGHBOUR_TRANSITION`,
   2). The prediction is the mixture of the two, with a weight for the
   neighbours that falls from 1 at half the limit to 0 at twice the limit,
   linearly in the logarithm of the consistency. In the zones at the cuts
@@ -204,7 +209,7 @@ section 8.
   are fewer by a third to two thirds with the mixture, and the largest
   about half as high (`docs/benchmarks.md`, section 8.20).
 * **A lower limit for a query outside its neighbours**
-  (`neighbour_consistency_outside`, 3). Away from the data the neighbours
+  (`NEIGHBOUR_CONSISTENCY_OUTSIDE`, 3). Away from the data the neighbours
   of a query come from several leaves and span many times the range of
   targets of the query's leaf. A kernel that fits them badly then carries
   their trend on to the query, where the leaf's own GP returns to the mean
@@ -230,7 +235,7 @@ section 8.
   that of the neighbours (`prefers_own`). That run is then 4% worse than
   the leaves, and the mean error over the 75 runs of a seed, with the rule
   and the search of 16 leaves, 0.6% above that without the two.
-* **Neighbours fade out** (`neighbour_fade`, 0.9). With neighbours that
+* **Neighbours fade out** (`NEIGHBOUR_FADE`, 0.9). With neighbours that
   all count alike the prediction steps wherever the set changes: 33 to 39
   times by more than 0.1 sigma on a path through two or three leaves, where
   the leaves' own predictions step 4 to 5 times. So the noise variance of a
@@ -253,7 +258,7 @@ section 8.
   kernel that claims more uncertainty than there is: the fading then takes
   place within the last hundredths of the radius, and is a step again.
 * **The kernels of neighbouring leaves are mixed across a cut**
-  (`neighbour_blend`, 0.1). The kernel, the scaling of the inputs and
+  (`NEIGHBOUR_BLEND`, 0.1). The kernel, the scaling of the inputs and
   targets, the metric of the distances and the calibration are those of a
   leaf, so a prediction would step where the query passes into the next
   leaf. Each leaf therefore has a zone at each of its faces, half of it on
@@ -290,7 +295,7 @@ section 8.
   zones of several leaves is registered, for the sigma scaler of the leaf it
   is stored in, with the mixed prediction. A leaf's choice between its own
   GP and the neighbours still compares the two with its own kernel.
-* **Most leaves sleep** (`neighbour_awake`, 8). A prediction from neighbours
+* **Most leaves sleep** (`NEIGHBOUR_AWAKE`, 8). A prediction from neighbours
   uses a leaf's kernel, scalers and points and never the factor of its
   kernel matrix, which is three quarters of a leaf's memory. The factor is
   needed where a point arrives, for the leaf's own prediction of it and to
@@ -310,7 +315,7 @@ section 8.
 * **A point is not its own neighbour.** The prediction registered for the
   calibration is made before the point is stored.
 * **The search.** The 16 leaves whose points' boxes are nearest to the query
-  are taken from the index of the leaves (`neighbour_leaves`), and the
+  are taken from the index of the leaves (`NEIGHBOUR_LEAVES`), and the
   neighbours are the nearest points among theirs. With `None` the search is
   exact: the query's leaf bounds the distance of the neighbours, and every
   leaf whose points can lie within it is looked at, 7 to 46 leaves in three

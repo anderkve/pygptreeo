@@ -34,6 +34,7 @@ from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
 from pygptreeo.leaf_index import LeafIndex
+from pygptreeo import neighbours as neighbour_settings
 from pygptreeo.neighbours import NeighbourSearch
 
 logger = logging.getLogger(__name__)
@@ -131,13 +132,6 @@ class GPTree:
                  widen_sigma_with_distance: bool = True,
                  predict_from: str = 'leaf',
                  n_neighbours: Optional[int] = None,
-                 neighbour_consistency: float = 10.0,
-                 neighbour_consistency_outside: Optional[float] = 3.0,
-                 neighbour_transition: Optional[float] = 2.0,
-                 neighbour_leaves: Optional[int] = 16,
-                 neighbour_fade: Optional[float] = 0.9,
-                 neighbour_blend: Optional[float] = 0.1,
-                 neighbour_awake: Optional[int] = 8,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -255,66 +249,20 @@ class GPTree:
                 ``n_neighbours`` stored points nearest to the query, from
                 whichever leaves hold them, with the kernel of the query's
                 leaf. Distances are in units of the spread of that leaf's
-                points along each input. Where the neighbours fit the leaf's
-                kernel badly (``neighbour_consistency``) the prediction
-                passes to that of the leaf's own GP. A leaf whose own GP
-                predicted the last points it received clearly better than
-                their neighbours did predicts from its own points. Needs a
-                GP backend with ``supports_conditioning()`` (the
-                scikit-learn adapter).
+                points along each input. The neighbours fade out towards the
+                furthest of them and the kernels of the leaves are mixed in
+                a zone around each cut, so that the prediction is continuous
+                in the query. Where the neighbours fit the kernel badly, the
+                more so for a query outside them, the prediction passes to
+                that of the leaf's own GP. A leaf whose own GP predicted the
+                last points it received clearly better than their neighbours
+                did predicts from its own points. All but a few leaves
+                sleep, which releases about three quarters of their memory.
+                The settings of these are the ``NEIGHBOUR_`` constants of
+                ``pygptreeo/neighbours.py``. Needs a GP backend with
+                ``supports_conditioning()`` (the scikit-learn adapter).
             n_neighbours (Optional[int]): For 'neighbours': the number of
                 points a prediction is conditioned on. Defaults to ``Nbar``.
-            neighbour_consistency (float): For 'neighbours': the leaf's own GP
-                predicts where the mean squared target of the neighbours,
-                whitened with the leaf's kernel, exceeds this. It is about 1
-                for points the kernel describes, and in the hundreds where
-                the neighbours lie across a jump of the target that the
-                leaf's own points do not contain. Defaults to 10.
-            neighbour_consistency_outside (Optional[float]): For
-                'neighbours': that limit for a query outside its neighbours,
-                where a kernel that fits them badly carries their trend far
-                from the target. How far outside a query lies is measured by
-                the distance of the neighbours' centre from it, over that of
-                the furthest neighbour: the limit is ``neighbour_consistency``
-                up to 0.5, this one from 0.8, and passes from one to the
-                other in between. Defaults to 3. None for one limit
-                everywhere.
-            neighbour_transition (Optional[float]): For 'neighbours': the
-                prediction passes gradually from that of the neighbours to
-                that of the leaf's own GP. It is the mixture of the two, with
-                a weight for the neighbours that falls from 1 at the limit
-                divided by this to 0 at the limit times this, linearly in
-                the logarithm of the consistency. Defaults to 2. None
-                switches at the limit.
-            neighbour_leaves (Optional[int]): For 'neighbours': the neighbours
-                are the nearest points of this many leaves, those whose
-                points lie nearest to the query. Defaults to 16. None looks
-                at every leaf that can hold one of the nearest points.
-            neighbour_fade (Optional[float]): For 'neighbours': the noise of
-                a neighbour grows with its distance from the query, from this
-                fraction of the distance of the first stored point beyond
-                the neighbours, where it is infinite. A point then enters
-                and leaves the neighbours with no weight, so the prediction
-                is continuous in the query within a leaf. Defaults to 0.9.
-                With None all neighbours count alike and the prediction
-                steps wherever the set of neighbours changes.
-            neighbour_blend (Optional[float]): For 'neighbours': at a cut
-                between two leaves the prediction passes from the kernel of
-                one to that of the other within a zone, in which the two
-                kernels are mixed. The zone is centred on the cut, and on
-                each side its width is measured against the leaf there: this
-                share of the leaf's width along the input that is cut.
-                Defaults to 0.1. With None the kernel is that of the query's
-                leaf alone, and the prediction steps at the cuts.
-            neighbour_awake (Optional[int]): For 'neighbours': the number of
-                leaves whose GPs stay awake, those that last received a point
-                or predicted from their own points. The GPs of the other
-                leaves sleep: they keep their points and their kernel, which
-                is what a prediction from neighbours needs of them, and
-                release the rest, about three quarters of a leaf's memory. A
-                sleeping leaf is woken when a point reaches it or its own GP
-                has to predict, and a leaf that predicts from its own points
-                stays awake. Defaults to 8. None keeps every leaf awake.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -367,11 +315,12 @@ class GPTree:
             if supports is None or not supports():
                 raise ValueError("predict_from='neighbours' needs a GP backend with supports_conditioning() == True "
                                  "(e.g. the scikit-learn adapter returned by Default_GPR)")
-            self.neighbours = NeighbourSearch(self, n_neighbours=Nbar if n_neighbours is None else n_neighbours,
-                                              consistency_limit=neighbour_consistency, max_leaves=neighbour_leaves,
-                                              fade=neighbour_fade, blend=neighbour_blend, awake=neighbour_awake,
-                                              outside_limit=neighbour_consistency_outside,
-                                              transition=neighbour_transition)
+            self.neighbours = NeighbourSearch(
+                self, n_neighbours=Nbar if n_neighbours is None else n_neighbours,
+                consistency_limit=neighbour_settings.NEIGHBOUR_CONSISTENCY, max_leaves=neighbour_settings.NEIGHBOUR_LEAVES,
+                fade=neighbour_settings.NEIGHBOUR_FADE, blend=neighbour_settings.NEIGHBOUR_BLEND,
+                awake=neighbour_settings.NEIGHBOUR_AWAKE, outside_limit=neighbour_settings.NEIGHBOUR_CONSISTENCY_OUTSIDE,
+                transition=neighbour_settings.NEIGHBOUR_TRANSITION)
 
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
@@ -611,7 +560,7 @@ class GPTree:
         one leaf where the point belongs to it alone, and within the overlap
         of two children the leaves on both sides, each with the product of
         the probabilities of ``prob_func`` along its branch. With zones at
-        the cuts (``neighbour_blend``) the leaves and weights are those of
+        the cuts (``NEIGHBOUR_BLEND``) the leaves and weights are those of
         the zones."""
         if self.leaf_index is not None:
             if self._blends():
@@ -733,7 +682,7 @@ class GPTree:
 
     def _let_leaves_sleep(self):
         """With predictions from neighbours, put the leaves to sleep whose GPs are
-        not among the last ``neighbour_awake`` that were used. A leaf that
+        not among the last ``NEIGHBOUR_AWAKE`` that were used. A leaf that
         predicts from its own points keeps its GPs awake."""
         search = self.neighbours
         if search is None or search.awake is None:

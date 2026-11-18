@@ -1,5 +1,5 @@
 """Leaves that sleep by default with predictions from neighbours: the prototype of
-``GPTree(neighbour_awake=...)``, to be run with ``neighbour_awake=None`` in the package.
+the package's NEIGHBOUR_AWAKE, run here with every leaf of the package awake.
 
 A leaf's GPs keep their kernel and points but release the factor of their
 kernel matrix (``GPNode.sleep``) unless the leaf is among the ``keep`` leaves
@@ -23,6 +23,7 @@ warnings.simplefilter('ignore')
 import numpy as np                                              # noqa: E402
 import bench                                                    # noqa: E402
 from pygptreeo import GPTree                                    # noqa: E402
+from variants import neighbour_tree                             # noqa: E402
 from pygptreeo.gpnode import GPNode                             # noqa: E402
 
 BASE = dict(Nbar=100, theta=1e-4, retrain_every_n_points=25, splitting_strategy='gradual')
@@ -79,7 +80,7 @@ if __name__ == '__main__':
     X, y_obs, sigma = data['X'], data['y_obs'], data['sigma']
     for keep in keeps:
         np.random.seed(1)
-        m = GPTree(predict_from='neighbours', neighbour_awake=None, **BASE)
+        m = neighbour_tree(neighbour_awake=None, **BASE)
         m.__class__ = SleepyTree
         m.keep, m._awake = keep, OrderedDict()
         WAKES[0] = 0

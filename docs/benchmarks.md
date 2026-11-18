@@ -592,13 +592,16 @@ predicted by one leaf, chosen by the cuts without overlap.
 
 Sections 8.2 to 8.13 were measured with neighbours that all count alike,
 with the kernel of the query's leaf alone and with every leaf awake
-(`neighbour_fade=None`, `neighbour_blend=None`, `neighbour_awake=None`).
+(`NEIGHBOUR_FADE`, `NEIGHBOUR_BLEND` and `NEIGHBOUR_AWAKE` at None).
 Section 8.15 has the neighbours that fade out, section 8.17 the kernels
 mixed across the cuts and section 8.19 the leaves asleep, which are the
 defaults of `predict_from='neighbours'`. Sections 8.2 to 8.20 were measured
-with a switch to the leaf's own GP at one limit (`neighbour_transition=None`,
-`neighbour_consistency_outside=None`); section 8.21 has the gradual change,
-which is the default as well.
+with a switch to the leaf's own GP at one limit (`NEIGHBOUR_TRANSITION` and
+`NEIGHBOUR_CONSISTENCY_OUTSIDE` at None); section 8.21 has the gradual
+change, which is the default as well. These settings are constants of
+`pygptreeo/neighbours.py`; they were options of the tree when the sections
+were measured, and `neighbour_tree` in `research/partitioning/variants.py`
+sets them for one tree.
 
 Sections 8.1 to 8.3: eleven targets (`GaussianPeaks` and `RotatedRosenbrock`
 in six dimensions, `Eggholder` in three, `Chirp` in four, a four-dimensional
@@ -1212,7 +1215,7 @@ points:
   takes 0.57 ms against 0.52 ms without fading, and 0.69 ms with 32 leaves
   searched; an update 2.5 ms against 2.3 ms.
 
-### 8.15 Neighbours that fade out (`neighbour_fade`)
+### 8.15 Neighbours that fade out (`NEIGHBOUR_FADE`)
 
 In the package the noise variance of a neighbour grows by `t^2 / (1 - t)^2`
 times a unit, with `t` as in section 8.14 and `start = 0.9`. Candidates for
@@ -1349,7 +1352,7 @@ relative to the neighbours that fade out run by run:
   takes 1.04 and 1.07 times as long as with fading alone in zones of 0.05
   and 0.1, and 1.24 and 1.86 times with the predictions blended.
 
-### 8.17 Kernels mixed across the cuts (`neighbour_blend`)
+### 8.17 Kernels mixed across the cuts (`NEIGHBOUR_BLEND`)
 
 In the package the kernels are mixed as in section 8.16, with two
 differences. The zone at a face of a leaf is a share of the leaf's own width
@@ -1552,7 +1555,7 @@ last 5000 points.
   not need: at 12 MB a third of the points are gone and the error is 17 to
   21% higher, where the whole tree asleep takes 9.7 to 10.8 MB.
 
-### 8.19 Leaves asleep by default (`neighbour_awake`)
+### 8.19 Leaves asleep by default (`NEIGHBOUR_AWAKE`)
 
 In the package the leaves whose GPs were fitted or woken last stay awake, 8
 by default, and so does a leaf that predicts from its own points. Two trees
@@ -1704,7 +1707,7 @@ queries of the two patches.
   times for both.
 
 Two more variants on the same runs: the limit of the test at 3 for every
-query (`neighbour_consistency=3`), and the 100 nearest points together with
+query (`NEIGHBOUR_CONSISTENCY` at 3), and the 100 nearest points together with
 the rest of the leaf's own points (`research/partitioning/with_leaf.py`, not
 in the code), 127 to 141 points per prediction on average. Largest
 prediction and RMSE away from the data:
@@ -1773,7 +1776,7 @@ side of it, in units of sigma):
   the whole square most steps of the neighbours' predictions have other
   causes.
 
-### 8.21 A gradual change to the leaf's own GP (`neighbour_transition`, `neighbour_consistency_outside`)
+### 8.21 A gradual change to the leaf's own GP (`NEIGHBOUR_TRANSITION`, `NEIGHBOUR_CONSISTENCY_OUTSIDE`)
 
 In the package the centre of the neighbours counts a neighbour that fades
 out by what is left of it, which makes the measure about 0.03 smaller than

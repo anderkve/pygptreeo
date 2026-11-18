@@ -4,7 +4,8 @@
 
 The stream and the tree are those of `examples/make_readme_gif.py --alt`
 (Himmelblau, 1500 points, additive kernel), with the declared noise as a share
-of the target value; the options go to the tree. Prints the largest prediction
+of the target value; the options go to the tree, or to its neighbour search
+(`variants.neighbour_tree`). Prints the largest prediction
 on a 70 x 70 grid, the errors of the cells near the data and away from it,
 and the steps of the mean along straight lines across the square.
 """
@@ -20,7 +21,8 @@ sys.path[:0] = [HERE, ROOT, os.path.join(ROOT, 'examples')]
 warnings.simplefilter('ignore')
 import numpy as np                                               # noqa: E402
 from scipy.spatial import cKDTree                                # noqa: E402
-from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel  # noqa: E402
+from pygptreeo import Default_GPR, AdditiveMaternKernel          # noqa: E402
+from variants import neighbour_tree                              # noqa: E402
 from target_functions import Himmelblau                          # noqa: E402
 
 N_POINTS, AWAY, LINES = 1500, 0.05, 40
@@ -58,9 +60,9 @@ def main():
     options = {name: None if value == 'None' else float(value) for name, value in (item.split('=') for item in sys.argv[4:])}
     prototype = {name: options.pop(name) for name in ('inside', 'outside', 'far', 'width') if name in options}
     X, y = stream(seed)
-    tree = GPTree(GPR=Default_GPR(kernel=AdditiveMaternKernel(d=2, order=2, nu=1.5), alpha=1e-6), Nbar=100, theta=0.05,
-                  splitting_strategy='gradual', split_position_method='median', retrain_every_n_points=2,
-                  use_calibrated_sigma=True, predict_from='leaf' if mode == 'leaf' else 'neighbours', **options)
+    tree = neighbour_tree(GPR=Default_GPR(kernel=AdditiveMaternKernel(d=2, order=2, nu=1.5), alpha=1e-6), Nbar=100, theta=0.05,
+                          splitting_strategy='gradual', split_position_method='median', retrain_every_n_points=2,
+                          use_calibrated_sigma=True, predict_from='leaf' if mode == 'leaf' else 'neighbours', **options)
     if mode == 'guarded':
         from guarded import guard
         guard(tree)

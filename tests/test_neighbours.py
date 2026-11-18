@@ -17,9 +17,26 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from pygptreeo import GPTree, Default_GPR, GPRegressorInterface
 from pygptreeo import gpnode as gpnode_module
+from pygptreeo import neighbours as neighbours_module
 from pygptreeo.neighbours import NeighbourSearch
 
 warnings.filterwarnings("ignore")
+
+
+# the settings of a tree's search, by the names of the package's NEIGHBOUR_ constants
+SETTINGS = {'neighbour_leaves': 'max_leaves', 'neighbour_fade': 'fade', 'neighbour_blend': 'blend', 'neighbour_awake': 'awake',
+            'neighbour_consistency': 'consistency_limit', 'neighbour_consistency_outside': 'outside_limit',
+            'neighbour_transition': 'transition'}
+
+
+def _tree(**options):
+    """A GPTree whose search has the given settings in place of the package's."""
+    settings = {SETTINGS[name]: options.pop(name) for name in list(options) if name in SETTINGS}
+    gpt = GPTree(**options)
+    if gpt.neighbours is not None:
+        for name, value in settings.items():
+            setattr(gpt.neighbours, name, value)
+    return gpt
 
 
 def _fixed_gpr(d, length_scale=1.0):
@@ -199,7 +216,7 @@ class TestSearch(unittest.TestCase):
         with self.assertRaises(ValueError):
             NeighbourSearch(gpt, n_neighbours=k, fade=1.0)
         with self.assertRaises(ValueError):
-            GPTree(predict_from='neighbours', neighbour_fade=-0.1)
+            NeighbourSearch(gpt, n_neighbours=k, fade=-0.1)
 
     def test_a_limit_on_the_leaves_searched(self):
         """The points then come from the leaves whose points' boxes are nearest to the query."""
@@ -225,7 +242,7 @@ class TestPredictions(unittest.TestCase):
         for fade in (None, 0.5):
             np.random.seed(0)
             rng = np.random.RandomState(0)
-            gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=k, neighbour_fade=fade,
+            gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=k, neighbour_fade=fade,
                          neighbour_consistency=np.inf, neighbour_leaves=None, use_calibrated_sigma=False)
             _stream(gpt, rng.rand(400, 2))
             X, y, sigma = _stored_points(gpt)
@@ -257,7 +274,7 @@ class TestPredictions(unittest.TestCase):
         """Along a path within a leaf the mean steps where the set of neighbours changes, unless they fade out."""
         np.random.seed(2)
         rng = np.random.RandomState(2)
-        gpt = GPTree(GPR=_fixed_gpr(2, length_scale=0.5), Nbar=60, predict_from='neighbours', n_neighbours=30,
+        gpt = _tree(GPR=_fixed_gpr(2, length_scale=0.5), Nbar=60, predict_from='neighbours', n_neighbours=30,
                      neighbour_leaves=None, neighbour_consistency=np.inf)
         _stream(gpt, rng.rand(700, 2), sigma=1e-2)
         self.assertEqual(gpt.neighbours.fade, 0.9)
@@ -291,7 +308,7 @@ class TestPredictions(unittest.TestCase):
         out = []
         for options in (dict(), dict(predict_from='neighbours', neighbour_consistency=0.0, neighbour_blend=None)):
             np.random.seed(3)
-            gpt = GPTree(Nbar=50, retrain_every_n_points=10, **options, **kw)
+            gpt = _tree(Nbar=50, retrain_every_n_points=10, **options, **kw)
             preds = []
             for i in range(n):
                 preds.append(np.hstack(gpt.predict(X[i:i + 1])))
@@ -355,7 +372,7 @@ class TestPredictions(unittest.TestCase):
         trees = {}
         for mode in ('leaf', 'neighbours'):
             np.random.seed(6)
-            trees[mode] = GPTree(Nbar=50, retrain_every_n_points=25, predict_from=mode, use_calibrated_sigma=False,
+            trees[mode] = _tree(Nbar=50, retrain_every_n_points=25, predict_from=mode, use_calibrated_sigma=False,
                                  neighbour_fade=None, neighbour_blend=None)
             _stream(trees[mode], X, y, sigma=1e-4)
         X_test = rng.rand(400, 2)
@@ -406,7 +423,7 @@ class TestPredictions(unittest.TestCase):
     def test_a_sleeping_leaf_stays_asleep(self):
         np.random.seed(7)
         rng = np.random.RandomState(7)
-        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', neighbour_consistency=np.inf)
+        gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', neighbour_consistency=np.inf)
         _stream(gpt, rng.rand(300, 2))
         q = rng.rand(1, 2)
         leaf = _leaf_of(gpt, q)
@@ -444,7 +461,7 @@ class TestPredictions(unittest.TestCase):
         rng = np.random.RandomState(10)
         X = rng.rand(300, 2)
         np.random.seed(10)
-        gpt = GPTree(Nbar=50, predict_from='neighbours', n_neighbours=40, neighbour_leaves=6)
+        gpt = _tree(Nbar=50, predict_from='neighbours', n_neighbours=40, neighbour_leaves=6)
         gpt.fit(X, _target(X)[:, None], np.full(300, 1e-3))
         X_test = rng.rand(30, 2)
         mean, std = gpt.predict(X_test)
@@ -458,13 +475,13 @@ class TestPredictions(unittest.TestCase):
 
 
 class TestBlend(unittest.TestCase):
-    """Predictions within the zones at the cuts (``neighbour_blend``)."""
+    """Predictions within the zones at the cuts (``NEIGHBOUR_BLEND``)."""
 
     @classmethod
     def setUpClass(cls):
         np.random.seed(11)
         rng = np.random.RandomState(11)
-        cls.gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
+        cls.gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
                          neighbour_leaves=None, neighbour_consistency=np.inf, use_calibrated_sigma=False)
         cls.X = rng.rand(700, 2)
         _stream(cls.gpt, cls.X, sigma=1e-3)
@@ -603,7 +620,7 @@ class TestBlend(unittest.TestCase):
         rng = np.random.RandomState(15)
         X = rng.rand(400, 2)
         for scaling in (True, False):
-            gpt = GPTree(GPR=Default_GPR(normalize_y=True), Nbar=40, retrain_every_n_points=10, predict_from='neighbours',
+            gpt = _tree(GPR=Default_GPR(normalize_y=True), Nbar=40, retrain_every_n_points=10, predict_from='neighbours',
                          n_neighbours=30, neighbour_consistency=np.inf, use_standard_scaling=scaling)
             _stream(gpt, X, 50.0 + 20.0 * _target(X), sigma=2.0)
             self._alone_equals_the_leaf(gpt, self.queries[:120])
@@ -612,7 +629,7 @@ class TestBlend(unittest.TestCase):
         """The error of the global model is in sigma, and no leaf predicts with an outdated snapshot."""
         np.random.seed(16)
         rng = np.random.RandomState(16)
-        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
+        gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
                      neighbour_consistency=np.inf, global_mean='additive_gp',
                      global_mean_kwargs=dict(reservoir_size=40, min_points=60, n_restarts_optimizer=0, random_state=0))
         X = rng.rand(400, 2)
@@ -722,10 +739,10 @@ class TestBlend(unittest.TestCase):
     def test_the_options(self):
         for blend in (0.0, 1.5, -0.1):
             with self.assertRaises(ValueError):
-                GPTree(predict_from='neighbours', neighbour_blend=blend)
+                NeighbourSearch(None, n_neighbours=10, blend=blend)
         np.random.seed(14)
         rng = np.random.RandomState(14)
-        plain = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', neighbour_blend=None)
+        plain = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', neighbour_blend=None)
         leaf_tree = GPTree(Nbar=40, retrain_every_n_points=10)
         X = rng.rand(300, 2)
         _stream(plain, X)
@@ -739,7 +756,7 @@ class TestBlend(unittest.TestCase):
 
 class TestGradual(unittest.TestCase):
     """The change from the neighbours' prediction to the leaf's own
-    (``neighbour_transition``, ``neighbour_consistency_outside``)."""
+    (``NEIGHBOUR_TRANSITION``, ``NEIGHBOUR_CONSISTENCY_OUTSIDE``)."""
 
     def test_the_weight_of_the_neighbours(self):
         search = NeighbourSearch(None, n_neighbours=10, consistency_limit=10.0, transition=2.0)
@@ -821,7 +838,7 @@ class TestGradual(unittest.TestCase):
     def test_the_prediction_passes_from_the_neighbours_to_the_leaf(self):
         rng = np.random.RandomState(2)
         np.random.seed(2)
-        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30, neighbour_fade=None,
+        gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30, neighbour_fade=None,
                      neighbour_blend=None, neighbour_consistency_outside=None, use_calibrated_sigma=False)
         _stream(gpt, rng.rand(400, 2))
         search, checked = gpt.neighbours, 0
@@ -845,7 +862,7 @@ class TestGradual(unittest.TestCase):
     def test_a_lower_limit_for_a_query_outside_its_neighbours(self):
         rng = np.random.RandomState(3)
         np.random.seed(3)
-        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30, neighbour_fade=None,
+        gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30, neighbour_fade=None,
                      neighbour_blend=None, neighbour_transition=None, use_calibrated_sigma=False)
         _stream(gpt, 0.3 + 0.4 * rng.rand(400, 2))                # the corners of the unit square hold no points
         search = gpt.neighbours
@@ -872,7 +889,7 @@ class TestGradual(unittest.TestCase):
         """There the other prediction is the mixture of the leaves' predictions."""
         rng = np.random.RandomState(11)
         np.random.seed(11)
-        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
+        gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
                      neighbour_leaves=None, neighbour_consistency_outside=None, use_calibrated_sigma=False)
         _stream(gpt, rng.rand(700, 2))
         search, between, checked = gpt.neighbours, 0, 0
@@ -900,18 +917,27 @@ class TestGradual(unittest.TestCase):
         self.assertGreater(checked, 300)
         self.assertGreater(between, 30)
 
-    def test_the_options(self):
-        for options in (dict(neighbour_transition=1.0), dict(neighbour_transition=0.5), dict(neighbour_consistency_outside=0.0)):
+    def test_the_settings(self):
+        for options in (dict(transition=1.0), dict(transition=0.5), dict(outside_limit=0.0)):
             with self.assertRaises(ValueError):
-                GPTree(predict_from='neighbours', **options)
-        gpt = GPTree(predict_from='neighbours')
-        self.assertEqual((gpt.neighbours.consistency_limit, gpt.neighbours.outside_limit, gpt.neighbours.transition), (10.0, 3.0, 2.0))
-        gpt = GPTree(predict_from='neighbours', neighbour_transition=None, neighbour_consistency_outside=None)
-        self.assertEqual((gpt.neighbours.outside_limit, gpt.neighbours.transition), (None, None))
+                NeighbourSearch(None, n_neighbours=10, **options)
+
+    def test_a_tree_takes_the_constants_of_the_package(self):
+        search = GPTree(predict_from='neighbours').neighbours
+        self.assertEqual((search.max_leaves, search.fade, search.blend, search.awake), (16, 0.9, 0.1, 8))
+        self.assertEqual((search.consistency_limit, search.outside_limit, search.transition), (10.0, 3.0, 2.0))
+        with mock.patch.object(neighbours_module, 'NEIGHBOUR_FADE', None), \
+                mock.patch.object(neighbours_module, 'NEIGHBOUR_TRANSITION', None), \
+                mock.patch.object(neighbours_module, 'NEIGHBOUR_LEAVES', 4):
+            search = GPTree(predict_from='neighbours').neighbours
+        self.assertEqual((search.max_leaves, search.fade, search.transition, search.blend), (4, None, None, 0.1))
+        for name in SETTINGS:           # they are no longer options of the tree
+            with self.assertRaises(TypeError):
+                GPTree(predict_from='neighbours', **{name: None})
 
 
 class TestAsleep(unittest.TestCase):
-    """Leaves whose GPs sleep unless they were used last (``neighbour_awake``)."""
+    """Leaves whose GPs sleep unless they were used last (``NEIGHBOUR_AWAKE``)."""
 
     @staticmethod
     def _awake(gpt, own=True):
@@ -920,7 +946,7 @@ class TestAsleep(unittest.TestCase):
 
     def _stream_with_predictions(self, X, y, **kw):
         np.random.seed(20)
-        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', **kw)
+        gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', **kw)
         predictions, most_awake = [], 0
         for i in range(len(X)):
             predictions.append(np.hstack(gpt.predict(X[i:i + 1])).ravel())
@@ -949,7 +975,7 @@ class TestAsleep(unittest.TestCase):
         rng = np.random.RandomState(21)
         X = rng.rand(600, 2)
         np.random.seed(21)
-        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', neighbour_awake=2)
+        gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', neighbour_awake=2)
         _stream(gpt, X)
         for x in rng.rand(40, 2):
             x = x[None, :]
@@ -1018,7 +1044,7 @@ class TestAsleep(unittest.TestCase):
         rng = np.random.RandomState(24)
         X = rng.rand(600, 2)
         np.random.seed(24)
-        gpt = GPTree(Nbar=40, predict_from='neighbours', neighbour_awake=3)
+        gpt = _tree(Nbar=40, predict_from='neighbours', neighbour_awake=3)
         gpt.fit(X, _target(X)[:, None], np.full(600, 1e-3))
         self.assertLessEqual(len(self._awake(gpt, own=False)), 3)
         X_test = rng.rand(50, 2)
@@ -1028,7 +1054,7 @@ class TestAsleep(unittest.TestCase):
     def test_the_options(self):
         for awake in (0, -1):
             with self.assertRaises(ValueError):
-                GPTree(predict_from='neighbours', neighbour_awake=awake)
+                NeighbourSearch(None, n_neighbours=10, awake=awake)
         rng = np.random.RandomState(25)
         X = rng.rand(400, 2)
         np.random.seed(25)

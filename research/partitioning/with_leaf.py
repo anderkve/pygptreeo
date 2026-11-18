@@ -6,8 +6,8 @@ neighbours fade out as in the package. Where the kernels of several leaves are
 mixed, the points of each leaf count by its weight against the largest one.
 """
 import numpy as np
-from pygptreeo import GPTree
 from pygptreeo.neighbours import NeighbourSearch
+from variants import neighbour_tree
 
 
 def _rows(a):
@@ -64,4 +64,4 @@ def with_leaf(tree):
 
 
 def with_leaf_tree(**kw):
-    return with_leaf(GPTree(predict_from='neighbours', **kw))
+    return with_leaf(neighbour_tree(**kw))

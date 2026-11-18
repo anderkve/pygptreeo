@@ -14,6 +14,16 @@ import numpy as np
 from scipy.linalg.lapack import dpotrf, dtrtrs
 
 
+# The settings of a tree that predicts from neighbours (the arguments of
+# NeighbourSearch that GPTree gives it); None turns a mechanism off.
+NEIGHBOUR_LEAVES = 16                   # leaves whose points are searched for the neighbours
+NEIGHBOUR_FADE = 0.9                    # fraction of the neighbours' reach from which their noise grows
+NEIGHBOUR_BLEND = 0.1                   # share of a leaf's width over which kernels are mixed at a cut
+NEIGHBOUR_AWAKE = 8                     # leaves whose GPs stay awake
+NEIGHBOUR_CONSISTENCY = 10.0            # limit on how badly the neighbours may fit the kernel
+NEIGHBOUR_CONSISTENCY_OUTSIDE = 3.0     # that limit for a query outside its neighbours
+NEIGHBOUR_TRANSITION = 2.0              # factor either side of the limit over which the leaf's own GP takes over
+
 # Of the distance of the furthest neighbour: between these distances of the
 # neighbours' centre from the query, the limit on their consistency passes
 # from that for a query among its neighbours to that for one outside them.
@@ -66,17 +76,17 @@ class NeighbourSearch:
         if n_neighbours < 1:
             raise ValueError("n_neighbours must be at least 1")
         if max_leaves is not None and max_leaves < 1:
-            raise ValueError("neighbour_leaves must be at least 1")
+            raise ValueError("max_leaves must be at least 1, or None")
         if fade is not None and not 0.0 <= fade < 1.0:
-            raise ValueError("neighbour_fade must be at least 0 and below 1, or None")
+            raise ValueError("fade must be at least 0 and below 1, or None")
         if blend is not None and not 0.0 < blend <= 1.0:
-            raise ValueError("neighbour_blend must be above 0 and at most 1, or None")
+            raise ValueError("blend must be above 0 and at most 1, or None")
         if awake is not None and awake < 1:
-            raise ValueError("neighbour_awake must be at least 1, or None")
+            raise ValueError("awake must be at least 1, or None")
         if outside_limit is not None and not outside_limit > 0.0:
-            raise ValueError("neighbour_consistency_outside must be above 0, or None")
+            raise ValueError("outside_limit must be above 0, or None")
         if transition is not None and not transition > 1.0:
-            raise ValueError("neighbour_transition must be above 1, or None")
+            raise ValueError("transition must be above 1, or None")
         self.tree = tree
         self.n_neighbours = int(n_neighbours)
         self.consistency_limit = float(consistency_limit)

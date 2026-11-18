@@ -1,4 +1,4 @@
-"""Predictions blended across the cuts: the prototypes of ``GPTree(neighbour_blend=...)``.
+"""Predictions blended across the cuts: the prototypes of the package's NEIGHBOUR_BLEND.
 
 Within a zone around each cut, whose width is the share ``blend`` of the
 spread of the node's points along the cut, a query is predicted with the
@@ -9,6 +9,7 @@ across the zone. Where a point is stored does not change.
 import numpy as np
 
 from pygptreeo import GPTree
+from variants import neighbour_tree
 
 
 class BlendedTree(GPTree):
@@ -39,8 +40,8 @@ class BlendedTree(GPTree):
 
 
 def blended_tree(blend=0.1, **tree_kwargs):
-    # the package's own zones (``neighbour_blend``) are off: these are the prototypes of them
-    gpt = GPTree(predict_from='neighbours', neighbour_blend=None, **tree_kwargs)
+    # the package's own zones are off: these are the prototypes of them
+    gpt = neighbour_tree(neighbour_blend=None, **tree_kwargs)
     gpt.__class__ = BlendedTree
     gpt.blend = blend
     return gpt

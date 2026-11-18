@@ -7,6 +7,23 @@ from pygptreeo import GPTree
 
 BASE = dict(Nbar=100, theta=1e-4, retrain_every_n_points=25, splitting_strategy='gradual')
 
+# the settings of a tree's neighbour search, by the names of the package's NEIGHBOUR_ constants
+SETTINGS = {'neighbour_leaves': 'max_leaves', 'neighbour_fade': 'fade', 'neighbour_blend': 'blend', 'neighbour_awake': 'awake',
+            'neighbour_consistency': 'consistency_limit', 'neighbour_consistency_outside': 'outside_limit',
+            'neighbour_transition': 'transition'}
+
+
+def neighbour_tree(**kw):
+    """A tree that predicts from neighbours. Options named as in SETTINGS set
+    its search in place of the package's constants, e.g. ``neighbour_fade=None``."""
+    settings = {SETTINGS[name]: kw.pop(name) for name in list(kw) if name in SETTINGS}
+    kw.setdefault('predict_from', 'neighbours')
+    tree = GPTree(**kw)
+    if tree.neighbours is not None:
+        for name, value in settings.items():
+            setattr(tree.neighbours, name, value)
+    return tree
+
 REGISTRY = {}
 
 
@@ -94,7 +111,7 @@ def _nb(d, seed, dir=None, pos='median', whiten=False, **opts):
     """The package's own neighbour conditioning, optionally with oblique cuts."""
     kw = dict(BASE)
     kw.update(opts)
-    gpt = GPTree(predict_from='neighbours', **kw)
+    gpt = neighbour_tree(**kw)
     if dir is not None:
         from oblique import ObliqueNode
         gpt.root.__class__ = type('ObliqueNode_' + dir, (ObliqueNode,), dict(direction=dir, position=pos, whiten=whiten))
@@ -106,7 +123,7 @@ def _nbf(d, seed, **opts):
     """The package's neighbour conditioning as it ships (the records of 'nb' are of earlier versions)."""
     kw = dict(BASE)
     kw.update(opts)
-    return GPTree(predict_from='neighbours', **kw)
+    return neighbour_tree(**kw)
 
 
 @register('guarded')
@@ -177,5 +194,5 @@ def _hybrid(d, seed, nb=False, **opts):
     """GP leaves on the residual of the feature network, predicting from the leaf or from neighbours."""
     kw = dict(BASE)
     kw.update(opts)
-    return GPTree(global_mean='net', global_mean_kwargs=dict(steps_per_update=1, random_state=seed),
-                  predict_from='neighbours' if nb else 'leaf', **kw)
+    return neighbour_tree(global_mean='net', global_mean_kwargs=dict(steps_per_update=1, random_state=seed),
+                          predict_from='neighbours' if nb else 'leaf', **kw)
