@@ -1486,6 +1486,14 @@ alignment:
 * **A warp of each axis that is the same along the other one** cannot move
   the two blobs of `two_blobs` in opposite directions. The network below has
   such a warp, and no gain on that family.
+* **Time on one core**, 800 images of `blob` and `two_blobs`: 46 to 48 s for
+  `'shared'`, 106 to 116 s for `'aligned'` as a curve and 178 to 204 s as an
+  image. A prediction takes 0.1 ms, 10 ms and 5 to 6 ms.
+* **The same ridge for curves** changes little: with 0.03 in place of 0.001
+  in the warp of a curve, the error of `'aligned'` on 800 curves was 1.3
+  times lower for `zprime_spectrum`, 1.1 times higher for `kinematic_edge`
+  on 64 points, and within 3% for five other families (two seeds). The warp
+  of a curve is unchanged.
 
 A global warp from a network, in place of a warp per leaf (not in the code).
 A network with two hidden layers of 64 units maps the parameters to the knots
