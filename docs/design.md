@@ -63,13 +63,23 @@ direction: the leaf resolves more dimensions than the target has.
   zero and then with it free, from that fit and from the shear its kernel
   started with. The free fit is kept if its leave-one-out error is lower by a
   factor 1.1. A leaf that declines predicts as with the default kernel.
+* **A bounded cost.** The free fit has at most 50 steps of the optimiser,
+  and after a rejection it is left out of the next 1, then 3, then 7 fits.
 * **The cut.** A leaf whose kernel has a shear is cut across the eigenvector
   of its metric with the largest eigenvalue, with the inputs in units of
   their spread, at the median of its points along that direction.
 * **Both are needed.** In one leaf of curves in a rotated parameter space the
   kernel alone gave the error of the default kernel on the unrotated
-  parameters or less. In the tree, with cuts along the inputs, it recovered
-  half of what the rotation cost (`docs/benchmarks.md`, section 9.11).
+  parameters or less. In a tree with `'shared'` leaves and cuts along the
+  inputs it left the error at 1.3 to 3.1 times that on the unrotated
+  parameters (10 times for a kinematic edge), and with the cuts across the
+  leaves' directions at 1.0 to 1.3 times (2.7 times; `docs/benchmarks.md`,
+  section 9.11).
+* **Many outputs determine the shear better than one.** The likelihood of a
+  shared-kernel GP sees every output. On curves no leaf that kept a shear
+  made the error higher by more than 2%. On three of eleven single-output
+  targets the error was 7 to 20% higher than with the default leaves, where
+  the leave-one-out error of 100 points decides on 6 to 45 entries.
 
 ## The global model
 

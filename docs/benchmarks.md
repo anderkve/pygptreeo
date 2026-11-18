@@ -1318,3 +1318,103 @@ place of its values on the grid, and a prediction is turned back into a curve:
   `'aligned'` on the grid, 86 to 128 s with a GP per coefficient, 6 to 13 s
   for the arc-length knots, 6 to 11 s and 10 to 18 s for `'aligned'` on 48
   and 96 coefficients.
+
+### 9.11 Parameters with mixed effects, and oblique leaves
+
+A family is evaluated in a rotated cube of its parameter space, so that each
+input of the tree is a combination of the family's parameters:
+`theta_family = 0.5 + (theta - 0.5) R / s` with a random rotation `R` and `s`
+the largest column sum of `|R|`, for which the cube stays inside the unit
+cube. The reference is the cube of the same size along the family's own axes
+(`R = 1`). 800 curves added with `batch_update_tree`, default leaves and
+`Default_GPR(oblique=True)`, two rotations. NRMSE on 300 test curves,
+geometric mean of the two rotations:
+
+| family | leaves | own axes | own axes, oblique | rotated | rotated, oblique | rotated / own | rotated / rotated oblique | rotated oblique / own |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `zprime_spectrum` | shared | 3.5e-3 | 2.8e-3 | 1.3e-2 | 4.7e-3 | 3.9 | 2.9 | 1.3 |
+| | aligned | 3.1e-4 | 3.2e-4 | 1.2e-3 | 6.3e-4 | 3.8 | 1.9 | 2.0 |
+| `sir_epidemic` | shared | 3.4e-4 | 1.8e-4 | 6.9e-4 | 3.8e-4 | 2.0 | 1.8 | 1.1 |
+| | aligned | 7.5e-5 | 7.5e-5 | 1.9e-4 | 1.1e-4 | 2.6 | 1.7 | 1.5 |
+| `cmb_peaks` | shared | 5.5e-5 | 5.5e-5 | 1.2e-4 | 7.4e-5 | 2.2 | 1.7 | 1.3 |
+| | aligned | 3.5e-5 | 3.5e-5 | 5.4e-5 | 4.7e-5 | 1.5 | 1.2 | 1.3 |
+| `matter_power` | shared | 2.6e-5 | 2.6e-5 | 5.8e-5 | 3.0e-5 | 2.2 | 1.9 | 1.1 |
+| | aligned | 2.6e-5 | 2.6e-5 | 5.8e-5 | 3.0e-5 | 2.2 | 1.9 | 1.1 |
+| `mixture_density` | shared | 1.0e-3 | 1.0e-3 | 2.2e-3 | 1.4e-3 | 2.1 | 1.6 | 1.3 |
+| | aligned | 1.7e-4 | 1.7e-4 | 2.0e-4 | 2.0e-4 | 1.2 | 1.0 | 1.2 |
+| `kinematic_edge`, 128 points | shared | 1.6e-4 | 1.6e-4 | 5.1e-3 | 4.2e-4 | 32 | 12 | 2.7 |
+| | aligned | 4.4e-5 | 4.4e-5 | 7.6e-5 | 5.1e-5 | 1.7 | 1.5 | 1.2 |
+| `z_lineshape` | shared | 6.0e-5 | 6.0e-5 | 2.5e-4 | 6.2e-5 | 4.2 | 4.1 | 1.0 |
+| | aligned | 1.7e-5 | 1.7e-5 | 3.0e-5 | 2.1e-5 | 1.8 | 1.5 | 1.2 |
+
+* **The rotation costs `'shared'` a factor 2.0 to 4.2**, and 32 on
+  `kinematic_edge`, whose curves depend on one of the three parameters far
+  more than on the others. `'aligned'` loses a factor 1.2 to 3.8: its warp is
+  linear in the offsets in any direction.
+* **Oblique leaves recover a factor 1.6 to 4.1 for `'shared'`** (12 on
+  `kinematic_edge`) and 1.0 to 1.9 for `'aligned'`, and leave the error
+  within a factor 1.0 to 1.3 (2.7) and 1.1 to 2.0 of that on the family's own
+  axes.
+* **On the family's own axes** the leaves of five families declined the
+  shear, with unchanged predictions. Those of `zprime_spectrum` and
+  `sir_epidemic` kept it with `'shared'`, for an error 1.2 and 1.9 times
+  lower. With `'aligned'` the error changed by 2% at most.
+* **The kernel alone, in one leaf.** 100 curves of five of the families in a
+  cube of side 0.5 or 0.25 of the rotated space, 300 test curves, one
+  shared-kernel GP: the oblique kernel has 1.4 to 5.8 times the accuracy of
+  the default kernel, and 1.0 to 1.9 times that of the default kernel on the
+  parameters turned back onto the family's own axes.
+* **The kernel without the cuts**, in the tree: a factor 1.4 to 3.1 for
+  `'shared'` on the rotated families, and an error 1.3 to 3.1 times that on
+  the own axes (10 on `kinematic_edge`).
+* **Time of the 800 curves**: 1.1 to 2.8 times that of the default leaves.
+
+The eleven single-output targets of `examples/target_functions_physics.py`,
+2000 points added with `batch_update_tree`, one rotation. NRMSE on 1000 test
+points, and the time of the 2000 points on the own axes:
+
+| target | inputs | own axes | own axes, oblique | rotated | rotated, oblique | rotated / own | rotated / rotated oblique | s, default | s, oblique |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `resonance_xsec` | 4 | 2.4e-2 | 1.8e-2 | 2.9e-2 | 8.6e-3 | 1.2 | 3.4 | 15 | 34 |
+| `dilepton_spectrum` | 4 | 2.3e-2 | 7.2e-3 | 4.2e-2 | 8.0e-3 | 1.9 | 5.3 | 10 | 35 |
+| `jet_spectrum` | 4 | 1.1e-4 | 1.1e-4 | 7.5e-4 | 2.2e-4 | 6.7 | 3.5 | 18 | 41 |
+| `oscillation_probability` | 5 | 1.8e-3 | 1.4e-3 | 4.8e-2 | 9.9e-3 | 27 | 4.9 | 9 | 39 |
+| `branching_ratio` | 5 | 3.5e-2 | 2.6e-2 | 1.5e-1 | 7.1e-2 | 4.2 | 2.1 | 11 | 40 |
+| `loop_decay_width` | 4 | 1.9e-3 | 1.8e-3 | 1.1e-2 | 2.6e-3 | 5.8 | 4.3 | 10 | 29 |
+| `relic_density` | 4 | 1.2e-2 | 3.1e-3 | 4.3e-2 | 3.7e-3 | 3.7 | 12 | 16 | 42 |
+| `neutralino_mass` | 4 | 9.2e-4 | 1.1e-3 | 3.8e-3 | 1.3e-3 | 4.2 | 2.9 | 10 | 31 |
+| `eft_signal_strength` | 6 | 1.6e-3 | 1.8e-3 | 1.5e-3 | 1.7e-3 | 1.0 | 0.9 | 10 | 52 |
+| `signal_yield_mc` | 4 | 2.1e-3 | 2.1e-3 | 2.2e-3 | 2.3e-3 | 1.0 | 1.0 | 11 | 17 |
+| `global_fit_loglike` | 10 | 5.5e-3 | 5.9e-3 | 6.6e-2 | 4.2e-2 | 12 | 1.6 | 18 | 137 |
+
+* **On the rotated inputs** oblique leaves lower the error by a factor 2.1
+  to 12 on eight targets and 1.6 on the target with ten inputs. On the two
+  that the rotation does not make harder they change it by 5 to 10%.
+* **On the targets' own parameters** the error is lower on six targets, by a
+  factor 1.3 to 3.8 on five, and higher on three, by 7 to 20%. With one
+  output the leave-one-out error of 100 points decides on up to 45 entries
+  of the shear.
+* **The 2000 points take 1.5 to 5 times as long**, and 8 times with ten
+  inputs.
+* **The coverage** is 0.61 to 0.77 with the default and with the oblique
+  leaves (0.96 to 0.98 for the noisy target).
+
+A rotation of the whole parameter space, in place of a kernel per leaf (not
+in the code): the eigenvectors of the mean of `J J^T`, with `J` the slopes of
+the curves in the parameters from linear fits to the 18 to 24 nearest
+curves, as the inputs of a tree with default leaves. Same curves and
+rotations:
+
+| family | rotated / rotated with the learned rotation, shared | aligned | own axes / own axes with the learned rotation, shared | aligned |
+|---|---:|---:|---:|---:|
+| `zprime_spectrum` | 2.7 | 2.1 | 1.2 | 1.1 |
+| `sir_epidemic` | 1.5 | 1.3 | 1.3 | 0.7 |
+| `cmb_peaks` | 1.7 | 1.4 | 0.8 | 1.3 |
+| `matter_power` | 1.2 | 1.2 | 0.4 | 0.4 |
+| `mixture_density` | 1.3 | 0.5 | 0.9 | 0.9 |
+| `kinematic_edge`, 128 points | 12 | 1.9 | 0.8 | 1.4 |
+| `z_lineshape` | 4.2 | 1.7 | 1.0 | 1.1 |
+
+The directions in which the curves change most are not always those of their
+length scales: on the own axes of `matter_power` this rotation makes the
+error 2.4 times higher.

@@ -106,7 +106,9 @@ If the target varies fastest along a combination of the inputs, e.g. for paramet
 gpt = GPTree(GPR=Default_GPR(oblique=True), Nbar=100)
 ```
 
-In our tests on seven families of curves with `output_model='shared'`, rotating the parameter space raised the error of the default tree by a factor 2 to 4, and by 32 for a kinematic edge whose position depends on a single parameter. With `oblique=True` the error on the rotated parameters was 1.6 to 4 times lower (11 times for the edge), and within a factor 1.0 to 1.3 (2.9) of that on the original parameters. On the original parameters the leaves declined the kernel for five families, with unchanged predictions, and kept it for two, with a 1.2 and 1.9 times lower error.
+In our tests on seven families of curves with `output_model='shared'`, rotating the parameter space raised the error of the default tree by a factor 2 to 4, and by 32 for a kinematic edge whose position depends on a single parameter. With `oblique=True` the error on the rotated parameters was 1.6 to 4 times lower (12 times for the edge), and within a factor 1.0 to 1.3 (2.7) of that on the original parameters. On the original parameters the leaves declined the kernel for five families, with unchanged predictions, and kept it for two, with a 1.2 and 1.9 times lower error.
+
+Physics parameters often have such mixed effects without any rotation. On eleven single-output physics targets with their original parameters, `oblique=True` lowered the error by a factor 1.3 to 3.8 for five targets, left it within 7% for three, and raised it by 7 to 20% for three. The run time was 1.1 to 2.8 times that of the default for the curves, and 1.5 to 5 times for the single-output targets (8 times with ten inputs).
 
 Any other scikit-learn kernel can be used in the same way, e.g. `ConstantKernel() * (Matern(nu=1.5, length_scale=[1.0] * d) + RBF(length_scale=[1.0] * d))` as a simpler and computationally cheaper alternative. For periodic inputs there is also `AdditivePeriodicMaternKernel(d=d)`, which is typically only beneficial when several oscillation periods fall within a single leaf.
 
