@@ -164,6 +164,13 @@ class TestAdditiveGPGlobalMean(unittest.TestCase):
         self.assertEqual(pred.shape, (4, 3))
         np.testing.assert_allclose(pred[:, 1] - pred[:, 0], 1.0, atol=0.05)
 
+    def test_smoothness_of_the_default_kernel(self):
+        for nu in (1.5, 2.5):
+            learner = AdditiveGPGlobalMean(nu=nu)
+            learner.observe(np.zeros((1, 3)), np.zeros((1, 1)), np.full((1, 1), 1e-3))
+            values = [v for k, v in learner.kernel.get_params().items() if k.endswith('nu')]
+            self.assertEqual(values, [nu])
+
     def test_make_global_mean(self):
         self.assertIsNone(make_global_mean(None))
         learner = make_global_mean('additive_gp', reservoir_size=77, min_points=10)
