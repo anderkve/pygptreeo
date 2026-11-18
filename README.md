@@ -129,7 +129,7 @@ Some recommendations for a function `f(t; x)` on a grid in `t`, e.g. a spectrum 
 - Give a quantity that varies over orders of magnitude as its logarithm.
 - A global model (see below) works with all output models. For smooth functions, give the additive GP the same smoothness with `global_mean_kwargs=dict(nu=2.5)`.
 
-See `examples/multioutput_physics_curves.py`, `examples/multioutput_surfaces.py` and `examples/multioutput_function_learning_pca.py` for examples, and section 10 of [`docs/benchmarks.md`](docs/benchmarks.md) for the test results.
+See `examples/multioutput_physics_curves.py`, `examples/multioutput_surfaces.py` and `examples/multioutput_function_learning_pca.py` for examples.
 
 ## Global models (optional)
 
