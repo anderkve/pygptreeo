@@ -251,5 +251,50 @@ class TestAlignedTree(unittest.TestCase):
             GPTree(n_outputs=4, output_model='aligned')
 
 
+class TestAlignedTreeWithGlobalModel(unittest.TestCase):
+    """A leaf with an alignment models the curves themselves, and a leaf without
+    one the residual of the global model."""
+
+    def _stream(self, model, target, with_global, n=220, seed=0):
+        from pygptreeo.global_mean import AdditiveGPGlobalMean
+        rng = np.random.RandomState(seed)
+        np.random.seed(seed)
+        X = rng.rand(n, 2)
+        Y = target(X)
+        learner = AdditiveGPGlobalMean(reservoir_size=60, min_points=50, n_restarts_optimizer=0, random_state=0) if with_global else None
+        gpt = _tree(model, global_mean=learner)
+        with contextlib.redirect_stdout(io.StringIO()):
+            gpt.batch_update_tree(X, Y, np.full(Y.shape, 1e-4))
+        return gpt
+
+    def test_aligned_leaves_do_without_the_global_model(self):
+        gpt = self._stream('aligned', moving_peak, with_global=True)
+        alone = self._stream('aligned', moving_peak, with_global=False)
+        self.assertIsNotNone(gpt.global_mean.current)
+        for leaf in gpt.root.leaves:
+            self.assertIsNotNone(leaf.alignment)
+            self.assertIsNone(leaf._fitted_global)
+        X = np.random.RandomState(1).rand(50, 2)
+        np.testing.assert_allclose(gpt.predict(X, mode='loop')[0], alone.predict(X, mode='loop')[0], atol=1e-8)
+
+    def test_other_leaves_model_the_residual(self):
+        gpt = self._stream('aligned', fixed_shapes, with_global=True)
+        shared = self._stream('shared', fixed_shapes, with_global=True)
+        X = np.random.RandomState(1).rand(50, 2)
+        np.testing.assert_allclose(gpt.predict(X, mode='loop')[0], shared.predict(X, mode='loop')[0], atol=1e-8)
+        for leaf in gpt.root.leaves:
+            self.assertIsNone(leaf.alignment)
+            self.assertIs(leaf._fitted_global, gpt.global_mean.current)
+
+    def test_aligned_leaf_is_not_refitted_for_a_new_snapshot(self):
+        gpt = self._stream('aligned', moving_peak, with_global=True)
+        leaf = gpt.root.leaves[0]
+        gpr = leaf.my_GPRs[0]
+        gpt.global_mean.fit()                      # a newer snapshot
+        leaf.predict(np.array([[0.4, 0.5]]))
+        self.assertIs(leaf.my_GPRs[0], gpr)
+        self.assertIsNotNone(leaf.alignment)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -28,6 +28,8 @@ import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.preprocessing import StandardScaler
 
+from pygptreeo.adapters.sklearn_adapter import SklearnGPAdapter
+
 
 class GlobalMeanSnapshot:
     """An immutable fitted global model.
@@ -287,7 +289,8 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
         gp = GaussianProcessRegressor(kernel=kernel, alpha=alpha,
                                       n_restarts_optimizer=self.n_restarts_optimizer,
                                       random_state=self.random_state)
-        gp.fit(x_scaler.transform(res.X), Y if Y.shape[1] > 1 else Y[:, 0])
+        # through the adapter, whose fit of several outputs does not grow with their number
+        SklearnGPAdapter(gp).fit(x_scaler.transform(res.X), Y if Y.shape[1] > 1 else Y[:, 0])
         version = 1 if self.current is None else self.current.version + 1
         if self.current is None:
             self.n_seen_at_first_fit = self.n_seen

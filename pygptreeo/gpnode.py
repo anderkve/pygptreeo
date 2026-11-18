@@ -936,6 +936,7 @@ class GPNode(Node):
         # With a global model the GPs are fitted on the residual of its current
         # snapshot. The stored targets stay raw.
         snapshot = None
+        curves = y_train
         if self.global_mean is not None:
             snapshot = self.global_mean.current
             if snapshot is not None:
@@ -954,22 +955,18 @@ class GPNode(Node):
                 gpr.fit(X_fit, targets[i])
 
         elif self.output_model in ('shared', 'aligned'):
-            # One GP with one shared kernel for all outputs (2-D target). The backend
-            # takes one noise variance per point, so the per-output noise variances
-            # are averaged over the outputs (exact when sigma is the same for all
-            # outputs, given the common output scale).
-            if self.use_standard_scaling:
-                self.X_scaler = StandardScaler().fit(X_train)
-                X_fit = self.X_scaler.transform(X_train)
-                mu, scale = self._fit_common_y_scaler(y_train)
-                y_fit = (y_train - mu) / scale
-                alpha = np.mean((sigma_train / scale) ** 2, axis=1)
+            previous = self.alignment
+            align = self._alignment_due(X_train.shape[0])
+            if align and snapshot is not None:
+                # An alignment is of the curves themselves, and a leaf that holds
+                # one does without the global model
+                self._fit_shared(X_train, curves, sigma_train, previous, previous_fit_std, align=True)
+                if self.alignment is not None:
+                    snapshot = None
+                else:
+                    self._fit_shared(X_train, y_train, sigma_train, None, previous_fit_std, align=False)
             else:
-                X_fit, y_fit = X_train, y_train
-                alpha = np.mean(sigma_train ** 2, axis=1)
-            self._set_noise(self.my_GPRs[0], alpha)
-            self.my_GPRs[0].fit(X_fit, y_fit)
-            self._after_shared_fit(X_train, X_fit, y_train, sigma_train, previous_fit_std)
+                self._fit_shared(X_train, y_train, sigma_train, previous, previous_fit_std, align)
 
         else:  # 'pca'
             if self.use_standard_scaling:
@@ -1005,11 +1002,38 @@ class GPNode(Node):
         return True
 
 
-    def _after_shared_fit(self, X_train, X_fit, y_train, sigma_train, previous_fit_std):
-        """What a shared-kernel GP takes from its leave-one-out predictions of the
-        curves ``y_train``: a sigma per output and, for output_model='aligned',
-        whether an alignment of the curves replaces it."""
-        previous, self.alignment, self.sigma_profile = self.alignment, None, None
+    def _alignment_due(self, n_points: int) -> bool:
+        """Whether this fit tries an alignment (output_model='aligned'): after a
+        rejection only once the wait is over, of which this call counts one fit."""
+        if self.output_model != 'aligned' or n_points < self.n_features + 3:
+            return False
+        if self._alignment_wait > 0:
+            self._alignment_wait -= 1
+            return False
+        return True
+
+
+    def _fit_shared(self, X_train, y_train, sigma_train, previous, previous_fit_std, align):
+        """Fit one GP with one kernel for all outputs to the curves ``y_train``
+        (a 2-D target). The backend takes one noise variance per point, so the
+        noise variances of the outputs are averaged (exact when sigma is the
+        same for all outputs, given the common output scale). With ``align`` an
+        alignment of the curves is tried, starting from the ``previous`` one."""
+        if self.use_standard_scaling:
+            self.X_scaler = StandardScaler().fit(X_train)
+            X_fit = self.X_scaler.transform(X_train)
+            mu, scale = self._fit_common_y_scaler(y_train)
+            y_fit = (y_train - mu) / scale
+            alpha = np.mean((sigma_train / scale) ** 2, axis=1)
+        else:
+            X_fit, y_fit = X_train, y_train
+            alpha = np.mean(sigma_train ** 2, axis=1)
+        self._set_noise(self.my_GPRs[0], alpha)
+        self.my_GPRs[0].fit(X_fit, y_fit)
+
+        # What the GP takes from its leave-one-out predictions of the curves: a
+        # sigma per output and, with ``align``, whether an alignment replaces it
+        self.alignment, self.sigma_profile = None, None
         loo = self.my_GPRs[0].leave_one_out()
         if loo is None:
             return
@@ -1017,19 +1041,16 @@ class GPNode(Node):
         mu, scale = self.y_common_scaler if self.use_standard_scaling else (0.0, 1.0)
         errors = weights @ (y_train - mu) - (y_train - mu)
         variance = variance * scale ** 2
-        if self.output_model == 'aligned' and X_train.shape[0] >= self.n_features + 3:
-            if self._alignment_wait > 0:
-                self._alignment_wait -= 1
+        if align:
+            aligned = self._aligned_fit(X_train, X_fit, y_train, sigma_train, previous, previous_fit_std)
+            if aligned is not None and np.sqrt(np.mean(aligned[2] ** 2)) * ALIGNMENT_MARGIN < np.sqrt(np.mean(errors ** 2)):
+                self.my_GPRs[0], self.alignment, errors, variance, scaler = aligned
+                if self.use_standard_scaling:
+                    self.y_common_scaler = scaler
+                self._alignment_rejections = 0
             else:
-                aligned = self._aligned_fit(X_train, X_fit, y_train, sigma_train, previous, previous_fit_std)
-                if aligned is not None and np.sqrt(np.mean(aligned[2] ** 2)) * ALIGNMENT_MARGIN < np.sqrt(np.mean(errors ** 2)):
-                    self.my_GPRs[0], self.alignment, errors, variance, scaler = aligned
-                    if self.use_standard_scaling:
-                        self.y_common_scaler = scaler
-                    self._alignment_rejections = 0
-                else:
-                    self._alignment_rejections += 1
-                    self._alignment_wait = min(2 ** self._alignment_rejections, ALIGNMENT_MAX_WAIT) - 1
+                self._alignment_rejections += 1
+                self._alignment_wait = min(2 ** self._alignment_rejections, ALIGNMENT_MAX_WAIT) - 1
         # The GP has one variance for all outputs. Each output gets the factor with
         # which its sigma covers TARGET_COVERAGE of its leave-one-out errors.
         profile = np.quantile(np.abs(errors) / np.sqrt(variance)[:, None], TARGET_COVERAGE, axis=0)
@@ -1725,8 +1746,9 @@ class GPNode(Node):
         # error its residual GP cannot correct.
         if self.global_mean is not None and self.is_leaf and self.n_points > 0:
             current = self.global_mean.current
-            if current is not None and (self._fitted_global is None
-                                        or self._fitted_global.version < current.version):
+            # a leaf with an alignment models the curves themselves, without the global model
+            if current is not None and self.alignment is None and (self._fitted_global is None
+                                                                    or self._fitted_global.version < current.version):
                 if not (getattr(self.global_mean, 'cheap_leaf_refresh', False)
                         and self._refit_on_snapshot(current)):
                     self.fit_my_GPR(force_training=True)
