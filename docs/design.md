@@ -514,15 +514,15 @@ section 8.
   neighbours' prediction alone.
 * **A switch at a lower limit for queries outside their neighbours**, or
   at a limit of 3 for every query (`docs/benchmarks.md`, section 8.20). Both
-  remove the overshoots outside the data. The first costs 0.7% in error
-  along the stream and the second 2.3%, where the gradual change costs
-  nothing there, and neither removes a step.
+  remove the overshoots outside the data. On 5000-point streams the first
+  costs 2.0% in error along the stream and the second 3.6%, where the
+  gradual change costs 1.0%, and neither removes a step.
 * **The leaf's remaining points with the neighbours**, so that a
   prediction is conditioned on the 100 nearest points and on every other
   point of its leaf (`docs/benchmarks.md`, section 8.20). The overshoots
   outside the data stay, since the points of other leaves near the query
   are still there, and without the test against the kernel they grow
-  several times. The error along the stream is 7% lower, as with 150
+  several times. The error along the stream is 6% lower, as with 150
   nearest neighbours, which need no rule for points that enter at a cut.
 * **A split into two clusters of the leaf's points**, each point going to
   the child with the nearer centroid (`docs/benchmarks.md`, section 8.13).
@@ -576,9 +576,10 @@ section 8.
   own GP predicted up to three times the target's largest value in corners
   without data, and the neighbours with it (`docs/benchmarks.md`, section
   8.20). The lower limit for queries outside their neighbours removes the
-  overshoots that the neighbours added to these, at 1% in error at uniform
-  test points on the benchmark targets, where the neighbours are the more
-  accurate of the two outside the data as well.
+  overshoots that the neighbours added to these. On the benchmark targets,
+  where the neighbours are the more accurate of the two outside the data
+  as well, it costs 1% in error on 5000-point streams and nothing on
+  20 000-point ones.
 * **GPyTorch leaves take no appended points.** The adapter cannot extend a
   fit, so a point enters the GPs with the leaf's next fit.
 * **GPyTorch leaves predict from their own points.** The adapter cannot

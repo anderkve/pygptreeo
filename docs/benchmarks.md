@@ -1684,10 +1684,11 @@ queries of the two patches.
 * **Both patches go.** The error near the data is within 2% in 5 of the 6
   runs and 8% higher in the sixth (seed 1, noise 1e-3).
 * **On the 33 runs of 5000 points the stricter test costs accuracy**: the
-  error along the stream is 0.7% higher and that of uniform test points
-  1.7% (3.1% on the sweeping stream), with 14 runs more than 2% worse and 6
-  better. With "the nearest neighbour is further than one of the leaf's
-  spreads" as the mark of such a query the two numbers are 1.0% and 2.3%:
+  error along the stream is 2.0% higher and that of uniform test points
+  1.5% (6.0% and 3.6% on the sweeping stream), with 4 runs more than 2%
+  worse and 2 better. With "the nearest neighbour is further than one of
+  the leaf's spreads" as the mark of such a query the two numbers are 2.3%
+  and 2.1%:
   in six dimensions the nearest neighbour of a point of the stream itself
   is 0.9 to 1.2 spreads away at the median.
 * **On those targets the neighbours are the better choice outside the data
@@ -1725,12 +1726,12 @@ prediction and RMSE away from the data:
 * **Without the test the predictions reach 621**, and in one run the error
   near the data is 26.7 where it was 3.6.
 * **On the 33 runs of 5000 points the leaf's points lower the error along
-  the stream by 6.9%** (3.6% at the median), and 150 nearest neighbours by
-  6.8% (3.0%): the gain is that of more points. Without the test it is
-  5.9%.
-* **A limit of 3 for every query costs 2.3%** along the stream and at
-  uniform test points, with 16 runs more than 2% worse and 3 better, against
-  0.7% and 1.7% for the limit of 3 outside the neighbours only. On the grids
+  the stream by 5.8%** (3.1% at the median), and 150 nearest neighbours by
+  5.7% (2.8%): the gain is that of more points. Without the test it is
+  4.7%.
+* **A limit of 3 for every query costs 3.6%** along the stream and 2.1% at
+  uniform test points, with 10 runs more than 2% worse and 1 better, against
+  2.0% and 1.5% for the limit of 3 outside the neighbours only. On the grids
   the two do the same.
 
 A gradual change in place of the two limits (the prototype
@@ -1761,10 +1762,11 @@ side of it, in units of sigma):
 * **The patches go as with the limit of 3 outside the neighbours**, and
   the largest error of the first is 32 where that leaves 41. Without the
   slide of the limit the first patch stays.
-* **On the 33 runs of 5000 points the error along the stream is 0.2%
-  higher** and that of uniform test points 1.4%, against 0.7% and 1.7%
+* **On the 33 runs of 5000 points the error along the stream is 1.4%
+  higher** and that of uniform test points 1.1%, against 2.0% and 1.5%
   with the limit of 3 outside. A change over a factor of 3 on either side
-  of the limit in place of 2 gives -0.5% and 1.3%.
+  of the limit in place of 2 gives 0.7% and 1.0%. Without the slide of the
+  limit the error is that of the switch.
 * **The large steps are fewer by a third to two thirds** and the largest
   about half as high. Steps above 0.1 sigma are as many as before, 53 and
   15 per line, where the leaves' own predictions have 10 and 1: across
@@ -1793,11 +1795,31 @@ defaults, against the switch at one limit:
 * **The steps** along the lines across the square are those of the
   prototype: 6.5 and 0.3 above one sigma per line (seed 4 with a noise of
   1e-6, seed 2 with 1e-3), against 9.2 and 1.0 with the switch.
-* **On the 33 runs of 5000 points** the error along the stream is 0.2%
-  lower than with the switch (0.5% higher at the median) and that of
-  uniform test points 1.2% higher (0.2% at the median), with 12 runs more
-  than 2% worse and 7 better. 1.5% of the predictions are off by more than
-  5 sigma, against 1.8%.
+* **On the 33 runs of 5000 points** the error along the stream and that
+  of uniform test points are both 1.0% higher than with the switch, and
+  the same at the median: 3 runs are more than 2% worse, 2 better, and the
+  mean is 2.8% higher on the sweeping stream and within 0.6% on the other
+  two. 1.5% of the predictions are off by more than 5 sigma, against 1.7%.
+
+The 150 runs of 20 000 points of section 8.17, as geometric means of the
+NRMSE of the last 5000 predictions:
+
+| stream | against the default tree: switch | gradual | gradual against the switch | uniform test points, gradual against the switch |
+|---|---|---|---|---|
+| uniform | 0.770 | 0.769 | 0.998 | 0.997 |
+| walker | 0.735 | 0.733 | 0.997 | 1.010 |
+| sweeping | 0.720 | 0.716 | 0.995 | 1.005 |
+| focusing | 0.632 | 0.630 | 0.997 | 0.999 |
+| all | 0.714 | 0.711 | 0.997 | 1.003 |
+
+* **At 20 000 points the error along the stream is 0.3% lower than with
+  the switch** and that of uniform test points 0.3% higher, with 4 runs more
+  than 2% worse and 8 better.
+* **One run of 150 is more than 2% worse than the default tree**
+  (`branching_ratio` on the uniform stream, 9%), where two were, by 11%.
+* **The coverage is 0.72 for both**, and 1.4% of the predictions are off
+  by more than 5 sigma, against 1.5% with the switch and 2.0% for the
+  default tree.
 
 Cost, with the two settings side by side in one process
 (`research/partitioning/time_paired.py`), 20 000 points, then 1000 points
