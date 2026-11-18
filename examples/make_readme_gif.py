@@ -2,7 +2,8 @@
 
 The animation tells the core pyGPTreeO story at a glance: an unknown target
 function is learned *online* and *locally*, from a stream of input points, in
-exactly those regions of input space where data arrives.
+exactly those regions of input space where data arrives. The tree predicts from
+each input point's nearest data points (``predict_from='neighbours'``).
 
 To make the "local" aspect obvious, the input points do not cover the domain
 uniformly. Instead they mimic an adaptive sampler: a cluster of points that
@@ -131,6 +132,7 @@ else:                   # himmelblau
     GRID = 70
 
 NBAR = 100 if args.alt else 50
+NOISE = 1e-4       # declared noise of a point, as a share of its target value
 FPS = 12
 END_PAUSE_MS = 1800       # how long the final frame is held before the loop repeats
 
@@ -423,12 +425,13 @@ else:
     kernel = AdditiveMaternKernel(d=2, order=2, nu=1.5)
 gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=NBAR, theta=0.05,
              splitting_strategy="gradual", split_position_method="median",
-             retrain_every_n_points=RETRAIN, use_calibrated_sigma=True)
+             retrain_every_n_points=RETRAIN, use_calibrated_sigma=True,
+             predict_from="neighbours")
 
 frames = []
 n_seen = 0
 for i in range(N_PTS):
-    gpt.update_tree(X_input[i].reshape(1, -1), y_input[i].reshape(1, 1), 0.001 * np.abs(y_input[i]).reshape(1, 1))
+    gpt.update_tree(X_input[i].reshape(1, -1), y_input[i].reshape(1, 1), NOISE * np.abs(y_input[i]).reshape(1, 1))
     n_seen += 1
     if args.final_only:
         if n_seen == N_PTS:
