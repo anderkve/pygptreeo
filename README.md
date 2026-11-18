@@ -86,9 +86,9 @@ This is faster, by a factor of about 2.5 for 5000 points in our tests, with a si
 
 ## Selecting a leaf kernel
 
-By default each leaf GP uses an anisotropic Matérn kernel, `ConstantKernel() * Matern(nu=1.5)`, with one length scale per input dimension. The fitted length scales also determine the split dimension: with the default setting `split_dimension_criteria='min_lengthscale'` a leaf is split along the dimension with the smallest length scale, i.e. the dimension along which the target function varies fastest. For kernels without per-dimension length scales the dimension with the largest spread in the data points is used instead.
+By default each leaf GP uses an anisotropic Matérn kernel, `ConstantKernel() * Matern(nu=1.5)`, with one length scale per input dimension. With the default setting `split_dimension_criteria='min_lengthscale'` a leaf is split along the dimension with the smallest length scale, i.e. the dimension along which the target function varies fastest. For kernels without per-dimension length scales the dimension with the largest spread in the data points is used instead.
 
-For many target functions `AdditiveMaternKernel` is a better choice. It combines the Matérn kernel with a low-order additive kernel, which models the target as a sum of main effects (`order=1`), or of main effects and pairwise interactions (`order=2`).
+For many target functions `AdditiveMaternKernel` is a better choice. It adds a low-order additive kernel, which models the target as a sum of main effects (`order=1`), or of main effects and pairwise interactions (`order=2`). It requires fewer data points when the target has approximately this structure, and there is typically little harm otherwise, except for a longer run time.
 
 ```python
 from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
@@ -98,19 +98,9 @@ kernel = AdditiveMaternKernel(d=d, order=2, nu=1.5)
 gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
 ```
 
-The additive component only has `d` length scales and one variance per interaction order, so it requires fewer data points when the target has (approximately) this structure. The Matérn component captures the remaining, non-additive variation. So even when the target has no additive structure there is typically little harm in using `AdditiveMaternKernel`, except for the increased run time from fitting more hyperparameters. The hyperparameters are tuned per leaf by marginal-likelihood maximisation.
+If the target varies fastest along a combination of the inputs, e.g. for parameters with partly degenerate effects, use `GPR=Default_GPR(oblique=True)`. Each leaf can then learn length scales along combinations of the inputs, keeps them only if they lower its leave-one-out error, and is split across the direction of fastest variation. In our tests this lowered the error by a factor of up to 12 for such targets, at 1.1 to 5 times the run time. For three of eleven single-output targets it raised the error by 7 to 20%.
 
-If the target varies fastest along a combination of the inputs, e.g. for parameters with partly degenerate effects, one length scale per input and splits along single inputs are a poor fit. With `oblique=True` each leaf also fits a Matérn kernel whose length scales can lie along combinations of the inputs (`ObliqueMatern`). A leaf keeps this kernel only if it lowers the leave-one-out error of its points, and is then split across the direction of its shortest length scale instead of along one input.
-
-```python
-gpt = GPTree(GPR=Default_GPR(oblique=True), Nbar=100)
-```
-
-In our tests on seven families of curves with `output_model='shared'`, rotating the parameter space raised the error of the default tree by a factor 2 to 4, and by 32 for a kinematic edge whose position depends on a single parameter. With `oblique=True` the error on the rotated parameters was 1.6 to 4 times lower (12 times for the edge), and within a factor 1.0 to 1.3 (2.7) of that on the original parameters. On the original parameters the leaves declined the kernel for five families, with unchanged predictions, and kept it for two, with a 1.2 and 1.9 times lower error.
-
-Physics parameters often have such mixed effects without any rotation. On eleven single-output physics targets with their original parameters, `oblique=True` lowered the error by a factor 1.3 to 3.8 for five targets, left it within 7% for three, and raised it by 7 to 20% for three. The run time was 1.1 to 2.8 times that of the default for the curves, and 1.5 to 5 times for the single-output targets (8 times with ten inputs).
-
-Any other scikit-learn kernel can be used in the same way, e.g. `ConstantKernel() * (Matern(nu=1.5, length_scale=[1.0] * d) + RBF(length_scale=[1.0] * d))` as a simpler and computationally cheaper alternative. For periodic inputs there is also `AdditivePeriodicMaternKernel(d=d)`, which is typically only beneficial when several oscillation periods fall within a single leaf.
+Any other scikit-learn kernel can be used in the same way, e.g. `ConstantKernel() * (Matern(nu=1.5, length_scale=[1.0] * d) + RBF(length_scale=[1.0] * d))` as a cheaper alternative. For periodic inputs there is also `AdditivePeriodicMaternKernel(d=d)`, which is typically only beneficial when several oscillation periods fall within a single leaf.
 
 ## Multi-output targets
 
