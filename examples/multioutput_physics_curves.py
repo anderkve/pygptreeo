@@ -30,11 +30,13 @@ import warnings
 
 import numpy as np
 
-from pygptreeo import GPTree
+from pygptreeo import GPTree, Default_GPR
 from target_functions_curves import FAMILIES
 
 warnings.filterwarnings("ignore")
 np.random.seed(0)
+
+NU = 2.5       # smoothness of the Matern leaf kernel: these curves are smooth in theta, and 2.5 does better than the default 1.5
 
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 COLOURS = ["#2a78d6", "#eb6834"]
@@ -43,7 +45,8 @@ COLOURS = ["#2a78d6", "#eb6834"]
 def learn(family, model, U, Y, S, truth, U_test, global_mean=None):
     """Stream the curves through a tree. Returns the predictions along the stream,
     those for the test set, and the time per update in ms."""
-    gpt = GPTree(Nbar=100, retrain_every_n_points=25, n_outputs=family.n_outputs, output_model=model, global_mean=global_mean)
+    gpt = GPTree(GPR=Default_GPR(nu=NU), Nbar=100, retrain_every_n_points=25, n_outputs=family.n_outputs, output_model=model,
+                 global_mean=global_mean)
     N = len(U)
     mean, sigma = np.zeros_like(Y), np.zeros_like(Y)
     t_update = 0.0

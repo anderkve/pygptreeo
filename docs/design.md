@@ -235,6 +235,15 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   from the inverse of the kernel matrix, without a refit, and each output's
   sigma gets the factor with which it covers 68% of that output's
   leave-one-out errors.
+* **A smoother kernel for curves from a smooth model.** The default leaf
+  kernel, Matérn 3/2, was chosen on rough targets and on the residual of the
+  network (`benchmarks.md`, section 4.4). The curves here are smooth in their
+  three or four parameters, and with Matérn 5/2 leaves
+  (`Default_GPR(nu=2.5)`) the error of `'shared'` is 3.1 times lower in the
+  geometric mean over the twelve families, between 0.9 and 58 times. RBF
+  leaves are better still on `z_lineshape` and `cmb_peaks`, by a factor 2 to
+  4, and 7 times worse on `zprime_spectrum`. The default is unchanged
+  (section 9.8).
 * **What limits the accuracy is a feature that moves.** Where a peak, an edge
   or the phase of an oscillation has a position in `x` that depends on
   `theta`, a combination of curves with the feature at different positions
@@ -299,6 +308,13 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   network lowered it by a factor 2.3 to 6 on five families and raised it by up
   to 2.2 on the other seven, where the tree alone is as accurate as the
   network (`benchmarks.md`, section 9.7).
+* **Much of that gain is the gain of a smoother model.** With Matérn 5/2
+  leaves the additive GP adds a factor 1.1 in the geometric mean over the
+  twelve families, and 1.9 at most. It keeps a large gain where its kernel
+  fits the structure of the target: `eft_distribution_6d` is quadratic in six
+  coefficients, which is what an additive kernel of order 2 describes, and
+  its error falls by a factor 2700 against the default leaves and 126
+  against Matérn 5/2 leaves.
 * **No global model follows a sharp feature that moves.** On
   `zprime_spectrum` and `kinematic_edge` the additive GP changed the error by
   less than a factor 1.3 and the network raised it by up to 1.6.
