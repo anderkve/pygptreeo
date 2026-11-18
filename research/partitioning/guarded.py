@@ -46,6 +46,7 @@ def guard(tree, measure='centroid', far=0.65, limit=3.0):
     search = tree.neighbours
     search.__class__ = GuardedSearch
     search.measure, search.far, search.far_limit = measure, far, limit
+    search.transition = search.outside_limit = None         # the package's own change to the leaf's GP is off
     return tree
 
 

@@ -132,6 +132,8 @@ class GPTree:
                  predict_from: str = 'leaf',
                  n_neighbours: Optional[int] = None,
                  neighbour_consistency: float = 10.0,
+                 neighbour_consistency_outside: Optional[float] = 3.0,
+                 neighbour_transition: Optional[float] = 2.0,
                  neighbour_leaves: Optional[int] = 16,
                  neighbour_fade: Optional[float] = 0.9,
                  neighbour_blend: Optional[float] = 0.1,
@@ -253,11 +255,12 @@ class GPTree:
                 ``n_neighbours`` stored points nearest to the query, from
                 whichever leaves hold them, with the kernel of the query's
                 leaf. Distances are in units of the spread of that leaf's
-                points along each input. Where the neighbours do not fit the
-                leaf's kernel (``neighbour_consistency``) the leaf's own GP
-                predicts. So it does for a leaf whose own GP predicted the
-                last points it received clearly better than their neighbours
-                did. Needs a GP backend with ``supports_conditioning()`` (the
+                points along each input. Where the neighbours fit the leaf's
+                kernel badly (``neighbour_consistency``) the prediction
+                passes to that of the leaf's own GP. A leaf whose own GP
+                predicted the last points it received clearly better than
+                their neighbours did predicts from its own points. Needs a
+                GP backend with ``supports_conditioning()`` (the
                 scikit-learn adapter).
             n_neighbours (Optional[int]): For 'neighbours': the number of
                 points a prediction is conditioned on. Defaults to ``Nbar``.
@@ -267,6 +270,22 @@ class GPTree:
                 for points the kernel describes, and in the hundreds where
                 the neighbours lie across a jump of the target that the
                 leaf's own points do not contain. Defaults to 10.
+            neighbour_consistency_outside (Optional[float]): For
+                'neighbours': that limit for a query outside its neighbours,
+                where a kernel that fits them badly carries their trend far
+                from the target. How far outside a query lies is measured by
+                the distance of the neighbours' centre from it, over that of
+                the furthest neighbour: the limit is ``neighbour_consistency``
+                up to 0.5, this one from 0.8, and passes from one to the
+                other in between. Defaults to 3. None for one limit
+                everywhere.
+            neighbour_transition (Optional[float]): For 'neighbours': the
+                prediction passes gradually from that of the neighbours to
+                that of the leaf's own GP. It is the mixture of the two, with
+                a weight for the neighbours that falls from 1 at the limit
+                divided by this to 0 at the limit times this, linearly in
+                the logarithm of the consistency. Defaults to 2. None
+                switches at the limit.
             neighbour_leaves (Optional[int]): For 'neighbours': the neighbours
                 are the nearest points of this many leaves, those whose
                 points lie nearest to the query. Defaults to 16. None looks
@@ -350,7 +369,9 @@ class GPTree:
                                  "(e.g. the scikit-learn adapter returned by Default_GPR)")
             self.neighbours = NeighbourSearch(self, n_neighbours=Nbar if n_neighbours is None else n_neighbours,
                                               consistency_limit=neighbour_consistency, max_leaves=neighbour_leaves,
-                                              fade=neighbour_fade, blend=neighbour_blend, awake=neighbour_awake)
+                                              fade=neighbour_fade, blend=neighbour_blend, awake=neighbour_awake,
+                                              outside_limit=neighbour_consistency_outside,
+                                              transition=neighbour_transition)
 
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
@@ -905,19 +926,22 @@ class GPTree:
 
     def _predict_blended(self, x: np.ndarray, leaves, weights, calibrated: bool = True):
         """The prediction at one query (one row) within the zones of several
-        leaves: from its neighbours with the kernels of the leaves mixed, or,
-        where that cannot be done, the mixture of the leaves' predictions.
-        Returns the mean and sigma per output; without ``calibrated`` sigma is
-        that of the GPs."""
+        leaves: from its neighbours with the kernels of the leaves mixed, the
+        mixture of the leaves' predictions where that cannot be done, or the
+        two mixed where the neighbours fit the mixed kernel badly
+        (``NeighbourSearch.share``). Returns the mean and sigma per output;
+        without ``calibrated`` sigma is that of the GPs."""
         weights = np.asarray(weights, dtype=float)
         mixed = self.neighbours.predict_mixed(x, leaves, weights)
-        if mixed is None:
+        share = 0.0 if mixed is None else mixed[2]
+        if share < 1.0:
             parts = [self._predict_leaf(leaf, x, calibrated) for leaf in leaves]
-            mu = sum(weight * mu_leaf[0] for weight, (mu_leaf, _) in zip(weights, parts))
-            variance = sum(weight * (sigma_leaf[0] ** 2 + (mu_leaf[0] - mu) ** 2)
+            mu_leaves = sum(weight * mu_leaf[0] for weight, (mu_leaf, _) in zip(weights, parts))
+            variance = sum(weight * (sigma_leaf[0] ** 2 + (mu_leaf[0] - mu_leaves) ** 2)
                            for weight, (mu_leaf, sigma_leaf) in zip(weights, parts))
-            return mu, np.sqrt(variance)
-        mu, sigma = mixed
+            if mixed is None:
+                return mu_leaves, np.sqrt(variance)
+        mu, sigma = mixed[:2]
         if calibrated and self.use_calibrated_sigma:
             sigma = sigma * sum(weight * np.asarray(leaf.sigma_scalers) for weight, leaf in zip(weights, leaves))
             if self._sigma_slope > 0.0:
@@ -927,6 +951,8 @@ class GPTree:
             for leaf in leaves:
                 self._account(leaf)
             self._enforce_memory_limit(remove=False)
+        if share < 1.0:
+            mu, sigma = self.neighbours.mix(share, mu, sigma, mu_leaves, np.sqrt(variance))
         return mu, sigma
 
 

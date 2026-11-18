@@ -14,6 +14,12 @@ import numpy as np
 from scipy.linalg.lapack import dpotrf, dtrtrs
 
 
+# Of the distance of the furthest neighbour: between these distances of the
+# neighbours' centre from the query, the limit on their consistency passes
+# from that for a query among its neighbours to that for one outside them.
+OUTSIDE_FROM, OUTSIDE_TO = 0.5, 0.8
+
+
 class NeighbourSearch:
     """Nearest-neighbour search over the points stored in the leaves of a tree.
 
@@ -25,6 +31,12 @@ class NeighbourSearch:
         consistency_limit (float): A leaf predicts from its own points where
             the neighbours fit its kernel worse than this (see
             ``GPRegressorInterface.condition``).
+        outside_limit (Optional[float]): That limit for a query outside its
+            neighbours (``outside``); None for one limit everywhere.
+        transition (Optional[float]): The prediction passes from the
+            neighbours' to the leaf's own between the limit divided by this
+            and the limit times this (``share``); None for a switch at the
+            limit.
         max_leaves (Optional[int]): The search stops after this many leaves;
             None for an exact search.
         fade (Optional[float]): The noise of a neighbour grows from this
@@ -44,10 +56,13 @@ class NeighbourSearch:
     fade = None
     blend = None
     awake = None
+    outside_limit = None
+    transition = None
 
 
     def __init__(self, tree, n_neighbours: int, consistency_limit: float = 10.0, max_leaves: Optional[int] = None,
-                 fade: Optional[float] = None, blend: Optional[float] = None, awake: Optional[int] = None):
+                 fade: Optional[float] = None, blend: Optional[float] = None, awake: Optional[int] = None,
+                 outside_limit: Optional[float] = None, transition: Optional[float] = None):
         if n_neighbours < 1:
             raise ValueError("n_neighbours must be at least 1")
         if max_leaves is not None and max_leaves < 1:
@@ -58,6 +73,10 @@ class NeighbourSearch:
             raise ValueError("neighbour_blend must be above 0 and at most 1, or None")
         if awake is not None and awake < 1:
             raise ValueError("neighbour_awake must be at least 1, or None")
+        if outside_limit is not None and not outside_limit > 0.0:
+            raise ValueError("neighbour_consistency_outside must be above 0, or None")
+        if transition is not None and not transition > 1.0:
+            raise ValueError("neighbour_transition must be above 1, or None")
         self.tree = tree
         self.n_neighbours = int(n_neighbours)
         self.consistency_limit = float(consistency_limit)
@@ -65,6 +84,8 @@ class NeighbourSearch:
         self.fade = fade
         self.blend = blend
         self.awake = awake
+        self.outside_limit = outside_limit
+        self.transition = transition
         self.in_use = OrderedDict()
         self.n_searches = 0
         self.n_leaves_searched = 0
@@ -74,6 +95,67 @@ class NeighbourSearch:
         if self.awake is not None:
             self.in_use[leaf] = None
             self.in_use.move_to_end(leaf)
+
+    def outside(self, X: np.ndarray, q: np.ndarray, w: np.ndarray, growth=None) -> float:
+        """How far the query ``q`` lies outside its neighbours ``X``: the
+        distance of their centre from it over that of the furthest of them,
+        in the inputs divided by ``w``. Near 0 with neighbours on all sides,
+        towards 1 with all of them on one side. A neighbour that fades out
+        (``growth``, as ``find`` returns it) counts by what is left of it,
+        so that the measure is continuous in the query."""
+        offsets = (X - q) / w
+        furthest = np.sqrt((offsets ** 2).sum(axis=1).max())
+        if not furthest > 0.0:
+            return 0.0
+        if growth is None:
+            centre = offsets.mean(axis=0)
+        else:
+            left = 1.0 / (1.0 + np.sqrt(growth))
+            centre = left @ offsets / left.sum()
+        return float(np.sqrt(centre @ centre) / furthest)
+
+    def share(self, consistency: float, outside: float = 0.0) -> float:
+        """The weight of the neighbours' prediction against that of the
+        leaf's own GP, for neighbours of the given ``consistency`` with the
+        kernel and a query that far ``outside`` them.
+
+        The limit on the consistency is ``consistency_limit`` up to
+        OUTSIDE_FROM, ``outside_limit`` from OUTSIDE_TO, and passes from one
+        to the other in between. The weight is 1 up to the limit divided by
+        ``transition``, 0 from the limit times it, and linear in the
+        logarithm of the consistency in between."""
+        limit = self.consistency_limit
+        if self.outside_limit is not None and outside > OUTSIDE_FROM and 0.0 < limit < np.inf:
+            limit *= (self.outside_limit / limit) ** min((outside - OUTSIDE_FROM) / (OUTSIDE_TO - OUTSIDE_FROM), 1.0)
+        if self.transition is None:
+            return 1.0 if consistency <= limit else 0.0
+        if consistency <= limit / self.transition:
+            return 1.0
+        if not consistency < limit * self.transition:
+            return 0.0
+        return float(np.log(limit * self.transition / consistency) / (2.0 * np.log(self.transition)))
+
+    def weight(self, consistency: float, X: np.ndarray, q: np.ndarray, w: np.ndarray, growth=None) -> float:
+        """``share`` for the neighbours ``X`` of the query ``q``. How far the
+        query lies outside them is worked out only where the weight depends
+        on it."""
+        among = self.share(consistency)
+        if among == self.share(consistency, 1.0):
+            return among
+        return self.share(consistency, self.outside(X, q, w, growth))
+
+    @staticmethod
+    def mix(share, mu, sigma, mu_other, sigma_other):
+        """Mean and sigma of the mixture of two predictions, the first with
+        the weight ``share``. Entries of the first are not read where its
+        weight is 0."""
+        share = np.broadcast_to(share, np.shape(mu_other))
+        first, second = share >= 1.0, share <= 0.0
+        mu, sigma = np.where(second, mu_other, mu), np.where(second, sigma_other, sigma)
+        mean = share * mu + (1.0 - share) * mu_other
+        variance = share * sigma ** 2 + (1.0 - share) * sigma_other ** 2 + share * (1.0 - share) * (mu - mu_other) ** 2
+        return (np.where(first, mu, np.where(second, mu_other, mean)),
+                np.where(first, sigma, np.where(second, sigma_other, np.sqrt(variance))))
 
     def find(self, q: np.ndarray, w: np.ndarray, leaf=None):
         """The ``n_neighbours`` stored points nearest to ``q``.
@@ -157,16 +239,18 @@ class NeighbourSearch:
         the global model and its error, and the unit of the fading are the
         leaves' with the same weights.
 
-        Returns the mean and sigma per output, before calibration, or None
-        where a leaf cannot give its kernel or predicts from its own points,
-        or where the neighbours do not fit the mixed kernel.
+        Returns the mean and sigma per output, before calibration, and the
+        weight of this prediction against the mixture of the leaves' own
+        predictions (``share``, the smallest over the outputs). None where a
+        leaf cannot give its kernel or predicts from its own points, or
+        where that weight is 0.
         """
         for leaf in leaves:
             leaf._refresh_global()
         if any(not leaf._can_condition() or leaf.prefers_own or leaf.output_model != 'independent' for leaf in leaves):
             return None
-        found = self.find(x[0], sum(weight * leaf.fit_std for weight, leaf in zip(weights, leaves)),
-                          leaf=leaves[int(np.argmax(weights))])
+        spread = sum(weight * leaf.fit_std for weight, leaf in zip(weights, leaves))
+        found = self.find(x[0], spread, leaf=leaves[int(np.argmax(weights))])
         if found is None:
             return None
         X, y, noise_std, growth = found
@@ -199,7 +283,7 @@ class NeighbourSearch:
         if growth is not None:
             noise = noise + growth[:, None] * (noise + unit + without_unit * 0.01 * residual.var(axis=0))
         noise = noise * scale
-        mu, sigma = np.empty(n_outputs), np.empty(n_outputs)
+        mu, sigma, share = np.empty(n_outputs), np.empty(n_outputs), 1.0
         for i in range(n_outputs):
             K = covariances[i, :n, :n].copy()
             K.flat[::n + 1] += noise[:, i]
@@ -211,8 +295,9 @@ class NeighbourSearch:
             if info != 0:
                 return None
             v, u = solved[:, 0], solved[:, 1]
-            if not v @ v / n <= self.consistency_limit:
+            share = min(share, self.weight(v @ v / n, X, x[0], spread, growth))
+            if share <= 0.0:
                 return None
             mu[i] = mean[n, i] + u @ v
             sigma[i] = np.sqrt(max(covariances[i, n, n] - u @ u, 0.0) + global_error[i])
-        return mu, sigma
+        return mu, sigma, share

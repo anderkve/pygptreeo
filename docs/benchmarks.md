@@ -595,7 +595,10 @@ with the kernel of the query's leaf alone and with every leaf awake
 (`neighbour_fade=None`, `neighbour_blend=None`, `neighbour_awake=None`).
 Section 8.15 has the neighbours that fade out, section 8.17 the kernels
 mixed across the cuts and section 8.19 the leaves asleep, which are the
-defaults of `predict_from='neighbours'`.
+defaults of `predict_from='neighbours'`. Sections 8.2 to 8.20 were measured
+with a switch to the leaf's own GP at one limit (`neighbour_transition=None`,
+`neighbour_consistency_outside=None`); section 8.21 has the gradual change,
+which is the default as well.
 
 Sections 8.1 to 8.3: eleven targets (`GaussianPeaks` and `RotatedRosenbrock`
 in six dimensions, `Eggholder` in three, `Chirp` in four, a four-dimensional
@@ -1730,9 +1733,9 @@ prediction and RMSE away from the data:
   0.7% and 1.7% for the limit of 3 outside the neighbours only. On the grids
   the two do the same.
 
-A gradual change in place of the two limits
-(`research/partitioning/smooth_guard.py`, not in the code): the
-neighbours' prediction and the leaf's own are mixed, with a weight for the
+A gradual change in place of the two limits (the prototype
+`research/partitioning/smooth_guard.py`; section 8.21 has it in the
+package): the neighbours' prediction and the leaf's own are mixed, with a weight for the
 neighbours that falls from 1 to 0 as their consistency rises from half the
 limit to twice it, linearly in its logarithm. The limit slides from 10 to 3
 as the centre of the neighbours moves from 0.5 to 0.8 of the distance of the
@@ -1767,3 +1770,55 @@ side of it, in units of sigma):
   15 per line, where the leaves' own predictions have 10 and 1: across
   the whole square most steps of the neighbours' predictions have other
   causes.
+
+### 8.21 A gradual change to the leaf's own GP (`neighbour_transition`, `neighbour_consistency_outside`)
+
+In the package the centre of the neighbours counts a neighbour that fades
+out by what is left of it, which makes the measure about 0.03 smaller than
+in the prototype of section 8.20. The grids of that section with the
+defaults, against the switch at one limit:
+
+| seed, noise | switch: largest prediction | RMSE away from the data | gradual: largest prediction | RMSE away from the data |
+|---|---|---|---|---|
+| 4, 1e-6 | 148.8 | 11.7 | 85.0 | 8.9 |
+| 4, 1e-3 | 74.8 | 10.8 | 74.8 | 11.0 |
+| 1, 1e-6 | 239.3 | 33.3 | 239.3 | 36.2 |
+| 1, 1e-3 | 86.4 | 12.6 | 86.4 | 12.4 |
+| 2, 1e-6 | 125.6 | 13.2 | 125.6 | 12.4 |
+| 2, 1e-3 | 73.0 | 16.7 | 73.0 | 8.8 |
+
+* **Away from the data the mean RMSE is 14.9**, against 16.4 with the
+  switch and 15.4 for the leaves. The error near the data is within 0.6% in
+  5 of the 6 runs and 2% higher in the sixth.
+* **The steps** along the lines across the square are those of the
+  prototype: 6.5 and 0.3 above one sigma per line (seed 4 with a noise of
+  1e-6, seed 2 with 1e-3), against 9.2 and 1.0 with the switch.
+* **On the 33 runs of 5000 points** the error along the stream is 0.2%
+  lower than with the switch (0.5% higher at the median) and that of
+  uniform test points 1.2% higher (0.2% at the median), with 12 runs more
+  than 2% worse and 7 better. 1.5% of the predictions are off by more than
+  5 sigma, against 1.8%.
+
+Cost, with the two settings side by side in one process
+(`research/partitioning/time_paired.py`), 20 000 points, then 1000 points
+that follow in the stream and 1000 uniform ones: the times with the gradual
+change divided by those with the switch, and the share of the predictions
+that needed the own GP of a leaf.
+
+| target, stream | update time | prediction time, stream | uniform | own GP needed, stream: switch | gradual | uniform: switch | gradual | of them from a sleeping leaf |
+|---|---|---|---|---|---|---|---|---|
+| `GaussianPeaks`, uniform | 1.004 | 1.010 | 1.010 | 4.2% | 4.5% | 5.1% | 5.2% | 0.2% |
+| `GaussianPeaks`, walker | 1.000 | 0.999 | 1.106 | 7.6% | 7.6% | 8.9% | 25.5% | 10.4% |
+| `resonance_xsec`, uniform | 1.004 | 1.036 | 1.035 | 38.1% | 39.6% | 38.8% | 40.4% | 13.9% |
+| `global_fit_loglike`, uniform | 1.005 | 1.035 | 1.012 | 72.6% | 73.3% | 65.6% | 65.9% | 6.8% |
+| `Eggholder`, walker | 1.002 | 1.008 | 1.039 | 1.0% | 1.6% | 0.9% | 5.6% | 1.7% |
+| `eft_signal_strength`, sweeping | 1.002 | 0.999 | 1.002 | 12.9% | 12.9% | 2.7% | 3.0% | 0.3% |
+
+* **An update takes up to 0.5% longer and a prediction along the stream
+  up to 4%.** Along the stream the leaf's own GP is needed for at most 1.5
+  points of a hundred more than with the switch.
+* **A prediction away from the stream takes up to 11% longer**, where a
+  quarter of the uniform test points need the leaf's own GP in place of a
+  tenth, and one in ten wakes a sleeping leaf for it.
+* **The memory is the same within 5%**: 10.9 MB for 10.4 where most leaves
+  are woken, and within 0.3 MB elsewhere.

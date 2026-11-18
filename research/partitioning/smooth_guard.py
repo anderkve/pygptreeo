@@ -1,6 +1,7 @@
 """A gradual change from the neighbours' prediction to the leaf's own.
 
-A prototype: the two predictions are mixed with a weight for the neighbours
+The prototype of `neighbour_transition` and `neighbour_consistency_outside`:
+the two predictions are mixed with a weight for the neighbours
 that falls from 1 to 0 as their consistency with the kernel rises from
 `limit / width` to `limit * width`, linearly in its logarithm. The limit
 itself slides from `neighbour_consistency` to `far` as the centre of the
@@ -137,6 +138,7 @@ GPTree._predict_blended = _predict_blended
 def smooth(tree, **settings):
     """Give the tree's neighbour search the gradual change."""
     tree.neighbours.__class__ = SmoothSearch
+    tree.neighbours.transition = tree.neighbours.outside_limit = None      # the package's own version is off
     for name, value in settings.items():
         setattr(tree.neighbours, name, value)
     return tree

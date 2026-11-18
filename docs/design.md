@@ -194,6 +194,30 @@ section 8.
   Above `neighbour_consistency` (10) the leaf's own GP predicts, as in the
   tree without neighbours. Limits from 5 to 100 give the same error, and the
   number comes with the factorisation that the prediction needs anyway.
+* **The change to the leaf's own GP is gradual** (`neighbour_transition`,
+  2). The prediction is the mixture of the two, with a weight for the
+  neighbours that falls from 1 at half the limit to 0 at twice the limit,
+  linearly in the logarithm of the consistency. In the zones at the cuts
+  the other prediction is the mixture of the leaves' predictions. With a
+  switch at the limit the prediction steps where the consistency crosses
+  it: along lines across the whole input space the steps above one sigma
+  are fewer by a third to two thirds with the mixture, and the largest
+  about half as high (`docs/benchmarks.md`, section 8.20).
+* **A lower limit for a query outside its neighbours**
+  (`neighbour_consistency_outside`, 3). Away from the data the neighbours
+  of a query come from several leaves and span many times the range of
+  targets of the query's leaf. A kernel that fits them badly then carries
+  their trend on to the query, where the leaf's own GP returns to the mean
+  of its points: with the additive kernel this gave patches of twice the
+  target's largest value, or below its smallest, in corners without data.
+  A query is outside by the distance of the neighbours' centre from it over
+  that of the furthest neighbour, near 0 with neighbours on all sides and
+  towards 1 with all of them on one side. The limit is that among the
+  neighbours up to 0.5 and the lower one from 0.8, with a geometric
+  passage between them; 95% of a stream's own points stay below 0.6, in two
+  dimensions and in six. A neighbour that fades out counts in the centre by
+  what is left of it, so the measure is continuous in the query. It is
+  worked out only where the weight depends on it.
 * **A leaf keeps to its own GP while that predicts its points better.**
   Where the declared noise is large against the change of the target across
   a query's neighbours, they say less about its slope than the points of the
@@ -302,7 +326,11 @@ section 8.
   an update takes 40 to 70% longer. Both times grow slowly with the stream,
   by about a quarter from
   5000 to 200 000 points, as leaves get faces along more inputs
-  (`docs/benchmarks.md`, section 8.17).
+  (`docs/benchmarks.md`, section 8.17). The gradual change to the leaf's
+  own GP asks for that GP wherever the weight of the neighbours is below
+  1, and wakes its leaf for it: at most 0.5% on an update, 4% on a
+  prediction along the stream and 11% on one at a uniform test point
+  (section 8.21).
 
 ## An index of the leaves
 
@@ -484,6 +512,11 @@ section 8.
 * **A blend of the neighbours' prediction and the leaf's own**, with equal
   weights or weights from the two sigmas: 1 to 13% worse than the
   neighbours' prediction alone.
+* **A switch at a lower limit for queries outside their neighbours**, or
+  at a limit of 3 for every query (`docs/benchmarks.md`, section 8.20). Both
+  remove the overshoots outside the data. The first costs 0.7% in error
+  along the stream and the second 2.3%, where the gradual change costs
+  nothing there, and neither removes a step.
 * **The leaf's remaining points with the neighbours**, so that a
   prediction is conditioned on the 100 nearest points and on every other
   point of its leaf (`docs/benchmarks.md`, section 8.20). The overshoots
@@ -538,25 +571,23 @@ section 8.
   median run. Near a leaf's points the sigma that grows with the distance
   changes nothing: 2.5% of the predictions within a distance of 2 are off by
   more than 5 sigma.
-* **Predictions from neighbours can overshoot outside the data.** Away
-  from the data the neighbours of a query come from several leaves and span
-  many times the range of targets of the query's leaf, whose kernel carries
-  their trend on to the query; the leaf's own GP returns to the mean of its
-  points instead. With the additive kernel in two dimensions this gave
-  patches of twice the target's largest value, or below its smallest, in
-  corners without data, more so with a declared noise near zero
-  (`docs/benchmarks.md`, section 8.20). On the benchmark targets the
-  neighbours are the more accurate of the two outside the data as well, and
-  a stricter test against the kernel for such queries cost 1 to 2% there.
+* **Outside the data both kinds of prediction can overshoot.** With the
+  additive kernel and a declared noise of a millionth of the value, a leaf's
+  own GP predicted up to three times the target's largest value in corners
+  without data, and the neighbours with it (`docs/benchmarks.md`, section
+  8.20). The lower limit for queries outside their neighbours removes the
+  overshoots that the neighbours added to these, at 1% in error at uniform
+  test points on the benchmark targets, where the neighbours are the more
+  accurate of the two outside the data as well.
 * **GPyTorch leaves take no appended points.** The adapter cannot extend a
   fit, so a point enters the GPs with the leaf's next fit.
 * **GPyTorch leaves predict from their own points.** The adapter cannot
   condition a fitted kernel on other points, so `predict_from='neighbours'`
   needs the scikit-learn adapter.
 * **Predictions from neighbours still step, by a tenth of a sigma or
-  less,** where the 16 leaves that are searched change, where a leaf that
-  predicts from its own points takes part, and where the neighbours stop
-  fitting the mixed kernel.
+  less,** where the 16 leaves that are searched change and where a leaf
+  that predicts from its own points takes part. Away from the data they
+  step more often than those of the leaves.
 * **A global model is evaluated at the neighbours of every query.** With
   `predict_from='neighbours'` the residuals of the neighbours are computed
   for each prediction, which is slow with the additive global GP.

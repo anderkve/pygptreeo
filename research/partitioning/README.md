@@ -26,7 +26,7 @@ Records go to `results/` (not in the repository).
 | `extrapolation_diag.py`, `extrapolation_report.py` | Uniform test points: the neighbours against the leaf's own GP by how far a query lies outside the data, and rules that choose between them |
 | `guarded.py` | A stricter test against the kernel for queries outside their neighbours |
 | `with_leaf.py` | The nearest neighbours together with the rest of the leaf's own points |
-| `smooth_guard.py` | A gradual change from the neighbours' prediction to the leaf's own, by the neighbours' consistency and by how far the query lies outside them |
+| `smooth_guard.py` | The prototype of `neighbour_transition` and `neighbour_consistency_outside`: a gradual change from the neighbours' prediction to the leaf's own, by the neighbours' consistency and by how far the query lies outside them |
 | `knn.py` | The first version of the neighbours (brute-force search, optional far points and per-level samples) |
 | `diag_knn.py`, `diag_batch.py`, `diag_knn_report.py` | Replay: the leaf's prediction against that of its kernel on the nearest points, for every size of the neighbour set, and rules for the test against the kernel |
 | `diag_kernel.py`, `diag_kernel_report.py` | Replay: which leaf's kernel the neighbours should use |
@@ -34,7 +34,7 @@ Records go to `results/` (not in the repository).
 | `drift_bench.py` | Cost along a steadily drifting stream |
 | `time_predict.py` | Update and prediction times with one process |
 | `time_scaling.py` | The same at checkpoints along one long stream |
-| `time_paired.py` | Two settings timed side by side, point by point |
+| `time_paired.py` | Two settings timed side by side, point by point, with the share of predictions that need a leaf's own GP |
 | `index_scaling.py` | The search for the nearest leaves, and the leaves of a prediction with zones at the cuts, up to a million points, without GPs |
 | `profile_search.py` | The parts of a neighbour search on a growing tree |
 

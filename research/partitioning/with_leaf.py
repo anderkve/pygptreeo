@@ -59,6 +59,7 @@ class WithLeafSearch(NeighbourSearch):
 def with_leaf(tree):
     """Give the tree's neighbour search the leaf's own points as well."""
     tree.neighbours.__class__ = WithLeafSearch
+    tree.neighbours.transition = tree.neighbours.outside_limit = None      # a switch at one limit, as when this was measured
     return tree
 
 

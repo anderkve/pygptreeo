@@ -55,7 +55,7 @@ def stream(seed):
 def main():
     seed, noise = int(sys.argv[1]), float(sys.argv[2])
     mode = sys.argv[3] if len(sys.argv) > 3 else 'neighbours'
-    options = {name: float(value) for name, value in (item.split('=') for item in sys.argv[4:])}
+    options = {name: None if value == 'None' else float(value) for name, value in (item.split('=') for item in sys.argv[4:])}
     prototype = {name: options.pop(name) for name in ('inside', 'outside', 'far', 'width') if name in options}
     X, y = stream(seed)
     tree = GPTree(GPR=Default_GPR(kernel=AdditiveMaternKernel(d=2, order=2, nu=1.5), alpha=1e-6), Nbar=100, theta=0.05,

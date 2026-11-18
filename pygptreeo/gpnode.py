@@ -1769,31 +1769,36 @@ class GPNode(Node):
         stored points nearest to it, before the global model is added back.
 
         Distances are in units of the spread of the points of the node's last
-        fit. Where the neighbours do not fit a kernel
-        (``NeighbourSearch.consistency_limit``) the node's own GP predicts.
+        fit. Where the neighbours fit a kernel badly the prediction is mixed
+        with that of the node's own GP, or is that alone
+        (``NeighbourSearch.share``).
         """
         n = x.shape[0]
-        mu = np.full((n, self.n_outputs), np.nan)
-        sigma = np.full((n, self.n_outputs), np.nan)
+        mu, sigma, share = (np.zeros((n, self.n_outputs)) for _ in range(3))
         for r in range(n):
             found = self.neighbours.find(x[r], self.fit_std, leaf=self)
             if found is not None:
-                self._condition_on(found, x[r:r + 1], mu[r], sigma[r])
-        missing = np.isnan(mu)
-        rows = missing.any(axis=1)
+                share[r] = self._condition_on(found, x[r:r + 1], mu[r], sigma[r])
+        rows = (share < 1.0).any(axis=1)
         if rows.any():
             mu_own, sigma_own = self._predict_own(x[rows])
-            mu[rows] = np.where(missing[rows], mu_own, mu[rows])
-            sigma[rows] = np.where(missing[rows], sigma_own, sigma[rows])
+            mu[rows], sigma[rows] = self.neighbours.mix(share[rows], mu[rows], sigma[rows], mu_own, sigma_own)
         return mu, sigma
 
 
     def _condition_on(self, points, xq: np.ndarray, mu: np.ndarray, sigma: np.ndarray):
         """Fill ``mu`` and ``sigma`` (one entry per output) with the posterior at
-        the single query ``xq`` of the node's kernels given ``points``. An
-        output is left as it is where the points do not fit its kernel or the
-        backend cannot condition."""
+        the single query ``xq`` of the node's kernels given ``points``, and
+        return the weight of that prediction per output against the node's
+        own (``NeighbourSearch.share``). An output is left as it is, with the
+        weight 0, where the points do not fit its kernel or the backend
+        cannot condition."""
         X, y, noise_std, growth = points
+        share = np.zeros(self.n_outputs)
+
+        def weight(consistency):
+            return self.neighbours.weight(consistency, X, xq[0], self.fit_std, growth)
+
         if self._fitted_global is not None:
             y = y - self._fitted_global.predict(X)
         if growth is not None:
@@ -1804,34 +1809,40 @@ class GPNode(Node):
             noise_std = np.sqrt(noise_std ** 2 + growth[:, None] * (noise_std ** 2 + unit))
         Xs, qs = self._scaled_inputs(X), self._scaled_inputs(xq)
         scaled = self.use_standard_scaling and self.X_scaler is not None
-        limit = self.neighbours.consistency_limit
 
         if self.output_model == 'independent':
             for i, gpr in enumerate(self.my_GPRs):
                 shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
                 result = gpr.condition(Xs, (y[:, i] - shift) / scale, (noise_std[:, i] / scale) ** 2, qs)
-                if result is not None and result[2][0] <= limit:
-                    mu[i], sigma[i] = result[0][0, 0] * scale + shift, result[1][0, 0] * scale
+                if result is not None:
+                    share[i] = weight(result[2][0])
+                    if share[i] > 0.0:
+                        mu[i], sigma[i] = result[0][0, 0] * scale + shift, result[1][0, 0] * scale
 
         elif self.output_model == 'shared':
             shift, scale = self.y_common_scaler if scaled and self.y_common_scaler is not None else (0.0, 1.0)
             result = self.my_GPRs[0].condition(Xs, (y - shift) / scale, np.mean((noise_std / scale) ** 2, axis=1), qs)
-            if result is not None and np.max(result[2]) <= limit:
-                mu[:], sigma[:] = result[0][0] * scale + shift, result[1][0] * scale
+            if result is not None:
+                share[:] = weight(np.max(result[2]))
+                if share[0] > 0.0:
+                    mu[:], sigma[:] = result[0][0] * scale + shift, result[1][0] * scale
 
         else:  # 'pca'
             basis = self._fitted_basis
             Z, noise_z = basis.project(y), basis.project_noise(noise_std)
             z_shift, z_scale = self.z_scaler
             z_mean, z_var = np.empty((1, basis.n_components)), np.empty((1, basis.n_components))
+            lowest = 1.0
             for j, gpr in enumerate(self.my_GPRs):
                 result = gpr.condition(Xs, (Z[:, j] - z_shift[j]) / z_scale[j], noise_z[:, j] / z_scale[j] ** 2, qs)
-                if result is None or not result[2][0] <= limit:
-                    return
+                lowest = 0.0 if result is None else min(lowest, weight(result[2][0]))
+                if lowest <= 0.0:
+                    return share
                 z_mean[0, j] = result[0][0, 0] * z_scale[j] + z_shift[j]
                 z_var[0, j] = (result[1][0, 0] * z_scale[j]) ** 2
             mu_pred, var_pred = basis.reconstruct(z_mean, z_var)
-            mu[:], sigma[:] = mu_pred[0], np.sqrt(var_pred[0])
+            mu[:], sigma[:], share[:] = mu_pred[0], np.sqrt(var_pred[0]), lowest
+        return share
 
 
     def _predict_independent(self, x: np.ndarray, return_std: bool = True):

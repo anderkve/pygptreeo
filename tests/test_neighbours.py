@@ -372,10 +372,11 @@ class TestPredictions(unittest.TestCase):
             ys = leaf.y_scalers[0]
             consistency = leaf.my_GPRs[0].condition(leaf.X_scaler.transform(Xn), ys.transform(yn)[:, 0],
                                                     (sn[:, 0] / ys.scale_[0]) ** 2, leaf.X_scaler.transform(q[None, :]))[2][0]
-            if consistency > gpt.neighbours.consistency_limit:
+            share = gpt.neighbours.share(consistency, gpt.neighbours.outside(Xn, q, leaf.fit_std))
+            if share == 0.0:
                 own += 1
                 np.testing.assert_allclose(gpt.predict(q[None, :])[0], leaf._predict_own(q[None, :])[0], rtol=1e-9)
-            else:
+            elif share == 1.0:
                 conditioned += 1
         self.assertGreater(own, 5)
         self.assertGreater(conditioned, 100)
@@ -734,6 +735,179 @@ class TestBlend(unittest.TestCase):
             self.assertTrue(all(np.all(gpt.leaf_index.faces(leaf)[2] == 0.0) for leaf in gpt.root.leaves))
             self.assertTrue(all(len(gpt._leaves_of(q[None, :])[0]) == 1 for q in self.queries[:100]))
         self.assertTrue(self.gpt._blends())
+
+
+class TestGradual(unittest.TestCase):
+    """The change from the neighbours' prediction to the leaf's own
+    (``neighbour_transition``, ``neighbour_consistency_outside``)."""
+
+    def test_the_weight_of_the_neighbours(self):
+        search = NeighbourSearch(None, n_neighbours=10, consistency_limit=10.0, transition=2.0)
+        for consistency, share in ((0.5, 1.0), (5.0, 1.0), (10.0, 0.5), (20.0, 0.0), (300.0, 0.0), (np.nan, 0.0),
+                                   (10.0 * 2 ** 0.5, 0.25), (10.0 / 2 ** 0.5, 0.75)):
+            self.assertAlmostEqual(search.share(consistency), share, places=12)
+            self.assertAlmostEqual(search.share(consistency, outside=0.9), share, places=12)     # one limit everywhere
+        shares = [search.share(c) for c in np.geomspace(1.0, 100.0, 200)]
+        self.assertTrue(np.all(np.diff(shares) <= 0.0))
+        self.assertLess(np.abs(np.diff(shares)).max(), 0.02)
+
+        search = NeighbourSearch(None, n_neighbours=10, consistency_limit=10.0, transition=2.0, outside_limit=3.0)
+        for outside, limit in ((0.0, 10.0), (0.5, 10.0), (0.65, 30.0 ** 0.5), (0.8, 3.0), (1.0, 3.0)):
+            self.assertAlmostEqual(search.share(limit, outside), 0.5, places=12)
+            self.assertEqual(search.share(limit / 2.0, outside), 1.0)
+            self.assertEqual(search.share(limit * 2.0, outside), 0.0)
+        limits = [search.share(6.0, outside) for outside in np.linspace(0.0, 1.0, 101)]
+        self.assertTrue(np.all(np.diff(limits) <= 0.0))
+        self.assertLess(np.abs(np.diff(limits)).max(), 0.05)
+
+        switch = NeighbourSearch(None, n_neighbours=10, consistency_limit=10.0)
+        self.assertEqual([switch.share(c) for c in (9.99, 10.0, 10.01, np.nan)], [1.0, 1.0, 0.0, 0.0])
+        for limit, share in ((np.inf, 1.0), (0.0, 0.0)):
+            for options in (dict(), dict(transition=2.0, outside_limit=3.0)):
+                search = NeighbourSearch(None, n_neighbours=10, consistency_limit=limit, **options)
+                self.assertEqual([search.share(c, 0.9) for c in (1e-3, 1.0, 1e6)], [share] * 3)
+                self.assertEqual(search.share(np.nan, 0.9), 0.0)
+
+    def test_a_search_saved_before_the_options_switches(self):
+        search = NeighbourSearch.__new__(NeighbourSearch)
+        search.consistency_limit = 10.0
+        self.assertEqual([search.share(c, 0.9) for c in (9.0, 11.0)], [1.0, 0.0])
+
+    def test_how_far_a_query_lies_outside(self):
+        rng = np.random.RandomState(0)
+        search = NeighbourSearch(None, n_neighbours=10)
+        q, w = np.array([0.3, -0.2, 0.5]), np.array([0.5, 2.0, 1.0])
+        around = q + rng.randn(400, 3) * w
+        self.assertLess(search.outside(around, q, w), 0.1)
+        self.assertLess(search.outside(np.vstack((around, 2 * q - around)), q, w), 1e-12)
+        aside = q + (np.array([6.0, 0.0, 0.0]) + 0.1 * rng.randn(400, 3)) * w
+        self.assertGreater(search.outside(aside, q, w), 0.9)
+        self.assertLessEqual(search.outside(aside, q, w), 1.0)
+        half = around[around[:, 0] > q[0]]
+        self.assertTrue(0.2 < search.outside(half, q, w) < 0.6)
+        self.assertEqual(search.outside(np.tile(q, (5, 1)), q, w), 0.0)
+        # a neighbour about to leave no longer moves the centre
+        growth = np.zeros(len(half))
+        growth[0] = 1e18
+        centre = np.linalg.norm(((half[1:] - q) / w).mean(axis=0))
+        furthest = np.sqrt((((half - q) / w) ** 2).sum(axis=1).max())
+        self.assertAlmostEqual(search.outside(half, q, w, growth), centre / furthest, places=9)
+
+    def test_the_mixture_of_two_predictions(self):
+        share = np.array([[1.0, 0.0, 0.5], [0.25, 1.0, 0.0]])
+        mu, sigma = np.array([[1.0, np.nan, 3.0], [4.0, 5.0, np.inf]]), np.array([[0.1, np.nan, 0.3], [0.4, 0.5, np.inf]])
+        mu_other, sigma_other = np.array([[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]]), np.full((2, 3), 2.0)
+        mean, std = NeighbourSearch.mix(share, mu, sigma, mu_other, sigma_other)
+        np.testing.assert_array_equal(mean[[0, 0, 1, 1], [0, 1, 1, 2]], [1.0, 8.0, 5.0, 12.0])
+        np.testing.assert_array_equal(std[[0, 0, 1, 1], [0, 1, 1, 2]], [0.1, 2.0, 0.5, 2.0])
+        np.testing.assert_allclose(mean[[0, 1], [2, 0]], [6.0, 8.5])
+        np.testing.assert_allclose(std[0, 2] ** 2, 0.5 * 0.3 ** 2 + 0.5 * 2.0 ** 2 + 0.25 * 6.0 ** 2)
+        np.testing.assert_allclose(std[1, 0] ** 2, 0.25 * 0.4 ** 2 + 0.75 * 2.0 ** 2 + 0.25 * 0.75 * 6.0 ** 2)
+
+    def _neighbours_and_own(self, gpt, leaf, x):
+        """The two predictions of a leaf at ``x`` and the consistency of the neighbours."""
+        search = gpt.neighbours
+        limit, search.consistency_limit = search.consistency_limit, np.inf
+        try:
+            from_neighbours = leaf._predict_from_neighbours(x)
+        finally:
+            search.consistency_limit = limit
+        Xn, yn, sn, growth = search.find(x[0], leaf.fit_std, leaf=leaf)
+        ys = leaf.y_scalers[0]
+        consistency = leaf.my_GPRs[0].condition(leaf.X_scaler.transform(Xn), ys.transform(yn)[:, 0],
+                                                (sn[:, 0] / ys.scale_[0]) ** 2, leaf.X_scaler.transform(x))[2][0]
+        return from_neighbours, leaf._predict_own(x), consistency, search.outside(Xn, x[0], leaf.fit_std, growth)
+
+    def test_the_prediction_passes_from_the_neighbours_to_the_leaf(self):
+        rng = np.random.RandomState(2)
+        np.random.seed(2)
+        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30, neighbour_fade=None,
+                     neighbour_blend=None, neighbour_consistency_outside=None, use_calibrated_sigma=False)
+        _stream(gpt, rng.rand(400, 2))
+        search, checked = gpt.neighbours, 0
+        for q in rng.rand(60, 2):
+            x = q[None, :]
+            leaf = _leaf_of(gpt, x)
+            if not leaf._can_condition() or leaf.prefers_own:
+                continue
+            (mu, sd), (mu_own, sd_own), consistency, _ = self._neighbours_and_own(gpt, leaf, x)
+            self.assertGreater(abs(mu[0, 0] - mu_own[0, 0]), 0.0)
+            for factor, share in ((2.5, 1.0), (2 ** 0.5, 0.75), (1.0, 0.5), (2 ** -0.5, 0.25), (0.4, 0.0)):
+                search.consistency_limit = factor * consistency
+                mean, std = gpt.predict(x)
+                expected = share * mu + (1 - share) * mu_own
+                variance = share * sd ** 2 + (1 - share) * sd_own ** 2 + share * (1 - share) * (mu - mu_own) ** 2
+                np.testing.assert_allclose(mean, expected, rtol=1e-9, atol=1e-12)
+                np.testing.assert_allclose(std, np.sqrt(variance), rtol=1e-7, atol=1e-12)
+            checked += 1
+        self.assertGreater(checked, 30)
+
+    def test_a_lower_limit_for_a_query_outside_its_neighbours(self):
+        rng = np.random.RandomState(3)
+        np.random.seed(3)
+        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30, neighbour_fade=None,
+                     neighbour_blend=None, neighbour_transition=None, use_calibrated_sigma=False)
+        _stream(gpt, 0.3 + 0.4 * rng.rand(400, 2))                # the corners of the unit square hold no points
+        search = gpt.neighbours
+        self.assertEqual(search.outside_limit, 3.0)
+        among, outside = 0, 0
+        for q in np.vstack((0.3 + 0.4 * rng.rand(40, 2), rng.rand(80, 2) * 0.1 + rng.randint(0, 2, (80, 2)) * 0.9)):
+            x = q[None, :]
+            leaf = _leaf_of(gpt, x)
+            if not leaf._can_condition() or leaf.prefers_own:
+                continue
+            (mu, _), (mu_own, _), consistency, how_far = self._neighbours_and_own(gpt, leaf, x)
+            # a limit that the neighbours pass among them and fail outside
+            search.consistency_limit, search.outside_limit = 2.0 * consistency, 0.5 * consistency
+            if how_far <= 0.5:
+                np.testing.assert_allclose(gpt.predict(x)[0], mu, rtol=1e-9, atol=1e-12)
+                among += 1
+            elif how_far >= 0.8:
+                np.testing.assert_allclose(gpt.predict(x)[0], mu_own, rtol=1e-9, atol=1e-12)
+                outside += 1
+        self.assertGreater(among, 15)
+        self.assertGreater(outside, 15)
+
+    def test_within_the_zones_at_the_cuts(self):
+        """There the other prediction is the mixture of the leaves' predictions."""
+        rng = np.random.RandomState(11)
+        np.random.seed(11)
+        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
+                     neighbour_leaves=None, neighbour_consistency_outside=None, use_calibrated_sigma=False)
+        _stream(gpt, rng.rand(700, 2))
+        search, between, checked = gpt.neighbours, 0, 0
+        for q in rng.rand(300, 2):
+            x = q[None, :]
+            leaves, weights = gpt._leaves_of(x)
+            if len(leaves) < 2 or any(not leaf._can_condition() or leaf.prefers_own for leaf in leaves):
+                continue
+            weights = np.array(weights)
+            for limit in np.geomspace(0.05, 50.0, 13):
+                search.consistency_limit = limit
+                mixed = search.predict_mixed(x, leaves, weights)
+                parts = [leaf.predict(x, return_std=True, use_calibrated_sigma=False) for leaf in leaves]
+                mean = sum(w * mu[0, 0] for w, (mu, _) in zip(weights, parts))
+                variance = sum(w * (sd[0, 0] ** 2 + (mu[0, 0] - mean) ** 2) for w, (mu, sd) in zip(weights, parts))
+                share = 0.0 if mixed is None else mixed[2]
+                if mixed is not None:
+                    mean, std = NeighbourSearch.mix(share, mixed[0][0], mixed[1][0], mean, np.sqrt(variance))
+                    variance = std ** 2
+                predicted = gpt.predict(x)
+                np.testing.assert_allclose(predicted[0][0, 0], mean, rtol=1e-9, atol=1e-12)
+                np.testing.assert_allclose(predicted[1][0, 0], np.sqrt(variance), rtol=1e-7, atol=1e-12)
+                between += 0.0 < share < 1.0
+                checked += 1
+        self.assertGreater(checked, 300)
+        self.assertGreater(between, 30)
+
+    def test_the_options(self):
+        for options in (dict(neighbour_transition=1.0), dict(neighbour_transition=0.5), dict(neighbour_consistency_outside=0.0)):
+            with self.assertRaises(ValueError):
+                GPTree(predict_from='neighbours', **options)
+        gpt = GPTree(predict_from='neighbours')
+        self.assertEqual((gpt.neighbours.consistency_limit, gpt.neighbours.outside_limit, gpt.neighbours.transition), (10.0, 3.0, 2.0))
+        gpt = GPTree(predict_from='neighbours', neighbour_transition=None, neighbour_consistency_outside=None)
+        self.assertEqual((gpt.neighbours.outside_limit, gpt.neighbours.transition), (None, None))
 
 
 class TestAsleep(unittest.TestCase):
