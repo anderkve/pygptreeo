@@ -357,7 +357,7 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   an image is flat nothing determines the warp. With the hard bound and the
   weak ridge of the curves it grew there until it met the bound, and at the
   corners of a leaf, where several offsets are large at once, it misplaced
-  the feature: a few queries had 30 times the median error, which the
+  the feature: a few queries had 300 times the median error, which the
   leave-one-out errors did not show. With the smooth bound and a ridge of
   0.03 the leave-one-out error of a leaf is that of its test points
   (`docs/benchmarks.md`, section 9.12).
@@ -584,20 +584,21 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
 * **Calibration after a new network version.** Coverage can dip for a batch
   until the per-leaf calibration catches up with the shifted residual.
 
-* **`'aligned'` is for one curve on one ordered grid.** It gains wherever a
-  feature moves along such a grid, in curves from physics or not (an epidemic
-  peak, a shock front, a filter resonance: a factor 3 to 12), and its leaves
-  decline where nothing moves or the outputs are in no order, at 1.3 to 1.8
-  times the time of `'shared'`. It does not follow a shift in two directions
-  of an image stored row by row. Over 64 runs on sixteen such targets it was
-  more than 5% worse than `'shared'` in two, by 10% at most
-  (`docs/benchmarks.md`, section 9.9).
+* **`'aligned'` is for one curve on one ordered grid, or one image.** It
+  gains wherever a feature moves along such a grid, in curves from physics
+  or not (an epidemic peak, a shock front, a filter resonance: a factor 3 to
+  12), and its leaves decline where nothing moves or the outputs are in no
+  order, at 1.3 to 1.8 times the time of `'shared'`. Over 64 runs on sixteen
+  such targets it was more than 5% worse than `'shared'` in two, by 10% at
+  most (`docs/benchmarks.md`, section 9.9). An image needs its
+  `output_shape`: as a curve, row by row, it is aligned along the rows only.
+  The warp of an image moves its rows and its columns. A feature that turns,
+  or grids of more than two dimensions, are beyond it.
 * **`'aligned'` follows what stays on the grid.** The warp maps the grid onto
   itself, so a change of scale that moves features across its end, like the
-  frequency of an oscillation, is followed only in part. It is for one curve
-  on one ordered grid. A leaf either aligns its curves or uses the global
-  model: where both would help (`cmb_peaks` with the network) it has the gain
-  of the alignment only.
+  frequency of an oscillation, is followed only in part. A leaf either
+  aligns its curves or uses the global model: where both would help
+  (`cmb_peaks` with the network) it has the gain of the alignment only.
 * **The calibrated sigma of noisy observations is that of an observation.**
   The calibration compares a prediction with the observed value. With noise
   the sigma grows to the noise level, and covers the underlying function too
