@@ -20,6 +20,8 @@ from ..gp_interface import GPRegressorInterface
 from ..kernels import ObliqueMatern, shear_dims
 
 OBLIQUE_MARGIN = 1.1    # a fit with a free shear is kept if it lowers the leave-one-out error by this factor
+OBLIQUE_STEPS = 50      # iterations of the optimiser of a fit with a free shear
+OBLIQUE_MAX_WAIT = 8    # after repeated rejections a free shear is tried at one fit in this many
 
 
 class SklearnGPAdapter(GPRegressorInterface):
@@ -76,6 +78,8 @@ class SklearnGPAdapter(GPRegressorInterface):
             )
         self._gpr = gpr
         self._kernel_factory = kernel_factory
+        self._shear_rejections = 0      # free shears rejected in a row, and the fits to pass before the next try
+        self._shear_wait = 0
 
     def _ensure_kernel(self, n_features: int) -> None:
         """Build the kernel from the factory (once) now that n_features is known."""
@@ -117,9 +121,10 @@ class SklearnGPAdapter(GPRegressorInterface):
         self.refit_fixed(X, y, self._maximise_likelihood(X, y, [sk.kernel.theta], sk.kernel.bounds))
         return self
 
-    def _maximise_likelihood(self, X: np.ndarray, y: np.ndarray, starts, bounds) -> np.ndarray:
+    def _maximise_likelihood(self, X: np.ndarray, y: np.ndarray, starts, bounds, max_steps=None) -> np.ndarray:
         """The ``theta`` within ``bounds`` of the largest likelihood found from
-        ``starts`` and from the regressor's number of random restarts."""
+        ``starts`` and from the regressor's number of random restarts, in at
+        most ``max_steps`` iterations from each."""
         sk = self._gpr
         y = y.reshape(y.shape[0], -1)
         n, n_targets = y.shape
@@ -146,7 +151,8 @@ class SklearnGPAdapter(GPRegressorInterface):
         best = None
         if sk.kernel.n_dims > 0:
             for start in starts:
-                result = minimize(negative_log_likelihood, start, method="L-BFGS-B", jac=True, bounds=bounds)
+                result = minimize(negative_log_likelihood, start, method="L-BFGS-B", jac=True, bounds=bounds,
+                                  options={} if max_steps is None else {"maxiter": max_steps})
                 if best is None or result.fun < best.fun:
                     best = result
         return starts[0] if best is None else best.x
@@ -154,7 +160,8 @@ class SklearnGPAdapter(GPRegressorInterface):
     def _fit_oblique(self, X: np.ndarray, y: np.ndarray) -> 'SklearnGPAdapter':
         """Fit a kernel with ObliqueMatern parts: with their shear at zero, and
         with it free, from that fit and from the kernel's own shear. The free
-        fit is kept if its leave-one-out error is lower by OBLIQUE_MARGIN."""
+        fit is kept if its leave-one-out error is lower by OBLIQUE_MARGIN.
+        After a rejection the free fit is left out of the next 1, 3, then 7 fits."""
         sk = self._gpr
         theta, bounds = sk.kernel.theta, sk.kernel.bounds
         shear = shear_dims(sk.kernel)
@@ -162,11 +169,16 @@ class SklearnGPAdapter(GPRegressorInterface):
         pinned[shear], start[shear] = 0.0, 0.0
         along_axes = self._maximise_likelihood(X, y, [start], pinned)
         chosen = along_axes
-        if X.shape[0] > theta.size:
+        if getattr(self, '_shear_wait', 0) > 0:
+            self._shear_wait -= 1
+        elif X.shape[0] > theta.size:
             starts = [along_axes] + ([theta] if np.any(theta[shear] != 0.0) else [])
-            free = self._maximise_likelihood(X, y, starts, bounds)
+            free = self._maximise_likelihood(X, y, starts, bounds, max_steps=OBLIQUE_STEPS)
             if self._leave_one_out_error(X, y, free) * OBLIQUE_MARGIN < self._leave_one_out_error(X, y, along_axes):
-                chosen = free
+                chosen, self._shear_rejections = free, 0
+            else:
+                self._shear_rejections = getattr(self, '_shear_rejections', 0) + 1
+                self._shear_wait = min(2 ** self._shear_rejections, OBLIQUE_MAX_WAIT) - 1
         self.refit_fixed(X, y, chosen)
         return self
 
@@ -277,7 +289,9 @@ class SklearnGPAdapter(GPRegressorInterface):
         SklearnGPAdapter
             A deep copy of this adapter instance.
         """
-        return SklearnGPAdapter(deepcopy(self._gpr), kernel_factory=self._kernel_factory)
+        copy = SklearnGPAdapter(deepcopy(self._gpr), kernel_factory=self._kernel_factory)
+        copy._shear_rejections, copy._shear_wait = getattr(self, '_shear_rejections', 0), getattr(self, '_shear_wait', 0)
+        return copy
 
     def get_kernel(self):
         """

@@ -1344,27 +1344,27 @@ class ObliqueMatern(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
         if X.shape[1] != self.n_features:
             raise ValueError(f"The kernel has {self.n_features} length scales and X {X.shape[1]} features")
         L, scale = self.mixing(), np.atleast_1d(self.length_scale).astype(float)
-        W = X @ L / scale
+        W = (X @ L / scale).T                                                # (n_features, n)
         if Y is None:
-            D = W[:, None, :] - W[None, :, :]
+            D = W[:, :, None] - W[:, None, :]
         elif eval_gradient:
             raise ValueError("Gradient can only be evaluated when Y is None.")
         else:
-            D = W[:, None, :] - (np.atleast_2d(Y) @ L / scale)[None, :, :]
-        K, dK = self._correlation(np.sum(D ** 2, axis=-1))
+            D = W[:, :, None] - (np.atleast_2d(Y) @ L / scale).T[:, None, :]
+        K, dK = self._correlation(np.einsum("kij,kij->ij", D, D))
         if not eval_gradient:
             return K
         scales, shear = self._free()
-        gradient = []
+        gradient = np.empty((self.n_features * scales + self.n_shear * shear,) + K.shape)
         if scales:
-            gradient.append(-2.0 * D ** 2)                                  # d r^2 / d log(length_scale_k)
+            np.multiply(D, D, out=gradient[:self.n_features])
+            gradient[:self.n_features] *= -2.0 * dK                         # d r^2 / d log(length_scale_k)
         if shear:
-            j, k = np.tril_indices(self.n_features, -1)
-            raw = X[:, None, :] - X[None, :, :]
-            gradient.append(2.0 * D[:, :, k] * raw[:, :, j] / scale[k])    # d r^2 / d L_jk
-        if not gradient:
-            return K, np.empty(K.shape + (0,))
-        return K, dK[:, :, None] * np.concatenate(gradient, axis=-1)
+            raw = X.T[:, :, None] - X.T[:, None, :]
+            D *= 2.0 * dK / scale[:, None, None]
+            for m, (j, k) in enumerate(zip(*np.tril_indices(self.n_features, -1))):
+                np.multiply(D[k], raw[j], out=gradient[m - self.n_shear])   # d r^2 / d L_jk
+        return K, np.moveaxis(gradient, 0, -1)
 
     def __repr__(self):
         return (f"{self.__class__.__name__}(length_scale=[{', '.join(f'{v:.3g}' for v in np.atleast_1d(self.length_scale))}], "
