@@ -1208,3 +1208,49 @@ thresholds, cusps and resonances lie in the input space. With a curve as the
 target such a feature lies along the grid, and the kernel only sees how the
 curve changes with the parameters: `jet_spectrum` gains a factor 3.3 from
 Matérn 5/2 leaves as a curve in `p_T`, and loses 18% with `p_T` as an input.
+
+### 9.9 Curves from outside physics, and targets that are not a curve
+
+Sixteen further targets with two to four inputs and 64 to 144 outputs, streams
+of 800 as in section 9.1, two seeds, default leaves. NRMSE of the last 400
+predictions (geometric mean of the seeds), the ratio for each seed, the share
+of the leaves that hold an alignment, and the ratio with Matérn 5/2 leaves:
+
+| target (inputs) | what moves | shared | aligned | shared / aligned, two seeds | leaves aligned | with Matérn 5/2 leaves |
+|---|---|---:|---:|---:|---:|---:|
+| infected fraction of an SIR epidemic against time (3) | a peak | 2.9e-3 | 9.2e-4 | 3.69, 2.72 | 1.00 | 3.50, 2.85 |
+| travelling viscous shock (3) | a steep front | 1.2e-2 | 1.0e-3 | 11, 12 | 1.00 | 8.58, 9.57 |
+| density of a mixture of two Gaussians (4) | two peaks, independently | 7.3e-3 | 1.2e-3 | 6.25, 5.83 | 1.00 | 9.27, 7.43 |
+| gain of a second-order low-pass filter against frequency (3) | a resonance | 3.4e-4 | 4.3e-5 | 9.90, 6.62 | 1.00 | 6.92, 6.07 |
+| elastic, then hardening (3) | a kink | 6.8e-4 | 5.2e-4 | 1.25, 1.35 | 0.60 | 1.24, 1.39 |
+| logistic growth against time (3) | an inflection | 8.3e-4 | 8.5e-4 | 1.07, 0.90 | 0.88 | 1.04, 1.16 |
+| Black-Scholes gamma against the strike (3) | a bell, a little | 1.1e-3 | 1.1e-3 | 1.03, 1.00 | 0.29 | 0.91, 1.00 |
+| drug concentration after an oral dose (3) | a broad peak | 8.1e-4 | 8.1e-4 | 1.00, 1.00 | 0.04 | 1.00, 1.00 |
+| Black-Scholes call price against the strike (3) | nothing | 2.4e-4 | 2.3e-4 | 1.00, 1.06 | 0.08 | 1.00, 1.00 |
+| five fixed shapes with varying amplitudes (3) | nothing | 1.6e-3 | 1.6e-3 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
+| a jump between two grid points (2) | a jump | 2.4e-2 | 2.4e-2 | 1.00, 1.00 | 0.00 | 1.00, 1.48 |
+| 12 x 12 image of a blob, row by row (3) | a blob, in two directions | 2.6e-3 | 1.5e-3 | 1.83, 1.64 | 0.96 | 1.15, 0.98 |
+| 64 unrelated functions of the inputs (3) | not a curve | 3.2e-3 | 3.2e-3 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
+| `sir_epidemic` with its grid shuffled | not a curve | 2.9e-3 | 2.9e-3 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
+| `viscous_shock` with its grid shuffled | not a curve | 1.2e-2 | 1.2e-2 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
+| `z_lineshape` with its grid shuffled | not a curve | 2.4e-4 | 2.4e-4 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
+
+* **What `'aligned'` needs is a feature that moves along an ordered grid**,
+  whatever the origin of the curve: a factor 3 to 12 for the epidemic peak,
+  the shock front, the two peaks of the mixture and the resonance of the
+  filter.
+* **Where nothing moves, or where the outputs are in no order, every leaf
+  declines**, and the predictions are those of `'shared'`: the three
+  shuffled grids and the unrelated outputs have a ratio of exactly 1.
+* **In between the gain is small and can be a loss.** Over the 64 runs of
+  this table (two kernels, two seeds) `'aligned'` was more than 5% worse
+  than `'shared'` in two, by 10% at most, and on the test curves after the
+  stream in one, by 21% (`stress_strain`).
+* **A stream takes 1.3 to 2.8 times as long** as with `'shared'`.
+* **An image is not a curve.** Row by row, the blob gains a factor 1.7 with
+  the default leaves and nothing with Matérn 5/2 leaves: a warp of one
+  ordered grid follows a shift along the rows only.
+* **Matérn 5/2 leaves and a jump.** They lower the error of `'shared'` on 13
+  of these targets, by a factor 1.3 to 6.2, change nothing on the shock, and
+  raise it by a factor 4 on the jump (0.10 against 0.024), where each output
+  is a step in the parameters.

@@ -246,7 +246,9 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   the eleven single-output physics targets, whose thresholds and cusps lie in
   the input space, Matérn 5/2 leaves have the same error in the geometric
   mean and a higher one on eight. A feature along the grid of a curve costs
-  the kernel nothing as long as it does not move (section 9.8).
+  the kernel nothing as long as it does not move (section 9.8). Where a jump
+  moves along the grid, each output is a step in the parameters, and Matérn
+  5/2 leaves have 4 times the error of the default (section 9.9).
 * **What limits the accuracy is a feature that moves.** Where a peak, an edge
   or the phase of an oscillation has a position in `x` that depends on
   `theta`, a combination of curves with the feature at different positions
@@ -504,6 +506,14 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
 * **Calibration after a new network version.** Coverage can dip for a batch
   until the per-leaf calibration catches up with the shifted residual.
 
+* **`'aligned'` is for one curve on one ordered grid.** It gains wherever a
+  feature moves along such a grid, in curves from physics or not (an epidemic
+  peak, a shock front, a filter resonance: a factor 3 to 12), and its leaves
+  decline where nothing moves or the outputs are in no order, at 1.3 to 1.8
+  times the time of `'shared'`. It does not follow a shift in two directions
+  of an image stored row by row. Over 64 runs on sixteen such targets it was
+  more than 5% worse than `'shared'` in two, by 10% at most
+  (`docs/benchmarks.md`, section 9.9).
 * **`'aligned'` follows what stays on the grid.** The warp maps the grid onto
   itself, so a change of scale that moves features across its end, like the
   frequency of an oscillation, is followed only in part. It is for one curve
