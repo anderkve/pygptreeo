@@ -11,6 +11,7 @@ import numpy as np
 from copy import deepcopy
 
 from scipy.linalg import cho_solve, cholesky, solve_triangular
+from scipy.linalg.lapack import dpotrf, dtrtrs
 from sklearn.base import clone as sklearn_clone
 from sklearn.gaussian_process import GaussianProcessRegressor
 
@@ -310,6 +311,38 @@ class SklearnGPAdapter(GPRegressorInterface):
         sk.L_ = L
         sk.alpha_ = cho_solve((L, True), sk.y_train_, check_finite=False)
         return True
+
+    def supports_conditioning(self) -> bool:
+        return True
+
+    def covariance(self, X: np.ndarray):
+        """The prior of the fitted kernel at ``X``; see the interface."""
+        sk = self._gpr
+        return (sk.kernel_(X), np.atleast_1d(np.asarray(sk._y_train_std, dtype=float)) ** 2,
+                np.atleast_1d(np.asarray(sk._y_train_mean, dtype=float)))
+
+    def condition(self, X: np.ndarray, y: np.ndarray, noise: np.ndarray, X_query: np.ndarray):
+        """The posterior of the fitted kernel given ``(X, y)``; see the interface."""
+        sk = self._gpr
+        n = X.shape[0]
+        # one kernel call for the matrix of the points and their covariances with the queries
+        K_all = sk.kernel_(np.vstack((X, X_query)))
+        K = K_all[:n, :n].copy()
+        K.flat[::n + 1] += noise
+        L, info = dpotrf(K, lower=True, overwrite_a=True)
+        if info != 0:
+            return None
+        y = (np.asarray(y, dtype=float).reshape(n, -1) - sk._y_train_mean) / sk._y_train_std
+        n_targets = y.shape[1]
+        # L^-1 applied to the targets and to the covariances with the queries at once
+        solved, info = dtrtrs(L, np.column_stack((y, K_all[:n, n:])), lower=True)
+        if info != 0:
+            return None
+        v, U = solved[:, :n_targets], solved[:, n_targets:]
+        mean = (U.T @ v) * sk._y_train_std + sk._y_train_mean
+        var = np.diagonal(K_all)[n:] - np.einsum("ij,ij->j", U, U)
+        std = np.sqrt(np.maximum(var, 0.0))[:, None] * np.broadcast_to(sk._y_train_std, (n_targets,))
+        return mean, std, np.einsum("ij,ij->j", v, v) / n
 
     def nbytes(self) -> int:
         """Size of the training data and the Cholesky factor that a fit stores."""

@@ -28,7 +28,10 @@ repository; they are in its history up to commit `cd27934`
 (`examples/benchmark_*.py`, `examples/compare_tree_vs_hybrid.py`,
 `examples/results/`). `examples/streaming_performance.py` runs the same kind of
 comparison on one stream. Sections 6 and 7 were measured later, with scripts
-that are not in the repository.
+that are not in the repository, and section 8 with
+`examples/mpi_fit_workers.py`. The scripts of section 9
+(`research/partitioning/`) were removed from the repository as well; they are
+in its history up to commit `25a4673`.
 
 ## 1. Split-dimension criterion
 
@@ -587,7 +590,6 @@ predicted by one leaf, chosen by the cuts without overlap.
   times, and 2.0% of the predictions are off by more than 5 sigma, against
   2.1%.
 
-
 ## 8. Leaf fits by other processes (`defer_fits`)
 
 ### 8.1 An MPI trainer with fit workers
@@ -676,3 +678,1263 @@ focusing stream takes the next points as one batch. The NRMSE is that of the
 * **`fit` is the way into an empty tree**: 2.6 times as fast as point by point
   at about the same error. Its sigma is not calibrated: it covers 0.91 of the
   errors (0.83 on the uniform stream) where point by point gives 0.71.
+
+## 9. Other ways to partition the data
+
+Sections 9.2 to 9.13 were measured with neighbours that all count alike,
+with the kernel of the query's leaf alone and with every leaf awake
+(`NEIGHBOUR_FADE`, `NEIGHBOUR_BLEND` and `NEIGHBOUR_AWAKE` at None).
+Section 9.15 has the neighbours that fade out, section 9.17 the kernels
+mixed across the cuts and section 9.19 the leaves asleep, which are the
+defaults of `predict_from='neighbours'`. Sections 9.2 to 9.20 were measured
+with a switch to the leaf's own GP at one limit (`NEIGHBOUR_TRANSITION` and
+`NEIGHBOUR_CONSISTENCY_OUTSIDE` at None); section 9.21 has the gradual
+change, which is the default as well. These settings are constants of
+`pygptreeo/neighbours.py`; they were options of the tree when the sections
+were measured, and `neighbour_tree` in `research/partitioning/variants.py`
+sets them for one tree.
+
+Sections 9.1 to 9.3: eleven targets (`GaussianPeaks` and `RotatedRosenbrock`
+in six dimensions, `Eggholder` in three, `Chirp` in four, a four-dimensional
+target with a ridge and a kink on oblique hyperplanes, `resonance_xsec`,
+`loop_decay_width`, `relic_density`, `eft_signal_strength`, `neutralino_mass`
+and `oscillation_probability`) on the uniform, walker and sweeping streams,
+5000 points, one seed: 33 runs. The tables give the NRMSE of the last 1250
+predictions divided by that of the default tree in the same run, as geometric
+means over the runs, and the mean coverage.
+
+### 9.1 Rules for the cuts (not in the code)
+
+One GP per leaf, as in the default tree. A hyperplane cut has a free normal
+and is placed at the median of the leaf's points along it, unless the row
+says otherwise.
+
+| cuts, one GP per leaf | uniform | walker | sweeping | all runs (range) | runs more than 2% worse | coverage |
+|---|---|---|---|---|---|---|
+| along the input with the largest spread of the points (`max_spread`) | 1.34 | 1.20 | 1.25 | 1.26 (0.66 to 4.31) | 24 of 33 | 0.69 |
+| hyperplane: largest spread of the points | 1.49 | 1.34 | 1.18 | 1.33 (0.27 to 4.33) | 24 of 33 | 0.69 |
+| hyperplane: between the centroids of two clusters | 1.54 | 1.33 | 1.08 | 1.30 (0.30 to 4.88) | 23 of 33 | 0.69 |
+| hyperplane: random direction | 1.61 | 1.46 | 1.05 | 1.35 (0.32 to 3.27) | 28 of 33 | 0.69 |
+| hyperplane: largest change of the GP mean | 1.18 | 1.18 | 0.91 | 1.08 (0.54 to 2.30) | 15 of 33 | 0.68 |
+| hyperplane: largest change of the GP mean's gradient | 1.07 | 0.93 | 1.14 | 1.04 (0.55 to 3.16) | 15 of 33 | 0.68 |
+| the default cut, placed where the gradient changes most | 1.03 | 0.97 | 0.98 | 0.99 (0.48 to 1.80) | 15 of 33 | 0.68 |
+| hyperplane of the gradient's change, placed where it changes most | 0.97 | 0.94 | 0.92 | 0.94 (0.43 to 1.80) | 11 of 33 | 0.68 |
+| the default cut, decorrelated inputs for the GPs | 1.00 | 0.98 | 1.03 | 1.00 (0.70 to 1.43) | 15 of 33 | 0.68 |
+| the axis of the decorrelated inputs with the shortest length scale | 1.06 | 1.23 | 1.09 | 1.13 (0.46 to 2.44) | 22 of 33 | 0.69 |
+| hyperplane of the gradient's change, decorrelated inputs | 0.85 | 0.86 | 1.03 | 0.91 (0.21 to 1.89) | 15 of 33 | 0.69 |
+| the same, placed where the gradient changes most | 0.87 | 0.82 | 0.90 | 0.86 (0.22 to 1.93) | 15 of 33 | 0.68 |
+| a model in every node (multi-resolution) | 1.66 | 1.27 | 1.33 | 1.41 (1.01 to 6.39) | 32 of 33 | 0.70 |
+
+* **No rule for the cuts is better than the default without being worse in
+  a third of the runs or more.**
+* **Rules that only look at the points** (their spread, two clusters, a
+  random direction) are 26 to 35% worse, along the inputs or not.
+* **Hyperplanes from the leaf's GP** are level with the default on average
+  and far from it in single runs. On the target with the oblique ridge the
+  hyperplane along the change of the gradient has 0.74 to 0.79 of the
+  default's error, on `oscillation_probability` 0.55 to 0.98, and on the
+  smooth `eft_signal_strength`, `GaussianPeaks` and `RotatedRosenbrock` 0.99
+  to 1.70.
+* **Decorrelated inputs** make an oblique cell usable for the leaf's kernel:
+  0.21 to 0.74 on the oblique ridge and 0.39 to 1.11 on `relic_density`,
+  whose funnel lies on a diagonal, against 1.32 to 1.58 on `GaussianPeaks`.
+* **A model in every node** is worse in every run.
+* **On 20 000-point streams** the same 33 runs give the same picture:
+
+| 20 000 points | uniform | walker | sweeping | all runs (range) | runs more than 2% worse |
+|---|---|---|---|---|---|
+| hyperplane of the gradient's change, placed where it changes most | 1.02 | 0.99 | 0.85 | 0.95 (0.42 to 1.71) | 16 of 33 |
+| the same with decorrelated inputs | 0.86 | 0.92 | 0.76 | 0.84 (0.18 to 2.69) | 11 of 33 |
+| predictions from neighbours (section 9.4), default cuts | 0.72 | 0.66 | 0.69 | 0.69 (0.38 to 0.98) | 0 of 33 |
+
+### 9.2 Predictions from a query's neighbours (`predict_from='neighbours'`)
+
+The kernel and the calibration are those of the query's leaf, and the
+prediction is conditioned on the query's nearest stored points. In this
+table the search for them is exact and no leaf prefers its own GP, except
+in the fourth row (the two defaults of sections 9.4 and 9.5 came later); the
+rows below it change one setting of the third each.
+
+| predictions from neighbours | uniform | walker | sweeping | all runs (range) | runs more than 2% worse | coverage |
+|---|---|---|---|---|---|---|
+| 100 neighbours, no test against the kernel | 0.86 | 0.72 | 0.71 | 0.76 (0.31 to 2.12) | 4 of 33 | 0.69 |
+| the same, distances in fitted length scales | 1.08 | 0.69 | 0.81 | 0.84 (0.44 to 6.46) | 4 of 33 | 0.68 |
+| **100 neighbours, tested against the kernel** | 0.76 | 0.69 | 0.79 | 0.74 (0.45 to 1.04) | 1 of 33 | 0.69 |
+| the same as it ships: 16 leaves searched, a leaf may keep to its own GP | 0.76 | 0.70 | 0.79 | 0.75 (0.45 to 1.04) | 1 of 33 | 0.69 |
+| 150 neighbours | 0.72 | 0.64 | 0.76 | 0.71 (0.40 to 1.01) | 0 of 33 | 0.69 |
+| 200 neighbours | 0.71 | 0.62 | 0.75 | 0.69 (0.36 to 1.00) | 0 of 33 | 0.69 |
+| limit of the test 3 | 0.78 | 0.71 | 0.81 | 0.77 (0.45 to 1.04) | 1 of 33 | 0.69 |
+| limit of the test 30 | 0.75 | 0.71 | 0.77 | 0.75 (0.45 to 1.04) | 1 of 33 | 0.69 |
+| distances in fitted length scales | 0.75 | 0.65 | 0.80 | 0.73 (0.44 to 1.01) | 0 of 33 | 0.69 |
+| 30 of the 100 at growing ranks of distance (no test) | 1.08 | 0.68 | 0.82 | 0.85 (0.42 to 6.49) | 3 of 33 | 0.68 |
+| 4 points per level above the leaf among the 100 | 0.77 | 0.72 | 0.79 | 0.76 (0.47 to 1.05) | 2 of 33 | 0.69 |
+| `Nbar=50` | 0.88 | 0.83 | 0.95 | 0.88 (0.54 to 2.39) | 9 of 33 | 0.69 |
+| `Nbar=50`, a fit every 12 points | 0.85 | 0.83 | 0.89 | 0.86 (0.47 to 2.05) | 6 of 33 | 0.69 |
+| `Nbar=200`, a fit every 50 points | 0.74 | 0.74 | 0.78 | 0.75 (0.44 to 1.31) | 4 of 33 | 0.68 |
+| a fit every 50 points or more (one fit per leaf) | 0.77 | 0.72 | 0.83 | 0.77 (0.45 to 1.03) | 4 of 33 | 0.69 |
+| at most 10 leaves searched | 0.76 | 0.69 | 0.79 | 0.75 (0.47 to 1.04) | 1 of 33 | 0.69 |
+| hyperplane cuts along the gradient's change | 0.82 | 0.68 | 0.83 | 0.77 (0.45 to 1.81) | 5 of 33 | 0.68 |
+| the same, placed where the gradient changes most | 0.76 | 0.71 | 0.77 | 0.75 (0.44 to 1.15) | 2 of 33 | 0.69 |
+| the tree without neighbours, `Nbar=200`, a fit every 50 points | 0.89 | 0.93 | 0.87 | 0.89 (0.58 to 1.27) | 7 of 33 | 0.69 |
+| the tree without neighbours, `theta=0.2` | 0.91 | 0.97 | 0.96 | 0.95 (0.65 to 1.58) | 7 of 33 | 0.86 |
+
+* **The neighbours lower the error by 26%**, on every stream type, with one
+  run more than 2% worse (`resonance_xsec` on the sweeping stream, 1.04).
+  The gain is 36 to 55% on the smooth six-dimensional targets and 5 to 24%
+  on the rough `Eggholder` and `Chirp`.
+* **The coverage is unchanged** (0.69).
+* **More neighbours lower the error further**: 29% with 150 and 31% with
+  200, at a cost per prediction that grows with the cube of their number.
+* **Doubling the leaves of the tree without neighbours gains 11%** at 1.6
+  times the update time, and a wide overlap 5% with a sigma that is too
+  large.
+* **The leaf size still matters.** With `Nbar=50` the kernels are fitted to
+  half as many points and the error is 19% higher than with `Nbar=100`, for
+  the same 100 neighbours. `Nbar=200` gains nothing over `Nbar=100`.
+* **A search that stops after 10 leaves** costs 1% in error.
+* **Nothing else in the table helps**: far points among the neighbours,
+  distances in fitted length scales, or cuts that are not along the inputs.
+
+### 9.3 The test of the neighbours against the kernel
+
+Recorded for every query of the second half of the 33 runs: the prediction
+of the query's leaf, and that of the leaf's kernel conditioned on the 100
+nearest points, with `y^T K^-1 y / k` of those points (the consistency). All
+numbers are relative to the leaf's own prediction.
+
+| the neighbours predict where the consistency is | NRMSE | worst run | runs more than 2% worse | share of the queries |
+|---|---|---|---|---|
+| anything (no test) | 0.78 | 3.10 | 3 of 33 | 100% |
+| at most 1.5 | 0.81 | 1.01 | 0 | 81% |
+| at most 3 | 0.76 | 1.00 | 0 | 91% |
+| at most 5 | 0.73 | 1.00 | 0 | 94% |
+| at most 10 (the default) | 0.73 | 1.00 | 0 | 96% |
+| at most 30 | 0.72 | 1.00 | 0 | 98% |
+| at most 100 | 0.72 | 1.00 | 0 | 99% |
+| whichever of the two is nearer the truth | 0.62 | 0.97 | 0 | 60% |
+
+* **Without the test three runs are up to 3.1 times worse.** On
+  `resonance_xsec`, whose value falls by orders of magnitude across an
+  oblique line, a leaf on the smooth side has length scales of 30 to 600
+  times its spread. Its 23 worst predictions from neighbours on a sweeping
+  stream have a consistency of 350 to 13 000 and errors of up to 13 where
+  the leaf's own are below 0.5; elsewhere the consistency is 0.1 to 2.
+* **Any limit from 5 to 100 gives the same error**, and no run is worse than
+  the leaf's own predictions.
+* **Other tests are no better**: the leave-one-out errors of the 5, 10 or 20
+  nearest neighbours in units of their sigma (0.72 to 0.73 at their best
+  limits), the smaller of the two sigmas (0.75), the largest set of nearest
+  neighbours that passes the test, or the neighbours up to the first one
+  that the nearer ones predict badly (0.72).
+* **The gain grows with the distance of the query from the centre of its
+  leaf**, the far score of section 7.5:
+
+| far score | below 0.75 | 0.75 to 1.25 | 1.25 to 1.75 | 1.75 to 2.5 | above 2.5 |
+|---|---|---|---|---|---|
+| share of the queries | 4% | 21% | 45% | 21% | 13% |
+| NRMSE relative to the leaf's own | 0.98 | 0.88 | 0.77 | 0.74 | 0.68 |
+
+* **The number of neighbours**, without the test: 1.27 with 10, 1.01 with
+  20, 0.85 with 50, 0.78 with 100, 0.74 with 200.
+
+### 9.4 Predictions from neighbours on 20 000-point streams
+
+The option without fading (100 neighbours from the 16 nearest leaves, the
+test against the kernel, and a leaf that keeps to its own GP while that
+predicts better) on nineteen targets: the eleven physics targets, `GaussianPeaks`,
+`RotatedRosenbrock`, `StepRidge` (d = 6), `ActiveSubspacePeaks` (d = 10),
+`Michalewicz` (d = 5), `Eggholder` (d = 3), `Chirp` and the target with the
+oblique ridge (d = 4), on four stream types with two seeds: 150 runs
+(`branching_ratio` is constant at the end of the focusing stream). The NRMSE
+of the last 5000 predictions divided by that of the default tree, for the two
+seeds:
+
+| target | d | uniform | walker | sweeping | focusing |
+|---|---|---|---|---|---|
+| `active_peaks` | 10 | 0.73 / 0.74 | 0.69 / 0.73 | 0.63 / 0.82 | 0.56 / 0.58 |
+| `branching_ratio` | 5 | 1.11 / 0.89 | 0.93 / 0.99 | 1.00 / 0.98 |  |
+| `chirp` | 4 | 0.92 / 0.91 | 0.72 / 0.67 | 0.67 / 0.70 | 0.32 / 0.33 |
+| `diagonal_ridge` | 4 | 0.70 / 0.67 | 0.74 / 0.67 | 0.83 / 0.77 | 0.68 / 0.72 |
+| `dilepton_spectrum` | 4 | 0.90 / 0.85 | 0.92 / 0.85 | 0.73 / 0.82 | 0.94 / 0.86 |
+| `eft_signal_strength` | 6 | 0.39 / 0.40 | 0.38 / 0.35 | 0.58 / 0.44 | 1.04 / 1.04 |
+| `eggholder` | 3 | 0.88 / 0.89 | 0.83 / 0.86 | 0.90 / 0.90 | 0.83 / 0.85 |
+| `gaussian_peaks` | 6 | 0.64 / 0.66 | 0.40 / 0.46 | 0.51 / 0.46 | 0.54 / 0.62 |
+| `global_fit_loglike` | 10 | 0.98 / 0.93 | 0.94 / 0.95 | 0.93 / 0.96 | 0.04 / 1.00 |
+| `jet_spectrum` | 4 | 0.97 / 0.82 | 1.00 / 0.76 | 0.61 / 0.34 | 0.45 / 0.44 |
+| `loop_decay_width` | 4 | 0.85 / 0.79 | 0.86 / 0.92 | 0.39 / 0.21 | 0.29 / 0.27 |
+| `michalewicz` | 5 | 1.00 / 1.02 | 0.81 / 0.95 | 1.01 / 1.00 | 0.90 / 0.89 |
+| `neutralino_mass` | 4 | 0.84 / 0.80 | 0.98 / 0.27 | 0.83 / 0.99 | 0.48 / 0.41 |
+| `oscillation_probability` | 5 | 0.60 / 0.53 | 0.62 / 1.01 | 0.92 / 0.94 | 0.85 / 0.90 |
+| `relic_density` | 4 | 0.90 / 0.86 | 0.92 / 0.96 | 0.86 / 0.71 | 0.92 / 0.95 |
+| `resonance_xsec` | 4 | 0.92 / 0.96 | 0.61 / 1.00 | 0.97 / 0.88 | 0.67 / 0.69 |
+| `rotated_rosenbrock` | 6 | 0.52 / 0.48 | 0.53 / 0.53 | 0.45 / 0.62 | 0.47 / 0.47 |
+| `signal_yield_mc` | 4 | 0.84 / 0.84 | 0.86 / 0.85 | 0.56 / 0.53 | 0.95 / 0.93 |
+| `step_ridge` | 6 | 0.91 / 0.86 | 0.96 / 0.92 | 0.87 / 0.90 | 0.92 / 0.92 |
+| geometric mean | | 0.78 | 0.74 | 0.71 | 0.61 |
+
+* **0.71 of the default tree's error** as the geometric mean over the 150
+  runs, from 0.04 to 1.11. 135 runs are more than 2% better and 4 more than
+  2% worse.
+* **The gain is largest on the streams that move**: 22% on the uniform
+  stream, 26% on the walker, 29% on the sweeping and 39% on the focusing
+  stream.
+* **Every part of the error distribution falls**: the mean absolute error to
+  0.74, the median to 0.74, the 99% quantile to 0.72 and the largest error
+  of a run to 0.67.
+* **The four runs that are worse.** `eft_signal_strength` on the focusing
+  stream, 4% with both seeds: its declared noise is large against the change
+  of the target across the neighbours of a query in the contracted cluster,
+  and without the choice of the leaf's own GP it was 26% worse.
+  `branching_ratio` on the uniform stream, 11% with one seed and 11% better
+  with the other: one prediction of a leaf's own GP beside a threshold,
+  which the neighbours had failed the test for, is off by more than the
+  target's range. `Michalewicz` on the uniform stream, 2%.
+* **`global_fit_loglike` on the focusing stream, 0.04**: a single prediction
+  of the default tree is off by twice the range of the last quarter.
+* **Off the stream the gain is smaller**: 0.75 on points held out of the
+  stream itself, predicted at its end, and 0.83 on uniform test points.
+* **The coverage is unchanged**, 0.710 against 0.709, and 2.0% of the
+  predictions are off by more than 5 sigma against 1.9%.
+
+### 9.5 The leaves that are searched
+
+`GaussianPeaks`, `Eggholder`, `resonance_xsec`, `eft_signal_strength`,
+`global_fit_loglike` and `ActiveSubspacePeaks` on three stream types, 20 000
+points, one seed (18 runs), with the test against the kernel and no choice
+of the leaf's own GP. The neighbours are the 100 nearest points of the
+leaves whose points' boxes are nearest to the query.
+
+| leaves searched | NRMSE relative to the exact search (range) | relative to the default tree |
+|---|---|---|
+| 4 | 1.05 (0.94 to 1.28) | 0.71 |
+| 8 | 1.01 (0.98 to 1.05) | 0.68 |
+| 16 (the default) | 1.00 (0.95 to 1.02) | 0.68 |
+| 32 | 1.00 (0.99 to 1.01) | 0.68 |
+| every leaf that can hold a neighbour | 1 | 0.68 |
+
+* **Sixteen leaves give the error of the exact search.**
+* **The exact search looks at more leaves the more inputs there are**: at
+  the end of the 20 000-point runs of section 9.4, 14 to 16 leaves per query
+  in three dimensions, 8 to 31 in four, 7 to 46 in five, 35 to 79 in six and
+  41 to 77 in ten, of about 285.
+
+### 9.6 100 000 points
+
+`GaussianPeaks` and `eft_signal_strength` (d = 6), `Eggholder` (d = 3),
+`resonance_xsec` (d = 4) and `global_fit_loglike` (d = 10) on the uniform,
+walker and sweeping streams, one seed: 15 runs of the default tree and of
+the tree with `predict_from='neighbours'`. Times are means over the runs and
+over the points of each part of the stream, with four runs at a time on four
+cores.
+
+| points | default tree: update ms mean / 99th percentile | predict ms | neighbours: update ms mean / 99th percentile | predict ms | leaves | deepest leaf of the cuts, mean (largest) | NRMSE relative to the default tree |
+|---|---|---|---|---|---|---|---|
+| 0 to 1000 | 2.40 / 71 | 0.20 | 2.98 / 66 | 0.50 | 15 | 5 (at most 6) | 0.99 |
+| 1000 to 4000 | 2.70 / 76 | 0.25 | 3.50 / 80 | 0.66 | 58 | 8 (at most 11) | 0.76 |
+| 4000 to 16000 | 2.52 / 67 | 0.24 | 3.18 / 64 | 0.65 | 235 | 12 (at most 17) | 0.69 |
+| 16000 to 64000 | 2.53 / 70 | 0.24 | 3.41 / 73 | 0.76 | 936 | 19 (at most 34) | 0.62 |
+| 64000 to 100000 | 2.52 / 67 | 0.26 | 3.40 / 64 | 0.81 | 1469 | 20 (at most 34) | 0.63 |
+
+* **The update time does not grow with the stream** for either tree beyond
+  the first 4000 points, where the leaves fill up. With neighbours an update
+  takes 1.3 times as long, and a prediction three times. These runs had the
+  first division of the index's groups (section 9.9), with which a
+  prediction from neighbours went from 0.65 to 0.81 ms; section 9.12 has
+  the times of the package as it is.
+* **The search looks at 16 leaves per query** from the first split to the
+  last, of 1469 at the end.
+* **The gain from the neighbours grows with the stream** and then holds: the
+  more points there are, the nearer a query's neighbours lie compared with
+  the points of its leaf, whose number stays the same.
+
+NRMSE of the last 25 000 predictions:
+
+| target | d | stream | default tree | neighbours | ratio |
+|---|---|---|---|---|---|
+| `eft_signal_strength` | 6 | sweeping | 0.0018 | 0.0007 | 0.38 |
+| `eft_signal_strength` | 6 | uniform | 0.0009 | 0.0003 | 0.37 |
+| `eft_signal_strength` | 6 | walker | 0.0019 | 0.0006 | 0.33 |
+| `eggholder` | 3 | sweeping | 0.0328 | 0.0283 | 0.86 |
+| `eggholder` | 3 | uniform | 0.0213 | 0.0170 | 0.79 |
+| `eggholder` | 3 | walker | 0.0232 | 0.0195 | 0.84 |
+| `gaussian_peaks` | 6 | sweeping | 0.0060 | 0.0031 | 0.52 |
+| `gaussian_peaks` | 6 | uniform | 0.0039 | 0.0022 | 0.57 |
+| `gaussian_peaks` | 6 | walker | 0.0068 | 0.0027 | 0.40 |
+| `global_fit_loglike` | 10 | sweeping | 0.0153 | 0.0117 | 0.77 |
+| `global_fit_loglike` | 10 | uniform | 0.0165 | 0.0146 | 0.88 |
+| `global_fit_loglike` | 10 | walker | 0.0174 | 0.0155 | 0.89 |
+| `resonance_xsec` | 4 | sweeping | 0.0135 | 0.0128 | 0.94 |
+| `resonance_xsec` | 4 | uniform | 0.0055 | 0.0051 | 0.94 |
+| `resonance_xsec` | 4 | walker | 0.0078 | 0.0077 | 0.99 |
+
+* **0.65 of the default tree's error** as the geometric mean, from 0.33 to
+  0.99, and no run worse. The coverage is 0.66 to 0.78.
+
+### 9.7 Cost with one process
+
+Streams of 20 000 points, one run at a time on an otherwise idle machine,
+with the first division of the index's groups (section 9.9). The update time
+is the mean over the stream, the prediction time the mean over
+1000 single-point predictions at the points that follow it, and the RMSE
+that of those predictions, relative to the default tree. The four numbers of
+a cell are for `GaussianPeaks` on the uniform and on the walker stream,
+`resonance_xsec` and `global_fit_loglike` on the uniform stream.
+
+| setting | update ms | predict ms | leaves searched | RMSE relative to the default tree |
+|---|---|---|---|---|
+| default tree | 1.77 / 1.92 / 2.95 / 3.38 | 0.14 / 0.14 / 0.14 / 0.14 | | 1 |
+| **neighbours: 100 from 16 leaves** | 2.50 / 2.66 / 3.59 / 4.23 | 0.58 / 0.62 / 0.51 / 0.46 | 16 | 0.66 / 0.59 / 0.94 / 0.85 |
+| exact search | 2.81 / 2.84 / 3.71 / 4.38 | 0.91 / 1.14 / 0.62 / 0.57 | 94 / 111 / 33 / 72 | 0.66 / 0.59 / 0.94 / 0.85 |
+| 8 leaves | 2.48 / 2.59 / 3.60 / 4.08 | 0.62 / 0.57 / 0.46 / 0.42 | 8 | 0.69 / 0.59 / 0.94 / 0.83 |
+| 50 neighbours | 2.45 / 2.50 / 3.58 / 4.09 | 0.46 / 0.44 / 0.39 / 0.36 | 16 | 0.78 / 0.72 / 1.02 / 1.00 |
+| 200 neighbours | 2.99 / 2.97 / 4.13 / 4.70 | 1.07 / 1.09 / 0.89 / 0.78 | 16 | 0.61 / 0.47 / 0.93 / 0.87 |
+
+* **A prediction from neighbours takes 0.46 to 0.62 ms** against 0.14 ms,
+  3.3 to 4.4 times as long.
+* **An update takes 0.6 to 0.9 ms longer**, 22 to 41%: the point is
+  predicted from the neighbours and from the leaf's own GP before it is
+  stored.
+* **The exact search** takes up to 0.5 ms more per prediction for the same
+  error, the more the higher the dimension of the cells that touch a query's
+  neighbourhood.
+* **With 50 neighbours** a prediction is 0.1 to 0.2 ms faster and the gain
+  is gone on two of the four streams. **With 200** it takes 1.7 to 1.8 times
+  as long and the error falls further on `GaussianPeaks` only.
+
+### 9.8 A stream that drifts
+
+A four-dimensional cluster of width 0.03 that moves along the first input by
+its width every 120 points, 12 000 points, each predicted before it is added;
+one process. The first pair of columns is the package before the index of
+the leaves (commit `1a242db`), where a point reaches its leaf through the
+cuts. The times are means over the 2000 points up to each row.
+
+| points | leaves | depth of the cuts, mean (largest) | through the cuts: predict ms | update ms | leaf index: predict ms | update ms | leaf index, neighbours: predict ms | update ms |
+|---|---|---|---|---|---|---|---|---|
+| 2000 | 26 | 14 (25) | 0.24 | 3.16 | 0.18 | 3.28 | 0.44 | 3.73 |
+| 4000 | 52 | 27 (51) | 0.37 | 3.46 | 0.18 | 3.52 | 0.51 | 4.18 |
+| 6000 | 77 | 39 (76) | 0.51 | 3.77 | 0.18 | 3.41 | 0.51 | 4.03 |
+| 8000 | 110 | 54 (95) | 0.64 | 4.06 | 0.19 | 3.53 | 0.51 | 4.03 |
+| 10 000 | 145 | 66 (113) | 0.73 | 4.17 | 0.20 | 3.61 | 0.50 | 4.05 |
+| 12 000 | 179 | 76 (131) | 0.83 | 4.43 | 0.19 | 3.78 | 0.51 | 4.17 |
+
+* **Every split adds a level to the cuts**: the deepest leaf is 131 levels
+  down, where a balanced tree of 179 leaves has 8.
+* **Through the cuts the prediction time grows with the depth**, 3.4 times
+  from the first 2000 points to the last, and the update time by 1.3 ms.
+  With the index both stay as they are, and the predictions are the same.
+* **A tree more than 1100 levels deep** (two inputs, `Nbar=8`, 9000 points
+  of such a stream) predicts, is saved and loaded with the index
+  (`tests/test_leaf_index.py`). Through the cuts the descent failed at about
+  1000 levels and saving from about 150.
+* **With neighbours the RMSE of the last 6000 predictions is 0.59 of the
+  default tree's.**
+
+### 9.9 The index of the leaves up to a million points
+
+Without GPs (`research/partitioning/index_scaling.py`): leaves of 100 points,
+cut at the median along a random input, on a uniform stream and on a random
+walk in the unit cube. The groups of the index that the search for the 16
+nearest leaves opens, as the mean over 500 queries near the latest points:
+with groups divided at the median of their children's centres (the index of
+sections 9.4 to 9.8), then with groups divided where their halves overlap
+least (the index of the package). Both give the same leaves.
+
+| points | leaves | uniform, d = 3 | d = 6 | d = 10 | walk, d = 3 | d = 6 | d = 10 |
+|---|---|---|---|---|---|---|---|
+| 5000 | 70 | 5.0 → 3.9 | 4.5 → 3.7 | 4.6 → 4.4 | 3.9 → 3.8 | 4.5 → 4.5 | 4.0 → 4.7 |
+| 20 000 | 300 | 6.9 → 5.0 | 8.5 → 5.4 | 10.6 → 5.5 | 6.1 → 5.8 | 7.8 → 7.6 | 10.3 → 7.3 |
+| 100 000 | 1500 | 10.9 → 6.8 | 19.3 → 7.4 | 25.2 → 8.2 | 12.3 → 7.9 | 25.7 → 10.1 | 30.3 → 12.3 |
+| 400 000 | 6000 | 14.8 → 7.2 | 37.0 → 8.6 | 48.9 → 9.4 | 19.0 → 7.8 | 46.1 → 10.4 | 67.6 → 16.4 |
+| 1 000 000 | 14 500 | 17.9 → 7.4 | 55.3 → 9.3 | 70.9 → 10.4 | | | |
+
+* **Divided at the median of the centres, the groups opened grow with a
+  power of the number of leaves**: twice as many for four times the leaves
+  in six and ten dimensions.
+* **Divided where the halves overlap least, they grow by one to four for
+  four times the leaves**, and a point lies in the cells' box of one bottom
+  group, against 5 in four dimensions and 9 in eight.
+* **The predictions do not change**: on two 5000-point streams with
+  `predict_from='neighbours'` all of them are identical with the two
+  divisions.
+
+The same on the default tree of `GaussianPeaks` on the uniform stream
+(`research/partitioning/profile_search.py`, 1000 queries at the points that
+follow each checkpoint, three processes at a time), first division → least
+overlap:
+
+| points | leaves | groups opened | `nearest` ms | the whole search for 100 neighbours, ms |
+|---|---|---|---|---|
+| 5000 | 70 | 5.0 → 3.9 | 0.06 → 0.05 | 0.14 → 0.14 |
+| 20 000 | 291 | 8.8 → 5.9 | 0.10 → 0.07 | 0.19 → 0.16 |
+| 50 000 | 728 | 9.1 → 7.8 | 0.12 → 0.09 | 0.23 → 0.20 |
+| 100 000 | 1436 | 13.1 → 8.3 | 0.17 → 0.10 | 0.32 → 0.23 |
+
+### 9.10 Neighbours with the feature network
+
+`GaussianPeaks`, `RotatedRosenbrock`, `Eggholder`, `resonance_xsec`,
+`eft_signal_strength` and `relic_density` on the uniform, walker and
+sweeping streams, 20 000 points, one seed: 18 runs. NRMSE of the last 5000
+predictions divided by that of the default tree, for the three streams in
+that order. The network is `global_mean='net'` with one training step per
+update.
+
+| target | neighbours | feature network | both |
+|---|---|---|---|
+| `eft_signal_strength` | 0.39 / 0.38 / 0.58 | 0.12 / 0.15 / 0.44 | 0.11 / 0.14 / 0.34 |
+| `eggholder` | 0.88 / 0.83 / 0.90 | 0.98 / 1.52 / 1.09 | 0.88 / 1.09 / 0.97 |
+| `gaussian_peaks` | 0.64 / 0.40 / 0.51 | 0.18 / 0.11 / 0.72 | 0.17 / 0.10 / 0.61 |
+| `relic_density` | 0.90 / 0.92 / 0.86 | 0.48 / 0.72 / 0.74 | 0.47 / 0.73 / 0.67 |
+| `resonance_xsec` | 0.92 / 0.61 / 0.97 | 0.59 / 2.55 / 1.18 | 0.61 / 2.53 / 1.12 |
+| `rotated_rosenbrock` | 0.52 / 0.53 / 0.45 | 0.08 / 0.07 / 0.50 | 0.07 / 0.06 / 0.43 |
+| geometric mean | 0.64 | 0.43 | 0.39 |
+
+* **With the network the neighbours lower the error by a further 10%**
+  (0.72 to 1.03 of the error with the network alone): 14 of the 18 runs are
+  more than 2% better and one is worse (`resonance_xsec` on the uniform
+  stream, 3%).
+* **The gain is smaller than without the network** (36% on these runs),
+  since the network already carries what the points beyond a leaf say about
+  the target.
+* **The neighbours do not repair a run that the network makes worse**:
+  `resonance_xsec` on the walker stream stays at 2.5 times the tree's error.
+* **The coverage is unchanged**, 0.71 against 0.70 with the network alone,
+  and 3.0% of the predictions are off by more than 5 sigma with both.
+* **A prediction takes 1.44 ms against 0.50 ms** with the network alone
+  (four runs at a time on four cores), and an update 4.7 ms against 3.3 ms:
+  the leaf's snapshot of the network is evaluated at the neighbours.
+
+### 9.11 Noisy observations
+
+The eleven targets of sections 9.1 to 9.3 with Gaussian noise of 0.2
+standard deviations of the target on every observation, declared to the
+model, on the three stream types: 33 runs of 5000 points. NRMSE of the last
+1250 predictions against the noise-free target, with
+`predict_from='neighbours'` relative to the default tree.
+
+| target | uniform | walker | sweeping |
+|---|---|---|---|
+| `chirp` | 0.98 | 0.82 | 0.88 |
+| `diagonal_ridge` | 0.87 | 0.82 | 0.84 |
+| `eft_signal_strength` | 0.73 | 0.77 | 0.75 |
+| `eggholder` | 0.95 | 0.86 | 0.94 |
+| `gaussian_peaks` | 0.91 | 0.70 | 0.79 |
+| `loop_decay_width` | 0.84 | 0.81 | 0.83 |
+| `neutralino_mass` | 0.97 | 1.02 | 0.74 |
+| `oscillation_probability` | 0.85 | 0.81 | 0.97 |
+| `relic_density` | 0.93 | 0.94 | 0.90 |
+| `resonance_xsec` | 0.98 | 0.89 | 0.96 |
+| `rotated_rosenbrock` | 0.80 | 0.79 | 0.81 |
+| geometric mean | 0.89 | 0.83 | 0.85 |
+
+* **0.86 of the default tree's error**, from 0.70 to 1.02, and no run more
+  than 2% worse. Without the noise the same runs are at 0.75.
+* **The coverage of the noise-free target** is 0.91 against 0.90, with a
+  sigma that includes the declared noise.
+
+### 9.12 Cost along a 200 000-point stream
+
+`GaussianPeaks` (d = 6) on the uniform stream, one process on an otherwise
+idle machine, the package as it is. The update time is the mean since the
+previous row, the prediction time the mean over 1000 single-point
+predictions at the points that follow, and the RMSE that of those
+predictions (`research/partitioning/time_scaling.py`).
+
+| points | leaves | default tree: update ms | predict ms | RMSE | neighbours: update ms | predict ms | RMSE | RMSE ratio |
+|---|---|---|---|---|---|---|---|---|
+| 5000 | 71 | 1.86 | 0.13 | 0.459 | 2.50 | 0.55 | 0.327 | 0.71 |
+| 20 000 | 289 | 1.86 | 0.17 | 0.282 | 2.59 | 0.61 | 0.175 | 0.62 |
+| 50 000 | 730 | 1.88 | 0.14 | 0.237 | 2.53 | 0.63 | 0.139 | 0.59 |
+| 100 000 | 1465 | 1.96 | 0.15 | 0.162 | 2.65 | 0.62 | 0.103 | 0.64 |
+| 200 000 | 2917 | 1.92 | 0.14 | 0.129 | 2.78 | 0.59 | 0.068 | 0.53 |
+
+* **The prediction time does not grow with the stream**: 0.55 to 0.63 ms
+  with neighbours and 0.13 to 0.17 ms without, from 71 leaves to 2917.
+* **The update time grows by 3% for the default tree and by 11% with
+  neighbours** from the first 5000 points to the last 100 000.
+* **The gain from the neighbours grows with the stream**, to 0.53 of the
+  default tree's error at 200 000 points.
+
+`global_fit_loglike` (d = 10) on the walker stream, 100 000 points, with
+the first division of the index's groups and with the package as it is,
+side by side (two processes at a time; the predictions are the same):
+
+| points | default tree, predict ms: first division → least overlap | neighbours, update ms | neighbours, predict ms |
+|---|---|---|---|
+| 5000 | 0.12 → 0.12 | 3.81 → 3.63 | 0.43 → 0.38 |
+| 20 000 | 0.17 → 0.18 | 3.74 → 3.59 | 0.55 → 0.50 |
+| 50 000 | 0.17 → 0.13 | 3.81 → 3.59 | 0.66 → 0.42 |
+| 100 000 | 0.21 → 0.13 | 3.84 → 3.33 | 0.97 → 0.53 |
+
+* **With the first division a prediction from neighbours took twice as long
+  at 100 000 points as at 5000**, and one of the default tree 1.7 times.
+  With the division at the least overlap neither grows beyond the spread of
+  the measurement.
+
+### 9.13 Two clusters per split, and the steps of the predictions (not in the code)
+
+**A split into two clusters.** The points of a leaf are divided into two
+clusters (2-means), and a point goes to the child whose centroid is nearer:
+a cut by the hyperplane half-way between the centroids. The 33 runs of
+5000 points of sections 9.1 to 9.3, one GP per leaf, relative to the default
+tree.
+
+| two clusters of the leaf's points | uniform | walker | sweeping | all runs (range) | runs more than 2% worse |
+|---|---|---|---|---|---|
+| nearest centroid | 1.48 | 1.31 | 1.03 | 1.26 (0.22 to 4.48) | 24 of 33 |
+| nearest centroid, standardised inputs | 1.44 | 1.35 | 1.13 | 1.30 (0.35 to 4.83) | 26 of 33 |
+| cut at the median along the line between the centroids (section 9.1) | 1.54 | 1.33 | 1.08 | 1.30 (0.30 to 4.88) | 23 of 33 |
+| nearest centroid, distances in the GP's fitted length scales | 0.99 | 1.17 | 0.97 | 1.04 (0.65 to 2.43) | 15 of 33 |
+| the same, cut at the median | 0.99 | 0.99 | 1.00 | 0.99 (0.61 to 1.71) | 14 of 33 |
+| nearest centroid, fitted length scales, decorrelated inputs for the GPs | 1.08 | 1.31 | 1.14 | 1.17 (0.59 to 3.24) | 25 of 33 |
+
+* **Clusters of the inputs alone are 26 to 30% worse than the default
+  cuts**, as the other rules of section 9.1 that do not look at the target.
+* **Clusters in the metric of the leaf's kernel are level with the default
+  cuts** and differ from them by up to 2.4 times in single runs, as the
+  other hyperplanes from the GP.
+
+**Steps of the predicted mean.** After 20 000 points, along 60 straight paths
+from a stored point to its 200th nearest stored point, in 1000 steps
+(`research/partitioning/jitter.py`). A step counts by how far it departs
+from the mean of the steps on either side of it, in units of the predicted
+sigma, so that one discontinuity counts up to three times: itself and, at
+half its size, the step before and after it. Means over the paths, which
+pass through 2.4 to 2.9 leaves.
+
+| target, stream | prediction from | steps above 0.01 sigma | above 0.1 sigma | above 1 sigma | their sum in sigma, mean (median) | largest step, median |
+|---|---|---|---|---|---|---|
+| `GaussianPeaks`, uniform | the leaf | 4.6 | 3.9 | 0.9 | 4.3 (2.3) | 0.89 |
+| | the query's neighbours | 243 | 32.6 | 0.2 | 14.0 (13.1) | 0.45 |
+| | the neighbours of one of 8 cells of the leaf | 8.6 | 7.0 | 1.7 | 5.7 (4.7) | 1.46 |
+| | of one of 32 cells | 10.7 | 8.3 | 1.4 | 5.8 (5.0) | 1.21 |
+| `Eggholder`, walker | the leaf | 4.9 | 3.9 | 1.4 | 4.8 (3.0) | 1.26 |
+| | the query's neighbours | 185 | 39.0 | 1.4 | 16.9 (12.3) | 0.75 |
+| | the neighbours of one of 8 cells of the leaf | 10.0 | 7.0 | 1.4 | 5.6 (4.6) | 1.21 |
+| | of one of 32 cells | 14.5 | 10.0 | 1.4 | 5.8 (4.1) | 0.92 |
+| `resonance_xsec`, uniform | the leaf | 6.1 | 4.8 | 2.0 | 13.7 (2.8) | 1.36 |
+| | the query's neighbours | 175 | 35.1 | 2.1 | 25.8 (16.7) | 1.21 |
+
+* **The leaf's prediction steps where the path enters another leaf**, 4 to
+  5 times on a path, by about one sigma at the largest.
+* **The neighbours' prediction steps whenever the set of neighbours
+  changes**: 33 to 39 steps above 0.1 sigma on a path and 3 to 5 times the
+  sum, with a largest step that is no larger than the leaf's.
+
+**Neighbours of a cell.** Each leaf is divided into 4 to 32 cells by median
+cuts of its points, and a prediction is conditioned on the 100 stored points
+nearest to the mean of the points of the query's cell, so that the queries
+of a cell share their neighbours (`research/partitioning/anchored.py`). The
+33 runs of 5000 points, relative to the default tree.
+
+| neighbours of | uniform | walker | sweeping | all runs (range) | runs more than 2% worse |
+|---|---|---|---|---|---|
+| the query (`predict_from='neighbours'`) | 0.76 | 0.70 | 0.79 | 0.75 (0.45 to 1.04) | 1 of 33 |
+| one of 4 cells of its leaf | 0.89 | 1.05 | 1.04 | 0.99 (0.78 to 1.24) | 12 of 33 |
+| one of 8 cells | 0.87 | 1.08 | 1.04 | 0.99 (0.78 to 1.55) | 13 of 33 |
+| one of 16 cells | 0.84 | 0.96 | 1.04 | 0.94 (0.67 to 1.66) | 8 of 33 |
+| one of 32 cells | 0.83 | 0.98 | 1.02 | 0.94 (0.64 to 2.02) | 10 of 33 |
+
+* **Neighbours that are shared by a cell step as rarely as the leaf's
+  prediction and keep 1 to 6% of the 25% that the query's own neighbours
+  gain.** A leaf of 100 points in four to six dimensions is two or three
+  points wide along each input: 32 cells halve it along five inputs, and
+  the centre of a cell is still a quarter of the leaf away from most of its
+  queries.
+
+### 9.14 Neighbours that fade out: the prototype
+
+The prediction from a query's neighbours with a noise that grows with the
+distance of a neighbour (`research/partitioning/tapered.py`; section 9.15
+has the version of the package). With `r` the
+distance of a neighbour divided by that of the first stored point beyond the
+100 neighbours, and `t = (r - start) / (1 - start)` where `r` exceeds
+`start`, the noise variance of the neighbour is raised by
+`e^2 t^2 / (1 - t)^2`, where `e^2` is the typical squared error of the
+leaf's recent predictions (the median of their squares divided by 0.455). A
+point enters and leaves the set of neighbours with no weight, so the
+prediction is continuous in the query for as long as its leaf, and the leaves
+that are searched, stay the same.
+
+The 33 runs of sections 9.1 to 9.3, relative to the default tree:
+
+| 100 neighbours unless stated | 5000 points: uniform | walker | sweeping | all runs (range) | runs more than 2% worse | 20 000 points: all runs (range) | runs more than 2% worse |
+|---|---|---|---|---|---|---|---|
+| as in the package (no fading) | 0.76 | 0.70 | 0.79 | 0.75 (0.45 to 1.04) | 1 of 33 | 0.69 (0.38 to 0.98) | 0 of 33 |
+| fading from `start = 0.9` | 0.77 | 0.72 | 0.80 | 0.76 (0.47 to 1.04) | 1 of 33 | 0.70 (0.39 to 0.98) | 0 of 33 |
+| fading from 0.8 | 0.78 | 0.73 | 0.81 | 0.77 (0.50 to 1.04) | 1 of 33 | 0.71 (0.38 to 0.99) | 0 of 33 |
+| fading from 0.5 | 0.83 | 0.78 | 0.83 | 0.82 (0.57 to 1.07) | 2 of 33 | | |
+| from 0.8, a tenth of the added noise | 0.77 | 0.72 | 0.80 | 0.76 (0.47 to 1.04) | 1 of 33 | | |
+| from 0.8, ten times the added noise | 0.81 | 0.76 | 0.83 | 0.80 (0.53 to 1.04) | 2 of 33 | | |
+| 150 neighbours, no fading | 0.72 | 0.65 | 0.76 | 0.71 (0.40 to 1.02) | 0 of 33 | | |
+| 150 neighbours, fading from 0.8 | 0.74 | 0.68 | 0.78 | 0.73 (0.43 to 1.04) | 1 of 33 | | |
+| 150 neighbours, fading from 0.5 | 0.76 | 0.71 | 0.80 | 0.76 (0.49 to 1.05) | 2 of 33 | | |
+
+The steps of the predicted mean, measured as in section 9.13 after 20 000
+points:
+
+| target, stream | prediction from | steps above 0.01 sigma | above 0.1 sigma | above 1 sigma | their sum in sigma, mean (median) | largest step, median |
+|---|---|---|---|---|---|---|
+| `GaussianPeaks`, uniform | the leaf | 4.6 | 3.9 | 0.9 | 4.3 (2.3) | 0.89 |
+| | neighbours | 243 | 32.6 | 0.2 | 14.0 (13.1) | 0.45 |
+| | neighbours fading from 0.8 | 24.4 | 4.8 | 0.2 | 2.0 (1.5) | 0.27 |
+| | fading from 0.9, 32 leaves searched | 21.0 | 2.6 | 0.2 | 1.5 (0.8) | 0.22 |
+| `Eggholder`, walker | the leaf | 4.9 | 3.9 | 1.4 | 4.8 (3.0) | 1.26 |
+| | neighbours | 185 | 39.0 | 1.4 | 16.9 (12.3) | 0.75 |
+| | neighbours fading from 0.8 | 36.5 | 3.6 | 0.5 | 2.8 (1.4) | 0.35 |
+| | fading from 0.9, 32 leaves searched | 51.9 | 4.4 | 0.5 | 3.5 (1.9) | 0.37 |
+| `resonance_xsec`, uniform | the leaf | 6.1 | 4.8 | 2.0 | 13.7 (2.8) | 1.36 |
+| | neighbours | 175 | 35.1 | 2.1 | 25.8 (16.7) | 1.21 |
+| | neighbours fading from 0.8 | 32.9 | 5.5 | 1.6 | 12.8 (3.1) | 1.09 |
+| | fading from 0.9, 32 leaves searched | 43.6 | 5.5 | 1.6 | 13.7 (3.1) | 0.98 |
+
+* **With fading neighbours the prediction steps as often as the leaf's
+  own**, 3 to 6 times above 0.1 sigma on a path against 33 to 39 without
+  fading, and by less: the largest step of a path is 0.2 to 1.1 sigma
+  against 0.9 to 1.4 for the leaves.
+* **The fading costs 1% of the error from 0.9 and 3% from 0.8** at 20 000
+  points (0.99 to 1.06 and 0.98 to 1.13 of the error without fading in
+  single runs), and no run is worse than the default tree. The coverage is
+  0.685 against 0.684.
+* **The width of the fading hardly changes the steps**, and a wider one
+  costs more error: 9% from 0.5.
+* **The steps that remain** are where the path enters another leaf, whose
+  kernel and metric differ, and where the 16 leaves that are searched
+  change: with 32 leaves, or an exact search, the steps above 0.1 sigma on
+  a 6000-point tree of `GaussianPeaks` fall from 3.9 to 2.3 per path.
+* **Cost** (`GaussianPeaks`, 20 000 points, one process): a prediction
+  takes 0.57 ms against 0.52 ms without fading, and 0.69 ms with 32 leaves
+  searched; an update 2.5 ms against 2.3 ms.
+
+### 9.15 Neighbours that fade out (`NEIGHBOUR_FADE`)
+
+In the package the noise variance of a neighbour grows by `t^2 / (1 - t)^2`
+times a unit, with `t` as in section 9.14 and `start = 0.9`. Candidates for
+the unit, on the 33 runs of 5000 points relative to the default tree, with
+the steps of the mean after 20 000 points as in section 9.13 (`GaussianPeaks`
+on the uniform stream / `Eggholder` on the walker stream):
+
+| unit of the added noise | all runs (range) | runs more than 2% worse | steps above 0.1 sigma | their sum in sigma |
+|---|---|---|---|---|
+| no fading | 0.75 (0.45 to 1.04) | 1 of 33 | 32.6 / 39.0 | 14.0 / 16.9 |
+| the squared error of the leaf's predictions (section 9.14), plus the neighbour's own noise variance | 0.76 (0.48 to 1.04) | 1 of 33 | 4.8 / 3.5 | 2.2 / 2.9 |
+| **the variance the leaf's GPs predict, plus the neighbour's own** | 0.77 (0.49 to 1.04) | 1 of 33 | 4.8 / 2.5 | 2.1 / 2.2 |
+| a quarter of the predicted variance, plus the neighbour's own | 0.76 (0.47 to 1.04) | 1 of 33 | 5.0 / 2.9 | 2.2 / 2.4 |
+
+* **The squared error of a leaf's predictions is 0.12 to 0.47 of the
+  variance its GPs predict** (medians over the leaves of four noise-free
+  targets after 5000 points), and 4.5 times that variance on a target with
+  noise of 0.2 standard deviations, where it contains the noise.
+* **Under a kernel that is not fitted** (a fixed kernel, declared noise ten
+  times the size of the errors, 30 neighbours in two dimensions) the largest
+  step along a path of 400 points across a leaf is 0.61 of that without
+  fading with the squared error alone as the unit, 0.32 with the
+  neighbour's noise added, and 0.26 with the predicted variance.
+* **On `resonance_xsec`** the predicted variance gives 5.5 steps above 0.1
+  sigma on a path with a sum of 12.7 sigma, as the squared error does.
+
+The 150 runs of section 9.4 with the package as it is: the NRMSE of the last
+5000 predictions divided by that of the default tree, for the two seeds.
+
+| target | d | uniform | walker | sweeping | focusing |
+|---|---|---|---|---|---|
+| `active_peaks` | 10 | 0.76 / 0.78 | 0.72 / 0.75 | 0.66 / 0.86 | 0.63 / 0.65 |
+| `branching_ratio` | 5 | 1.14 / 0.89 | 0.95 / 0.97 | 0.99 / 0.96 |  |
+| `chirp` | 4 | 0.92 / 0.91 | 0.73 / 0.68 | 0.69 / 0.70 | 0.37 / 0.37 |
+| `diagonal_ridge` | 4 | 0.70 / 0.67 | 0.76 / 0.68 | 0.83 / 0.78 | 0.75 / 0.73 |
+| `dilepton_spectrum` | 4 | 0.89 / 0.85 | 0.95 / 0.90 | 0.73 / 0.81 | 0.94 / 0.88 |
+| `eft_signal_strength` | 6 | 0.42 / 0.44 | 0.43 / 0.40 | 0.64 / 0.49 | 1.04 / 1.05 |
+| `eggholder` | 3 | 0.88 / 0.89 | 0.82 / 0.86 | 0.91 / 0.90 | 0.84 / 0.85 |
+| `gaussian_peaks` | 6 | 0.65 / 0.69 | 0.42 / 0.49 | 0.54 / 0.48 | 0.50 / 0.58 |
+| `global_fit_loglike` | 10 | 0.99 / 0.96 | 0.92 / 0.96 | 0.95 / 0.97 | 0.20 / 1.00 |
+| `jet_spectrum` | 4 | 0.73 / 0.83 | 1.00 / 0.77 | 0.63 / 0.75 | 0.44 / 0.44 |
+| `loop_decay_width` | 4 | 0.87 / 0.79 | 0.86 / 0.93 | 0.39 / 0.18 | 0.29 / 0.28 |
+| `michalewicz` | 5 | 1.01 / 1.02 | 0.81 / 0.96 | 1.01 / 1.00 | 0.91 / 0.91 |
+| `neutralino_mass` | 4 | 0.84 / 0.79 | 0.99 / 0.26 | 0.83 / 0.99 | 0.52 / 0.44 |
+| `oscillation_probability` | 5 | 0.63 / 0.55 | 0.63 / 1.02 | 0.93 / 0.94 | 0.87 / 0.93 |
+| `relic_density` | 4 | 0.89 / 0.86 | 0.92 / 0.96 | 0.87 / 0.74 | 0.93 / 0.96 |
+| `resonance_xsec` | 4 | 0.93 / 0.98 | 0.62 / 1.00 | 0.97 / 0.89 | 0.72 / 0.73 |
+| `rotated_rosenbrock` | 6 | 0.54 / 0.52 | 0.56 / 0.53 | 0.49 / 0.68 | 0.50 / 0.51 |
+| `signal_yield_mc` | 4 | 0.84 / 0.84 | 0.87 / 0.87 | 0.51 / 0.54 | 0.94 / 0.93 |
+| `step_ridge` | 6 | 0.92 / 0.87 | 0.95 / 0.93 | 0.87 / 0.91 | 0.91 / 0.91 |
+| geometric mean | | 0.79 | 0.75 | 0.73 | 0.65 |
+| without fading (section 9.4) | | 0.78 | 0.74 | 0.71 | 0.61 |
+
+* **0.73 of the default tree's error** as the geometric mean over the 150
+  runs, from 0.18 to 1.14, against 0.71 without fading. 135 runs are more
+  than 2% better than the default tree and 4 more than 2% worse, the four of
+  section 9.4: `branching_ratio` on the uniform stream (14%),
+  `eft_signal_strength` on the focusing stream (4 and 5%) and `Michalewicz`
+  on the uniform stream (2%).
+* **Run by run the fading costs 0.8% of error in the median** and 3.3% in
+  the geometric mean (0.75 to 4.81 of the error without fading): 0.9% on the
+  uniform stream, 1.9% on the walker, 3.3% on the sweeping and 7.4% on the
+  focusing stream. Without `global_fit_loglike` on the focusing stream,
+  where one prediction of the default tree is off by twice the range and the
+  ratio is 0.20 with fading and 0.04 without, it is 2.2%.
+* **The rest of the error distribution**: the mean absolute error is 0.77 of
+  the default tree's, the median 0.76, the 99% quantile 0.74 and the largest
+  error of a run 0.69 (without fading 0.74, 0.74, 0.72 and 0.67); 0.77 on
+  points held out of the stream and 0.84 on uniform test points.
+* **The coverage is 0.712** against 0.709 for the default tree, and 1.76% of
+  the predictions are off by more than 5 sigma, against 1.95% for the
+  default tree and 2.02% without fading.
+* **Cost** (20 000 points, one process): on `GaussianPeaks` a prediction
+  takes 0.57 ms with fading, 0.54 ms without and 0.14 ms for the default
+  tree, and an update 2.53, 2.46 and 1.82 ms; on `resonance_xsec` 0.60, 0.46
+  and 0.14 ms, and 3.61, 3.58 and 2.95 ms.
+
+### 9.16 Blending across the cuts: the prototypes
+
+What is left of the steps of section 9.15 is where a query passes into
+another leaf, whose kernel, scaling of the inputs and targets, metric of the
+distances and calibration differ. Two ways to pass from one leaf to the next
+gradually, within a zone around each cut whose width is a share of the
+spread of the node's points along the cut, with weights that change linearly
+across it (`research/partitioning/blended.py`); where a point is stored does
+not change:
+
+* **predictions blended**: the query is predicted from its neighbours with
+  the hyperparameters of each leaf in turn, and the predictions are mixed;
+* **kernels mixed**: one prediction, with the weighted sum of the leaves'
+  kernels (in the units of the inputs and targets) as its kernel, and the
+  weighted means of their metrics, target means, units of the fading and
+  sigma scalers. A single output without a global model; a leaf that prefers
+  its own GP, or neighbours that fail the test, give blended predictions.
+
+The steps of the mean after 20 000 points, as in section 9.13, for
+`GaussianPeaks` on the uniform stream / `Eggholder` on the walker stream /
+`resonance_xsec` on the uniform stream:
+
+| | leaves per prediction | steps above 0.1 sigma | their sum in sigma | largest step, median |
+|---|---|---|---|---|
+| the default tree | 1 | 3.9 / 3.9 / 4.8 | 4.3 / 4.8 / 13.7 | 0.89 / 1.26 / 1.36 |
+| neighbours that fade out (the package) | 1 | 4.8 / 2.5 / 5.5 | 2.1 / 2.2 / 12.7 | 0.26 / 0.32 / 1.08 |
+| predictions blended, zone 0.05 | 1.39 / 1.51 / 1.49 | 2.4 / 0.3 / 1.4 | 1.1 / 0.5 / 1.3 | 0.10 / 0.02 / 0.04 |
+| predictions blended, zone 0.1 | 1.99 / 2.15 / 2.10 | 2.3 / 0.4 / 0.9 | 1.0 / 0.7 / 0.9 | 0.09 / 0.01 / 0.02 |
+| kernels mixed, zone 0.05 | 1.39 / 1.51 / 1.49 | 2.9 / 0.5 / 2.8 | 1.3 / 0.7 / 2.9 | 0.11 / 0.03 / 0.07 |
+| kernels mixed, zone 0.1 | 1.99 / 2.15 / 2.10 | 2.5 / 0.2 / 1.9 | 1.1 / 0.5 / 1.9 | 0.10 / 0.03 / 0.05 |
+
+The 33 runs of sections 9.1 to 9.3, relative to the default tree, and
+relative to the neighbours that fade out run by run:
+
+| | 5000 points: all runs (range) | against fading alone, mean / median (range) | 20 000 points: all runs (range) | against fading alone, mean / median (range) | coverage at 20 000 | off by more than 5 sigma |
+|---|---|---|---|---|---|---|
+| neighbours that fade out (the package) | 0.77 (0.49 to 1.04) | 1 | 0.71 (0.39 to 0.99) | 1 | 0.686 | 1.52% |
+| predictions blended, zone 0.05 | 0.76 (0.48 to 1.04) | 0.985 / 0.992 (0.91 to 1.02) | | | | |
+| predictions blended, zone 0.1 | 0.75 (0.48 to 1.05) | 0.977 / 0.988 (0.80 to 1.05) | | | | |
+| kernels mixed, zone 0.05 | 0.75 (0.48 to 1.04) | 0.976 / 0.992 (0.82 to 1.03) | 0.69 (0.38 to 0.97) | 0.977 / 0.985 (0.86 to 1.03) | 0.710 | 1.08% |
+| kernels mixed, zone 0.1 | 0.72 (0.27 to 1.05) | 0.939 / 0.983 (0.31 to 1.05) | 0.67 (0.38 to 0.97) | 0.943 / 0.976 (0.51 to 1.08) | 0.733 | 0.80% |
+
+* **Either way the steps at the cuts all but vanish**: the largest step of
+  a path falls from 0.26 to 1.08 sigma to 0.01 to 0.11 sigma. On
+  `GaussianPeaks` two to three steps of a tenth of a sigma remain, where
+  the 16 leaves that are searched change.
+* **The error falls too**: with the kernels mixed in a zone of 0.1 it is 6%
+  lower than with fading alone at 20 000 points (2% in the median run, 22 of
+  33 runs more than 2% better and one worse, by 8%), and 2% lower in a zone
+  of 0.05. That is 0.67 and 0.69 of the default tree's error, where the
+  neighbours without fading have 0.69 on these runs.
+* **The coverage rises** to 0.71 and 0.73: a leaf's sigma scaler is
+  calibrated on the predictions with its own kernel alone, which are less
+  accurate in the zones.
+* **Cost** (`GaussianPeaks`, 20 000 points, one process, the prototype
+  walking the cuts for every query): a prediction with the kernels mixed
+  takes 1.04 and 1.07 times as long as with fading alone in zones of 0.05
+  and 0.1, and 1.24 and 1.86 times with the predictions blended.
+
+### 9.17 Kernels mixed across the cuts (`NEIGHBOUR_BLEND`)
+
+In the package the kernels are mixed as in section 9.16, with two
+differences. The zone at a face of a leaf is a share of the leaf's own width
+along that input, where the prototype took a share of the spread of the node
+that was cut; and a leaf's sigma scaler is calibrated on the mixed
+prediction. The 33 runs of sections 9.1 to 9.3, relative to the default tree
+and, run by run, to the neighbours that fade out without mixing:
+
+| | 5000 points: all runs (range) | against fading alone, mean / median (range) | 20 000 points: all runs (range) | against fading alone, mean / median (range) | coverage at 20 000 | off by more than 5 sigma |
+|---|---|---|---|---|---|---|
+| neighbours without fading or mixing | 0.75 (0.45 to 1.04) | | 0.69 (0.38 to 0.98) | 0.977 / 0.993 (0.88 to 1.01) | 0.686 | 1.52% |
+| fading alone | 0.77 (0.49 to 1.04) | 1 | 0.71 (0.39 to 0.99) | 1 | 0.686 | 1.52% |
+| prototype, zone 0.05 of the node | 0.75 (0.48 to 1.04) | 0.976 / 0.992 (0.82 to 1.03) | 0.69 (0.38 to 0.97) | 0.977 / 0.985 (0.86 to 1.03) | 0.710 | 1.08% |
+| prototype, zone 0.1 of the node | 0.72 (0.27 to 1.05) | 0.939 / 0.983 (0.31 to 1.05) | 0.67 (0.38 to 0.97) | 0.943 / 0.976 (0.51 to 1.08) | 0.733 | 0.80% |
+| package, zone 0.05 of the leaf | 0.76 (0.48 to 1.04) | 0.985 / 0.998 (0.82 to 1.02) | | | | |
+| **package, zone 0.1 of the leaf** | 0.74 (0.38 to 1.04) | 0.962 / 0.992 (0.43 to 1.03) | 0.69 (0.38 to 0.98) | 0.983 / 0.990 (0.86 to 1.06) | 0.692 | 1.34% |
+| package, zone 0.2 of the leaf | 0.73 (0.38 to 1.04) | 0.952 / 0.988 (0.44 to 1.02) | 0.68 (0.38 to 0.97) | 0.967 / 0.980 (0.80 to 1.07) | 0.700 | 1.21% |
+
+The steps of the mean after 20 000 points, as in section 9.13, for
+`GaussianPeaks` on the uniform stream / `Eggholder` on the walker stream /
+`resonance_xsec` on the uniform stream:
+
+| | steps above 0.1 sigma | their sum in sigma | largest step, median |
+|---|---|---|---|
+| the default tree | 3.9 / 3.9 / 4.8 | 4.3 / 4.8 / 13.7 | 0.89 / 1.26 / 1.36 |
+| fading alone | 4.8 / 2.5 / 5.5 | 2.1 / 2.2 / 12.7 | 0.26 / 0.32 / 1.08 |
+| **package, zone 0.1 of the leaf** | 3.0 / 0.5 / 3.6 | 1.3 / 0.9 / 4.4 | 0.11 / 0.04 / 0.11 |
+| package, zone 0.2 of the leaf | 2.6 / 0.5 / 3.0 | 1.2 / 0.8 / 3.0 | 0.11 / 0.03 / 0.07 |
+
+Cost after 20 000 points, one process (a slower machine than that of
+sections 9.7, 9.12 and 9.15): milliseconds per prediction and per update
+without and with the mixing, and the mean number of leaves in a prediction.
+
+| target, stream | d | default tree: predict / update | fading alone | kernels mixed, zone 0.1 | leaves per prediction |
+|---|---|---|---|---|---|
+| `Eggholder`, walker | 3 | 0.22 / 1.91 | 0.70 / 2.66 | 0.78 / 2.76 | 1.28 |
+| `resonance_xsec`, uniform | 4 | 0.17 / 3.24 | 0.62 / 4.15 | 0.75 / 4.56 | 1.32 |
+| `GaussianPeaks`, uniform | 6 | 0.17 / 2.09 | 0.71 / 2.93 | 0.79 / 3.11 | 1.43 |
+| `global_fit_loglike`, uniform | 10 | 0.16 / 3.83 | 0.50 / 4.76 | 0.69 / 5.16 | 1.34 |
+| `ActiveSubspacePeaks`, uniform | 10 | 0.16 / 3.16 | 0.76 / 4.21 | 0.93 / 4.36 | 1.35 |
+
+* **The steps at the cuts are gone as in the prototype**: the largest step
+  of a path is 0.04 to 0.11 sigma, against 0.26 to 1.08 with fading alone.
+  On `resonance_xsec`, where leaves keep to their own GP or the neighbours
+  fail the test more often, 0.9 steps of more than a sigma remain on a path,
+  against 1.6.
+* **The error is 2% lower than with fading alone at 20 000 points** (1% in
+  the median run; 8 runs more than 2% better and one worse, by 6%), which
+  takes back most of what the fading costs: 0.69 of the default tree's
+  error, as the neighbours without fading. The zones of the leaves are
+  narrower than those of the prototype, whose 6% came with zones of old
+  cuts that reach across many leaves.
+* **The coverage stays at 0.69** with the sigma scaler calibrated on the
+  mixed prediction, where the prototype had 0.73.
+* **Twice the zone** gives another 2% at 20 000 points, with 1.9 leaves in
+  a prediction on `GaussianPeaks` and 0.96 ms per prediction against 0.79.
+* **A prediction takes 11 to 37% longer** than with fading alone and an
+  update 4 to 10%. About 1.3 to 1.4 leaves take part in a prediction
+  whatever the number of inputs: a leaf of a tree this size has seen eight
+  or nine cuts, so most of its faces in ten dimensions are still open.
+
+The 150 runs of section 9.4 with the package as it is (neighbours that fade
+out, kernels mixed in zones of 0.1): the NRMSE of the last 5000 predictions
+divided by that of the default tree, for the two seeds.
+
+| target | d | uniform | walker | sweeping | focusing |
+|---|---|---|---|---|---|
+| `active_peaks` | 10 | 0.74 / 0.77 | 0.69 / 0.72 | 0.65 / 0.84 | 0.59 / 0.61 |
+| `branching_ratio` | 5 | 1.11 / 0.84 | 0.89 / 0.95 | 1.11 / 0.93 |  |
+| `chirp` | 4 | 0.91 / 0.90 | 0.72 / 0.68 | 0.69 / 0.70 | 0.37 / 0.37 |
+| `diagonal_ridge` | 4 | 0.61 / 0.64 | 0.73 / 0.67 | 0.73 / 0.75 | 0.66 / 0.69 |
+| `dilepton_spectrum` | 4 | 0.89 / 0.85 | 0.94 / 0.85 | 0.73 / 0.79 | 0.93 / 0.83 |
+| `eft_signal_strength` | 6 | 0.42 / 0.44 | 0.43 / 0.39 | 0.65 / 0.48 | 0.95 / 0.95 |
+| `eggholder` | 3 | 0.87 / 0.88 | 0.82 / 0.86 | 0.90 / 0.90 | 0.83 / 0.83 |
+| `gaussian_peaks` | 6 | 0.64 / 0.67 | 0.41 / 0.48 | 0.53 / 0.48 | 0.49 / 0.58 |
+| `global_fit_loglike` | 10 | 0.95 / 0.93 | 0.86 / 0.86 | 0.94 / 0.93 | 0.20 / 1.00 |
+| `jet_spectrum` | 4 | 0.74 / 0.80 | 1.00 / 0.76 | 0.72 / 0.75 | 0.44 / 0.44 |
+| `loop_decay_width` | 4 | 0.86 / 0.79 | 0.84 / 0.90 | 0.38 / 0.17 | 0.28 / 0.27 |
+| `michalewicz` | 5 | 0.98 / 1.00 | 0.78 / 0.92 | 0.99 / 0.98 | 0.81 / 0.81 |
+| `neutralino_mass` | 4 | 0.82 / 0.77 | 0.98 / 0.24 | 0.82 / 0.96 | 0.52 / 0.44 |
+| `oscillation_probability` | 5 | 0.63 / 0.55 | 0.63 / 1.02 | 0.93 / 0.94 | 0.84 / 0.90 |
+| `relic_density` | 4 | 0.88 / 0.80 | 0.92 / 0.96 | 0.86 / 0.74 | 0.91 / 0.95 |
+| `resonance_xsec` | 4 | 0.88 / 0.96 | 0.65 / 0.96 | 0.97 / 0.85 | 0.71 / 0.72 |
+| `rotated_rosenbrock` | 6 | 0.53 / 0.51 | 0.56 / 0.51 | 0.48 / 0.67 | 0.48 / 0.49 |
+| `signal_yield_mc` | 4 | 0.82 / 0.82 | 0.86 / 0.86 | 0.50 / 0.54 | 0.94 / 0.93 |
+| `step_ridge` | 6 | 0.90 / 0.85 | 0.93 / 0.89 | 0.85 / 0.89 | 0.84 / 0.86 |
+| geometric mean | | 0.77 | 0.74 | 0.72 | 0.63 |
+| fading alone (section 9.15) | | 0.79 | 0.75 | 0.73 | 0.65 |
+| neither (section 9.4) | | 0.78 | 0.74 | 0.71 | 0.61 |
+
+* **0.71 of the default tree's error** as the geometric mean over the 150
+  runs, from 0.17 to 1.11, against 0.73 with fading alone. 142 runs are
+  more than 2% better than the default tree and 2 more than 2% worse, both
+  by 11%: `branching_ratio` with one seed on the uniform and on the sweeping
+  stream. `eft_signal_strength` on the focusing stream, 4 to 5% worse
+  before, is 5% better.
+* **Run by run the error is 2.3% below that with fading alone** (1.7% in
+  the median; 0.86 to 1.13), with 68 runs more than 2% better and 3 worse:
+  `jet_spectrum` and `branching_ratio` on the sweeping stream by 13% and
+  `resonance_xsec` on the walker by 6%. Against the neighbours without
+  fading or mixing it is 0.7% lower in the median run and 0.9% higher in the
+  mean.
+* **The rest of the error distribution**: the mean absolute error is 0.75 of
+  the default tree's, the median 0.78, the 99% quantile 0.71 and the largest
+  error of a run 0.66; 0.74 on points held out of the stream and 0.83 on
+  uniform test points.
+* **The coverage is 0.719** against 0.709 for the default tree, and 1.51% of
+  the predictions are off by more than 5 sigma, against 1.95% for the
+  default tree, 1.76% with fading alone and 2.02% with neither.
+
+Along a 200 000-point stream (`GaussianPeaks`, d = 6, uniform; one process,
+the three settings one after the other on the machine of the cost table
+above), as in section 9.12: milliseconds per update since the previous row
+and per prediction at the points that follow, and the RMSE of those
+predictions.
+
+| points | leaves | default tree: update / predict | RMSE | fading alone: update / predict | RMSE | fading and mixing: update / predict | RMSE |
+|---|---|---|---|---|---|---|---|
+| 5000 | 71 | 2.13 / 0.17 | 0.459 | 3.00 / 0.71 | 0.328 | 3.07 / 0.82 | 0.328 |
+| 20 000 | 289 | 2.08 / 0.17 | 0.282 | 3.05 / 0.72 | 0.177 | 3.32 / 0.90 | 0.175 |
+| 50 000 | 730 | 2.03 / 0.16 | 0.237 | 3.22 / 0.81 | 0.134 | 3.47 / 0.83 | 0.134 |
+| 100 000 | 1465 | 2.19 / 0.17 | 0.162 | 3.20 / 0.79 | 0.106 | 3.67 / 1.10 | 0.104 |
+| 200 000 | 2917 | 2.26 / 0.18 | 0.129 | 3.26 / 0.79 | 0.069 | 3.79 / 1.06 | 0.067 |
+
+The leaves of a prediction in the index alone, without GPs
+(`research/partitioning/index_scaling.py` with zones of 0.1, uniform stream,
+500 queries): their mean number, and the time to find them with their
+weights.
+
+| points | leaves | d = 3: leaves per prediction | ms | d = 6 | ms | d = 10 | ms |
+|---|---|---|---|---|---|---|---|
+| 5000 | 70 | 1.25 | 0.03 | 1.30 | 0.03 | 1.40 | 0.03 |
+| 20 000 | 290 | 1.25 | 0.03 | 1.37 | 0.04 | 1.47 | 0.03 |
+| 100 000 | 1450 | 1.30 | 0.04 | 1.41 | 0.05 | 1.52 | 0.04 |
+| 400 000 | 5800 | 1.30 | 0.04 | 1.43 | 0.05 | 1.60 | 0.05 |
+| 1 000 000 | 14 500 | 1.33 | 0.05 | 1.47 | 0.09 | 1.65 | 0.06 |
+
+* **With the mixing the cost of a point grows slowly with the stream**: from
+  the first 5000 points to 200 000, an update by 23% and a prediction by 29%
+  (with a spread of a tenth between the rows), where fading alone grows by
+  9 and 12% and the default tree by 6 and 4%.
+* **The number of leaves in a prediction grows by a tenth to a fifth from
+  5000 points to a million**, towards the `1.1^d` of leaves with two faces
+  along every input, and the search for them stays below 0.1 ms.
+* **The error at 200 000 points is 0.52 of the default tree's**, against
+  0.54 with fading alone.
+
+### 9.18 Leaves asleep by default with neighbours: the prototype
+
+A prediction from neighbours needs the kernel and the scalers of a leaf, not
+the factor of its kernel matrix, which is what a sleeping leaf releases
+(section 6). In a prototype (`research/partitioning/sleepy.py`) every leaf
+sleeps except the last few that fitted or were woken, for a point or for a
+prediction from their own points. 20 000 points, three runs at a time; the
+predictions are the same to the last digit.
+
+| target, stream | leaves awake | memory MB (of it the GPs) | update ms | predict ms | leaves woken per 1000 updates | per 1000 predictions |
+|---|---|---|---|---|---|---|
+| `GaussianPeaks`, uniform | all 281 | 37.2 (29.8) | 3.36 | 0.86 | | |
+| | 1 | 9.7 (2.3) | 3.55 | 0.79 | 956 | 37 |
+| | 8 | 10.3 (2.9) | 3.49 | 0.85 | 850 | 13 |
+| | 32 | 12.7 (5.3) | 3.51 | 0.81 | 621 | 10 |
+| `GaussianPeaks`, walker | all 293 | 38.7 (30.9) | 3.54 | 0.88 | | |
+| | 1 | 10.8 (3.1) | 3.60 | 0.85 | 525 | 33 |
+| | 8 | 11.4 (3.7) | 3.50 | 0.86 | 236 | 4 |
+| `resonance_xsec`, uniform | all 286 | 36.6 (29.5) | 4.58 | 0.98 | | |
+| | 1 | 8.9 (1.8) | 4.73 | 0.85 | 1018 | 375 |
+
+* **The tree takes a quarter of the memory**: about 34 kB per leaf in place
+  of 132 kB.
+* **An update takes 2 to 6% longer**, for the factor of the leaf that
+  receives the point: its own prediction is compared with the neighbours'
+  and the point is appended to it. The prediction time does not change
+  beyond the spread of the measurement.
+* **A leaf is woken for 1 to 4% of the predictions** on `GaussianPeaks`,
+  where its own GP predicts because the neighbours fail the test or the leaf
+  prefers it, and for 38% on `resonance_xsec`, where a fifth of the leaves
+  prefer their own GP.
+
+A memory limit with predictions from neighbours and every leaf awake, as the
+package was (`research/partitioning/memory_limit.py`; `GaussianPeaks`,
+20 000 points, four runs at a time): the RMSE of the predictions made before each of the
+last 5000 points.
+
+| stream | `max_memory_mb` | leaves (asleep) | points kept | from the leaves: RMSE | from neighbours: RMSE |
+|---|---|---|---|---|---|
+| uniform | none (37.3 MB) | 279 (0) | 20 000 | 0.309 | 0.198 |
+| | 12 | 194 (139) | 13 700 | 0.374 | 0.240 |
+| | 6 | 98 (70) | 6900 | 0.511 | 0.325 |
+| walker | none (37.8 MB) | 289 (0) | 20 000 | 0.122 | 0.050 |
+| | 12 | 195 (138) | 13 400 | 0.152 | 0.058 |
+| | 6 | 97 (69) | 6700 | 0.196 | 0.082 |
+
+* **The limit holds with neighbours as it does without**: the size the tree
+  reports and the size counted from its leaves are at the limit, and as many
+  leaves sleep and are removed. The error with neighbours is 0.42 to 0.64
+  of that of the leaves at the same limit.
+* **Leaves are removed while half of the leaves' memory is left to the GPs
+  that are awake** (`FITTED_SHARE`), which predictions from neighbours do
+  not need: at 12 MB a third of the points are gone and the error is 17 to
+  21% higher, where the whole tree asleep takes 9.7 to 10.8 MB.
+
+### 9.19 Leaves asleep by default (`NEIGHBOUR_AWAKE`)
+
+In the package the leaves whose GPs were fitted or woken last stay awake, 8
+by default, and so does a leaf that predicts from its own points. Two trees
+side by side in one process, each point given to both in turn
+(`research/partitioning/time_paired.py`), 20 000 points: the times with the
+leaves asleep divided by those with every leaf awake.
+
+| target, stream | leaves asleep | memory MB, every leaf awake | leaves asleep | update time | prediction time |
+|---|---|---|---|---|---|
+| `GaussianPeaks`, uniform | 272 of 281 | 37.2 | 10.1 | 1.11 | 1.00 |
+| `GaussianPeaks`, walker | 282 of 293 | 38.7 | 10.5 | 1.03 | 1.01 |
+| `resonance_xsec`, uniform | 226 of 286 | 36.6 | 14.1 | 1.06 | 1.06 |
+| `global_fit_loglike`, uniform | 151 of 293 | 40.4 | 25.5 | | |
+
+* **The tree takes 27 to 63% of the memory.** On `global_fit_loglike` half
+  of the leaves predict from their own points and stay awake.
+* **An update takes 3 to 11% longer**, most on a uniform stream, where
+  nearly every point wakes its leaf. **A prediction takes up to 6% longer.**
+  With the leaves that predict from their own points asleep too, a
+  prediction on `resonance_xsec` took 17% longer and an update 9%, for 9.1
+  MB in place of 14.1.
+* **The predictions are the same**: on the 33 runs of 5000 points the RMSE
+  agrees to four digits in every run, and the largest difference of a single
+  prediction is 4e-7 of the target's range (a factor that is computed again
+  differs in its last digits from one that grew point by point).
+* **Against the default tree** (side by side as above, where the default
+  tree's short predictions lose more to the other tree than they would
+  alone): an update takes 1.3 to 1.7 times as long and a prediction 3.0 to
+  3.4 times, on `Eggholder` (walker), `GaussianPeaks`, `resonance_xsec` and
+  `global_fit_loglike` (uniform).
+
+A memory limit, as in the table of section 9.18 (`GaussianPeaks`, 20 000
+points):
+
+| stream | `max_memory_mb` | leaves (asleep) | points kept | RMSE | with every leaf awake (section 9.18): points kept | RMSE |
+|---|---|---|---|---|---|---|
+| uniform | none (10.7 MB) | 279 (264) | 20 000 | 0.198 | 20 000 | 0.198 |
+| | 12 | 279 (264) | 20 000 | 0.198 | 13 700 | 0.240 |
+| | 6 | 151 (141) | 10 100 | 0.263 | 6900 | 0.325 |
+| walker | none (10.7 MB) | 289 (276) | 20 000 | 0.050 | 20 000 | 0.050 |
+| | 12 | 289 (276) | 20 000 | 0.050 | 13 400 | 0.058 |
+| | 6 | 157 (149) | 10 800 | 0.066 | 6700 | 0.082 |
+
+* **At 12 MB nothing is removed**, and at 6 MB half of the points are kept
+  where a third was, with an error 19 to 20% lower.
+
+### 9.20 Predictions from neighbours outside the data
+
+The stream and tree of the README's animation
+(`research/partitioning/animation_grid.py`: `Himmelblau` in two dimensions,
+1500 points of a cloud that moves and contracts, `Nbar=100`, a fit every 2
+points, the additive kernel with an RBF base), predicted on a 70 x 70 grid
+over the unit square. The target is at most 77.9 there. "Away" are the
+cells further than 0.05 from the nearest point of the stream, a quarter of
+the grid. The declared noise is a share of the target value.
+
+| seed | noise | leaves: largest prediction | RMSE away | near | neighbours: largest prediction | RMSE away | near |
+|---|---|---|---|---|---|---|---|
+| 4 | 1e-3 | 73.1 | 14.9 | 1.21 | 74.8 | 10.8 | 0.85 |
+| | 1e-4 | 74.9 | 13.0 | 1.94 | 86.1 | 9.2 | 1.09 |
+| | 1e-5 | 73.0 | 10.6 | 2.04 | 107.3 | 9.1 | 1.21 |
+| | 1e-6 | 73.0 | 11.6 | 2.03 | 148.8 | 11.7 | 1.32 |
+| 1 | 1e-3 | 74.9 | 11.2 | 1.24 | 86.4 | 12.6 | 0.97 |
+| | 1e-4 | 77.1 | 11.0 | 1.30 | 92.0 | 10.2 | 1.02 |
+| | 1e-5 | 73.8 | 16.5 | 1.34 | 75.9 | 14.4 | 0.98 |
+| | 1e-6 | 237.8 | 36.5 | 2.70 | 239.3 | 33.3 | 2.17 |
+| 2 | 1e-3 | 73.0 | 7.0 | 1.52 | 73.0 | 16.7 | 1.50 |
+| | 1e-4 | 73.6 | 7.8 | 1.63 | 76.9 | 9.8 | 1.83 |
+| | 1e-5 | 94.8 | 8.3 | 2.49 | 94.8 | 11.1 | 2.52 |
+| | 1e-6 | 125.6 | 11.1 | 3.96 | 125.6 | 13.2 | 3.55 |
+
+* **Away from the data the two are equally accurate on average**, 13.3 and
+  13.5 over the twelve runs, **and fail in different places.** Near the
+  data the neighbours have the lower error in 10 of the 12.
+* **With a noise of 1e-6 of the value a leaf's own GP can overshoot**: to
+  238 with seed 1 and 126 with seed 2, in both modes.
+* **The neighbours add failures of their own.** With seed 4 and a noise of
+  1e-6 they predict up to 149 at the upper edge of the square, where the
+  target is 65 and the leaf's own GP predicts 40. With seed 2 and a noise
+  of 1e-3 they predict -15 in the lower right corner, where the target is
+  50 and the leaf's own GP predicts 51, and 114 cells are off by more than
+  30 against 3.
+
+The worst query of each of the two:
+
+| | (0.275, 1.0), seed 4, noise 1e-6 | (0.91, 0.19), seed 2, noise 1e-3 |
+|---|---|---|
+| target | 65.2 | 49.8 |
+| from the neighbours | 149.2 +- 21.1 | -14.8 +- 43.2 |
+| the leaf's own GP | 40.4 +- 12.3 | 51.1 +- 7.8 |
+| neighbours among the leaf's own points | 28 of 100 | 27 of 100 |
+| extent of the neighbours along x1, of the leaf's points | 0.14 to 0.46, 0.21 to 0.35 | 0.39 to 1.00, 0.21 to 0.66 |
+| targets of the neighbours, in the leaf's standard deviations from its mean | -6.4 to 1.3 | -9.1 to 2.2 |
+| consistency with the leaf's kernel | 7.6 | 9.5 (13.2 before the fading) |
+| a GP fitted to the 100 neighbours | 66.5 +- 7.7 | -42.1 +- 6.1 |
+
+* **The leaf of the query supplies the kernel, other leaves most of the
+  points.** Away from the data the 100 nearest points reach across several
+  leaves, and their targets lie 6 to 9 of the leaf's standard deviations
+  from its mean. The kernel carries their trend on to the query, where the
+  leaf's own GP, given only its own points, returns to their mean. Both
+  sets pass the test against the kernel, with a consistency just under the
+  limit of 10.
+* **In the first case the kernel is at fault.** A GP fitted to the same 100
+  points predicts 66.5. With the leaf's kernel the matrix has a condition
+  number of 7e12 and the weights of the neighbours reach 3e5, for targets of
+  at most 6.4. The same conditioning with a noise of 1e-5, 1e-4 and 1e-3 of
+  the value gives 122, 83 and 57, and with the 44 neighbours inside the
+  leaf's own range of x1 it gives 91.
+* **In the second the extrapolation itself is.** The targets of the
+  neighbours fall towards the query, and a GP fitted to them predicts -42.
+
+A stricter test for such queries (`research/partitioning/guarded.py`, not
+in the code): where the centre of the neighbours lies further from the
+query than 0.65 of the distance of the furthest neighbour, they predict only
+with a consistency of at most 3. That ratio is at most 0.6 for 95% of the
+stream's own points, in two dimensions and in six, and 0.67 to 0.78 for the
+queries of the two patches.
+
+| seed, noise | neighbours: largest prediction | RMSE away | stricter test: largest prediction | RMSE away | leaves: RMSE away |
+|---|---|---|---|---|---|
+| 4, 1e-6 | 148.8 | 11.7 | 72.9 | 10.5 | 11.6 |
+| 4, 1e-3 | 74.8 | 10.8 | 74.8 | 11.0 | 14.9 |
+| 1, 1e-6 | 239.3 | 33.3 | 239.3 | 36.8 | 36.5 |
+| 1, 1e-3 | 86.4 | 12.6 | 86.4 | 12.5 | 11.2 |
+| 2, 1e-6 | 125.6 | 13.2 | 125.6 | 12.1 | 11.1 |
+| 2, 1e-3 | 73.0 | 16.7 | 73.0 | 7.3 | 7.0 |
+
+* **Both patches go.** The error near the data is within 2% in 5 of the 6
+  runs and 8% higher in the sixth (seed 1, noise 1e-3).
+* **On the 33 runs of 5000 points the stricter test costs accuracy**: the
+  error along the stream is 2.0% higher and that of uniform test points
+  1.5% (6.0% and 3.6% on the sweeping stream), with 4 runs more than 2%
+  worse and 2 better. With "the nearest neighbour is further than one of
+  the leaf's spreads" as the mark of such a query the two numbers are 2.3%
+  and 2.1%:
+  in six dimensions the nearest neighbour of a point of the stream itself
+  is 0.9 to 1.2 spreads away at the median.
+* **On those targets the neighbours are the better choice outside the data
+  as well.** For uniform test points after 5000 points of a stream, eight
+  of the targets on three streams (`extrapolation_diag.py`), the leaf's own
+  GP for every query has an RMSE 3% higher overall and 31 to 36% higher on
+  `eft_signal_strength` and `GaussianPeaks`. On six targets after 3000
+  points, with a noise of 1e-3 and of 1e-6 of the value and with the default
+  and the additive kernel (72 runs), it is 1.2 to 5.7% higher. The largest
+  single error is another matter with the additive kernel: 1.9 times the
+  target's range with a noise of 1e-6 and 1.3 times with 1e-3, where the
+  leaf's own GP stays at 0.8. With the default kernel it is 1.1 to 1.2
+  times for both.
+
+Two more variants on the same runs: the limit of the test at 3 for every
+query (`NEIGHBOUR_CONSISTENCY` at 3), and the 100 nearest points together with
+the rest of the leaf's own points (`research/partitioning/with_leaf.py`, not
+in the code), 127 to 141 points per prediction on average. Largest
+prediction and RMSE away from the data:
+
+| seed, noise | neighbours | limit 3 for every query | with the leaf's points | the same without the test |
+|---|---|---|---|---|
+| 4, 1e-6 | 148.8, 11.7 | 72.9, 10.6 | 157.5, 12.7 | 620.8, 44.3 |
+| 4, 1e-3 | 74.8, 10.8 | 74.8, 11.0 | 73.1, 14.5 | 73.1, 15.0 |
+| 1, 1e-6 | 239.3, 33.3 | 239.3, 36.8 | 239.3, 34.6 | 581.0, 50.3 |
+| 1, 1e-3 | 86.4, 12.6 | 86.4, 12.5 | 86.6, 13.1 | 88.8, 19.3 |
+| 2, 1e-6 | 125.6, 13.2 | 125.6, 12.1 | 125.6, 13.5 | 249.2, 25.9 |
+| 2, 1e-3 | 73.0, 16.7 | 73.0, 6.9 | 73.1, 19.0 | 73.0, 6.1 |
+
+* **The leaf's remaining points do not remove the patches.** The two worst
+  queries are predicted as 157 from 151 points and -14.8 from 161: the
+  points of other leaves near the query are still there, and the leaf's own
+  lie further away. The consistency falls to 6.0 and 6.4, since the leaf's
+  own points fit its kernel.
+* **Without the test the predictions reach 621**, and in one run the error
+  near the data is 26.7 where it was 3.6.
+* **On the 33 runs of 5000 points the leaf's points lower the error along
+  the stream by 5.8%** (3.1% at the median), and 150 nearest neighbours by
+  5.7% (2.8%): the gain is that of more points. Without the test it is
+  4.7%.
+* **A limit of 3 for every query costs 3.6%** along the stream and 2.1% at
+  uniform test points, with 10 runs more than 2% worse and 1 better, against
+  2.0% and 1.5% for the limit of 3 outside the neighbours only. On the grids
+  the two do the same.
+
+A gradual change in place of the two limits (the prototype
+`research/partitioning/smooth_guard.py`; section 9.21 has it in the
+package): the neighbours' prediction and the leaf's own are mixed, with a weight for the
+neighbours that falls from 1 to 0 as their consistency rises from half the
+limit to twice it, linearly in its logarithm. The limit slides from 10 to 3
+as the centre of the neighbours moves from 0.5 to 0.8 of the distance of the
+furthest one. Largest prediction and RMSE away from the data, and the steps
+of the mean along 40 straight lines across the square, of 1000 steps each
+(a step counts by how far it departs from the mean of the steps on either
+side of it, in units of sigma):
+
+| seed, noise | neighbours | limit 3 outside | gradual | gradual, without the slide |
+|---|---|---|---|---|
+| 4, 1e-6 | 148.8, 11.7 | 72.9, 10.5 | 74.0, 9.1 | 137.2, 10.1 |
+| 4, 1e-3 | 74.8, 10.8 | 74.8, 11.0 | 74.8, 11.0 | 74.8, 10.8 |
+| 1, 1e-6 | 239.3, 33.3 | 239.3, 36.8 | 239.3, 36.4 | 239.3, 32.7 |
+| 1, 1e-3 | 86.4, 12.6 | 86.4, 12.5 | 86.4, 12.3 | 86.4, 12.6 |
+| 2, 1e-6 | 125.6, 13.2 | 125.6, 12.1 | 125.6, 12.2 | 125.6, 13.1 |
+| 2, 1e-3 | 73.0, 16.7 | 73.0, 7.3 | 73.0, 8.3 | 73.0, 13.2 |
+
+| seed, noise | steps above 1 sigma per line: neighbours | limit 3 outside | gradual | leaves | largest step on the worst line: neighbours | limit 3 outside | gradual | leaves |
+|---|---|---|---|---|---|---|---|---|
+| 4, 1e-6 | 9.2 | 9.4 | 6.5 | 0.8 | 101 | 99 | 45 | 28 |
+| 2, 1e-3 | 1.0 | 1.1 | 0.3 | 0.0 | 12.6 | 12.6 | 5.5 | 0.4 |
+
+* **The patches go as with the limit of 3 outside the neighbours**, and
+  the largest error of the first is 32 where that leaves 41. Without the
+  slide of the limit the first patch stays.
+* **On the 33 runs of 5000 points the error along the stream is 1.4%
+  higher** and that of uniform test points 1.1%, against 2.0% and 1.5%
+  with the limit of 3 outside. A change over a factor of 3 on either side
+  of the limit in place of 2 gives 0.7% and 1.0%. Without the slide of the
+  limit the error is that of the switch.
+* **The large steps are fewer by a third to two thirds** and the largest
+  about half as high. Steps above 0.1 sigma are as many as before, 53 and
+  15 per line, where the leaves' own predictions have 10 and 1: across
+  the whole square most steps of the neighbours' predictions have other
+  causes.
+
+### 9.21 A gradual change to the leaf's own GP (`NEIGHBOUR_TRANSITION`, `NEIGHBOUR_CONSISTENCY_OUTSIDE`)
+
+In the package the centre of the neighbours counts a neighbour that fades
+out by what is left of it, which makes the measure about 0.03 smaller than
+in the prototype of section 9.20. The grids of that section with the
+defaults, against the switch at one limit:
+
+| seed, noise | switch: largest prediction | RMSE away from the data | gradual: largest prediction | RMSE away from the data |
+|---|---|---|---|---|
+| 4, 1e-6 | 148.8 | 11.7 | 85.0 | 8.9 |
+| 4, 1e-3 | 74.8 | 10.8 | 74.8 | 11.0 |
+| 1, 1e-6 | 239.3 | 33.3 | 239.3 | 36.2 |
+| 1, 1e-3 | 86.4 | 12.6 | 86.4 | 12.4 |
+| 2, 1e-6 | 125.6 | 13.2 | 125.6 | 12.4 |
+| 2, 1e-3 | 73.0 | 16.7 | 73.0 | 8.8 |
+
+* **Away from the data the mean RMSE is 14.9**, against 16.4 with the
+  switch and 15.4 for the leaves. The error near the data is within 0.6% in
+  5 of the 6 runs and 2% higher in the sixth.
+* **The steps** along the lines across the square are those of the
+  prototype: 6.5 and 0.3 above one sigma per line (seed 4 with a noise of
+  1e-6, seed 2 with 1e-3), against 9.2 and 1.0 with the switch.
+* **On the 33 runs of 5000 points** the error along the stream and that
+  of uniform test points are both 1.0% higher than with the switch, and
+  the same at the median: 3 runs are more than 2% worse, 2 better, and the
+  mean is 2.8% higher on the sweeping stream and within 0.6% on the other
+  two. 1.5% of the predictions are off by more than 5 sigma, against 1.7%.
+
+The 150 runs of 20 000 points of section 9.17, as geometric means of the
+NRMSE of the last 5000 predictions:
+
+| stream | against the default tree: switch | gradual | gradual against the switch | uniform test points, gradual against the switch |
+|---|---|---|---|---|
+| uniform | 0.770 | 0.769 | 0.998 | 0.997 |
+| walker | 0.735 | 0.733 | 0.997 | 1.010 |
+| sweeping | 0.720 | 0.716 | 0.995 | 1.005 |
+| focusing | 0.632 | 0.630 | 0.997 | 0.999 |
+| all | 0.714 | 0.711 | 0.997 | 1.003 |
+
+* **At 20 000 points the error along the stream is 0.3% lower than with
+  the switch** and that of uniform test points 0.3% higher, with 4 runs more
+  than 2% worse and 8 better.
+* **One run of 150 is more than 2% worse than the default tree**
+  (`branching_ratio` on the uniform stream, 9%), where two were, by 11%.
+* **The coverage is 0.72 for both**, and 1.4% of the predictions are off
+  by more than 5 sigma, against 1.5% with the switch and 2.0% for the
+  default tree.
+
+Cost, with the two settings side by side in one process
+(`research/partitioning/time_paired.py`), 20 000 points, then 1000 points
+that follow in the stream and 1000 uniform ones: the times with the gradual
+change divided by those with the switch, and the share of the predictions
+that needed the own GP of a leaf.
+
+| target, stream | update time | prediction time, stream | uniform | own GP needed, stream: switch | gradual | uniform: switch | gradual | of them from a sleeping leaf |
+|---|---|---|---|---|---|---|---|---|
+| `GaussianPeaks`, uniform | 1.004 | 1.010 | 1.010 | 4.2% | 4.5% | 5.1% | 5.2% | 0.2% |
+| `GaussianPeaks`, walker | 1.000 | 0.999 | 1.106 | 7.6% | 7.6% | 8.9% | 25.5% | 10.4% |
+| `resonance_xsec`, uniform | 1.004 | 1.036 | 1.035 | 38.1% | 39.6% | 38.8% | 40.4% | 13.9% |
+| `global_fit_loglike`, uniform | 1.005 | 1.035 | 1.012 | 72.6% | 73.3% | 65.6% | 65.9% | 6.8% |
+| `Eggholder`, walker | 1.002 | 1.008 | 1.039 | 1.0% | 1.6% | 0.9% | 5.6% | 1.7% |
+| `eft_signal_strength`, sweeping | 1.002 | 0.999 | 1.002 | 12.9% | 12.9% | 2.7% | 3.0% | 0.3% |
+
+* **An update takes up to 0.5% longer and a prediction along the stream
+  up to 4%.** Along the stream the leaf's own GP is needed for at most 1.5
+  points of a hundred more than with the switch.
+* **A prediction away from the stream takes up to 11% longer**, where a
+  quarter of the uniform test points need the leaf's own GP in place of a
+  tenth, and one in ten wakes a sleeping leaf for it.
+* **The memory is the same within 5%**: 10.9 MB for 10.4 where most leaves
+  are woken, and within 0.3 MB elsewhere.
