@@ -172,8 +172,10 @@ class TestObliqueTree(unittest.TestCase):
                 self.assertGreater(len(directions), 0)
                 if oblique:
                     self.assertTrue(all(d is not None and abs(d @ DIRECTION) > 0.95 for d in directions))
+                    self.assertIsNone(gpt.leaf_index)            # the cells are no boxes
                 else:
                     self.assertTrue(all(d is None for d in directions))
+                    self.assertIsNotNone(gpt.leaf_index)
             self.assertLess(2.0 * errors[True], errors[False])
 
     def test_stream_save_and_load(self):
@@ -189,6 +191,17 @@ class TestObliqueTree(unittest.TestCase):
             gpt.save(path)
             loaded = joblib.load(path)
         np.testing.assert_allclose(loaded.predict(X_test)[0], gpt.predict(X_test)[0])
+
+    def test_predictions_from_neighbours(self):
+        rng = np.random.RandomState(2)
+        X, X_test = rng.rand(300, 3), rng.rand(200, 3)
+        np.random.seed(0)
+        gpt = self._tree(True, predict_from='neighbours')
+        gpt.batch_update_tree(X, _along_direction(X), np.full((300, 1), 1e-4))
+        self.assertTrue(any(node.split_direction is not None for node in self._nodes(gpt)))
+        mean, sigma = gpt.predict(X_test)
+        self.assertLess(np.sqrt(np.mean((mean.ravel() - _along_direction(X_test).ravel()) ** 2)), 0.01)
+        self.assertTrue(np.all(sigma > 0.0))
 
     def test_deferred_fits(self):
         rng = np.random.RandomState(4)

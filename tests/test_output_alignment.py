@@ -167,6 +167,19 @@ class TestAlignedTree(unittest.TestCase):
         X = np.random.RandomState(1).rand(50, 2)
         np.testing.assert_allclose(aligned.predict(X, mode='loop')[0], shared.predict(X, mode='loop')[0], atol=1e-10)
 
+    def test_with_predictions_from_neighbours(self):
+        """A leaf with an alignment predicts from its own aligned curves, and a
+        leaf without one from the points nearest to the query."""
+        aligned = _fit('aligned', moving_peak, predict_from='neighbours')
+        shared = _fit('shared', moving_peak, predict_from='neighbours')
+        self.assertTrue(all(leaf.alignment is not None and not leaf._can_condition() for leaf in aligned.root.leaves))
+        self.assertLess(_rmse(aligned, moving_peak), 0.5 * _rmse(shared, moving_peak))
+        declined = _fit('aligned', fixed_shapes, predict_from='neighbours')
+        self.assertTrue(all(leaf.alignment is None and leaf._can_condition() for leaf in declined.root.leaves))
+        X = np.random.RandomState(1).rand(50, 2)
+        np.testing.assert_allclose(declined.predict(X, mode='loop')[0],
+                                   _fit('shared', fixed_shapes, predict_from='neighbours').predict(X, mode='loop')[0], atol=1e-10)
+
     def test_stream_with_appended_points_and_a_split(self):
         rng = np.random.RandomState(6)
         np.random.seed(6)

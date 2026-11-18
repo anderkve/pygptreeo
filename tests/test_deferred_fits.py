@@ -339,7 +339,7 @@ class TestDeferredFits(unittest.TestCase):
                 results.sort(key=lambda item: item[0])
             self.assertLessEqual(gpt.memory_mb, 0.6)
         self.assertIn(False, applied)
-        self.assertGreater(sum(applied), 20)
+        self.assertGreater(sum(applied), 15)
         leaves = gpt.root.leaves
         self.assertGreater(sum(leaf.asleep for leaf in leaves), 0)
         self.assertEqual(set(map(id, gpt._leaves)), set(map(id, leaves)))

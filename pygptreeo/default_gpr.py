@@ -35,12 +35,12 @@ class DefaultKernelFactory:
         self.oblique = oblique
 
     def __call__(self, n_features: int):
-        if getattr(self, 'oblique', False) and n_features > 1:
+        if self.oblique and n_features > 1:
             return ConstantKernel() * ObliqueMatern(nu=self.nu, length_scale=np.ones(int(n_features)))
         return ConstantKernel() * Matern(nu=self.nu, length_scale=np.ones(int(n_features)))
 
     def __repr__(self) -> str:
-        return f"DefaultKernelFactory(nu={self.nu}, oblique={getattr(self, 'oblique', False)})"
+        return f"DefaultKernelFactory(nu={self.nu}, oblique={self.oblique})"
 
 
 def Default_GPR(

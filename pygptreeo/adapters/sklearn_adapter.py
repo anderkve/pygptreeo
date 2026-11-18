@@ -11,6 +11,7 @@ import numpy as np
 from copy import deepcopy
 
 from scipy.linalg import cho_solve, cholesky, solve_triangular
+from scipy.linalg.lapack import dpotrf, dtrtrs
 from scipy.optimize import minimize
 from sklearn.base import clone as sklearn_clone
 from sklearn.utils import check_random_state
@@ -169,7 +170,7 @@ class SklearnGPAdapter(GPRegressorInterface):
         pinned[shear], start[shear] = 0.0, 0.0
         along_axes = self._maximise_likelihood(X, y, [start], pinned)
         chosen = along_axes
-        if getattr(self, '_shear_wait', 0) > 0:
+        if self._shear_wait > 0:
             self._shear_wait -= 1
         elif X.shape[0] > theta.size:
             starts = [along_axes] + ([theta] if np.any(theta[shear] != 0.0) else [])
@@ -177,7 +178,7 @@ class SklearnGPAdapter(GPRegressorInterface):
             if self._leave_one_out_error(X, y, free) * OBLIQUE_MARGIN < self._leave_one_out_error(X, y, along_axes):
                 chosen, self._shear_rejections = free, 0
             else:
-                self._shear_rejections = getattr(self, '_shear_rejections', 0) + 1
+                self._shear_rejections += 1
                 self._shear_wait = min(2 ** self._shear_rejections, OBLIQUE_MAX_WAIT) - 1
         self.refit_fixed(X, y, chosen)
         return self
@@ -290,7 +291,7 @@ class SklearnGPAdapter(GPRegressorInterface):
             A deep copy of this adapter instance.
         """
         copy = SklearnGPAdapter(deepcopy(self._gpr), kernel_factory=self._kernel_factory)
-        copy._shear_rejections, copy._shear_wait = getattr(self, '_shear_rejections', 0), getattr(self, '_shear_wait', 0)
+        copy._shear_rejections, copy._shear_wait = self._shear_rejections, self._shear_wait
         return copy
 
     def get_kernel(self):
@@ -441,6 +442,38 @@ class SklearnGPAdapter(GPRegressorInterface):
         weights = -K_inv / diagonal[:, None]
         np.fill_diagonal(weights, 0.0)
         return weights, 1.0 / diagonal
+
+    def supports_conditioning(self) -> bool:
+        return True
+
+    def covariance(self, X: np.ndarray):
+        """The prior of the fitted kernel at ``X``; see the interface."""
+        sk = self._gpr
+        return (sk.kernel_(X), np.atleast_1d(np.asarray(sk._y_train_std, dtype=float)) ** 2,
+                np.atleast_1d(np.asarray(sk._y_train_mean, dtype=float)))
+
+    def condition(self, X: np.ndarray, y: np.ndarray, noise: np.ndarray, X_query: np.ndarray):
+        """The posterior of the fitted kernel given ``(X, y)``; see the interface."""
+        sk = self._gpr
+        n = X.shape[0]
+        # one kernel call for the matrix of the points and their covariances with the queries
+        K_all = sk.kernel_(np.vstack((X, X_query)))
+        K = K_all[:n, :n].copy()
+        K.flat[::n + 1] += noise
+        L, info = dpotrf(K, lower=True, overwrite_a=True)
+        if info != 0:
+            return None
+        y = (np.asarray(y, dtype=float).reshape(n, -1) - sk._y_train_mean) / sk._y_train_std
+        n_targets = y.shape[1]
+        # L^-1 applied to the targets and to the covariances with the queries at once
+        solved, info = dtrtrs(L, np.column_stack((y, K_all[:n, n:])), lower=True)
+        if info != 0:
+            return None
+        v, U = solved[:, :n_targets], solved[:, n_targets:]
+        mean = (U.T @ v) * sk._y_train_std + sk._y_train_mean
+        var = np.diagonal(K_all)[n:] - np.einsum("ij,ij->j", U, U)
+        std = np.sqrt(np.maximum(var, 0.0))[:, None] * np.broadcast_to(sk._y_train_std, (n_targets,))
+        return mean, std, np.einsum("ij,ij->j", v, v) / n
 
     def nbytes(self) -> int:
         """Size of the training data and the Cholesky factor that a fit stores."""

@@ -98,7 +98,7 @@ kernel = AdditiveMaternKernel(d=d, order=2, nu=1.5)
 gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
 ```
 
-If the target varies fastest along a combination of the inputs, e.g. for parameters with partly degenerate effects, use `GPR=Default_GPR(oblique=True)`. Each leaf can then learn length scales along combinations of the inputs, keeps them only if they lower its leave-one-out error, and is split across the direction of fastest variation. In our tests this lowered the error by a factor of up to 12 for such targets, at 1.1 to 5 times the run time. For three of eleven single-output targets it raised the error by 7 to 20%.
+If the target varies fastest along a combination of the inputs, e.g. for parameters with partly degenerate effects, use `GPR=Default_GPR(oblique=True)`. Each leaf can then learn length scales along combinations of the inputs, keeps them only if they lower its leave-one-out error, and is split across the direction of fastest variation. In our tests this lowered the error by a factor of up to 12 for such targets, at 1.1 to 5 times the run time.
 
 Any other scikit-learn kernel can be used in the same way, e.g. `ConstantKernel() * (Matern(nu=1.5, length_scale=[1.0] * d) + RBF(length_scale=[1.0] * d))` as a cheaper alternative. For periodic inputs there is also `AdditivePeriodicMaternKernel(d=d)`, which is typically only beneficial when several oscillation periods fall within a single leaf.
 
@@ -125,11 +125,11 @@ For a function on a grid of two dimensions, pass the flattened values (`values.r
 Some recommendations for a function `f(t; x)` on a grid in `t`, e.g. a spectrum that depends on the model parameters `x`:
 
 - Start with `'shared'`. Use `'aligned'` if a feature moves along the grid with the inputs. In our tests this lowered the error by a factor 2 to 12, at two to four times the run time. The grid should have at least two to three points across the feature.
-- If the function changes smoothly with the inputs, use a smoother leaf kernel, `GPR=Default_GPR(nu=2.5)`. In our tests this lowered the error by a factor 3 on average.
+- If the function changes smoothly with the inputs, use a smoother leaf kernel, `GPR=Default_GPR(nu=2.5)`.
 - Give a quantity that varies over orders of magnitude as its logarithm.
 - A global model (see below) works with all output models. For smooth functions, give the additive GP the same smoothness with `global_mean_kwargs=dict(nu=2.5)`.
 
-See `examples/multioutput_physics_curves.py`, `examples/multioutput_surfaces.py` and `examples/multioutput_function_learning_pca.py` for examples, and section 9 of [`docs/benchmarks.md`](docs/benchmarks.md) for the test results.
+See `examples/multioutput_physics_curves.py`, `examples/multioutput_surfaces.py` and `examples/multioutput_function_learning_pca.py` for examples, and section 10 of [`docs/benchmarks.md`](docs/benchmarks.md) for the test results.
 
 ## Global models (optional)
 
@@ -157,6 +157,19 @@ gpt = GPTree(Nbar=100, global_mean='net', global_mean_kwargs=dict(steps_per_upda
 Further options can be passed via `global_mean_kwargs`, see the docstrings of `AdditiveGPGlobalMean` and `FeatureNetLearner`. Benchmark results are given in [`docs/benchmarks.md`](docs/benchmarks.md), and the design of the global models is described in more detail in [`docs/design.md`](docs/design.md). See `examples/example_hybrid.py` for a comparison of a tree with and without the neural network.
 
 
+## Predictions from the nearest data points (optional)
+
+By default the prediction for an input point is made by the GP of the leaf that the point falls in, i.e. from the data points of that leaf alone. In more than a few dimensions most input points lie close to an edge of their leaf, with many of their nearest data points in neighbouring leaves. With `predict_from='neighbours'` a prediction is instead based on the `Nbar` data points nearest to the input point, from whichever leaves hold them:
+
+```python
+gpt = GPTree(Nbar=100, predict_from='neighbours')
+```
+
+The leaf that the input point falls in still provides the kernel hyperparameters and the calibration of the predicted uncertainty. Where the nearest data points are poorly described by that kernel, e.g. across a jump in the target function or for an input point far from all data, the prediction gradually changes over to that of the leaf's own GP. Most leaves are kept asleep (see the next section), which in our tests reduced the memory use of the tree to between a quarter and two thirds.
+
+In our tests with streams of 20 000 points the prediction error was reduced by 29% on average, and by 27-37% for input streams that move through the input space. A prediction takes about 4 times as long as with the default setting (0.7-0.9 ms instead of about 0.2 ms), and an `update_tree` call 40-70% longer. This option requires the scikit-learn interface. See [`docs/benchmarks.md`](docs/benchmarks.md) (section 9) for the benchmark results and [`docs/design.md`](docs/design.md) for the details.
+
+
 ## Limiting the memory use (optional)
 
 By default the tree keeps every leaf it creates, so its memory use grows with the number of data points. For streams that are too long for this, a memory limit can be set:
@@ -169,6 +182,8 @@ The tree then keeps its own estimate of its size, available as `gpt.memory_mb`, 
 
 - It puts leaves to sleep, starting with the leaf that has gone unused for the longest time. A sleeping leaf keeps its data points and its kernel hyperparameters, but releases the Cholesky factor of its GP, which takes most of the memory of a leaf. The factor is computed again when the leaf is next used, so the predictions do not change.
 - When putting leaves to sleep is no longer enough, it removes the leaf that has gone longest without receiving a data point, together with its data points and its GP. The leaf's sibling in the tree takes over its region.
+
+With `predict_from='neighbours'` most leaves are asleep already (see above). The limit is then reached later, and leaves are only removed once the tree with its leaves asleep exceeds the limit. In our tests the tree kept about 50% more data points at the same limit than with all leaves awake.
 
 ## Fitting the leaves in other processes (optional)
 

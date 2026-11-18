@@ -278,6 +278,30 @@ if __name__ == '__main__':
     unittest.main()
 
 
+class TestSmallSigmaOnLargeMean(unittest.TestCase):
+    """The variance of a mixture of leaves keeps a sigma far below the mean."""
+
+    def test_sigma_is_positive_and_finite(self):
+        rng = np.random.RandomState(0)
+        np.random.seed(0)
+        X = rng.rand(400, 2)
+        y = -40.0 + 1e-7 * np.sin(5 * X[:, 0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            gpt = GPTree(Nbar=50, retrain_every_n_points=10, theta=0.05)
+            for i in range(X.shape[0]):
+                gpt.update_tree(X[i:i + 1], y[i:i + 1, None], np.array([[1e-9]]))
+        X_test = rng.rand(300, 2)
+        for mode in ('recursive', 'loop'):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", category=RuntimeWarning)
+                mean, sigma = gpt.predict(X_test, mode=mode)
+            self.assertTrue(np.all(np.isfinite(sigma)))
+            self.assertTrue(np.all(sigma > 0.0))
+            self.assertLess(sigma.max(), 1e-7)
+            self.assertLess(np.abs(mean[:, 0] + 40.0).max(), 1e-6)
+
+
 class TestPredictModesAgree(unittest.TestCase):
     """predict_loop evaluates each leaf only at the points it can own; it must give
     the same mixture as the per-point recursive mode."""

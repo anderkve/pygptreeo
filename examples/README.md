@@ -18,7 +18,7 @@ the small linear-algebra calls of the leaves and gives consistent timings.
 | `multioutput_physics_curves.py` | The multi-output models on a stream of physics-like curves f(x; theta), e.g. a resonance, a spectrum with a peak that moves, a kinematic edge. `aligned` against `shared` as a figure | matplotlib for the figure | 20 s |
 | `multioutput_surfaces.py` | `shared` and `aligned` leaves on families of functions f(u, v; theta) on a grid of two dimensions, e.g. a peak that moves along both axes, with and without `output_shape` | | 7 min |
 | `gpytorch_backend.py` | GPyTorch models as the leaf GPs, against the scikit-learn default | GPyTorch | 10 s |
-| `streaming_performance.py` | Accuracy, coverage and time per point along a stream, for the plain tree, the hybrid and the additive global GP, as a figure. `--max_memory_mb` limits the memory of the trees | matplotlib (PyTorch for the hybrid) | 2 min |
+| `streaming_performance.py` | Accuracy, coverage and time per point along a stream, for the plain tree, the tree that predicts from each query's nearest points, the hybrid and the additive global GP, as a figure. `--max_memory_mb` limits the memory of the trees | matplotlib (PyTorch for the hybrid) | 2 min |
 | `mpi_fit_workers.py` | An MPI trainer that holds the tree and hands the leaf fits to fit workers (`update_tree(defer_fits=True)`), against a trainer that fits the leaves itself | mpi4py | 15 s on 4 processes |
 | `make_readme_gif.py` | The animation in the top-level README: a 2D target learned locally from a moving cluster of points | matplotlib, Pillow | 3 min |
 
@@ -31,6 +31,7 @@ OMP_NUM_THREADS=1 python examples/multioutput_surfaces.py peak 800
 python examples/gpytorch_backend.py
 OMP_NUM_THREADS=1 python examples/streaming_performance.py --target eggholder --d 3 --N 20000
 OMP_NUM_THREADS=1 python examples/streaming_performance.py --target relic_density --stream walker --configs tree,hybrid,global_gp
+OMP_NUM_THREADS=1 python examples/streaming_performance.py --target gaussian_peaks --d 6 --stream walker --configs tree,neighbours
 OMP_NUM_THREADS=1 python examples/streaming_performance.py --target gaussian_peaks --d 6 --stream walker --configs tree --max_memory_mb 10
 OMP_NUM_THREADS=1 mpiexec -n 4 python examples/mpi_fit_workers.py     # -n 1: no fit workers
 python examples/make_readme_gif.py --alt      # --quick for a fast preview

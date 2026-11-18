@@ -34,6 +34,8 @@ from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_alignment import MIN_GRID, MIN_OUTPUTS
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
+from pygptreeo.leaf_index import LeafIndex
+from pygptreeo.neighbours import NeighbourSearch
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +81,16 @@ class GPTree:
             between two of its fits is added to its fitted GPs at once.
         widen_sigma_with_distance (bool): Whether sigma grows with the distance
             of a query from the fitted points of its leaf.
+        predict_from (str): 'leaf' if a prediction is conditioned on the points
+            of the query's leaf, 'neighbours' if on the stored points nearest
+            to the query.
         max_memory_mb (Optional[float]): The memory the tree stays within, in MB,
             or None for no limit.
         memory_mb (float): The tree's estimate of its own size, in MB.
+        n_leaves (int): Number of leaves of the tree.
+        leaf_index (Optional[LeafIndex]): A balanced index over the leaves,
+            through which the leaf of a point is found whatever the depth of
+            the tree of cuts.
 
     Methods:
         fit(X_train, y_train, show_progress=False, shuffle=True, forward_GPR_to_next_leaf=False):
@@ -102,6 +111,11 @@ class GPTree:
         save(path):
             Saves the trained GPTree object to a file.
     """
+    # for a tree saved by a version without them
+    predict_from = 'leaf'
+    neighbours = None
+    leaf_index = None
+
     def __init__(self,
                  GPR: Optional[GPRegressorInterface] = None,
                  Nbar: Optional[int] = 100,
@@ -124,6 +138,7 @@ class GPTree:
                  max_memory_mb: Optional[float] = None,
                  append_points_between_fits: bool = True,
                  widen_sigma_with_distance: bool = True,
+                 predict_from: str = 'leaf',
                  **kwargs):
         """Initializes the GPTree.
 
@@ -248,6 +263,16 @@ class GPTree:
                 is for a leaf that predicts beyond its own points. The
                 predictions themselves do not change. Without
                 `use_calibrated_sigma` it has no effect.
+            predict_from (str): The points a prediction is conditioned on.
+                'leaf' (default): the points of the leaf that the query falls
+                in, through the leaf's fitted GP. 'neighbours': the ``Nbar``
+                stored points nearest to the query, from whichever leaves
+                hold them, with the kernel of the query's leaf; where they
+                fit that kernel badly the prediction passes to that of the
+                leaf's own GP, and all but a few leaves sleep. The settings
+                are the ``NEIGHBOUR_`` constants of
+                ``pygptreeo/neighbours.py``. Needs a GP backend with
+                ``supports_conditioning()`` (the scikit-learn adapter).
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -300,10 +325,21 @@ class GPTree:
         self._distance_errors = deque(maxlen=SIGMA_DISTANCE_WINDOW)
         self._sigma_slope = 0.0
 
+        if predict_from not in ('leaf', 'neighbours'):
+            raise ValueError(f"Unknown predict_from '{predict_from}'. Use 'leaf' or 'neighbours'.")
+        self.predict_from = predict_from
+        # Tree-wide nearest-neighbour search (None by default; shared by reference with every node)
+        self.neighbours = None
+        if predict_from == 'neighbours':
+            if not GPR.supports_conditioning():
+                raise ValueError("predict_from='neighbours' needs a GP backend with supports_conditioning() == True "
+                                 "(e.g. the scikit-learn adapter returned by Default_GPR)")
+            self.neighbours = NeighbourSearch(self, Nbar)
+
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
                           output_model=output_model, output_shape=output_shape, output_basis=self.output_basis,
-                          global_mean=self.global_mean,
+                          global_mean=self.global_mean, neighbours=self.neighbours,
                           **kwargs)  # Initialize root node of the GPTree
 
         self.theta = theta
@@ -328,17 +364,15 @@ class GPTree:
 
         self.aggregation = aggregation
 
+        # Balanced index over the leaves, built with the first point. None for
+        # a tree whose cuts are not along the inputs.
+        self.leaf_index = None
         # The fits that update_tree(defer_fits=True) handed out and whose results
         # are still to come: task id -> (the node the task was made for, the frame of the task)
         self._fit_tasks = {}
         self._n_fit_tasks = 0
 
         self.first_point = True
-
-
-    def __getstate__(self):
-        # The fits handed out are not saved: their results cannot reach a loaded tree
-        return {**self.__dict__, '_fit_tasks': {}}
 
 
     def update_tree(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray],
@@ -389,6 +423,8 @@ class GPTree:
         if self.first_point:
             self.n_features = x.size
             self.root.init_data_set(self.n_features)
+            self.leaf_index = LeafIndex(self.n_features, blend=None if self.neighbours is None else self.neighbours.blend)
+            self.leaf_index.add(self.root)
             if self.max_memory_mb is not None:
                 self._start_accounting()
             self.first_point = False
@@ -400,20 +436,19 @@ class GPTree:
             self.global_mean.observe(x, y, sigma)
 
         # Find a leaf node for the new (x,y,sigma) point
-        # - Start from the root node
-        # - For each level, pick a branch according node.prob_func(x), until a leaf node is reached
-        node = self.root
-        while not node.is_leaf:
-            node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
+        node = self._leaf_of(x)
         # A sleeping leaf is woken before the point is stored, so that the
         # prediction registered below is one made without the point
         node.wake()
 
-        # Check if this point should be merged with a nearby point (updates existing point in-place)
-        if node.should_merge_point(x, y, sigma):
-            # Point was merged with existing point, don't add as new point
-            # Still register prediction performance and update sigma scaler
+        # A point close to a stored one is merged into it, after its prediction
+        # was registered, and is not added as a new point
+        nearest = node.merge_candidate(x)
+        if nearest is not None:
             self._register_prediction(node, x, y, allow_training)
+            node.merge_with_point(x, y, sigma, nearest)
+            if self.leaf_index is not None:
+                self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
             self._after_update(node)
             return
 
@@ -423,10 +458,14 @@ class GPTree:
             self._after_update(node)
             return
 
-        # Add new point and register prediction performance. Without training, a node
-        # that has no fitted GP stays at its prior, which says nothing about the fitted GP.
-        node.store_point(x, y, sigma, remove_shared=True)
+        # Register the prediction performance, then add the new point: the point is
+        # not yet among the stored points that a prediction may be conditioned on.
+        # Without training, a node that has no fitted GP stays at its prior, which
+        # says nothing about the fitted GP.
         self._register_prediction(node, x, y, allow_training)
+        node.store_point(x, y, sigma, remove_shared=True)
+        if self.leaf_index is not None:
+            self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
 
         # Retrain GP? The node will decide based Nbar and/or its buffer of training points
         task = None
@@ -479,6 +518,13 @@ class GPTree:
             # Retrain the child-node GPs?
             # for child in node.children:
             #     child.fit_my_GPR()
+
+            if self.leaf_index is not None:
+                axis = node.cut_axis()
+                if axis is None:
+                    self.leaf_index = None      # the cells are no boxes
+                else:
+                    self.leaf_index.split(node, node.left, node.right, axis, node.split_position, 0.5 * node.overlap)
 
             # GP and training data of non-leaf nodes is not needed
             node.delete_data(delete_own_data=True, delete_shared_data=True)
@@ -570,9 +616,107 @@ class GPTree:
             leaf.apply_fit(result['hyperparameters'], frame)
             if self.max_memory_mb is not None:
                 self._account(leaf)
+        self._let_leaves_sleep()
         if self.max_memory_mb is not None:
             self._enforce_memory_limit(remove=False)
         return bool(leaves)
+
+
+    def __getstate__(self):
+        """The nodes are saved as a list, with their links as positions in it.
+        The fits handed out are not saved: their results cannot reach a loaded tree."""
+        state = {**self.__dict__, '_fit_tasks': {}}
+        nodes, links = [self.root], []
+        for node in nodes:              # breadth first; the list grows while it is read
+            if node.is_leaf:
+                links.append(None)
+            else:
+                links.append(len(nodes))
+                nodes += [node.left, node.right]
+        state['_saved_nodes'], state['_saved_links'] = nodes, links
+        return state
+
+
+    def __setstate__(self, state):
+        nodes, links = state.pop('_saved_nodes', ()), state.pop('_saved_links', ())
+        self.__dict__.update(state)
+        for node, first in zip(nodes, links):
+            if first is not None:
+                node.left, node.right = nodes[first], nodes[first + 1]
+                node.children = [node.left, node.right]
+                node.left.parent = node.right.parent = node
+
+
+    def _leaf_of(self, x: np.ndarray):
+        """The leaf that the point ``x`` (one row) is stored in. The index of the
+        leaves gives it wherever the point belongs to one leaf alone. Within
+        the overlap of two children the cuts are followed from the root, each
+        branch taken with the probability of ``prob_func``."""
+        if self.leaf_index is not None:
+            leaf = self.leaf_index.locate(np.asarray(x, dtype=float).reshape(-1))
+            if leaf is not None:
+                return leaf
+        node = self.root
+        while not node.is_leaf:
+            node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
+        return node
+
+
+    def _prediction_leaves(self, x: np.ndarray):
+        """The leaves of ``_leaves_of`` and their weights, of which no more than
+        ``max_n_pred_leaves`` are kept, those with the largest weights."""
+        leaves, weights = self._leaves_of(x)
+        if self.max_n_pred_leaves:
+            ordering = np.argsort(weights)[::-1][:self.max_n_pred_leaves]
+            kept = np.array(weights)[ordering]
+            leaves, weights = [leaves[idx] for idx in ordering], list(kept / kept.sum())
+        return leaves, weights
+
+
+    def _blends(self) -> bool:
+        """Whether predictions pass from one leaf to the next within zones at the cuts."""
+        return self.neighbours is not None and self.neighbours.blend is not None and self.leaf_index is not None
+
+
+    def _leaves_of(self, x: np.ndarray):
+        """The leaves that predict at the point ``x`` (one row) and their weights:
+        one leaf where the point belongs to it alone, and within the overlap
+        of two children the leaves on both sides, each with the product of
+        the probabilities of ``prob_func`` along its branch. With zones at
+        the cuts (``NEIGHBOUR_BLEND``) the leaves and weights are those of
+        the zones."""
+        if self.leaf_index is not None:
+            if self._blends():
+                leaves, weights = self.leaf_index.blend(x[0])
+                if leaves:
+                    return leaves, weights
+            leaf = self.leaf_index.locate(x[0])
+            if leaf is not None:
+                return [leaf], [1.0]
+        leaves, weights, total = [], [], 0.0
+        stack = [(self.root, 1.0)]
+        while stack and total < 1:
+            node, weight = stack.pop()
+            if node.is_leaf:
+                leaves.append(node)
+                weights.append(weight)
+                total += weight
+                continue
+            p = node.prob_func(x)[0, 0]
+            # the right child goes on the stack first, so the left one is visited first
+            if weight * p > 0:
+                stack.append((node.right, weight * p))
+            if weight * (1 - p) > 0:
+                stack.append((node.left, weight * (1 - p)))
+        return leaves, weights
+
+
+    @property
+    def n_leaves(self):
+        """Number of leaves of the tree."""
+        if self.leaf_index is not None:
+            return len(self.leaf_index)
+        return len(self.root.leaves)
 
 
     @property
@@ -637,20 +781,41 @@ class GPTree:
         """Take a node that is no longer a leaf of the tree out of the accounts."""
         self._leaf_bytes -= self._leaves.pop(node)
         self._fitted_bytes -= self._fitted.pop(node, 0)
+        if self.neighbours is not None and self.neighbours.awake is not None:
+            self.neighbours.in_use.pop(node, None)
 
 
     def _after_update(self, node: GPNode):
-        """Account for the leaf a point went to, or the two it was split into, and
-        bring the tree back within its memory limit."""
-        if self.max_memory_mb is None:
+        """Account for the leaf a point went to, or the two it was split into, let
+        the leaves sleep that predictions from neighbours do not keep awake,
+        and bring the tree back within its memory limit."""
+        if self.max_memory_mb is not None:
+            if node.is_leaf:
+                self._account(node, updated=True)
+            else:
+                self._forget(node)
+                for child in node.children:
+                    self._account(child, updated=True)
+        elif not node.is_leaf and self.neighbours is not None and self.neighbours.awake is not None:
+            self.neighbours.in_use.pop(node, None)
+        self._let_leaves_sleep()
+        if self.max_memory_mb is not None:
+            self._enforce_memory_limit(remove=True)
+
+
+    def _let_leaves_sleep(self):
+        """With predictions from neighbours, put the leaves to sleep whose GPs are
+        not among the last ``NEIGHBOUR_AWAKE`` that were used. A leaf that
+        predicts from its own points, or from its aligned curves, keeps its
+        GPs awake."""
+        search = self.neighbours
+        if search is None or search.awake is None:
             return
-        if node.is_leaf:
-            self._account(node, updated=True)
-        else:
-            self._forget(node)
-            for child in node.children:
-                self._account(child, updated=True)
-        self._enforce_memory_limit(remove=True)
+        while len(search.in_use) > search.awake:
+            leaf, _ = search.in_use.popitem(last=False)
+            if leaf.is_leaf and not leaf.prefers_own and leaf.alignment is None and leaf.sleep() \
+                    and self.max_memory_mb is not None and leaf in self._leaves:
+                self._account(leaf)
 
 
     def _enforce_memory_limit(self, remove: bool):
@@ -684,6 +849,20 @@ class GPTree:
         sibling = parent.right if leaf.is_left else parent.left
         grandparent = parent.parent
         logger.debug("Removed leaf %s", leaf.name)
+
+        if self.leaf_index is not None:
+            # the leaves along the removed cut extend over the removed leaf's cell
+            axis = parent.cut_axis()
+            along = [sibling]
+            while along:
+                node = along.pop()
+                if node.is_leaf:
+                    self.leaf_index.extend(node, leaf, axis, leaf.is_left)
+                elif node.cut_axis() == axis:
+                    along.append(node.left if leaf.is_left else node.right)
+                else:
+                    along += [node.left, node.right]
+            self.leaf_index.remove(leaf)
 
         sibling.parent = grandparent
         sibling.is_left = parent.is_left
@@ -784,6 +963,8 @@ class GPTree:
             leaf.fit_my_GPR(force_training=True)
             if self.max_memory_mb is not None:
                 self._account(leaf)
+            self._let_leaves_sleep()
+            if self.max_memory_mb is not None:
                 self._enforce_memory_limit(remove=False)
             # No prediction of a fitted GP was registered: sigma is the GP's own
             if leaf.residuals_list[0].shape[0] == 0:
@@ -801,7 +982,14 @@ class GPTree:
         """Register how the node predicted the point before it was fitted to it: for
         the node's sigma scaler and, beyond SIGMA_DISTANCE_START, for the slope
         of sigma with the distance from the node's fitted points."""
-        errors = node.register_pred_perf(x, y, only_if_fitted=not allow_training)
+        prediction = None
+        if self._blends() and not self.first_point and (allow_training or node._is_fitted()):
+            # within the zones of several leaves the prediction to calibrate is theirs together
+            leaves, weights = self._prediction_leaves(x)
+            if len(leaves) > 1:
+                mu, sigma = self._predict_blended(x, leaves, weights, calibrated=False)
+                prediction = mu[None, :], sigma[None, :]
+        errors = node.register_pred_perf(x, y, only_if_fitted=not allow_training, prediction=prediction)
         if not self.use_calibrated_sigma:
             return
         if self.widen_sigma_with_distance and errors is not None:
@@ -815,12 +1003,45 @@ class GPTree:
         node.update_sigma_scaler()
 
 
-    def _predict_leaf(self, leaf: GPNode, x: np.ndarray):
+    def _predict_blended(self, x: np.ndarray, leaves, weights, calibrated: bool = True):
+        """The prediction at one query (one row) within the zones of several
+        leaves: from its neighbours with the kernels of the leaves mixed, the
+        mixture of the leaves' predictions where that cannot be done, or the
+        two mixed where the neighbours fit the mixed kernel badly
+        (``NeighbourSearch.share``). Returns the mean and sigma per output;
+        without ``calibrated`` sigma is that of the GPs."""
+        weights = np.asarray(weights, dtype=float)
+        mixed = self.neighbours.predict_mixed(x, leaves, weights)
+        share = 0.0 if mixed is None else mixed[2]
+        if share < 1.0:
+            parts = [self._predict_leaf(leaf, x, calibrated) for leaf in leaves]
+            mu_leaves = sum(weight * mu_leaf[0] for weight, (mu_leaf, _) in zip(weights, parts))
+            variance = sum(weight * (sigma_leaf[0] ** 2 + (mu_leaf[0] - mu_leaves) ** 2)
+                           for weight, (mu_leaf, sigma_leaf) in zip(weights, parts))
+            if mixed is None:
+                return mu_leaves, np.sqrt(variance)
+        mu, sigma = mixed[:2]
+        if calibrated and self.use_calibrated_sigma:
+            sigma = sigma * sum(weight * np.asarray(leaf.sigma_scalers) for weight, leaf in zip(weights, leaves))
+            if self._sigma_slope > 0.0:
+                beyond = [max(leaf.distance_from_fit(x)[0] - SIGMA_DISTANCE_START, 0.0) for leaf in leaves]
+                sigma = sigma * (1.0 + self._sigma_slope * float(np.dot(weights, beyond)))
+        if self.max_memory_mb is not None:
+            for leaf in leaves:
+                self._account(leaf)
+            self._enforce_memory_limit(remove=False)
+        if share < 1.0:
+            mu, sigma = self.neighbours.mix(share, mu, sigma, mu_leaves, np.sqrt(variance))
+        return mu, sigma
+
+
+    def _predict_leaf(self, leaf: GPNode, x: np.ndarray, calibrated: bool = True):
         """The prediction of one leaf, with a sigma that grows with the distance from
         the leaf's fitted points. Under a memory limit this counts as a use of the
-        leaf's GPs, and if the leaf had to be woken another one is put to sleep."""
-        mu, sigma = leaf.predict(x, return_std=True, use_calibrated_sigma=self.use_calibrated_sigma)
-        if self._sigma_slope > 0.0:
+        leaf's GPs, and if the leaf had to be woken another one is put to sleep.
+        Without ``calibrated`` sigma is that of the GPs."""
+        mu, sigma = leaf.predict(x, return_std=True, use_calibrated_sigma=calibrated and self.use_calibrated_sigma)
+        if calibrated and self._sigma_slope > 0.0:
             beyond = np.maximum(leaf.distance_from_fit(x) - SIGMA_DISTANCE_START, 0.0)
             sigma = sigma * (1.0 + self._sigma_slope * beyond)[:, None]
         if self.max_memory_mb is not None and not self.first_point:
@@ -831,7 +1052,7 @@ class GPTree:
 
     def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False, return_leaf_names: Optional[bool]=False):
         """ 
-        A predict function that uses a recursive function to collect contributing leaves.
+        A predict function that, for each point, visits only the leaves it can belong to.
         Should be the fastest alternative when N_train >> Nbar. 
         
         Arguments
@@ -859,110 +1080,33 @@ class GPTree:
             A list with the names of the leaves contributing to the prediction. Only returned if return_leaf_names=True.
         """
         
-        global sum_probs, collection_done
-        def collect_leaves(x: np.ndarray, current_node: GPNode, current_prob: float):
-            """Recursively traverses the tree to find relevant leaf nodes for prediction.
-
-            This helper function is called by `predict_recursive` for a single test
-            point `x`. It navigates down the tree from `current_node`, calculating
-            the probability of taking each path. If a path's probability is non-zero,
-            it continues traversal.
-
-            When a leaf node is reached, it's added to the `leaves` list (in the
-            outer scope of `predict_recursive`), and its accumulated probability
-            (`current_prob`) is added to `pred_leaf_probs` (also in the outer scope).
-
-            The traversal uses `sum_probs` and `collection_done` (global variables
-            within `predict_recursive`'s scope) for early stopping: if the sum of
-            probabilities of collected leaves reaches or exceeds 1.0, the search
-            is considered complete.
-
-            Args:
-                x (np.ndarray): The single test point (1-row numpy array) for which
-                    leaf nodes are being collected.
-                current_node (GPNode): The GPNode from which to continue the traversal.
-                current_prob (float): The accumulated probability of reaching the
-                    `current_node` from the root.
-            """
-
-            global sum_probs, collection_done
-
-            if collection_done or current_prob <= 0:
-                return
-            
-            # Return if we have reached a leaf node
-            if current_node.is_leaf:
-                leaves.append(current_node)
-                pred_leaf_probs.append(current_prob)
-
-                sum_probs += current_prob
-                if sum_probs >= 1:
-                    collection_done = True                
-                return
-
-            # Ok, not a leaf node. Now, for both child nodes:
-            # - compute the probability
-            # - call this function again
-
-            new_p = current_node.prob_func(x)[0,0]
-
-            p0 = current_prob*(1 - new_p)
-            if p0 > 0:
-                collect_leaves(x, current_node.left, p0)
-
-            p1 = current_prob*new_p
-            if p1 > 0:
-                collect_leaves(x, current_node.right, p1)
-
-            # Done
-            return
-        
-
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
         var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
 
         for i, x in tqdm(enumerate(X_test), total=X_test.shape[0], disable=not show_progress, desc="Predicting"):
             x = x.reshape((1, x.shape[0]))
+            self._let_leaves_sleep()
 
-            # Collect leaves
-            sum_probs = 0
-            collection_done = False
+            leaves, pred_leaf_probs = self._prediction_leaves(x)
 
-            leaves = []
-            pred_leaf_probs = []
-            collect_leaves(x, self.root, 1.0)
-
-            # Limit the number of leaves used?
-            if self.max_n_pred_leaves:
-                pred_leaf_probs = np.array(pred_leaf_probs)
-                ordering = np.argsort(pred_leaf_probs)[::-1]
-
-                pred_leaf_probs = pred_leaf_probs[ordering]
-                leaves = [leaves[idx] for idx in ordering]
-
-                pred_leaf_probs = pred_leaf_probs[:self.max_n_pred_leaves]
-                pred_leaf_probs = pred_leaf_probs / np.sum(pred_leaf_probs)
-                pred_leaf_probs = list(pred_leaf_probs)
-
-                leaves = leaves[:self.max_n_pred_leaves]
+            if len(leaves) > 1 and self._blends():
+                mu, sigma = self._predict_blended(x, leaves, pred_leaf_probs)
+                mean_DLGP[i, :], var_DLGP[i, :] = mu, sigma ** 2
+                continue
 
             # Compute joint prediciton
             # The default: mixture of experts, following the DLGP paper
             if self.aggregation == "default" or self.aggregation == "moe":
 
-                # The spread of the leaves' means is summed apart from their
-                # variances, which can be smaller than its rounding error
-                second_moment = np.zeros(self.n_outputs)
-                for leaf, ptilde in zip(leaves, pred_leaf_probs):
-
-                    mu_leaf, sigma_leaf = self._predict_leaf(leaf, x)
-                    # mu_leaf and sigma_leaf have shape (1, n_outputs)
-
+                # mu_leaf and sigma_leaf have shape (1, n_outputs)
+                parts = [(ptilde,) + self._predict_leaf(leaf, x) for leaf, ptilde in zip(leaves, pred_leaf_probs)]
+                for ptilde, mu_leaf, _ in parts:
                     mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
-                    var_DLGP[i, :] += ptilde * sigma_leaf[0, :]**2
-                    second_moment += ptilde * mu_leaf[0, :]**2
-
-                var_DLGP[i, :] += np.maximum(second_moment - mean_DLGP[i, :]**2, 0.0)
+                # The variance of the mixture: that of each leaf, and the spread of
+                # their means about the mixture's. In this form a small sigma
+                # survives a large mean.
+                for ptilde, mu_leaf, sigma_leaf in parts:
+                    var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + (mu_leaf[0, :] - mean_DLGP[i, :])**2)
 
             # Generalized product of experts
             elif self.aggregation == "poe":
@@ -997,6 +1141,7 @@ class GPTree:
 
             # print(f"DEBUG: mean_DLGP: {mean_DLGP}  var_DLGP: {var_DLGP}")
 
+        self._let_leaves_sleep()
         if return_leaf_names:
             leaf_names = [leaf.name for leaf in leaves]
             return mean_DLGP, np.sqrt(var_DLGP), leaf_names
@@ -1028,10 +1173,8 @@ class GPTree:
         """
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
         var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
-        # The spread of the leaves' means is summed apart from their variances,
-        # which can be smaller than its rounding error
-        second_moment = np.zeros((X_test.shape[0], self.n_outputs))
 
+        parts = []
         for leaf in tqdm(self.root.leaves, disable=not show_progress, desc="Predicting"):
 
             ptilde = leaf.marg_prob(X_test)  # Shape: (n_test, 1)
@@ -1047,10 +1190,11 @@ class GPTree:
 
             # Broadcast ptilde to match shape (n_masked, n_outputs)
             mean_DLGP[mask] += ptilde[mask] * mu_leaf
-            var_DLGP[mask] += ptilde[mask] * sigma_leaf**2
-            second_moment[mask] += ptilde[mask] * mu_leaf**2
+            parts.append((mask, ptilde[mask], mu_leaf, sigma_leaf))
 
-        var_DLGP += np.maximum(second_moment - mean_DLGP**2, 0.0)
+        # The variance of the mixture, in the form in which a small sigma survives a large mean
+        for mask, ptilde, mu_leaf, sigma_leaf in parts:
+            var_DLGP[mask] += ptilde * (sigma_leaf**2 + (mu_leaf - mean_DLGP[mask])**2)
 
         return mean_DLGP, np.sqrt(var_DLGP)
 
@@ -1072,7 +1216,12 @@ class GPTree:
         if mode == 'recursive':
             return self.predict_recursive(X_test, show_progress=show_progress, return_leaf_names=return_leaf_names)
         elif mode == 'loop':
-            return self.predict_loop(X_test, show_progress=show_progress)
+            if self._blends():
+                # the zones at the cuts are those of the leaf index, which 'recursive' follows
+                return self.predict_recursive(X_test, show_progress=show_progress)
+            result = self.predict_loop(X_test, show_progress=show_progress)
+            self._let_leaves_sleep()
+            return result
         elif mode == 'each':
             return self.predict_each(X_test, show_progress=show_progress)
         else:
