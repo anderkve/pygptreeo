@@ -28,7 +28,7 @@ from sklearn.preprocessing import StandardScaler
 # Local imports
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gp_interface import GPRegressorInterface
-from pygptreeo.output_alignment import AlignedCurves, OutputWarp
+from pygptreeo.output_alignment import output_warp
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner
 
@@ -98,6 +98,7 @@ class GPNode(Node):
                  split_eval_min_points: Optional[int] = 20,
                  n_outputs: Optional[int] = 1,
                  output_model: Optional[str] = 'independent',
+                 output_shape: Optional[tuple] = None,
                  output_basis: Optional[OutputBasisLearner] = None,
                  global_mean: Optional[GlobalMeanLearner] = None,
                  my_GPRs: Optional[list] = None):
@@ -203,6 +204,7 @@ class GPNode(Node):
         if output_model == 'pca' and output_basis is None:
             raise ValueError("output_model='pca' requires an OutputBasisLearner passed as output_basis")
         self.output_model = output_model
+        self.output_shape = tuple(output_shape) if output_shape is not None else (n_outputs,)   # the grid of the outputs ('aligned')
         self.output_basis = output_basis   # tree-global, shared by reference across all nodes
         self._fitted_basis = None          # the OutputBasis this node's GPs were fitted with ('pca')
         self.z_scaler = None               # (shift, scale) per basis score, fitted per leaf ('pca')
@@ -397,6 +399,7 @@ class GPNode(Node):
             'split_eval_min_points': self.split_eval_min_points,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
             'output_model': self.output_model,
+            'output_shape': getattr(self, 'output_shape', None),
             'output_basis': self.output_basis,
             'global_mean': self.global_mean,
         }
@@ -1090,13 +1093,13 @@ class GPNode(Node):
         if gpr is None:
             return None
         delta = (X_train - self.fit_mean) / self.fit_std
-        warp = OutputWarp(self.n_outputs, self.n_features)
+        warp = output_warp(getattr(self, 'output_shape', (self.n_outputs,)), self.n_features)
         if previous is not None:
             # the previous warp, in the units of the new offsets
-            warp.C = previous.warp.C * (self.fit_std / previous_fit_std)[:, None]
+            warp.start_from(previous.warp, self.fit_std / previous_fit_std)
         warp.fit(y_train, delta)
         aligned = warp.register(y_train, delta)
-        curves = AlignedCurves(warp, y_train, delta)
+        curves = warp.curves(y_train, aligned, delta)
         mu, scale = 0.0, 1.0
         if self.use_standard_scaling:
             mu = aligned.mean(axis=0)
@@ -1869,8 +1872,9 @@ class GPNode(Node):
         m, sd = gpr.predict(xs, return_std=True)
         m = np.asarray(m, dtype=float).reshape(n, -1)
         sd = np.asarray(sd, dtype=float).reshape(n, -1)
-        if sd.shape[1] == 1 and self.n_outputs > 1:
-            sd = np.tile(sd, (1, self.n_outputs))
+        if sd.shape[1] != self.n_outputs:
+            # one sigma for all targets of the GP, of which an alignment can have more than there are outputs
+            sd = np.tile(sd[:, :1], (1, self.n_outputs))
         if self.use_standard_scaling and self.y_common_scaler is not None:
             mu, scale = self.y_common_scaler
             m = m * scale + mu

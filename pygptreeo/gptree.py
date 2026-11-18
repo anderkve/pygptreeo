@@ -31,7 +31,7 @@ from tqdm import tqdm
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode, TARGET_COVERAGE
 from pygptreeo.gp_interface import GPRegressorInterface
-from pygptreeo.output_alignment import MIN_OUTPUTS
+from pygptreeo.output_alignment import MIN_GRID, MIN_OUTPUTS
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
 
@@ -113,6 +113,7 @@ class GPTree:
                  aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
                  output_model: Optional[str] = 'independent',
+                 output_shape: Optional[tuple] = None,
                  output_basis_components: Union[str, int, float] = 'noise',
                  output_basis_max_components: Optional[int] = None,
                  output_basis_min_points: int = 50,
@@ -172,6 +173,10 @@ class GPTree:
                 the alignment if it lowers the leave-one-out error of its
                 curves. Suited to curves with features whose position depends
                 on the inputs; needs the scikit-learn adapter.
+            output_shape (Optional[tuple]): For 'aligned': the shape ``(p1, p2)``
+                of the grid of outputs that are an image, flattened row by row
+                (``image.ravel()``). The leaves then warp both axes of the
+                grid. Defaults to a curve, ``(n_outputs,)``.
             output_basis_components ('noise', int or float): For 'pca': how many
                 basis components to keep. 'noise' (default) keeps every component
                 whose variance lies above what the per-point observation noise
@@ -268,6 +273,13 @@ class GPTree:
         if output_model == 'aligned' and n_outputs < MIN_OUTPUTS:
             raise ValueError(f"output_model='aligned' is for a curve on a grid of at least {MIN_OUTPUTS} points, "
                              f"not for {n_outputs} outputs")
+        if output_shape is not None:
+            output_shape = tuple(int(p) for p in output_shape)
+            if len(output_shape) not in (1, 2) or int(np.prod(output_shape)) != n_outputs:
+                raise ValueError(f"output_shape must be (n_outputs,) or (p1, p2) with p1 * p2 = n_outputs = {n_outputs}, not {output_shape}")
+            if len(output_shape) == 2 and min(output_shape) < MIN_GRID:
+                raise ValueError(f"output_shape (p1, p2) is for a grid of at least {MIN_GRID} points along each axis, not {output_shape}")
+        self.output_shape = output_shape
         self.output_model = output_model
         # Tree-global output basis for 'pca' (shared by reference with every node)
         self.output_basis = None
@@ -289,7 +301,7 @@ class GPTree:
 
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
-                          output_model=output_model, output_basis=self.output_basis,
+                          output_model=output_model, output_shape=output_shape, output_basis=self.output_basis,
                           global_mean=self.global_mean,
                           **kwargs)  # Initialize root node of the GPTree
 
