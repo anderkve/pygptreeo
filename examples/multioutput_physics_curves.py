@@ -14,12 +14,14 @@ with the parameters, 'cmb_peaks' and 'ringdown' oscillate with a phase that depe
 them, and 'peak_counts_mc' has Monte Carlo noise.
 
 Usage:
-    python examples/multioutput_physics_curves.py [family] [n_train] [models]
+    python examples/multioutput_physics_curves.py [family] [n_train] [models] [global_mean]
 
-    family    a key of FAMILIES (default 'z_lineshape')
-    n_train   number of curves in the stream (default 400)
-    models    comma-separated output models (default 'pca,shared,aligned';
-              'independent' is also possible, and slow)
+    family       a key of FAMILIES (default 'z_lineshape')
+    n_train      number of curves in the stream (default 400)
+    models       comma-separated output models (default 'pca,shared,aligned';
+                 'independent' is also possible, and slow)
+    global_mean  'additive_gp' or 'net' gives every tree that global model
+                 (default: none)
 """
 
 import sys
@@ -38,10 +40,10 @@ SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 COLOURS = ["#2a78d6", "#eb6834"]
 
 
-def learn(family, model, U, Y, S, truth, U_test):
+def learn(family, model, U, Y, S, truth, U_test, global_mean=None):
     """Stream the curves through a tree. Returns the predictions along the stream,
     those for the test set, and the time per update in ms."""
-    gpt = GPTree(Nbar=100, retrain_every_n_points=25, n_outputs=family.n_outputs, output_model=model)
+    gpt = GPTree(Nbar=100, retrain_every_n_points=25, n_outputs=family.n_outputs, output_model=model, global_mean=global_mean)
     N = len(U)
     mean, sigma = np.zeros_like(Y), np.zeros_like(Y)
     t_update = 0.0
@@ -109,6 +111,7 @@ def main():
     name = sys.argv[1] if len(sys.argv) > 1 else "z_lineshape"
     n_train = int(sys.argv[2]) if len(sys.argv) > 2 else 400
     models = (sys.argv[3] if len(sys.argv) > 3 else "pca,shared,aligned").split(",")
+    global_mean = sys.argv[4] if len(sys.argv) > 4 else None
     family = FAMILIES[name]
 
     rng = np.random.RandomState(0)
@@ -118,11 +121,12 @@ def main():
     truth_test = family(U_test)
     value_range = truth_test.max() - truth_test.min()
 
-    print(f"{name}: {family.d} parameters, {family.n_outputs} grid points in {family.xlabel}, {n_train} curves ({family.kind})\n")
+    print(f"{name}: {family.d} parameters, {family.n_outputs} grid points in {family.xlabel}, {n_train} curves ({family.kind})"
+          + (f", global model '{global_mean}'" if global_mean else "") + "\n")
     print(f"{'output model':<14s} {'GPs/leaf':>8s} {'ms/update':>10s} {'stream NRMSE':>13s} {'coverage':>9s} {'test NRMSE':>11s}")
     results = []
     for model in models:
-        r = learn(family, model, U, Y, S, truth, U_test)
+        r = learn(family, model, U, Y, S, truth, U_test, global_mean)
         test_rmse = np.sqrt(np.mean((r["test_mean"] - truth_test) ** 2))
         note = f"   {100 * r['aligned']:.0f}% of the leaves aligned" if model == "aligned" else ""
         print(f"{model:<14s} {r['gps']:>8.0f} {r['ms']:>10.1f} {r['rmse'] / value_range:>13.2e} {r['coverage']:>9.2f} "

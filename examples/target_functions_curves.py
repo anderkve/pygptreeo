@@ -197,6 +197,35 @@ def ringdown(U, t):
 
 
 # --------------------------------------------------------------------------- #
+# six parameters
+# --------------------------------------------------------------------------- #
+def zprime_spectrum_6d(U, mll):
+    """:func:`zprime_spectrum` with three more parameters (6D): a tilt of the
+    spectrum, its normalisation, and the phase of the Z' amplitude relative to the
+    continuum, which moves the dip from below the peak to above it."""
+    M = _col(U[:, 0], 1000.0, 4500.0); g = _col(U[:, 1], 0.1, 1.0); extra = _col(U[:, 2], 0.0, 3.0)
+    tilt = _col(U[:, 3], -0.5, 0.5); normalisation = _col(U[:, 4], -0.2, 0.2); phase = _col(U[:, 5], 0.0, np.pi / 2)
+    width = M * (0.03 * g ** 2 * (1.0 + extra) + 0.02)
+    s = mll ** 2
+    amplitude = 1.0 + np.exp(1j * phase) * (g ** 2 / 0.1) * s / (s - M ** 2 + 1j * M * width)
+    return np.log10(_parton_luminosity(mll) / s * np.abs(amplitude) ** 2) + tilt * np.log10(mll / 1000.0) + normalisation
+
+
+def _eft_shapes():
+    rng = np.random.RandomState(7)
+    return rng.uniform(-1.0, 1.0, (2, 6, 3))         # real and imaginary part: coefficients of 1, x, x^2 per operator
+
+
+def eft_distribution_6d(U, x):
+    """:func:`eft_distribution` with six Wilson coefficients (6D): the curves span
+    a space of 28 dimensions."""
+    c = 2 * U[:, :6] - 1
+    powers = np.stack([np.ones_like(x), x, x ** 2])                  # (3, p)
+    real, imag = (c @ (shape @ powers) for shape in _eft_shapes())   # (n, p) each
+    return 100.0 * np.exp(-4.0 * x) * ((1.0 + 0.6 * real) ** 2 + (0.6 * imag) ** 2)
+
+
+# --------------------------------------------------------------------------- #
 # noise
 # --------------------------------------------------------------------------- #
 MC_OVER_DATA = 5.0      # simulated events per expected event
@@ -265,6 +294,9 @@ FAMILIES = {
     "ringdown": CurveFamily(ringdown, 3, np.linspace(0.0, 10.0, 128), "time", "amplitude", 1e-4, "oscillation"),
     "peak_counts_mc": CurveFamily(peak_counts, 3, np.linspace(100.5, 159.5, 60), "mass [GeV]", "events", 1e-3, "noise, transport",
                                   noisy=peak_counts_mc),
+    # two of the families with six parameters
+    "zprime_spectrum_6d": CurveFamily(zprime_spectrum_6d, 6, np.geomspace(500.0, 5000.0, 128), "m_ll [GeV]", "dex", DEX, "range, transport"),
+    "eft_distribution_6d": CurveFamily(eft_distribution_6d, 6, np.linspace(0.0, 1.0, 48), "scaled energy", "events", 1e-3, "smooth"),
 }
 
 

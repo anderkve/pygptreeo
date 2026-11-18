@@ -240,7 +240,15 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   `theta`, a combination of curves with the feature at different positions
   has several weaker features, and none in between. The error then falls
   slowly with the number of curves.
-* **`'aligned'`: each leaf warps the grid.**
+* **`'aligned'`: each leaf brings the features of its curves to common
+  positions.** Take a spectrum with a resonance whose mass is one of the
+  parameters. The curves of a leaf have their peaks at different masses. The
+  leaf stretches the grid of each curve in some places and compresses it in
+  others, by an amount that depends on the curve's parameters, until the
+  peaks lie on top of each other (the registration of functional data). The
+  aligned curves differ in the height and the width of the peak, which change
+  slowly with the parameters, and its position is carried by the stretch.
+* **The stretch is a warp of the grid.**
 
       phi(u; delta) = (p - 1) I(u) / I(p - 1),    I(u) = int_0^u exp(delta . w(s)) ds
 
@@ -268,11 +276,42 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   a feature that moves every leaf declined, and the predictions are those of
   `'shared'`. After a rejection the next attempt waits for 1, then 3, then 7
   fits.
+* **An alignment learns the grid one would choose by hand.** Where the
+  position of the feature is known, the curve can be given on a grid relative
+  to it, and nothing moves. For a kinematic endpoint the leaves of `'shared'`
+  on a grid in `m / endpoint` have the error of `'aligned'` on the grid in
+  `m` (an RMSE of 3.0e-4 and 2.9e-4 events, against 3.9e-3 for `'shared'` on
+  the grid in `m`). For a Z' peak the grid in `m / M` is the better of the two
+  (0.015 against 0.025 dex, and 0.10 dex for `'shared'` on the grid in `m`),
+  and an alignment on top of it lowers the error to 0.009 dex, since the dip
+  below the peak still moves.
 * **The grid has to resolve the feature.** An alignment interpolates the
   curves between the grid points, by cubic splines. The gain on a kinematic
   edge was a factor 9 where the grid has three points across the edge or
   more, 1.4 to 3 with half as many, and none with a quarter, where every leaf
   declined.
+* **Both global models take the curve as their target.** The network has one
+  output per grid point and the additive GP one kernel for all outputs, fitted
+  from `Y Y^T` like the GP of a leaf, and a leaf models the residual curves.
+  With 800 curves and `'shared'` leaves the additive GP lowered the error by a
+  factor 3.6 to 70 on the four smooth families, by 3.5 on the Z line shape and
+  2.6 on the oscillation probability, and by 1.2 to 1.7 on five others. The
+  network lowered it by a factor 2.3 to 6 on five families and raised it by up
+  to 2.2 on the other seven, where the tree alone is as accurate as the
+  network (`benchmarks.md`, section 9.7).
+* **No global model follows a sharp feature that moves.** On
+  `zprime_spectrum` and `kinematic_edge` the additive GP changed the error by
+  less than a factor 1.3 and the network raised it by up to 1.6.
+* **A leaf with an alignment does without the global model.** What a global
+  model leaves of a peak that it places slightly wrong does not move with the
+  parameters, so the residual curves cannot be aligned: with a global model
+  every leaf of `'aligned'` declined, and the gain of the alignment was lost.
+  A leaf therefore tries an alignment of the curves themselves. If it keeps
+  it, it models the curves. If it declines, it models the residual of the
+  global model, as a leaf of `'shared'` does. With the additive GP the error
+  on each of the thirteen streams was then within 10% of the lower of
+  `'aligned'` alone and `'shared'` with the global GP, and 3.6 times lower
+  than that of `'shared'` alone in the geometric mean.
 
 ## Tried and dropped
 
@@ -376,6 +415,20 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   * Every fit started from blurred curves: the gain on a narrow peak rose
     from 2.0 to 3.2, and that on a damped oscillation fell from 2.6 to 1.3,
     since the blur removes the oscillation. Hence both starts.
+* **Global networks that take `x` into account** (`docs/benchmarks.md`,
+  section 9.7), each alone on 800 curves against the network with one output
+  per grid point:
+  * The grid coordinate as one more input, `(theta, u) -> f(u; theta)`:
+    2 to 2.7 times more accurate on the two families with a sharp feature
+    that moves, 20 to 65 times less accurate on smooth and oscillating
+    curves, at 15 times the time of a fit.
+  * A warp of the output grid, from a second head that gives the knots of a
+    monotone map at which the network's curve is read: 2.5 times more
+    accurate on the sharp features and 1.3 to 1.8 on the noisy histograms,
+    up to 9 times less accurate on eight other families. As the global model
+    of `'shared'` leaves it lowered the error on `zprime_spectrum` by a
+    factor 1.4 and on `kinematic_edge` by 1.6, where the alignment in the
+    leaves gives 4 and 14.
 * **A shared-kernel GP on outputs in units of their noise**, for noise that
   differs between the outputs: within 2% of the common scale with 800 and
   3200 noisy curves, and 5 to 16% worse with 200.
@@ -423,9 +476,9 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
 * **`'aligned'` follows what stays on the grid.** The warp maps the grid onto
   itself, so a change of scale that moves features across its end, like the
   frequency of an oscillation, is followed only in part. It is for one curve
-  on one ordered grid. With a global model the leaves align the residual
-  curves, in which a feature no longer just moves: in one test with the
-  additive GP every leaf declined.
+  on one ordered grid. A leaf either aligns its curves or uses the global
+  model: where both would help (`cmb_peaks` with the network) it has the gain
+  of the alignment only.
 * **The calibrated sigma of noisy observations is that of an observation.**
   The calibration compares a prediction with the observed value. With noise
   the sigma grows to the noise level, and covers the underlying function too
