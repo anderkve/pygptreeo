@@ -202,6 +202,27 @@ class GPRegressorInterface(ABC):
         """
         return False
 
+    def mean_weights(self, X: np.ndarray) -> Optional[np.ndarray]:
+        """The weights of the training targets in the predicted mean at ``X``, of
+        shape (n_samples, n_train): the mean is ``weights @ y_train``.
+
+        Optional capability used by ``GPTree(output_model='aligned')``. Returns
+        None without a fit or if the backend cannot.
+        """
+        return None
+
+    def leave_one_out(self):
+        """The predictions of each training point from the others, with the
+        hyperparameters kept: ``(weights, variance)``. Row ``i`` of the weights
+        (n_train, n_train) gives the mean at training point ``i`` as
+        ``weights[i] @ y_train``, and ``variance[i]`` is the variance of that
+        prediction of the observed target, both in the units of ``fit``.
+
+        Optional capability used by the 'shared' and 'aligned' output models.
+        Returns None without a fit or if the backend cannot.
+        """
+        return None
+
     def nbytes(self) -> int:
         """Approximate size in bytes of what a fit has stored, 0 without a fit.
 

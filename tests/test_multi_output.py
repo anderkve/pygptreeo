@@ -226,6 +226,24 @@ class TestOutputModels(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(mu)) and np.all(sd > 0))
         self.assertLess(np.sqrt(np.mean((mu - Y[:20]) ** 2)), 0.05)
 
+    def test_shared_mode_sigma_differs_between_outputs(self):
+        # output 0 is hard to predict and output 1 is nearly constant: one sigma for both cannot cover each at 68%
+        rng = np.random.RandomState(8)
+        np.random.seed(8)
+        X = rng.rand(300, 2)
+        target = lambda X: np.column_stack([np.sin(12 * X[:, 0]) * np.cos(9 * X[:, 1]), 1e-3 * X[:, 0], X[:, 1] ** 2])
+        Y = target(X)
+        gpt = GPTree(GPR=Default_GPR(), Nbar=100, n_outputs=3, output_model='shared', use_calibrated_sigma=False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            gpt.fit(X, Y, np.full(Y.shape, 1e-5))
+        for leaf in gpt.root.leaves:
+            self.assertEqual(leaf.sigma_profile.shape, (3,))
+        Xt = rng.rand(400, 2)
+        mu, sd = gpt.predict(Xt, mode='loop')
+        self.assertTrue(np.all(sd[:, 0] > 10 * sd[:, 1]))
+        coverage = np.mean(np.abs(mu - target(Xt)) < sd, axis=0)
+        self.assertTrue(np.all(coverage > 0.4) and np.all(coverage < 0.95), coverage)
+
     def test_shared_mode_requires_multitarget_backend(self):
         class NoMultitarget(Default_GPR().__class__):
             def supports_multitarget(self):

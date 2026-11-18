@@ -352,6 +352,25 @@ class SklearnGPAdapter(GPRegressorInterface):
         sk.alpha_ = cho_solve((L, True), sk.y_train_, check_finite=False)
         return True
 
+    def mean_weights(self, X):
+        """``K(X, X_train) K^-1``."""
+        sk = self._gpr
+        if not hasattr(sk, 'L_') or sk.normalize_y:
+            return None
+        return cho_solve((sk.L_, True), sk.kernel_(sk.X_train_, np.asarray(X, dtype=float)), check_finite=False).T
+
+    def leave_one_out(self):
+        """From the inverse of the kernel matrix: the weights are its rows over
+        its diagonal, negated, and the variances the inverse of its diagonal."""
+        sk = self._gpr
+        if not hasattr(sk, 'L_') or sk.normalize_y:
+            return None
+        K_inv = cho_solve((sk.L_, True), np.eye(sk.L_.shape[0]), check_finite=False)
+        diagonal = np.diag(K_inv).copy()
+        weights = -K_inv / diagonal[:, None]
+        np.fill_diagonal(weights, 0.0)
+        return weights, 1.0 / diagonal
+
     def nbytes(self) -> int:
         """Size of the training data and the Cholesky factor that a fit stores."""
         return sum(getattr(self._gpr, name).nbytes for name in ('X_train_', 'y_train_', 'L_', 'alpha_')

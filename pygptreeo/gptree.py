@@ -31,6 +31,7 @@ from tqdm import tqdm
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode, TARGET_COVERAGE
 from pygptreeo.gp_interface import GPRegressorInterface
+from pygptreeo.output_alignment import MIN_OUTPUTS
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
 
@@ -163,6 +164,14 @@ class GPTree:
                 the ``k`` basis scores with ``k`` GPs; predictions are mapped back to
                 output space with propagated uncertainties. Suited to strongly
                 correlated outputs such as a function f(t; x) sampled on a t-grid.
+                'aligned': as 'shared', for outputs that are a curve on a grid,
+                given in the order of the grid. Each leaf also learns a warp of
+                the grid that depends on the inputs and brings the features of
+                its curves (a peak, an edge, the phase of an oscillation) to
+                common positions, fits its GP to the aligned curves, and keeps
+                the alignment if it lowers the leave-one-out error of its
+                curves. Suited to curves with features whose position depends
+                on the inputs; needs the scikit-learn adapter.
             output_basis_components ('noise', int or float): For 'pca': how many
                 basis components to keep. 'noise' (default) keeps every component
                 whose variance lies above what the per-point observation noise
@@ -247,15 +256,18 @@ class GPTree:
         self.splitting_strategy = splitting_strategy
         self.n_outputs = n_outputs
 
-        if output_model not in ('independent', 'shared', 'pca'):
-            raise ValueError(f"Unknown output_model '{output_model}'. Use 'independent', 'shared' or 'pca'.")
+        if output_model not in ('independent', 'shared', 'pca', 'aligned'):
+            raise ValueError(f"Unknown output_model '{output_model}'. Use 'independent', 'shared', 'pca' or 'aligned'.")
         if n_outputs == 1:
             output_model = 'independent'
-        if output_model == 'shared':
+        if output_model in ('shared', 'aligned'):
             supports = getattr(GPR, 'supports_multitarget', None)
             if supports is None or not supports():
-                raise ValueError("output_model='shared' needs a GP backend with supports_multitarget() == True "
+                raise ValueError(f"output_model='{output_model}' needs a GP backend with supports_multitarget() == True "
                                  "(e.g. the scikit-learn adapter returned by Default_GPR)")
+        if output_model == 'aligned' and n_outputs < MIN_OUTPUTS:
+            raise ValueError(f"output_model='aligned' is for a curve on a grid of at least {MIN_OUTPUTS} points, "
+                             f"not for {n_outputs} outputs")
         self.output_model = output_model
         # Tree-global output basis for 'pca' (shared by reference with every node)
         self.output_basis = None
