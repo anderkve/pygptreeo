@@ -149,6 +149,14 @@ class TestGridWarpFit(unittest.TestCase):
         after = centres(warp.register(F, self.delta), warp.fine).std(axis=0) / OVERSAMPLING
         self.assertTrue(np.all(before > 0.4) and np.all(after < 0.3 * before), (before, after))
 
+    def test_a_finer_grid_is_fitted_on_fewer_points(self):
+        shape = (40, 36)                                  # more than MAX_FIT_POINTS along both axes
+        F = _blob(self.U[:40], shape)
+        warp = GridWarp(shape, 3)
+        self.assertLess(warp.fit(F, self.delta[:40]), 0.05)
+        self.assertEqual(warp.C.shape, GridWarp(SHAPE, 3).C.shape)
+        self.assertLess(np.abs(warp.unwarp(warp.register(F, self.delta[:40]), self.delta[:40]) - F).max(), 0.02)
+
     def test_no_warp_where_nothing_moves(self):
         warp = GridWarp(SHAPE, 3)
         warp.fit(_fixed_shapes(self.U), self.delta)
