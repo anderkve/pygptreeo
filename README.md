@@ -132,7 +132,7 @@ gpt = GPTree(GPR=Default_GPR(nu=2.5), Nbar=100, n_outputs=100, output_model='ali
              global_mean='additive_gp', global_mean_kwargs=dict(nu=2.5))
 ```
 
-With this configuration the error was 1.1 to 110 times lower than with the default `'shared'` leaves on our twelve families, and 5.3 times lower in the geometric mean. Without the global model the factor was 4.0, and with `'shared'` leaves and the Matérn 5/2 kernel alone it was 3.1.
+With this configuration the error was up to 130 times lower than with the default `'shared'` leaves on our twelve families, never more than 3% higher, and 5 times lower in the geometric mean (4.8 to 5.3 over three seeds). Without the global model the factor was 4, and with `'shared'` leaves and the Matérn 5/2 kernel alone it was 3.
 
 See `examples/multioutput_physics_curves.py` for a comparison of the output models on these curve families, and `examples/multioutput_function_learning_pca.py` for the `'pca'` model compared with a B-spline representation of the curves. The benchmark results are given in [`docs/benchmarks.md`](docs/benchmarks.md), section 9.
 

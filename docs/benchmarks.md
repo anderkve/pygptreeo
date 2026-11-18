@@ -1161,7 +1161,9 @@ both"). NRMSE of the last 400 predictions:
   lowest error of the eight columns on ten families, 5% above it on
   `zprime_spectrum` and 30% above it on `kinematic_edge` with 64 points. The
   global GP adds a factor 1.3 to `'aligned'` with Matérn 5/2 leaves in the
-  geometric mean, between 1.0 and 2.3.
+  geometric mean, between 1.0 and 2.3. Over three seeds the gain over the
+  default `'shared'` is 5.3, 4.8 and 5.3, between 0.97 and 128 for a single
+  family, and 4.0, 3.9 and 4.6 without the global GP.
 * **Coverage** is 0.59 to 0.72 for these columns on the exact curves.
 
 RBF leaves (`Default_GPR(nu=float('inf'))`), six families:

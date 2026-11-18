@@ -336,8 +336,9 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   on each of the thirteen streams was then within 10% of the lower of
   `'aligned'` alone and `'shared'` with the global GP, and 3.6 times lower
   than that of `'shared'` alone in the geometric mean. With Matérn 5/2 in
-  the leaves and in the global GP it was 5.3 times lower than that of the
-  default `'shared'` leaves, and 4.0 times without the global model.
+  the leaves and in the global GP it was 4.8 to 5.3 times lower than that of
+  the default `'shared'` leaves over three seeds, and 3.9 to 4.6 times
+  without the global model.
 
 ## Tried and dropped
 
