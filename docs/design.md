@@ -2,9 +2,9 @@
 
 Why the tree has a global model, how the mechanism works, how the tree stays
 within a fixed size, how a point reaches a leaf's GP between two fits, how a
-fit can run in another process, how a batch of points is added, what was tried
-and dropped, and what is still open. The measurements are in
-[`benchmarks.md`](benchmarks.md).
+fit can run in another process, how a batch of points is added, how a leaf
+models a curve, what was tried and dropped, and what is still open. The
+measurements are in [`benchmarks.md`](benchmarks.md).
 
 ## What is global and what is local
 
@@ -212,6 +212,68 @@ its result to the tree. The tree has no part in sending them.
 * **`fit` is for a tree without points.** It sets the root up anew, so it
   raises an error for a tree that holds points.
 
+## Curves as outputs
+
+A multi-output target is often a function `f(x; theta)` of a physics quantity
+`x`, given on a grid in `x`, with the parameters `theta` as the inputs of the
+tree. `examples/target_functions_curves.py` has twelve families of such
+curves, and `benchmarks.md`, section 9, what was measured on them.
+
+* **A leaf's prediction is a combination of its curves.** The weights come
+  from the kernel: one set per grid point with `'independent'`, one per
+  component with `'pca'`, one for the whole curve with `'shared'`. On curves
+  without noise the three have the same error within a factor of 2, so
+  `'shared'` is the reference: one GP per leaf.
+* **The fit of a shared-kernel GP is computed from `Y Y^T`.** Its likelihood
+  depends on the targets `Y`, of N points and p outputs, only through that
+  N x N matrix, so the adapter optimises the hyperparameters at a cost that
+  does not grow with p. The optimum is that of scikit-learn's own fit, which
+  takes 9 times as long for 128 outputs and 53 times for 1000.
+* **A sigma per output from leave-one-out errors.** A shared-kernel GP has
+  one variance for all outputs, whether an output varies across the leaf or
+  not. Its predictions of each of the leaf's curves from the others follow
+  from the inverse of the kernel matrix, without a refit, and each output's
+  sigma gets the factor with which it covers 68% of that output's
+  leave-one-out errors.
+* **What limits the accuracy is a feature that moves.** Where a peak, an edge
+  or the phase of an oscillation has a position in `x` that depends on
+  `theta`, a combination of curves with the feature at different positions
+  has several weaker features, and none in between. The error then falls
+  slowly with the number of curves.
+* **`'aligned'`: each leaf warps the grid.**
+
+      phi(u; delta) = (p - 1) I(u) / I(p - 1),    I(u) = int_0^u exp(delta . w(s)) ds
+
+  `u` is the grid index, `delta` the offset of `theta` from the mean of the
+  leaf's points in units of their standard deviation, and each `w_i` is
+  piecewise linear on 8 knots. The aligned curve is `g(u) = f(phi(u; delta))`.
+  The warp is monotone, maps the grid onto itself, is smooth in `delta` and is
+  the identity at the leaf's centre. It is 8 numbers per input.
+* **The warp makes the aligned curves linear in `theta`.** It minimises what a
+  fit linear in `delta` leaves of the aligned curves, by least squares. A
+  feature that only moves is then carried by the warp, and the GP is left
+  with curves that change slowly. A leaf's first fit is also run from a warp
+  fitted to blurred curves, since narrow features that lie apart do not pull
+  on each other, and the better of the two results is kept. A later fit
+  starts from the leaf's previous warp.
+* **A prediction warps each curve into the frame of the query** and combines
+  the warped curves with the weights of the GP mean (transformed snapshot
+  interpolation, Welper 2017). Each curve is interpolated once, at
+  `phi_n(phi^-1(x))`, and a curve of the leaf is returned exactly at its own
+  `theta`. Predicting the aligned curve and warping it back interpolates
+  twice, and leaves an error that does not fall with the number of curves.
+* **The leaf decides by leave-one-out.** It fits one GP to the curves and one
+  to the aligned curves, and keeps the alignment if it predicts each curve
+  from the others with an error lower by a factor 1.5. On the families without
+  a feature that moves every leaf declined, and the predictions are those of
+  `'shared'`. After a rejection the next attempt waits for 1, then 3, then 7
+  fits.
+* **The grid has to resolve the feature.** An alignment interpolates the
+  curves between the grid points, by cubic splines. The gain on a kinematic
+  edge was a factor 9 where the grid has three points across the edge or
+  more, 1.4 to 3 with half as many, and none with a quarter, where every leaf
+  declined.
+
 ## Tried and dropped
 
 * **Neural-linear leaves**: a Bayesian linear regression per leaf on the
@@ -304,6 +366,23 @@ its result to the tree. The tree has no part in sending them.
   parent's 100 points. A variant that kept the pair's newest points was within
   the seed-to-seed spread of plain removal.
 
+* **Other warps for `'aligned'`** (`docs/benchmarks.md`, section 9.6):
+  * Free ends, i.e. a shift and a stretch, with a curve continued beyond the
+    grid by its value at the edge: worse than the warp that maps the grid
+    onto itself in 11 of 12 single-leaf runs.
+  * Sixteen knots, or a warp that is also linear in the squares of the
+    offsets: no family gained more than 10%, most lost, at 2 to 7 times the
+    time.
+  * Every fit started from blurred curves: the gain on a narrow peak rose
+    from 2.0 to 3.2, and that on a damped oscillation fell from 2.6 to 1.3,
+    since the blur removes the oscillation. Hence both starts.
+* **A shared-kernel GP on outputs in units of their noise**, for noise that
+  differs between the outputs: within 2% of the common scale with 800 and
+  3200 noisy curves, and 5 to 16% worse with 200.
+* **`x` as one more input of a single-output tree**, in place of the curve as
+  a multi-output target: 2 to 80 times the error with 200 curves, and a fit
+  that takes 12 to 65 seconds where `'shared'` takes less than one.
+
 ## Known limitations
 
 * **Sigma far from the data.** The calibration is fitted on the stream. In
@@ -341,6 +420,24 @@ its result to the tree. The tree has no part in sending them.
 * **Calibration after a new network version.** Coverage can dip for a batch
   until the per-leaf calibration catches up with the shifted residual.
 
+* **`'aligned'` follows what stays on the grid.** The warp maps the grid onto
+  itself, so a change of scale that moves features across its end, like the
+  frequency of an oscillation, is followed only in part. It is for one curve
+  on one ordered grid. With a global model the leaves align the residual
+  curves, in which a feature no longer just moves: in one test with the
+  additive GP every leaf declined.
+* **The calibrated sigma of noisy observations is that of an observation.**
+  The calibration compares a prediction with the observed value. With noise
+  the sigma grows to the noise level, and covers the underlying function too
+  often: 0.98 of the predictions on a stream of Monte Carlo histograms,
+  and 0.99 for a single output with a noise of 5% of its range. The GP's own
+  sigma (`use_calibrated_sigma=False`) is that of the function.
+* **`'pca'` keeps nearly all components of curves without noise**, since few
+  are below the declared noise: 125 of 128 for `zprime_spectrum`, where 24
+  give the same error within 3% in a fifth of the time.
+* **`fit` splits by the spread of the points.** It builds the tree before a
+  leaf is fitted, so there are no length scales for `min_lengthscale`.
+
 ## Open ideas
 
 * **Thinning sleeping leaves before removing them.** A leaf reduced to its 50
@@ -350,6 +447,21 @@ its result to the tree. The tree has no part in sending them.
   was better than fitting them again to the remaining points, and the
   calibration has to be redone, for which the discarded points are a held-out
   set.
+* **A calibration that takes the declared noise out.** The scale `s` for
+  which `sqrt(s^2 sigma^2 + noise^2)` covers 68% of the last residuals, in
+  place of the one for which `s sigma` does. Where the noise dominates, 25
+  residuals say little about `s`, so it needs a longer window or a prior.
+* **The number of `'pca'` components from the prediction error.** Components
+  whose variance is below the error of the leaf GPs add fits and no accuracy.
+* **A covariance between the outputs.** The leave-one-out errors of a
+  shared-kernel leaf also give the correlation of the errors along the grid,
+  which a chi-square fit to a predicted curve needs.
+* **A basis per leaf.** Across a leaf the curves vary in a few directions,
+  far fewer than across the stream, so a leaf's own principal components
+  would do with fewer GPs than the global ones.
+* **Warps for other grids.** A free end for changes of scale, a grid in two
+  dimensions, several curves in one target, or a warp the user supplies
+  where the position of a feature is known.
 * **Bagged networks for the off-stream sigma.** The spread of a few networks
   trained on resampled points is an uncertainty about the global model that
   grows away from the data (Lakshminarayanan et al. 2017; Osband et al. 2023
@@ -385,3 +497,5 @@ its result to the tree. The tree has no part in sending them.
   neural-linear model), arXiv:1802.09127.
 * Vijayakumar, D'Souza, Schaal 2005, Incremental online learning in high
   dimensions (LWPR), Neural Computation.
+* Welper 2017, Interpolation of functions with parameter dependent jumps by
+  transformed snapshots, SIAM J. Sci. Comput., arXiv:1505.01227.

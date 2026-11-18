@@ -107,16 +107,24 @@ Any other scikit-learn kernel can be used in the same way, e.g. `ConstantKernel(
 pyGPTreeO also supports multi-output targets. Set `n_outputs=p` and pass `y` and `sigma` as arrays with `p` columns. The `output_model` option determines how the outputs are modelled within each leaf:
 
 - `'independent'` (default): One GP per output, each with its own kernel hyperparameters.
-- `'shared'`: One GP with a single kernel shared by all outputs. This requires one Cholesky factorisation per leaf instead of `p`, with similar accuracy when the outputs have similar length scales. This option is only available with the scikit-learn interface.
-- `'pca'`: The tree learns a global linear basis for the output space, using PCA on a subsample of the input stream, and each leaf models the leading principal components with one GP each. Predictions and uncertainties are transformed back to the output space. This is suitable for strongly correlated outputs, e.g. a function `f(t; x)` evaluated on a grid in `t`. By default only the components with a variance above the observation noise level (given by `sigma`) are kept. The number of components can also be set explicitly with `output_basis_components`.
+- `'shared'`: One GP with a single kernel shared by all outputs. This requires one Cholesky factorisation per leaf instead of `p`, and the time of a fit hardly depends on `p`. The accuracy is similar when the outputs have similar length scales. This option is only available with the scikit-learn interface.
+- `'pca'`: The tree learns a global linear basis for the output space, using PCA on a subsample of the input stream, and each leaf models the leading principal components with one GP each. Predictions and uncertainties are transformed back to the output space. This is suitable for strongly correlated outputs, e.g. a function `f(t; x)` evaluated on a grid in `t` with noise. By default only the components with a variance above the observation noise level (given by `sigma`) are kept. The number of components can also be set explicitly with `output_basis_components`.
+- `'aligned'`: For outputs that are a curve on a grid, given in the order of the grid, with features whose position depends on the inputs: a resonance peak, a kinematic edge, the phase of an oscillation. This works as `'shared'`, but each leaf also learns a transformation of the grid that depends on the inputs and moves the features of its curves to common positions, and fits its GP to the aligned curves. A leaf only keeps the alignment if it lowers the leave-one-out error of its curves, so for curves without such features the predictions are those of `'shared'`. This option is only available with the scikit-learn interface.
 
 ```python
-gpt = GPTree(Nbar=50, n_outputs=100, output_model='pca')
-gpt.fit(X_train, Y_train, sigma_train)    # Y_train has shape (N, 100)
-Y_pred, Y_std = gpt.predict(X_test)
+gpt = GPTree(Nbar=100, n_outputs=100, output_model='aligned')
+for x, y, sigma in data_stream:               # y and sigma have shape (1, 100)
+    y_pred, y_std = gpt.predict(x)
+    gpt.update_tree(x, y, sigma)
 ```
 
-In this example the tree is trained in batch mode with `fit`, so the predicted uncertainties are the uncalibrated GP uncertainties (see the section on adding many points at once). See `examples/multioutput_function_learning_pca.py` for a comparison of the three options.
+A typical multi-output target is a function `f(t; x)` evaluated on a grid in `t`, e.g. a spectrum or a differential cross-section that depends on the model parameters `x`. Some recommendations for such targets, from our tests on twelve families of physics-like curves:
+
+- `'shared'` reaches the accuracy of `'independent'` (within a factor 2) at a small fraction of the run time, and is a good first choice. For curves with a feature that moves with the inputs, `'aligned'` lowered the error by a factor 1.6 to 13 (3 to 4 for a resonance peak), at about three times the run time of `'shared'`.
+- A quantity that varies over orders of magnitude should be given as its logarithm, with `sigma` as the uncertainty of the logarithm. For a spectrum over ten decades this lowered the relative error by one to three orders of magnitude, depending on the output model.
+- For `'aligned'` the grid has to resolve the feature that moves, with at least two to three grid points across a peak or an edge. A finer grid costs little, since the time of a fit hardly depends on the number of grid points.
+
+See `examples/multioutput_physics_curves.py` for a comparison of the output models on these curve families, and `examples/multioutput_function_learning_pca.py` for the `'pca'` model compared with a B-spline representation of the curves. The benchmark results are given in [`docs/benchmarks.md`](docs/benchmarks.md), section 9.
 
 ## Global models (optional)
 
