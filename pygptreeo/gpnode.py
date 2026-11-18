@@ -29,6 +29,7 @@ from sklearn.preprocessing import StandardScaler
 # Local imports
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gp_interface import GPRegressorInterface
+from pygptreeo.output_alignment import output_warp
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner
 from pygptreeo.neighbours import NeighbourSearch
@@ -40,6 +41,9 @@ DEFAULT_OVERLAP = 0.001  # Default initial overlap for node boundaries
 DEFAULT_N_POINTS_PRED_PERF = 25  # Number of recent predictions tracked for calibration
 DEFAULT_SIGMA_SCALER = 10.0  # Initial sigma scaling factor for uncertainty calibration
 TARGET_COVERAGE = 0.68  # Target coverage for calibrated uncertainty (1 sigma)
+ALIGNMENT_MARGIN = 1.5  # an alignment is kept if it lowers the leave-one-out error of a leaf's curves by this factor
+ALIGNMENT_MAX_WAIT = 8  # after repeated rejections an alignment is tried at one fit in this many
+SIGMA_PROFILE_FLOOR = 1e-6  # smallest sigma of an output of a shared-kernel GP, relative to the RMS over its outputs
 N_SCORES = 50  # Recent points over which a leaf compares its own GPs with the neighbours' prediction
 MIN_SCORES = 10  # No comparison with fewer points
 OWN_MARGIN = 0.9  # A leaf predicts from its own points while their RMS error is below this times the neighbours'
@@ -102,6 +106,7 @@ class GPNode(Node):
                  split_eval_min_points: Optional[int] = 20,
                  n_outputs: Optional[int] = 1,
                  output_model: Optional[str] = 'independent',
+                 output_shape: Optional[tuple] = None,
                  output_basis: Optional[OutputBasisLearner] = None,
                  global_mean: Optional[GlobalMeanLearner] = None,
                  neighbours: Optional[NeighbourSearch] = None,
@@ -169,7 +174,11 @@ class GPNode(Node):
                 scale; needs a backend with ``supports_multitarget()``. 'pca': the
                 outputs are projected on a tree-global linear basis (``output_basis``)
                 and one GP is trained per basis score; predictions are mapped back to
-                output space with propagated variances. Defaults to 'independent'.
+                output space with propagated variances. 'aligned': as 'shared', for
+                outputs that are a curve on a grid; the node also learns a warp of
+                the grid that aligns the features of its curves, and keeps it if
+                it lowers their leave-one-out error (see ``output_alignment``).
+                Defaults to 'independent'.
             output_basis (Optional[OutputBasisLearner]): The tree-global output basis
                 learner, shared by reference between all nodes. Required for 'pca'.
             global_mean (Optional[GlobalMeanLearner]): The tree-wide global model
@@ -200,17 +209,22 @@ class GPNode(Node):
         self.Nbar = Nbar
         self.n_outputs = n_outputs
 
-        if output_model not in ('independent', 'shared', 'pca'):
-            raise ValueError(f"Unknown output_model '{output_model}'. Use 'independent', 'shared' or 'pca'.")
+        if output_model not in ('independent', 'shared', 'pca', 'aligned'):
+            raise ValueError(f"Unknown output_model '{output_model}'. Use 'independent', 'shared', 'pca' or 'aligned'.")
         if n_outputs == 1:
             output_model = 'independent'  # the modes only differ for several outputs
         if output_model == 'pca' and output_basis is None:
             raise ValueError("output_model='pca' requires an OutputBasisLearner passed as output_basis")
         self.output_model = output_model
+        self.output_shape = tuple(output_shape) if output_shape is not None else (n_outputs,)   # the grid of the outputs ('aligned')
         self.output_basis = output_basis   # tree-global, shared by reference across all nodes
         self._fitted_basis = None          # the OutputBasis this node's GPs were fitted with ('pca')
         self.z_scaler = None               # (shift, scale) per basis score, fitted per leaf ('pca')
-        self.y_common_scaler = None        # (mu, scale) of the common output scaling ('shared')
+        self.y_common_scaler = None        # (mu, scale) of the common output scaling ('shared', 'aligned')
+        self.alignment = None              # the AlignedCurves the node's GP was fitted with, if any ('aligned')
+        self._alignment_rejections = 0     # alignments rejected in a row, and the fits to pass before the next try
+        self._alignment_wait = 0
+        self.sigma_profile = None          # factor per output on the sigma of a shared-kernel GP ('shared', 'aligned')
 
         # Tree-wide global model (shared by reference; None when the tree has none) and
         # the snapshot of it that this node's GPs were fitted against.
@@ -230,12 +244,12 @@ class GPNode(Node):
         self.fit_std = None
 
         # GP regressors: one per output ('independent'), one for all outputs
-        # ('shared'), or one per basis score ('pca'; the list is sized at the
-        # first fit, once the basis rank is known). Children receive their own
-        # list via my_GPRs: one clone per parent GP.
+        # ('shared', 'aligned'), or one per basis score ('pca'; the list is sized
+        # at the first fit, once the basis rank is known). Children receive their
+        # own list via my_GPRs: one clone per parent GP.
         if my_GPRs is not None:
             self.my_GPRs = list(my_GPRs)
-        elif n_outputs == 1 or output_model in ('shared', 'pca'):
+        elif n_outputs == 1 or output_model in ('shared', 'pca', 'aligned'):
             self.my_GPRs = [my_GPR]
         else:
             self.my_GPRs = [deepcopy(my_GPR) for _ in range(n_outputs)]
@@ -304,6 +318,7 @@ class GPNode(Node):
         self.n_shared_points = 0
 
         self.split_index = 0       # 'j' in the DLGP article
+        self.split_direction = None  # the direction of a split that is not along an input, as weights of the inputs
         self.split_position = 0.0  # 's' in the DLGP article
         self.overlap = DEFAULT_OVERLAP  # 'o' in the DLGP article
         self.name = name
@@ -420,6 +435,7 @@ class GPNode(Node):
             'split_eval_min_points': self.split_eval_min_points,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
             'output_model': self.output_model,
+            'output_shape': self.output_shape,
             'output_basis': self.output_basis,
             'global_mean': self.global_mean,
             'neighbours': self.neighbours,
@@ -505,6 +521,10 @@ class GPNode(Node):
         self.right.z_scaler = deepcopy(self.z_scaler)
         self.left._fitted_global = self._fitted_global
         self.right._fitted_global = self._fitted_global
+        self.left.alignment = self.right.alignment = self.alignment
+        self.left._alignment_rejections = self.right._alignment_rejections = self._alignment_rejections
+        self.left._alignment_wait = self.right._alignment_wait = self._alignment_wait
+        self.left.sigma_profile = self.right.sigma_profile = self.sigma_profile
         self.left.fit_mean = self.right.fit_mean = self.fit_mean
         self.left.fit_std = self.right.fit_std = self.fit_std
         self.left.fit_task_id = self.right.fit_task_id = self.fit_task_id
@@ -645,6 +665,7 @@ class GPNode(Node):
         for gpr in self.my_GPRs:
             del gpr
         del self.my_GPRs
+        self.alignment = None
 
 
     def find_nearest_neighbor(self, x: np.ndarray):
@@ -856,6 +877,24 @@ class GPNode(Node):
         else:  # a bare scikit-learn GaussianProcessRegressor
             gpr.alpha = alpha
 
+    def _fastest_direction(self):
+        """For GPs whose kernels are not along the inputs: the direction of their
+        shortest length scale, as weights of the inputs, or None. The metrics of
+        several GPs are added, and inputs are compared in units of their spread."""
+        metrics = [gpr.get_metric(self.n_features) for gpr in self.my_GPRs if gpr.is_trained()]
+        metrics = [m for m in metrics if m is not None]
+        if not metrics or self.my_X_data.shape[0] < 2:
+            return None
+        stds = np.std(self.my_X_data, axis=0)
+        stds = np.where(stds > 0, stds, 1.0)
+        metric = sum(metrics)
+        if not self.use_standard_scaling:
+            metric = metric * np.outer(stds, stds)
+        direction = np.linalg.eigh(metric)[1][:, -1] / stds
+        if np.ptp(self.my_X_data @ direction) == 0:
+            return None
+        return direction / np.linalg.norm(direction)
+
     def _pooled_length_scales(self):
         """Per-dimension length scales pooled over all of this node's fitted GPs
         (elementwise minimum: the shortest scale in any output/score governs the
@@ -957,12 +996,15 @@ class GPNode(Node):
         # With a global model the GPs are fitted on the residual of its current
         # snapshot. The stored targets stay raw.
         snapshot = None
+        curves = y_train
         if self.global_mean is not None:
             snapshot = self.global_mean.current
             if snapshot is not None:
                 y_train = y_train - snapshot.predict(X_train)
 
         self.n_points_since_retrain = 0
+        previous_fit_std = self.fit_std
+        self._set_fit_statistics(X_train)
 
         if self.output_model == 'independent':
             # One GP per output, per-output standardisation of y
@@ -972,22 +1014,19 @@ class GPNode(Node):
                 self._set_noise(gpr, noise[i])
                 gpr.fit(X_fit, targets[i])
 
-        elif self.output_model == 'shared':
-            # One GP with one shared kernel for all outputs (2-D target). The backend
-            # takes one noise variance per point, so the per-output noise variances
-            # are averaged over the outputs (exact when sigma is the same for all
-            # outputs, given the common output scale).
-            if self.use_standard_scaling:
-                self.X_scaler = StandardScaler().fit(X_train)
-                X_fit = self.X_scaler.transform(X_train)
-                mu, scale = self._fit_common_y_scaler(y_train)
-                y_fit = (y_train - mu) / scale
-                alpha = np.mean((sigma_train / scale) ** 2, axis=1)
+        elif self.output_model in ('shared', 'aligned'):
+            previous = self.alignment
+            align = self._alignment_due(X_train.shape[0])
+            if align and snapshot is not None:
+                # An alignment is of the curves themselves, and a leaf that holds
+                # one does without the global model
+                self._fit_shared(X_train, curves, sigma_train, previous, previous_fit_std, align=True)
+                if self.alignment is not None:
+                    snapshot = None
+                else:
+                    self._fit_shared(X_train, y_train, sigma_train, None, previous_fit_std, align=False)
             else:
-                X_fit, y_fit = X_train, y_train
-                alpha = np.mean(sigma_train ** 2, axis=1)
-            self._set_noise(self.my_GPRs[0], alpha)
-            self.my_GPRs[0].fit(X_fit, y_fit)
+                self._fit_shared(X_train, y_train, sigma_train, previous, previous_fit_std, align)
 
         else:  # 'pca'
             if self.use_standard_scaling:
@@ -1019,10 +1058,94 @@ class GPNode(Node):
         self._fitted_global = snapshot
         self.asleep = False
         self._used()
-        self._set_fit_statistics(X_train)
         if self.n_outputs == 1:
             self.my_GPR = self.my_GPRs[0]
         return True
+
+
+    def _alignment_due(self, n_points: int) -> bool:
+        """Whether this fit tries an alignment (output_model='aligned'): after a
+        rejection only once the wait is over, of which this call counts one fit."""
+        if self.output_model != 'aligned' or n_points < self.n_features + 3:
+            return False
+        if self._alignment_wait > 0:
+            self._alignment_wait -= 1
+            return False
+        return True
+
+
+    def _fit_shared(self, X_train, y_train, sigma_train, previous, previous_fit_std, align):
+        """Fit one GP with one kernel for all outputs to the curves ``y_train``
+        (a 2-D target). The backend takes one noise variance per point, so the
+        noise variances of the outputs are averaged (exact when sigma is the
+        same for all outputs, given the common output scale). With ``align`` an
+        alignment of the curves is tried, starting from the ``previous`` one."""
+        if self.use_standard_scaling:
+            self.X_scaler = StandardScaler().fit(X_train)
+            X_fit = self.X_scaler.transform(X_train)
+            mu, scale = self._fit_common_y_scaler(y_train)
+            y_fit = (y_train - mu) / scale
+            alpha = np.mean((sigma_train / scale) ** 2, axis=1)
+        else:
+            X_fit, y_fit = X_train, y_train
+            alpha = np.mean(sigma_train ** 2, axis=1)
+        self._set_noise(self.my_GPRs[0], alpha)
+        self.my_GPRs[0].fit(X_fit, y_fit)
+
+        # What the GP takes from its leave-one-out predictions of the curves: a
+        # sigma per output and, with ``align``, whether an alignment replaces it
+        self.alignment, self.sigma_profile = None, None
+        loo = self.my_GPRs[0].leave_one_out()
+        if loo is None:
+            return
+        weights, variance = loo
+        mu, scale = self.y_common_scaler if self.use_standard_scaling else (0.0, 1.0)
+        errors = weights @ (y_train - mu) - (y_train - mu)
+        variance = variance * scale ** 2
+        if align:
+            aligned = self._aligned_fit(X_train, X_fit, y_train, sigma_train, previous, previous_fit_std)
+            if aligned is not None and np.sqrt(np.mean(aligned[2] ** 2)) * ALIGNMENT_MARGIN < np.sqrt(np.mean(errors ** 2)):
+                self.my_GPRs[0], self.alignment, errors, variance, scaler = aligned
+                if self.use_standard_scaling:
+                    self.y_common_scaler = scaler
+                self._alignment_rejections = 0
+            else:
+                self._alignment_rejections += 1
+                self._alignment_wait = min(2 ** self._alignment_rejections, ALIGNMENT_MAX_WAIT) - 1
+        # The GP has one variance for all outputs. Each output gets the factor with
+        # which its sigma covers TARGET_COVERAGE of its leave-one-out errors.
+        profile = np.quantile(np.abs(errors) / np.sqrt(variance)[:, None], TARGET_COVERAGE, axis=0)
+        self.sigma_profile = np.maximum(profile, SIGMA_PROFILE_FLOOR * np.sqrt(np.mean(profile ** 2)))
+
+
+    def _aligned_fit(self, X_train, X_fit, y_train, sigma_train, previous, previous_fit_std):
+        """A warp of the grid of the curves ``y_train`` and a GP fitted to the
+        aligned curves: ``(GP, AlignedCurves, leave-one-out errors and variances
+        of the curves, (mu, scale) of the aligned curves)``, or None if the GP
+        backend cannot."""
+        gpr = self.my_GPRs[0].unfitted_copy()
+        if gpr is None:
+            return None
+        delta = (X_train - self.fit_mean) / self.fit_std
+        warp = output_warp(self.output_shape, self.n_features)
+        if previous is not None:
+            # the previous warp, in the units of the new offsets
+            warp.start_from(previous.warp, self.fit_std / previous_fit_std)
+        warp.fit(y_train, delta)
+        aligned = warp.register(y_train, delta)
+        curves = warp.curves(y_train, aligned, delta)
+        mu, scale = 0.0, 1.0
+        if self.use_standard_scaling:
+            mu = aligned.mean(axis=0)
+            scale = float((aligned - mu).std())
+            if not np.isfinite(scale) or scale <= 0.0:
+                scale = 1.0
+        else:
+            curves.centre_weights = np.zeros(X_train.shape[0])
+        self._set_noise(gpr, np.mean((sigma_train / scale) ** 2, axis=1))
+        gpr.fit(X_fit, (aligned - mu) / scale)
+        weights, variance = gpr.leave_one_out()
+        return gpr, curves, curves.combine(delta, weights) - y_train, variance * scale ** 2, (mu, scale)
 
 
     def _points(self, snapshot=None):
@@ -1149,9 +1272,16 @@ class GPNode(Node):
                 done.append(gpr.append(xs, (y[0, i] - shift) / scale, (sigma[0, i] / scale) ** 2))
             return all(done)
 
-        if self.output_model == 'shared':
+        if self.output_model in ('shared', 'aligned'):
             mu, scale = self.y_common_scaler if scaled and self.y_common_scaler is not None else (0.0, 1.0)
-            return self.my_GPRs[0].append(xs, (y - mu) / scale, float(np.mean((sigma / scale) ** 2)))
+            noise = float(np.mean((sigma / scale) ** 2))
+            if self.alignment is None:
+                return self.my_GPRs[0].append(xs, (y - mu) / scale, noise)
+            delta = (x - self.fit_mean) / self.fit_std
+            done = self.my_GPRs[0].append(xs, (self.alignment.warp.register(y, delta) - mu) / scale, noise)
+            if done:
+                self.alignment = self.alignment.with_curve(y, delta)
+            return done
 
         z = self._fitted_basis.project(y)[0]
         noise_z = self._fitted_basis.project_noise(sigma)[0]
@@ -1169,6 +1299,8 @@ class GPNode(Node):
         """
         if self.asleep or not any([gpr.release() for gpr in self.my_GPRs]):
             return False
+        if self.alignment is not None:
+            self.alignment.release()
         self.asleep = True
         return True
 
@@ -1197,8 +1329,9 @@ class GPNode(Node):
 
 
     def nbytes_fitted(self):
-        """Size in bytes of what the node's GPs hold from their fits, as they report it."""
-        return sum(gpr.nbytes() for gpr in self.my_GPRs)
+        """Size in bytes of what the node's GPs hold from their fits, as they report
+        it, and of the curves of an alignment."""
+        return sum(gpr.nbytes() for gpr in self.my_GPRs) + (self.alignment.nbytes() if self.alignment is not None else 0)
 
 
     def _compute_dimensional_uncertainty(self):
@@ -1494,6 +1627,7 @@ class GPNode(Node):
             # If evaluation failed, fall through to use default criteria
 
         # Determine the split index based on the chosen criteria
+        self.split_direction = None
         if self.split_dimension_criteria == 'max_spread':
             if self.my_X_data.shape[0] > 0:
                 w = np.empty(self.n_features)
@@ -1543,6 +1677,7 @@ class GPNode(Node):
             length_scales = None
             if self.my_X_data.shape[0] > 1:
                 length_scales = self._pooled_length_scales()
+                self.split_direction = self._fastest_direction()
             if length_scales is not None:
                 # Compare length scales in units of each dimension's std so the
                 # choice is scale-invariant. With standard scaling the GP frame
@@ -1573,10 +1708,11 @@ class GPNode(Node):
             if spreads[self.split_index] == 0:
                 self.split_index = int(np.argmax(spreads))
 
-        # Calculate spread for the chosen split_index, used for overlap calculation
+        # Calculate spread along the split, used for overlap calculation
         # and potentially for split_position if data is scarce for other methods.
+        along_split = self.split_coordinate(self.my_X_data)
         if self.my_X_data.shape[0] > 0:
-            current_dim_spread = np.max(self.my_X_data[:, self.split_index]) - np.min(self.my_X_data[:, self.split_index])
+            current_dim_spread = np.max(along_split) - np.min(along_split)
         else:
             current_dim_spread = 0.0 # Default if no data
 
@@ -1585,18 +1721,18 @@ class GPNode(Node):
             self.split_position = 0.0
         elif self.split_position_method == 'median':
             if self.my_X_data.shape[0] > 0:
-                self.split_position = np.median(self.my_X_data[:, self.split_index])
+                self.split_position = np.median(along_split)
             else: # Should not happen if split_index logic is robust
                 self.split_position = 0.0
         elif self.split_position_method == 'mean':
             if self.my_X_data.shape[0] > 0:
-                self.split_position = np.mean(self.my_X_data[:, self.split_index])
+                self.split_position = np.mean(along_split)
             else: # Should not happen
                 self.split_position = 0.0
         elif self.split_position_method == 'random':
             if self.my_X_data.shape[0] > 0:
-                min_val = np.min(self.my_X_data[:, self.split_index])
-                max_val = np.max(self.my_X_data[:, self.split_index])
+                min_val = np.min(along_split)
+                max_val = np.max(along_split)
                 if min_val == max_val: # All points are the same
                     self.split_position = min_val
                 else:
@@ -1605,7 +1741,7 @@ class GPNode(Node):
                 self.split_position = 0.0
         elif self.split_position_method == 'randomchoice':
             if self.my_X_data.shape[0] > 0:
-                self.split_position = np.random.choice(self.my_X_data[:, self.split_index])
+                self.split_position = np.random.choice(along_split)
             else: # Should not happen
                 self.split_position = 0.0
         else:
@@ -1616,12 +1752,12 @@ class GPNode(Node):
 
     def split_coordinate(self, x: np.ndarray):
         """The coordinate of the rows of x along the normal of this node's cut."""
-        return x[:, self.split_index]
+        return x[:, self.split_index] if self.split_direction is None else x @ self.split_direction
 
 
     def cut_axis(self):
         """The input this node's cut is along, or None if it is along none."""
-        return self.split_index
+        return self.split_index if self.split_direction is None else None
 
 
     def prob_func(self, x: np.array):
@@ -1660,8 +1796,9 @@ class GPNode(Node):
         an outdated snapshot whose error its residual GP cannot correct."""
         if self.global_mean is not None and self.is_leaf and self.n_points > 0:
             current = self.global_mean.current
-            if current is not None and (self._fitted_global is None
-                                        or self._fitted_global.version < current.version):
+            # a leaf with an alignment models the curves themselves, without the global model
+            if current is not None and self.alignment is None and (self._fitted_global is None
+                                                                    or self._fitted_global.version < current.version):
                 if not (getattr(self.global_mean, 'cheap_leaf_refresh', False)
                         and self._refit_on_snapshot(current)):
                     self.fit_my_GPR(force_training=True)
@@ -1733,8 +1870,10 @@ class GPNode(Node):
 
 
     def _can_condition(self) -> bool:
-        """Whether this node can predict from the stored points nearest to a query."""
-        return self.neighbours is not None and self.is_leaf and self.fit_std is not None and self._is_fitted()
+        """Whether this node can predict from the stored points nearest to a
+        query. A leaf with an alignment predicts from its own aligned curves."""
+        return (self.neighbours is not None and self.is_leaf and self.fit_std is not None and self._is_fitted()
+                and self.alignment is None)
 
 
     def _score_predictors(self, x: np.ndarray, y: np.ndarray, mu_pred: np.ndarray):
@@ -1793,7 +1932,7 @@ class GPNode(Node):
         self.wake()
         if self.output_model == 'independent':
             return self._predict_independent(x, return_std)
-        if self.output_model == 'shared':
+        if self.output_model in ('shared', 'aligned'):
             return self._predict_shared(x)
         return self._predict_pca(x)
 
@@ -1848,13 +1987,14 @@ class GPNode(Node):
                     if share[i] > 0.0:
                         mu[i], sigma[i] = result[0][0, 0] * scale + shift, result[1][0, 0] * scale
 
-        elif self.output_model == 'shared':
+        elif self.output_model in ('shared', 'aligned'):
             shift, scale = self.y_common_scaler if scaled and self.y_common_scaler is not None else (0.0, 1.0)
             result = self.my_GPRs[0].condition(Xs, (y - shift) / scale, np.mean((noise_std / scale) ** 2, axis=1), qs)
             if result is not None:
                 share[:] = weight(np.max(result[2]))
                 if share[0] > 0.0:
-                    mu[:], sigma[:] = result[0][0] * scale + shift, result[1][0] * scale
+                    profile = 1.0 if self.sigma_profile is None else self.sigma_profile
+                    mu[:], sigma[:] = result[0][0] * scale + shift, result[1][0] * scale * profile
 
         else:  # 'pca'
             basis = self._fitted_basis
@@ -1925,20 +2065,27 @@ class GPNode(Node):
         return np.tile(mu0, (1, self.n_outputs)), np.tile(sd0, (1, self.n_outputs))
 
     def _predict_shared(self, x: np.ndarray):
-        """One shared-kernel GP over all outputs (output_model='shared')."""
+        """One shared-kernel GP over all outputs (output_model='shared'), fitted
+        to aligned curves if the node has an alignment (output_model='aligned')."""
         gpr = self.my_GPRs[0]
         if not gpr.is_trained():
             return self._prior_prediction(x)
         n = x.shape[0]
-        m, sd = gpr.predict(self._scaled_inputs(x), return_std=True)
+        xs = self._scaled_inputs(x)
+        m, sd = gpr.predict(xs, return_std=True)
         m = np.asarray(m, dtype=float).reshape(n, -1)
         sd = np.asarray(sd, dtype=float).reshape(n, -1)
-        if sd.shape[1] == 1 and self.n_outputs > 1:
-            sd = np.tile(sd, (1, self.n_outputs))
+        if sd.shape[1] != self.n_outputs:
+            # one sigma for all targets of the GP, of which an alignment can have more than there are outputs
+            sd = np.tile(sd[:, :1], (1, self.n_outputs))
         if self.use_standard_scaling and self.y_common_scaler is not None:
             mu, scale = self.y_common_scaler
             m = m * scale + mu
             sd = sd * scale
+        if self.sigma_profile is not None:
+            sd = sd * self.sigma_profile
+        if self.alignment is not None:
+            m = self.alignment.combine((x - self.fit_mean) / self.fit_std, gpr.mean_weights(xs))
         return m, sd
 
     def _predict_pca(self, x: np.ndarray):

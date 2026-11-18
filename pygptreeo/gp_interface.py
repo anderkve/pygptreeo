@@ -162,6 +162,15 @@ class GPRegressorInterface(ABC):
         """
         return None
 
+    def get_metric(self, n_features: int) -> Optional[np.ndarray]:
+        """The matrix ``M`` (n_features, n_features) of a fitted kernel whose
+        distance ``(x - x') M (x - x')^T`` is not along the inputs, or None.
+
+        Optional capability used by the 'min_lengthscale' split criterion: such
+        a leaf is cut across the direction of its shortest length scale.
+        """
+        return None
+
     def refit_fixed(self, X: np.ndarray, y: np.ndarray, hyperparameters: Optional[np.ndarray] = None) -> bool:
         """Fit to ``(X, y)`` without optimising: with ``hyperparameters`` (as
         ``get_hyperparameters`` returns them), or with those of the last fit.
@@ -201,6 +210,27 @@ class GPRegressorInterface(ABC):
         is no fit to extend or the backend cannot.
         """
         return False
+
+    def mean_weights(self, X: np.ndarray) -> Optional[np.ndarray]:
+        """The weights of the training targets in the predicted mean at ``X``, of
+        shape (n_samples, n_train): the mean is ``weights @ y_train``.
+
+        Optional capability used by ``GPTree(output_model='aligned')``. Returns
+        None without a fit or if the backend cannot.
+        """
+        return None
+
+    def leave_one_out(self):
+        """The predictions of each training point from the others, with the
+        hyperparameters kept: ``(weights, variance)``. Row ``i`` of the weights
+        (n_train, n_train) gives the mean at training point ``i`` as
+        ``weights[i] @ y_train``, and ``variance[i]`` is the variance of that
+        prediction of the observed target, both in the units of ``fit``.
+
+        Optional capability used by the 'shared' and 'aligned' output models.
+        Returns None without a fit or if the backend cannot.
+        """
+        return None
 
     def supports_conditioning(self) -> bool:
         """Whether ``condition`` is implemented, as

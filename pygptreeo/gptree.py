@@ -31,6 +31,7 @@ from tqdm import tqdm
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode, TARGET_COVERAGE
 from pygptreeo.gp_interface import GPRegressorInterface
+from pygptreeo.output_alignment import MIN_GRID, MIN_OUTPUTS
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
 from pygptreeo.leaf_index import LeafIndex
@@ -126,6 +127,7 @@ class GPTree:
                  aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
                  output_model: Optional[str] = 'independent',
+                 output_shape: Optional[tuple] = None,
                  output_basis_components: Union[str, int, float] = 'noise',
                  output_basis_max_components: Optional[int] = None,
                  output_basis_min_points: int = 50,
@@ -178,6 +180,19 @@ class GPTree:
                 the ``k`` basis scores with ``k`` GPs; predictions are mapped back to
                 output space with propagated uncertainties. Suited to strongly
                 correlated outputs such as a function f(t; x) sampled on a t-grid.
+                'aligned': as 'shared', for outputs that are a curve on a grid,
+                given in the order of the grid. Each leaf also learns a warp of
+                the grid that depends on the inputs and brings the features of
+                its curves (a peak, an edge, the phase of an oscillation) to
+                common positions, fits its GP to the aligned curves, and keeps
+                the alignment if it lowers the leave-one-out error of its
+                curves. Suited to curves with features whose position depends
+                on the inputs; needs the scikit-learn adapter.
+            output_shape (Optional[tuple]): For 'aligned': the shape ``(p1, p2)``
+                of the grid, for outputs that are a function on a grid of two
+                dimensions (a surface), flattened row by row
+                (``values.ravel()``). The leaves then warp both axes of the
+                grid. Defaults to a curve, ``(n_outputs,)``.
             output_basis_components ('noise', int or float): For 'pca': how many
                 basis components to keep. 'noise' (default) keeps every component
                 whose variance lies above what the per-point observation noise
@@ -272,15 +287,25 @@ class GPTree:
         self.splitting_strategy = splitting_strategy
         self.n_outputs = n_outputs
 
-        if output_model not in ('independent', 'shared', 'pca'):
-            raise ValueError(f"Unknown output_model '{output_model}'. Use 'independent', 'shared' or 'pca'.")
+        if output_model not in ('independent', 'shared', 'pca', 'aligned'):
+            raise ValueError(f"Unknown output_model '{output_model}'. Use 'independent', 'shared', 'pca' or 'aligned'.")
         if n_outputs == 1:
             output_model = 'independent'
-        if output_model == 'shared':
+        if output_model in ('shared', 'aligned'):
             supports = getattr(GPR, 'supports_multitarget', None)
             if supports is None or not supports():
-                raise ValueError("output_model='shared' needs a GP backend with supports_multitarget() == True "
+                raise ValueError(f"output_model='{output_model}' needs a GP backend with supports_multitarget() == True "
                                  "(e.g. the scikit-learn adapter returned by Default_GPR)")
+        if output_model == 'aligned' and n_outputs < MIN_OUTPUTS:
+            raise ValueError(f"output_model='aligned' is for a curve on a grid of at least {MIN_OUTPUTS} points, "
+                             f"not for {n_outputs} outputs")
+        if output_shape is not None:
+            output_shape = tuple(int(p) for p in output_shape)
+            if len(output_shape) not in (1, 2) or int(np.prod(output_shape)) != n_outputs:
+                raise ValueError(f"output_shape must be (n_outputs,) or (p1, p2) with p1 * p2 = n_outputs = {n_outputs}, not {output_shape}")
+            if len(output_shape) == 2 and min(output_shape) < MIN_GRID:
+                raise ValueError(f"output_shape (p1, p2) is for a grid of at least {MIN_GRID} points along each axis, not {output_shape}")
+        self.output_shape = output_shape
         self.output_model = output_model
         # Tree-global output basis for 'pca' (shared by reference with every node)
         self.output_basis = None
@@ -313,7 +338,7 @@ class GPTree:
 
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
-                          output_model=output_model, output_basis=self.output_basis,
+                          output_model=output_model, output_shape=output_shape, output_basis=self.output_basis,
                           global_mean=self.global_mean, neighbours=self.neighbours,
                           **kwargs)  # Initialize root node of the GPTree
 
@@ -781,13 +806,14 @@ class GPTree:
     def _let_leaves_sleep(self):
         """With predictions from neighbours, put the leaves to sleep whose GPs are
         not among the last ``NEIGHBOUR_AWAKE`` that were used. A leaf that
-        predicts from its own points keeps its GPs awake."""
+        predicts from its own points, or from its aligned curves, keeps its
+        GPs awake."""
         search = self.neighbours
         if search is None or search.awake is None:
             return
         while len(search.in_use) > search.awake:
             leaf, _ = search.in_use.popitem(last=False)
-            if leaf.is_leaf and not leaf.prefers_own and leaf.sleep() \
+            if leaf.is_leaf and not leaf.prefers_own and leaf.alignment is None and leaf.sleep() \
                     and self.max_memory_mb is not None and leaf in self._leaves:
                 self._account(leaf)
 

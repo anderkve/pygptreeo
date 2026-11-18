@@ -31,7 +31,11 @@ comparison on one stream. Sections 6 and 7 were measured later, with scripts
 that are not in the repository, and section 8 with
 `examples/mpi_fit_workers.py`. The scripts of section 9
 (`research/partitioning/`) were removed from the repository as well; they are
-in its history up to commit `25a4673`.
+in its history up to commit `25a4673`. Section 10 was measured with scripts
+that are not in the repository; its curve families are in
+`examples/target_functions_curves.py`, and
+`examples/multioutput_physics_curves.py` runs the comparison of section 10.1
+on one of them.
 
 ## 1. Split-dimension criterion
 
@@ -1938,3 +1942,850 @@ that needed the own GP of a leaf.
   tenth, and one in ten wakes a sleeping leaf for it.
 * **The memory is the same within 5%**: 10.9 MB for 10.4 where most leaves
   are woken, and within 0.3 MB elsewhere.
+
+## 10. Curves as outputs (multi-output targets)
+
+The twelve families of `examples/target_functions_curves.py`: a curve
+`f(x; theta)` on a grid of 48 to 128 points in `x` is the multi-output target,
+and three or four parameters `theta`, uniform in the unit cube, are the inputs.
+The observations are exact, with a declared sigma of 0.1% of the quantity for
+the curves given as `log10` and of 1e-4 to 1e-3 in the unit of the curve
+otherwise. `peak_counts_mc` has Monte Carlo noise, declared bin by bin. The
+NRMSE is the RMSE over all grid points divided by the range of the family, and
+errors are against the noise-free curves. The tree is that of the conventions
+above, with the scikit-learn leaves. `kinematic_edge` is also run on a grid of
+128 points in place of 64 (section 10.4).
+
+### 10.1 The output models on a stream
+
+800 curves, each predicted before the tree is updated with it. NRMSE of the
+last 400 predictions; for `'shared'` and `'aligned'` the geometric mean of
+three seeds, with the ratio of the two and its range over the seeds, and one
+seed for `'independent'` and `'pca'`:
+
+| family | points in x | independent | pca | shared | aligned | shared / aligned |
+|---|---:|---:|---:|---:|---:|---:|
+| `matter_power` | 64 | 3.2e-5 | 6.8e-5 | 5.0e-5 | 5.0e-5 | 1 |
+| `eft_distribution` | 48 | 1.4e-4 | 1.5e-4 | 1.5e-4 | 1.5e-4 | 1 |
+| `jet_spectrum` | 64 | 4.1e-5 | 4.6e-5 | 4.9e-5 | 4.9e-5 | 1 |
+| `dust_sed` | 64 | 1.1e-5 | 7.7e-6 | 1.1e-5 | 1.1e-5 | 1 |
+| `z_lineshape` | 64 | 2.4e-4 | 2.2e-4 | 2.3e-4 | 6.3e-5 | 3.6 (3.2 to 4.1) |
+| `zprime_spectrum` | 128 | 8.5e-3 | 7.9e-3 | 8.0e-3 | 2.0e-3 | 3.9 (3.1 to 4.8) |
+| `kinematic_edge` | 64 | 1.3e-3 | 2.5e-3 | 1.2e-3 | 7.7e-4 | 1.6 (1.5 to 1.7) |
+| `kinematic_edge`, 128 points | 128 | 1.4e-3 | 2.3e-3 | 1.2e-3 | 1.0e-4 | 12 (9.9 to 13) |
+| `oscillation_probability` | 96 | 1.1e-3 | 9.2e-4 | 1.1e-3 | 1.1e-3 | 1 |
+| `cmb_peaks` | 128 | 1.6e-4 | 1.9e-4 | 2.1e-4 | 1.1e-4 | 1.8 (1.6 to 2.1) |
+| `form_factor` | 96 | 3.2e-3 | 6.3e-3 | 4.3e-3 | 4.3e-3 | 1 |
+| `ringdown` | 128 | 2.7e-3 | 2.7e-3 | 2.4e-3 | 8.2e-4 | 3 (2.8 to 3.2) |
+| `peak_counts_mc` | 60 | 3.2e-3 | 4.1e-3 | 3.9e-3 | 3.9e-3 | 1 |
+
+Coverage of the same predictions, time of an update, and the share of the
+leaves that hold an alignment at the end of the stream:
+
+| family | coverage: independent | pca | shared | aligned | ms per update: independent | pca | shared | aligned | leaves aligned |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `matter_power` | 0.67 | 0.67 | 0.66 | 0.66 | 240 | 20 | 7.8 | 11 | 0.00 |
+| `eft_distribution` | 0.67 | 0.70 | 0.67 | 0.67 | 131 | 12 | 5.6 | 8.1 | 0.00 |
+| `jet_spectrum` | 0.68 | 0.67 | 0.66 | 0.66 | 205 | 18 | 6.8 | 10 | 0.00 |
+| `dust_sed` | 0.65 | 0.63 | 0.65 | 0.65 | 212 | 19 | 9 | 13 | 0.00 |
+| `z_lineshape` | 0.65 | 0.66 | 0.66 | 0.66 | 174 | 34 | 7.2 | 15 | 1.00 |
+| `zprime_spectrum` | 0.66 | 0.66 | 0.66 | 0.67 | 245 | 225 | 9.4 | 24 | 1.00 |
+| `kinematic_edge` | 0.68 | 0.71 | 0.67 | 0.66 | 149 | 69 | 6 | 13 | 0.91 |
+| `kinematic_edge`, 128 points | 0.68 | 0.66 | 0.67 | 0.67 | 295 | 96 | 9.4 | 23 | 1.00 |
+| `oscillation_probability` | 0.69 | 0.70 | 0.66 | 0.66 | 203 | 25 | 8.2 | 15 | 0.00 |
+| `cmb_peaks` | 0.68 | 0.69 | 0.67 | 0.66 | 313 | 53 | 10 | 27 | 1.00 |
+| `form_factor` | 0.68 | 0.67 | 0.67 | 0.67 | 194 | 142 | 9.2 | 14 | 0.00 |
+| `ringdown` | 0.69 | 0.69 | 0.67 | 0.67 | 221 | 38 | 9.4 | 20 | 1.00 |
+| `peak_counts_mc` | 0.99 | 0.98 | 0.99 | 0.99 | 110 | 32 | 5 | 8.7 | 0.00 |
+
+* **`'independent'`, `'pca'` and `'shared'` have the same error within a
+  factor 2.1 on every family**, and `'shared'` within 1.6 of
+  `'independent'`, at 3 to 5% of its time.
+* **`'aligned'` lowers the error on the families with a feature that moves**:
+  by a factor 3.6 for `z_lineshape`, 3.9 for `zprime_spectrum`, 3.0 for
+  `ringdown`, 1.8 for `cmb_peaks`, and 12 for `kinematic_edge` on 128 grid
+  points (1.6 on 64). On the other families its leaves decline the alignment,
+  and the predictions are those of `'shared'`. On the test curves after the
+  stream the factors are 4.2, 4.4, 3.1, 1.8, 10 and 1.2.
+* **The coverage is 0.63 to 0.71 for the exact curves**, for every output
+  model. For the noisy curves it is 0.98 to 0.99 (section 10.5).
+* **An update with `'aligned'` takes 2.1 to 2.7 times as long as with
+  `'shared'`** where the leaves hold alignments, and 1.4 to 1.8 times where
+  they decline: a leaf that declined waits for 1, then 3, then 7 fits before
+  it tries again. A prediction takes 0.3 to 0.5 ms with `'shared'` and 2 to 4
+  ms from a leaf with an alignment, with four such runs on four cores.
+
+### 10.2 Batch fits
+
+`fit` on 200 and 800 curves, NRMSE on 400 test curves.
+
+200 curves:
+
+| family | independent | pca | shared | aligned | components of pca | fit time [s]: independent | pca | shared | aligned |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `matter_power` | 5.4e-5 | 5.8e-5 | 7.8e-5 | 7.8e-5 | 6 | 25 | 1.6 | 0.31 | 3.1 |
+| `eft_distribution` | 2.1e-4 | 2.0e-4 | 2.1e-4 | 2.1e-4 | 4 | 13 | 0.73 | 0.22 | 1.5 |
+| `jet_spectrum` | 1.1e-4 | 1.1e-4 | 1.2e-4 | 1.2e-4 | 6 | 26 | 1.3 | 0.36 | 1.3 |
+| `dust_sed` | 1.4e-5 | 9.5e-6 | 1.7e-5 | 1.7e-5 | 5 | 24 | 1.1 | 0.26 | 1.4 |
+| `z_lineshape` | 3.8e-4 | 3.3e-4 | 3.7e-4 | 1.3e-4 | 15 | 17 | 2.2 | 0.21 | 1.4 |
+| `zprime_spectrum` | 1.4e-2 | 1.4e-2 | 1.4e-2 | 4.3e-3 | 120 | 19 | 14 | 0.15 | 2.7 |
+| `kinematic_edge` | 2.3e-3 | 2.4e-3 | 2.2e-3 | 6.8e-4 | 35 | 15 | 4.5 | 0.17 | 1.6 |
+| `kinematic_edge`, 128 points | 2.4e-3 | 2.3e-3 | 2.3e-3 | 2.3e-4 | 48 | 30 | 6.2 | 0.17 | 2.9 |
+| `oscillation_probability` | 3.1e-3 | 3.2e-3 | 3.5e-3 | 3.5e-3 | 10 | 21 | 1.3 | 0.17 | 4.1 |
+| `cmb_peaks` | 4.1e-4 | 4.3e-4 | 4.4e-4 | 2.7e-4 | 24 | 22 | 4.3 | 0.23 | 2.8 |
+| `form_factor` | 6.6e-3 | 1.1e-2 | 8.4e-3 | 8.4e-3 | 74 | 20 | 7.5 | 0.14 | 2 |
+| `ringdown` | 4.8e-3 | 5.0e-3 | 5.3e-3 | 1.9e-3 | 22 | 17 | 3.4 | 0.16 | 3.7 |
+| `peak_counts_mc` | 4.1e-3 | 4.4e-3 | 5.3e-3 | 5.3e-3 | 15 | 13 | 1.9 | 0.14 | 1.9 |
+
+800 curves:
+
+| family | independent | pca | shared | aligned | components of pca | fit time [s]: independent | pca | shared | aligned |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `matter_power` | 5.5e-5 | 4.2e-5 | 6.3e-5 | 6.3e-5 | 6 | 89 | 6.8 | 1.1 | 8.2 |
+| `eft_distribution` | 9.1e-5 | 9.1e-5 | 9.3e-5 | 9.3e-5 | 4 | 57 | 3.6 | 1.4 | 6.7 |
+| `jet_spectrum` | 5.4e-5 | 6.7e-5 | 8.5e-5 | 8.5e-5 | 6 | 96 | 8.1 | 1.8 | 6.7 |
+| `dust_sed` | 9.4e-6 | 6.5e-6 | 1.1e-5 | 1.1e-5 | 5 | 94 | 6 | 1.4 | 6.5 |
+| `z_lineshape` | 1.8e-4 | 1.7e-4 | 1.8e-4 | 5.2e-5 | 15 | 83 | 14 | 1.2 | 6.6 |
+| `zprime_spectrum` | 9.4e-3 | 8.7e-3 | 9.2e-3 | 3.1e-3 | 125 | 97 | 92 | 0.78 | 14 |
+| `kinematic_edge` | 9.1e-4 | 1.7e-3 | 9.0e-4 | 6.7e-4 | 35 | 57 | 31 | 0.8 | 7.3 |
+| `kinematic_edge`, 128 points | 9.2e-4 | 1.7e-3 | 9.0e-4 | 9.0e-5 | 56 | 111 | 44 | 0.81 | 12 |
+| `oscillation_probability` | 1.4e-3 | 1.4e-3 | 1.6e-3 | 1.4e-3 | 11 | 57 | 8.1 | 0.74 | 13 |
+| `cmb_peaks` | 2.3e-4 | 2.5e-4 | 2.6e-4 | 1.4e-4 | 24 | 105 | 16 | 0.94 | 10 |
+| `form_factor` | 4.4e-3 | 8.0e-3 | 4.8e-3 | 4.8e-3 | 77 | 93 | 69 | 0.64 | 8.6 |
+| `ringdown` | 1.8e-3 | 1.9e-3 | 1.9e-3 | 7.9e-4 | 22 | 82 | 15 | 0.82 | 13 |
+| `peak_counts_mc` | 3.5e-3 | 3.4e-3 | 4.6e-3 | 4.6e-3 | 20 | 45 | 17 | 0.58 | 8.1 |
+
+`fit` builds the tree before a leaf is fitted, so its splits follow the spread
+of the points and not the fitted length scales (`min_lengthscale`), and the
+sigma is not calibrated. The sigma of a shared-kernel leaf is set per output
+from the leave-one-out errors of the leaf's curves, and covers 0.59 to 0.78 of
+the test errors with 200 curves and 0.49 to 0.77 with 800. That of
+`'independent'` covers 0.70 to 1.00 and that of `'pca'` 0.77 to 1.00. Before
+the sigma per output, that of `'shared'` covered 0.81 to 1.00.
+
+### 10.3 More curves
+
+`fit`, NRMSE on the test curves:
+
+| family | shared: 200 | 800 | 3200 | aligned: 200 | 800 | 3200 |
+|---|---:|---:|---:|---:|---:|---:|
+| `z_lineshape` | 3.7e-4 | 1.8e-4 | 5.3e-5 | 1.3e-4 | 5.2e-5 | 1.8e-5 |
+| `zprime_spectrum` | 1.4e-2 | 9.2e-3 | 5.5e-3 | 4.3e-3 | 3.1e-3 | 1.3e-3 |
+| `kinematic_edge`, 128 points | 2.3e-3 | 9.0e-4 | 4.3e-4 | 2.3e-4 | 9.0e-5 | 4.2e-5 |
+| `cmb_peaks` | 4.4e-4 | 2.6e-4 | 1.3e-4 | 2.7e-4 | 1.4e-4 | 5.8e-5 |
+| `ringdown` | 5.3e-3 | 1.9e-3 | 6.2e-4 | 1.9e-3 | 7.9e-4 | 2.2e-4 |
+| `matter_power` | 7.8e-5 | 6.3e-5 | 2.4e-5 | 7.8e-5 | 6.3e-5 | 2.4e-5 |
+
+With 200 curves `'aligned'` has the error that `'shared'` has with 800 on
+`cmb_peaks` and `ringdown`, and a lower one on the three other families with
+a feature that moves. On `matter_power` every leaf declines.
+
+### 10.4 The grid has to resolve the feature
+
+`kinematic_edge` has an edge that is smeared by a mass resolution of 1 to 4
+GeV, on a grid from 20 to 140 GeV. The same family on four grids, `fit`, NRMSE
+on the test curves:
+
+| grid points | spacing [GeV] | 200 curves: shared | aligned | 800 curves: shared | aligned | leaves with an alignment, 800 curves |
+|---:|---:|---:|---:|---:|---:|---:|
+| 32 | 3.9 | 2.2e-3 | 2.2e-3 | 9.3e-4 | 9.3e-4 | 0.08 |
+| 64 | 1.9 | 2.2e-3 | 6.8e-4 | 9.0e-4 | 6.7e-4 | 0.92 |
+| 128 | 0.94 | 2.3e-3 | 2.3e-4 | 9.0e-4 | 9.0e-5 | 1.00 |
+| 256 | 0.47 | 2.3e-3 | 2.3e-4 | 9.0e-4 | 9.1e-5 | 1.00 |
+
+An alignment interpolates the curves between the grid points. With grid
+points 0.9 GeV apart or closer the gain is a factor 10, at 1.9 GeV it is 1.4
+to 3.3, and at 3.9 GeV nearly every leaf declines the alignment. A finer grid
+costs `'shared'` nothing and `'aligned'` time in proportion. For
+`zprime_spectrum` the gain was 2.8 to 3.4 on grids of 64 to 512 points.
+
+### 10.5 Other measurements
+
+* **The fit of a shared-kernel GP** (100 points, three inputs, one
+  optimiser run), by scikit-learn and by the adapter from `Y Y^T`:
+
+  | outputs | scikit-learn [ms] | adapter [ms] |
+  |---:|---:|---:|
+  | 8 | 113 | 93 |
+  | 128 | 776 | 90 |
+  | 1000 | 8087 | 152 |
+
+  The log-likelihoods at the optimum agree to a relative 1e-7 and the
+  predictions to 4e-5 of the scale of the targets.
+* **The logarithm of a quantity over many decades.** `dust_sed` covers ten
+  decades. With 800 curves given as `10^y`, with a declared sigma of 0.1% of
+  the value, in place of `y`, relative errors of the predicted spectrum:
+
+  | | independent | pca | shared |
+  |---|---:|---:|---:|
+  | median, log10 as the target | 6.0e-5 | 2.4e-5 | 1.9e-5 |
+  | median, the value as the target | 1.7e-3 | 3.8e-2 | 2.9e-3 |
+  | 99th percentile, log10 as the target | 7.8e-4 | 6.0e-4 | 9.0e-4 |
+  | 99th percentile, the value as the target | 0.12 | 3.3 | 0.14 |
+  | predictions below zero, the value as the target | 0.03% | 2.5% | 0.05% |
+
+  (Measured before the changes of this section, which do not change the
+  predicted means.)
+* **`x` as one more input of a single-output tree**, with the 200 curves as
+  `200 p` points: 2.3 to 83 times the NRMSE of `'shared'` (median 12), with
+  135 to 381 leaves, and a `fit` of 12 to 65 seconds.
+* **The number of components of `'pca'`**, 800 curves, `fit`:
+
+  | family | 3 | 6 | 12 | 24 | 48 | noise rule | its components | fit time [s]: 24 | noise rule |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+  | `zprime_spectrum` | 3.8e-2 | 2.5e-2 | 1.3e-2 | 8.9e-3 | 8.7e-3 | 8.7e-3 | 125 | 17 | 89 |
+  | `kinematic_edge` | 4.4e-2 | 2.2e-2 | 6.3e-3 | 1.8e-3 | 1.7e-3 | 1.7e-3 | 35 | 17 | 27 |
+  | `form_factor` | 5.4e-2 | 3.2e-2 | 1.9e-2 | 1.1e-2 | 8.1e-3 | 8.0e-3 | 77 | 19 | 71 |
+  | `cmb_peaks` | 1.0e-2 | 2.6e-3 | 4.4e-4 | 2.5e-4 | 2.5e-4 | 2.5e-4 | 24 | 14 | 12 |
+
+  The declared sigma of these curves is 1e-4 of their scale or less, so the
+  noise rule keeps every component above it. Beyond the error of the leaf GPs
+  more components do not lower the error.
+* **`'pca'` and the starts of the optimiser.** On `kinematic_edge` and
+  `form_factor` the error of `'pca'` is twice that of `'shared'` whatever the
+  number of components (800 curves, `fit`: 1.7e-3 and 8.0e-3 against 9.0e-4
+  and 4.8e-3). With three restarts of the optimiser of each score GP
+  (`Default_GPR(n_restarts_optimizer=3)`) it is 9.7e-4 and 4.5e-3, at three
+  times the time: a score of a curve with a feature that moves oscillates
+  with the parameters, and a single start ends in a local optimum of its
+  likelihood.
+* **Noise and the calibrated sigma.** On the stream of `peak_counts_mc` the
+  calibrated sigma covers the noise-free curve in 0.98 to 0.99 of the cases, for
+  every output model. For a single output, `sin(5 x1) cos(3 x2)` with a
+  declared noise of 0 (1e-4), 0.05 and 0.2, 1500 points: the sigma of the
+  last 750 predictions averages 0.0001, 0.052 and 0.207, the RMSE against
+  the noise-free target is 0.0008, 0.016 and 0.048, and the coverage of the
+  target is 0.65, 0.99 and 1.00. The coverage of the observations is 0.65,
+  0.66 and 0.66.
+* **A shared-kernel GP with the outputs in units of their noise**
+  (`peak_counts_mc`, whose noise differs by a factor 3 between the bins,
+  `fit`, two seeds): NRMSE 6.2e-3 against 5.3e-3 and 5.9e-3 with 200 curves,
+  4.5e-3 and 4.6e-3 against 4.6e-3 and 4.7e-3 with 800, 3.7e-3 and 3.8e-3
+  against 3.8e-3 with 3200.
+
+### 10.6 Other warps (not in the code)
+
+* **Single leaves.** 100 curves in a cube of side 0.8, 0.5 or 0.3 of the
+  parameter range, 200 test curves in the same cube, three positions of the
+  cube, one shared-kernel GP on the curves or on the aligned curves. NRMSE,
+  geometric mean over the positions:
+
+  | family | side | curves | warp that maps the grid onto itself | warp with free ends |
+  |---|---:|---:|---:|---:|
+  | `z_lineshape` | 0.8 | 5.2e-4 | 1.9e-4 | 5.8e-4 |
+  | | 0.5 | 1.8e-4 | 6.0e-5 | 1.9e-4 |
+  | | 0.3 | 5.9e-5 | 2.0e-5 | 6.7e-5 |
+  | `zprime_spectrum` | 0.8 | 1.6e-2 | 7.7e-3 | 9.6e-3 |
+  | | 0.5 | 8.8e-3 | 1.7e-3 | 3.1e-3 |
+  | | 0.3 | 4.1e-3 | 4.2e-4 | 8.1e-4 |
+  | `kinematic_edge` | 0.8 | 3.4e-3 | 8.7e-4 | 6.8e-4 |
+  | | 0.5 | 1.0e-3 | 2.6e-4 | 2.8e-4 |
+  | | 0.3 | 2.9e-4 | 1.0e-4 | 1.3e-4 |
+  | `cmb_peaks` | 0.8 | 6.8e-4 | 3.1e-4 | 5.0e-4 |
+  | | 0.5 | 2.4e-4 | 1.0e-4 | 1.9e-4 |
+  | | 0.3 | 8.0e-5 | 3.3e-5 | 6.6e-5 |
+
+  The warp with free ends is a shift and a stretch, and a curve is continued
+  beyond the grid by its value at the edge. These runs fitted the warp from
+  the curves themselves, without the start from blurred curves.
+* **Knots, squares of the offsets and blurred starts**, 800 curves, `fit`.
+  Error of `'shared'` over that of `'aligned'`:
+
+  | family | 8 knots (as in the code then) | 16 knots | 8 knots, squares | 16 knots, squares | every fit from blurred curves |
+  |---|---:|---:|---:|---:|---:|
+  | `z_lineshape` | 3.6 | 3.1 | 2.1 | 2.3 | 3.4 |
+  | `zprime_spectrum` | 2.0 | 1.4 | 2.1 | 2.1 | 3.2 |
+  | `kinematic_edge`, 128 points | 9.3 | 6.7 | 8.1 | 2.0 | 9.3 |
+  | `cmb_peaks` | 1.9 | 1.7 | 1.4 | 1.3 | 1.9 |
+  | `ringdown` | 2.6 | 1.6 | 1.3 | 1.0 | 1.3 |
+
+  The fit took 2 to 7 times as long with 16 knots or with the squares. The
+  code runs a first fit both from the curves and from blurred curves and
+  keeps the better result.
+* **The aligned curve predicted and warped back**, in place of each curve
+  warped into the frame of the query: on single leaves with an early form of
+  the warp the NRMSE was 7.1e-5 against 4.6e-5 (`kinematic_edge`, side 0.3)
+  and 9.1e-4 against 6.4e-4 (`zprime_spectrum`, side 0.5), and equal on
+  `z_lineshape` and `cmb_peaks`.
+* **The factor of the leave-one-out test**, streams of 800 curves, NRMSE of
+  the last 400 predictions with a factor 1.5 (as in the code), 2 and 3, with
+  the default and with Matérn 5/2 leaves (section 10.8):
+
+  | family | leaves | 1.5 | 2 | 3 |
+  |---|---|---:|---:|---:|
+  | `cmb_peaks` | 3/2 | 1.2e-4 | 1.8e-4 | 1.9e-4 |
+  | `cmb_peaks` | 5/2 | 2.2e-5 | 3.2e-5 | 3.3e-5 |
+  | `ringdown` | 3/2 | 8.8e-4 | 8.8e-4 | 1.5e-3 |
+  | `ringdown` | 5/2 | 4.7e-4 | 4.7e-4 | 1.3e-3 |
+  | `z_lineshape` | 3/2 | 6.4e-5 | 6.4e-5 | 1.6e-4 |
+  | `zprime_spectrum` | 3/2 | 2.0e-3 | 2.8e-3 | 2.8e-3 |
+  | `kinematic_edge`, 64 points | 5/2 | 1.0e-3 | 1.1e-3 | 8.3e-4 |
+
+  A larger factor declines alignments that help: on `cmb_peaks` every leaf
+  declines with a factor 2. It would avoid the one case in which an alignment
+  that passed the test did harm, `kinematic_edge` on 64 points with Matérn
+  5/2 leaves: on the test curves the NRMSE is 6.6e-4 with the factor 1.5 and
+  3.4e-4 with 3, which is that of `'shared'`. The warp is fitted to all
+  curves of a leaf, the one left out included, so the test is optimistic
+  where the grid hardly resolves the feature.
+
+### 10.7 Global models with curves
+
+Streams of 800 curves as in section 10.1, one seed, with the additive GP
+(`global_mean='additive_gp'`, "GP") or the network (`'net'`) as the global
+model and the default leaves. NRMSE of the last 400 predictions:
+
+| family | shared | shared + GP | shared + net | aligned | aligned + GP | aligned + net |
+|---|---:|---:|---:|---:|---:|---:|
+| `matter_power` | 5.0e-5 | 1.4e-5 | 8.6e-5 | 5.0e-5 | 1.4e-5 | 8.6e-5 |
+| `eft_distribution` | 1.5e-4 | 2.1e-6 | 2.4e-5 | 1.5e-4 | 2.1e-6 | 2.4e-5 |
+| `jet_spectrum` | 5.6e-5 | 9.0e-6 | 9.2e-5 | 5.6e-5 | 9.0e-6 | 9.2e-5 |
+| `dust_sed` | 1.3e-5 | 2.6e-6 | 2.8e-5 | 1.3e-5 | 2.6e-6 | 2.8e-5 |
+| `z_lineshape` | 2.6e-4 | 7.4e-5 | 7.1e-5 | 6.4e-5 | 6.4e-5 | 6.4e-5 |
+| `zprime_spectrum` | 8.2e-3 | 9.3e-3 | 9.4e-3 | 2.0e-3 | 2.0e-3 | 2.0e-3 |
+| `kinematic_edge` | 1.3e-3 | 9.7e-4 | 2.0e-3 | 7.8e-4 | 7.8e-4 | 7.8e-4 |
+| `kinematic_edge`, 128 points | 1.4e-3 | 1.1e-3 | 2.2e-3 | 1.0e-4 | 1.0e-4 | 1.0e-4 |
+| `oscillation_probability` | 1.1e-3 | 4.3e-4 | 4.7e-4 | 1.1e-3 | 4.3e-4 | 4.7e-4 |
+| `cmb_peaks` | 1.9e-4 | 1.1e-4 | 6.0e-5 | 1.2e-4 | 1.2e-4 | 1.2e-4 |
+| `form_factor` | 4.7e-3 | 4.0e-3 | 6.7e-3 | 4.7e-3 | 4.0e-3 | 6.7e-3 |
+| `ringdown` | 2.8e-3 | 1.8e-3 | 9.4e-4 | 8.8e-4 | 8.8e-4 | 8.8e-4 |
+| `peak_counts_mc` | 4.1e-3 | 3.3e-3 | 4.3e-3 | 4.1e-3 | 3.3e-3 | 4.3e-3 |
+
+* **The additive GP lowers the error of `'shared'`** by a factor 3.6 to 70 on
+  the four smooth families, 3.5 on `z_lineshape`, 2.6 on
+  `oscillation_probability` and 1.2 to 1.7 on five others, and raises it by
+  13% on `zprime_spectrum`: 2.9 (0.89 to 69) in the
+  geometric mean over the twelve families. With 800 curves its sample holds
+  500 of them, and on the smooth families the GP alone has the error of the
+  tree with it (`matter_power`: 9.7e-6 on the test curves against 8.3e-6).
+* **The network lowers it by a factor 2.3 to 6 on five families and raises
+  it by up to 2.2 on the other seven**: 1.3 (0.45 to 6.1)
+  in the geometric mean.
+* **A leaf of `'aligned'` with an alignment models the curves themselves**,
+  and the others the residual of the global model. The error is that of
+  `'aligned'` alone where the leaves hold alignments and that of `'shared'`
+  with the global model where they decline: with the GP
+  3.6 (1.2 to 69) times lower than `'shared'` alone, and
+  3.6 (1.1 to 103 by family) over three seeds. When the leaves still aligned
+  the residual curves they declined, and `'aligned'` with the network had
+  9.7e-3 on `zprime_spectrum`.
+* **Coverage**: 0.63 to 0.72 with the GP and 0.53 to 0.72 with the network on
+  the exact curves, and 0.95 and 0.93 on `peak_counts_mc`, where it is 0.99
+  without a global model. It dips after each new version of the global
+  model: on a stream of 400 curves of `matter_power`, with the GP fitted at
+  200 and at 400, it was 0.48 over the last 200.
+* **Time for the stream**: 4 to 16 s with `'shared'`, 18 to 68 s with the GP,
+  which is fitted three times, and 17 to 41 s with the network.
+
+3200 curves, NRMSE of the last 1600 predictions:
+
+| family | shared | shared + GP | shared + net | aligned | aligned + GP |
+|---|---:|---:|---:|---:|---:|
+| `matter_power` | 3.2e-5 | 5.8e-6 | 3.9e-5 | 3.2e-5 | 5.8e-6 |
+| `z_lineshape` | 9.5e-5 | 3.0e-5 | 2.1e-5 | 2.7e-5 | 2.7e-5 |
+| `zprime_spectrum` | 3.3e-3 | 4.3e-3 | 4.5e-3 | 7.4e-4 | 7.4e-4 |
+| `kinematic_edge`, 128 points | 3.7e-4 | 2.8e-4 | 4.5e-4 | 4.9e-5 | 4.9e-5 |
+| `cmb_peaks` | 9.7e-5 | 2.9e-5 | 1.7e-5 | 5.5e-5 | 5.5e-5 |
+| `peak_counts_mc` | 3.1e-3 | 2.6e-3 | 2.2e-3 | 3.1e-3 | 2.6e-3 |
+
+* The gains over `'shared'` are 2 (0.78 to 5.5) for the GP,
+  1.6 (0.74 to 5.8) for the network,
+  2.5 (1 to 7.6) for `'aligned'` and
+  3.4 (1.2 to 7.6) for `'aligned'` with the GP.
+* **A leaf that could use either takes the alignment.** On `cmb_peaks` the
+  alignment gains a factor 1.8 and the global models 3.3 and 5.7, and
+  `'aligned'` with a global model has the gain of the alignment.
+
+Six parameters (`zprime_spectrum_6d`, `eft_distribution_6d`), with the
+default and with Matérn 5/2 leaves ("5/2"), 800 curves:
+
+| family | shared | shared, 5/2 | shared + GP | aligned | aligned, 5/2 | aligned + GP, 5/2 | aligned + GP, 5/2 in both |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `zprime_spectrum_6d` | 6.5e-3 | 7.1e-3 | 5.8e-3 | 3.7e-3 | 3.6e-3 | 2.7e-3 | 2.7e-3 |
+| `eft_distribution_6d` | 1.7e-3 | 7.8e-5 | 6.2e-7 | 1.7e-3 | 7.8e-5 | 6.2e-7 | 2.0e-6 |
+
+3200 curves:
+
+| family | shared | aligned | aligned, 5/2 | aligned + GP | aligned + GP, 5/2 |
+|---|---:|---:|---:|---:|---:|
+| `zprime_spectrum_6d` | 3.3e-3 | 1.2e-3 | 8.6e-4 | 1.0e-3 | 1.0e-3 |
+| `eft_distribution_6d` | 1.3e-3 | 1.3e-3 | 4.7e-5 | 4.3e-7 | 4.3e-7 |
+
+"GP, 5/2" has Matérn 5/2 leaves and the global GP with its default kernel, and
+"5/2 in both" also the global GP with `nu=2.5` (section 10.8).
+
+* **`eft_distribution_6d` is quadratic in its six coefficients**, which the
+  additive kernel of order 2 of the global GP describes: with 800 curves its
+  error is 850 to 2700 times lower than that of the default leaves and 40 to
+  130 times lower than that of Matérn 5/2 leaves.
+* **The alignment also gains with six parameters**: by a factor 1.8 with 800
+  curves, where a leaf of 100 curves spans more of each parameter than with
+  three, and 2.8 with 3200 (3.8 with Matérn 5/2 leaves).
+
+Global networks that take `x` into account, each alone, fitted once to 800
+curves, NRMSE on the test curves:
+
+| family | one output per grid point | with a warp of its grid | grid coordinate as an input |
+|---|---:|---:|---:|
+| `matter_power` | 1.0e-4 | 3.6e-4 | 2.3e-3 |
+| `z_lineshape` | 5.6e-4 | 4.2e-4 | 8.1e-4 |
+| `zprime_spectrum` | 1.1e-2 | 4.4e-3 | 4.1e-3 |
+| `kinematic_edge`, 128 points | 5.6e-3 | 2.6e-3 | 2.7e-3 |
+| `cmb_peaks` | 2.2e-4 | 4.8e-4 | 1.4e-2 |
+| `ringdown` | 2.4e-3 | 1.2e-2 | 7.1e-2 |
+| `peak_counts_mc` | 4.0e-3 | 2.2e-3 | 5.5e-3 |
+
+* **The grid coordinate as one more input**, `(theta, u) -> f(u; theta)`,
+  is 2 to 2.7 times more accurate than one output per grid point on the two
+  families with a sharp feature that moves and 20 to 65 times less accurate
+  on `matter_power`, `cmb_peaks` and `ringdown`. Its fit takes 15 to 20 times
+  as long.
+* **A warp of the output grid**: a second head gives the knots of a monotone
+  map of the grid, and the network's curve is read at the mapped positions.
+  It is 2.2 to 2.5 times more accurate on the sharp features and 1.8 on the
+  noisy histograms, and 2 to 5 times less accurate on `matter_power`,
+  `cmb_peaks` and `ringdown`. As the global model of `'shared'` leaves it
+  lowered the error on the stream by a factor 1.4 on `zprime_spectrum` and
+  1.6 on `kinematic_edge` with 128 points, where `'aligned'` gives 4 and 14.
+
+The curve as a single-output target with `x` as one more input: 200 curves
+as `200 p` points of a stream in random order, with and without the network.
+NRMSE on the test curves, and the time of the stream:
+
+| family | tree on `(x, theta)` | with the network | `'shared'`, 5/2 | `'aligned'`, 5/2 |
+|---|---:|---:|---:|---:|
+| `z_lineshape` | 7.8e-4, 68 s | 6.8e-5, 147 s | 7.1e-5, 1.3 s | 2.4e-5, 2.8 s |
+| `zprime_spectrum` | 1.6e-2, 149 s | 7.4e-3, 191 s | 1.4e-2, 1.7 s | 5.4e-3, 4.8 s |
+
+With the network the single-output tree has the error of `'shared'` on
+`z_lineshape` and half of it on `zprime_spectrum`, at 100 times the time. On a
+stream it is 8 times better than with `fit` (section 10.5), which does not use
+the fitted length scales for its splits.
+
+A grid relative to a known position. 800 curves, `'shared'` and `'aligned'`
+with the default leaves, RMSE of the last 400 predictions in the unit of the
+curve:
+
+| family and grid | shared | aligned |
+|---|---:|---:|
+| `zprime_spectrum`, 128 points in `m` [dex] | 0.102 | 0.025 |
+| `zprime_spectrum`, 128 points in `m / M` [dex] | 0.015 | 0.0091 |
+| `kinematic_edge`, 128 points in `m` [events] | 3.9e-3 | 2.9e-4 |
+| `kinematic_edge`, 128 points in `m / endpoint` [events] | 3.0e-4 | 3.0e-4 |
+
+On the grid in `m / endpoint` the edge does not move, every leaf declines the
+alignment, and `'shared'` has the error that `'aligned'` has on the grid in
+`m`. On the grid in `m / M` the peak does not move and the dip below it does.
+
+### 10.8 Leaf kernels for curves
+
+Streams of 800 curves as in section 10.1, one seed, with the default leaf
+kernel (Matérn 3/2) and with Matérn 5/2 (`Default_GPR(nu=2.5)`, "5/2"), and
+with the additive GP as the global model, with its default kernel ("GP, 5/2")
+or with Matérn 5/2 in it too (`global_mean_kwargs=dict(nu=2.5)`, "5/2 in
+both"). NRMSE of the last 400 predictions:
+
+| family | shared | shared, 5/2 | shared + GP, 5/2 | shared + GP, 5/2 in both | aligned | aligned, 5/2 | aligned + GP, 5/2 | aligned + GP, 5/2 in both |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `matter_power` | 5.0e-5 | 1.2e-5 | 1.4e-5 | 1.0e-5 | 5.0e-5 | 1.2e-5 | 1.4e-5 | 1.0e-5 |
+| `eft_distribution` | 1.5e-4 | 2.5e-6 | 2.1e-6 | 1.3e-6 | 1.5e-4 | 2.5e-6 | 2.1e-6 | 1.3e-6 |
+| `jet_spectrum` | 5.6e-5 | 1.7e-5 | 9.0e-6 | 7.2e-6 | 5.6e-5 | 1.7e-5 | 9.0e-6 | 7.2e-6 |
+| `dust_sed` | 1.3e-5 | 3.2e-6 | 2.6e-6 | 2.6e-6 | 1.3e-5 | 3.2e-6 | 2.6e-6 | 2.6e-6 |
+| `z_lineshape` | 2.6e-4 | 4.2e-5 | 7.4e-5 | 2.5e-5 | 6.4e-5 | 3.2e-5 | 2.3e-5 | 1.8e-5 |
+| `zprime_spectrum` | 8.2e-3 | 8.9e-3 | 9.7e-3 | 9.8e-3 | 2.0e-3 | 2.1e-3 | 2.1e-3 | 2.1e-3 |
+| `kinematic_edge` | 1.3e-3 | 8.2e-4 | 1.1e-3 | 9.3e-4 | 7.8e-4 | 1.0e-3 | 1.0e-3 | 1.0e-3 |
+| `kinematic_edge`, 128 points | 1.4e-3 | 8.8e-4 | 1.1e-3 | 9.7e-4 | 1.0e-4 | 4.4e-5 | 4.4e-5 | 4.4e-5 |
+| `oscillation_probability` | 1.1e-3 | 4.7e-4 | 4.3e-4 | 2.7e-4 | 1.1e-3 | 4.7e-4 | 4.3e-4 | 2.7e-4 |
+| `cmb_peaks` | 1.9e-4 | 3.3e-5 | 1.1e-4 | 2.4e-5 | 1.2e-4 | 2.2e-5 | 2.4e-5 | 2.2e-5 |
+| `form_factor` | 4.7e-3 | 4.9e-3 | 4.2e-3 | 4.2e-3 | 4.7e-3 | 4.9e-3 | 4.2e-3 | 4.2e-3 |
+| `ringdown` | 2.8e-3 | 1.4e-3 | 1.8e-3 | 7.7e-4 | 8.8e-4 | 4.7e-4 | 4.7e-4 | 4.7e-4 |
+| `peak_counts_mc` | 4.1e-3 | 3.9e-3 | 3.3e-3 | 3.0e-3 | 4.1e-3 | 3.9e-3 | 3.3e-3 | 3.0e-3 |
+
+* **Matérn 5/2 leaves lower the error of `'shared'` by a factor
+  3.1 (0.93 to 58)** in the geometric mean over the twelve
+  families, at the same time per update. The largest gains are on the smooth
+  families, and on `zprime_spectrum` and `form_factor` the error is 4 to 9%
+  higher.
+* **With `'aligned'` the gain over the default `'shared'` is
+  4 (0.95 to 58)**, against
+  1.5 (1 to 4.1) for `'aligned'` with the default leaves.
+  On `kinematic_edge` with 64 points, where the grid hardly resolves the
+  edge, half of the leaves keep an alignment and the error is 1.2 times
+  that of `'shared'` with Matérn 5/2 leaves, and twice that on the test
+  curves (section 10.6).
+* **The global GP needs the smoother kernel too.** With its default kernel it
+  raises the error of Matérn 5/2 `'shared'` leaves on six families, by up
+  to a factor 3.3 (`cmb_peaks`). With Matérn 5/2 in both it lowers it on the
+  ten families without a sharp feature, by a factor 1.2 to 2.4, and raises
+  it by 10 to 13% on `zprime_spectrum` and `kinematic_edge`:
+  4.3 (0.84 to 110) over the default `'shared'`.
+* **`'aligned'` with Matérn 5/2 in the leaves and in the global GP** has
+  5.3 (1.1 to 110) over the default `'shared'`: the
+  lowest error of the eight columns on ten families, 5% above it on
+  `zprime_spectrum` and 30% above it on `kinematic_edge` with 64 points. The
+  global GP adds a factor 1.3 to `'aligned'` with Matérn 5/2 leaves in the
+  geometric mean, between 1.0 and 2.3. Over three seeds the gain over the
+  default `'shared'` is 5.3, 4.8 and 5.3, between 0.97 and 128 for a single
+  family, and 4.0, 3.9 and 4.6 without the global GP.
+* **Coverage** is 0.59 to 0.72 for these columns on the exact curves.
+
+RBF leaves (`Default_GPR(nu=float('inf'))`), six families:
+
+| family | shared | shared, 5/2 | shared, RBF | aligned | aligned, 5/2 | aligned, RBF |
+|---|---:|---:|---:|---:|---:|---:|
+| `matter_power` | 5.0e-5 | 1.2e-5 | 1.5e-5 | 5.0e-5 | 1.2e-5 | 1.5e-5 |
+| `z_lineshape` | 2.6e-4 | 4.2e-5 | 1.9e-5 | 6.4e-5 | 3.2e-5 | 9.6e-6 |
+| `cmb_peaks` | 1.9e-4 | 3.3e-5 | 8.3e-6 | 1.2e-4 | 2.2e-5 | 8.3e-6 |
+| `kinematic_edge`, 128 points | 1.4e-3 | 8.8e-4 | 8.8e-4 | 1.0e-4 | 4.4e-5 | 3.9e-5 |
+| `zprime_spectrum` | 8.2e-3 | 8.9e-3 | 6.1e-2 | 2.0e-3 | 2.1e-3 | 4.2e-3 |
+| `peak_counts_mc` | 4.1e-3 | 3.9e-3 | 3.9e-3 | 4.1e-3 | 3.9e-3 | 3.9e-3 |
+
+RBF leaves are 2 to 4 times better than Matérn 5/2 leaves on `z_lineshape`
+and `cmb_peaks`, and 7 times worse on `zprime_spectrum` with `'shared'` and 2
+times worse with `'aligned'`.
+
+3200 curves, NRMSE of the last 1600 predictions:
+
+| family | shared | shared, 5/2 | aligned | aligned, 5/2 | aligned + GP, 5/2 | aligned + GP, 5/2 in both |
+|---|---:|---:|---:|---:|---:|---:|
+| `matter_power` | 3.2e-5 | 2.1e-5 | 3.2e-5 | 2.1e-5 | 5.8e-6 | 5.8e-6 |
+| `z_lineshape` | 9.5e-5 | 1.3e-5 | 2.7e-5 | 1.2e-5 | 1.1e-5 | 8.3e-6 |
+| `zprime_spectrum` | 3.3e-3 | 3.4e-3 | 7.4e-4 | 8.4e-4 | 8.4e-4 | 8.4e-4 |
+| `kinematic_edge`, 128 points | 3.7e-4 | 1.9e-4 | 4.9e-5 | 3.0e-5 | 3.0e-5 | 3.0e-5 |
+| `cmb_peaks` | 9.7e-5 | 1.3e-5 | 5.5e-5 | 9.2e-6 | 1.7e-5 | 7.7e-6 |
+| `peak_counts_mc` | 3.1e-3 | 3.0e-3 | 3.1e-3 | 3.0e-3 | 2.6e-3 | 2.4e-3 |
+
+The gains over the default `'shared'` are 2.4 (0.97 to 7.6)
+for Matérn 5/2 leaves, 4.3 (1.1 to 12) with `'aligned'`,
+and 6.1 (1.3 to 13) with Matérn 5/2 in the global GP
+too. On `matter_power` the error of Matérn 5/2 leaves is higher with 3200
+curves than with 800 (2.1e-5 against 1.2e-5), and the global GP lowers it to
+5.8e-6.
+
+The eleven single-output targets of `examples/target_functions_physics.py`,
+streams of 4000 uniform points, NRMSE of the last 2000 predictions: with
+Matérn 5/2 leaves the error is 8 to 19% higher on eight targets and lower on
+three (`eft_signal_strength` by a factor 2.1, `oscillation_probability` 1.3,
+`signal_yield_mc` 1.1), 1.02 times lower in the geometric mean. Their
+thresholds, cusps and resonances lie in the input space. With a curve as the
+target such a feature lies along the grid, and the kernel only sees how the
+curve changes with the parameters: `jet_spectrum` gains a factor 3.3 from
+Matérn 5/2 leaves as a curve in `p_T`, and loses 18% with `p_T` as an input.
+
+### 10.9 Curves from outside physics, and targets that are not a curve
+
+Sixteen further targets with two to four inputs and 64 to 144 outputs, streams
+of 800 as in section 10.1, two seeds, default leaves. NRMSE of the last 400
+predictions (geometric mean of the seeds), the ratio for each seed, the share
+of the leaves that hold an alignment, and the ratio with Matérn 5/2 leaves:
+
+| target (inputs) | what moves | shared | aligned | shared / aligned, two seeds | leaves aligned | with Matérn 5/2 leaves |
+|---|---|---:|---:|---:|---:|---:|
+| infected fraction of an SIR epidemic against time (3) | a peak | 2.9e-3 | 9.2e-4 | 3.69, 2.72 | 1.00 | 3.50, 2.85 |
+| travelling viscous shock (3) | a steep front | 1.2e-2 | 1.0e-3 | 11, 12 | 1.00 | 8.58, 9.57 |
+| density of a mixture of two Gaussians (4) | two peaks, independently | 7.3e-3 | 1.2e-3 | 6.25, 5.83 | 1.00 | 9.27, 7.43 |
+| gain of a second-order low-pass filter against frequency (3) | a resonance | 3.4e-4 | 4.3e-5 | 9.90, 6.62 | 1.00 | 6.92, 6.07 |
+| elastic, then hardening (3) | a kink | 6.8e-4 | 5.2e-4 | 1.25, 1.35 | 0.60 | 1.24, 1.39 |
+| logistic growth against time (3) | an inflection | 8.3e-4 | 8.5e-4 | 1.07, 0.90 | 0.88 | 1.04, 1.16 |
+| Black-Scholes gamma against the strike (3) | a bell, a little | 1.1e-3 | 1.1e-3 | 1.03, 1.00 | 0.29 | 0.91, 1.00 |
+| drug concentration after an oral dose (3) | a broad peak | 8.1e-4 | 8.1e-4 | 1.00, 1.00 | 0.04 | 1.00, 1.00 |
+| Black-Scholes call price against the strike (3) | nothing | 2.4e-4 | 2.3e-4 | 1.00, 1.06 | 0.08 | 1.00, 1.00 |
+| five fixed shapes with varying amplitudes (3) | nothing | 1.6e-3 | 1.6e-3 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
+| a jump between two grid points (2) | a jump | 2.4e-2 | 2.4e-2 | 1.00, 1.00 | 0.00 | 1.00, 1.48 |
+| a peak on a grid of 12 x 12 points, row by row (3) | a peak, in two directions | 2.6e-3 | 1.5e-3 | 1.83, 1.64 | 0.96 | 1.15, 0.98 |
+| 64 unrelated functions of the inputs (3) | not a curve | 3.2e-3 | 3.2e-3 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
+| `sir_epidemic` with its grid shuffled | not a curve | 2.9e-3 | 2.9e-3 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
+| `viscous_shock` with its grid shuffled | not a curve | 1.2e-2 | 1.2e-2 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
+| `z_lineshape` with its grid shuffled | not a curve | 2.4e-4 | 2.4e-4 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
+
+* **What `'aligned'` needs is a feature that moves along an ordered grid**,
+  whatever the origin of the curve: a factor 3 to 12 for the epidemic peak,
+  the shock front, the two peaks of the mixture and the resonance of the
+  filter.
+* **Where nothing moves, or where the outputs are in no order, every leaf
+  declines**, and the predictions are those of `'shared'`: the three
+  shuffled grids and the unrelated outputs have a ratio of exactly 1.
+* **In between the gain is small and can be a loss.** Over the 64 runs of
+  this table (two kernels, two seeds) `'aligned'` was more than 5% worse
+  than `'shared'` in two, by 10% at most, and on the test curves after the
+  stream in one, by 21% (`stress_strain`).
+* **A stream takes 1.3 to 2.8 times as long** as with `'shared'`.
+* **A surface is not a curve.** Row by row, the peak on the grid of two
+  dimensions gains a factor 1.7 with the default leaves and nothing with
+  Matérn 5/2 leaves: a warp of one ordered grid follows a shift along the
+  rows only. Section 10.12 has the warp of both axes.
+* **Matérn 5/2 leaves and a jump.** They lower the error of `'shared'` on 13
+  of these targets, by a factor 1.3 to 6.2, change nothing on the shock, and
+  raise it by a factor 4 on the jump (0.10 against 0.024), where each output
+  is a step in the parameters.
+
+### 10.10 Other representations of the curve as the outputs (not in the code)
+
+The outputs of the tree are the weights of a representation of the curve, in
+place of its values on the grid, and a prediction is turned back into a curve:
+
+* **B-spline coefficients**: the least-squares coefficients of the curve in a
+  cubic B-spline basis of 48, 64 or 96 functions on uniform knots.
+* **Arc-length knots**: for each curve one position per grid point, at equal
+  steps of the curve's arc length (grid and values each scaled to a length of
+  one), and the curve's values at these positions. The predicted curve is the
+  interpolant through the predicted positions and values.
+
+800 curves added with `batch_update_tree`, default leaves, one seed. NRMSE on
+300 test curves; the first two columns are the curve on its grid:
+
+| family | points in x | shared | aligned | 96 coefficients, shared | 64 coefficients, independent | arc-length knots, shared | 48 coefficients, aligned | 96 coefficients, aligned | arc-length knots, aligned |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `zprime_spectrum` | 128 | 6.9e-3 | 1.8e-3 | 7.0e-3 | 7.7e-3 | 3.2e-3 | 3.7e-3 | 1.6e-3 | 3.2e-3 |
+| `kinematic_edge` | 128 | 5.3e-4 | 8.0e-5 | 5.2e-4 | 1.1e-3 | 3.7e-4 | 2.4e-3 | 1.8e-4 | 1.9e-4 |
+| `viscous_shock` | 128 | 8.0e-3 | 9.5e-4 | 8.4e-3 | | 2.4e-3 | 9.2e-3 | 2.3e-3 | 2.4e-3 |
+| `cmb_peaks` | 128 | 1.9e-4 | 1.0e-4 | 1.9e-4 | | 4.5e-3 | 1.7e-4 | 9.8e-5 | 2.0e-3 |
+| `sir_epidemic` | 97 | 1.5e-3 | 3.7e-4 | 1.5e-3 | 1.4e-3 | 1.3e-3 | 3.9e-4 | 4.9e-4 | 1.2e-3 |
+| `mixture_density` | 96 | 5.3e-3 | 8.7e-4 | 5.3e-3 | 2.3e-3 | 8.3e-3 | 8.4e-4 | 8.5e-4 | 2.8e-3 |
+| `z_lineshape` | 64 | 1.5e-4 | 4.0e-5 | 1.5e-4 | | 3.5e-4 | 3.8e-5 | 1.5e-4 | 3.5e-4 |
+| `matter_power` | 64 | 5.2e-5 | 5.2e-5 | 5.0e-5 | | 3.0e-4 | 4.4e-4 | 5.0e-5 | 3.0e-4 |
+| `peak_counts_mc` | 60 | 3.5e-3 | 3.5e-3 | 3.8e-3 | | 5.8e-3 | 9.5e-3 | 3.8e-3 | 5.8e-3 |
+
+* **A fixed basis with a shared kernel is `'shared'`**: with 96 coefficients
+  the error is within 5% of that on the grid (9% on the noisy histograms).
+  The prediction is the same weighted sum of the leaf's curves, in other
+  coordinates. A peak that moves along the grid passes from one basis function
+  to the next, so each coefficient is as narrow a function of the parameters
+  as the peak is of `x`.
+* **A GP per coefficient** lowers the error on `mixture_density` by a factor
+  2.3 and on none of the other three, at about 15 times the time. With 64
+  coefficients the basis itself has an error of 2e-3 on `zprime_spectrum` and
+  8e-4 on `kinematic_edge`.
+* **Arc-length knots follow a feature without a fit**: against `'shared'` the
+  error is lower by a factor 2.1 on `zprime_spectrum`, 3.3 on `viscous_shock`,
+  1.4 on `kinematic_edge` and 1.2 on `sir_epidemic`. It is higher by 1.6 on
+  `mixture_density`, 1.7 on the noisy histograms and 23 on `cmb_peaks`. With
+  two positions per grid point the error on `z_lineshape` is 1.2e-4 and on
+  `matter_power` 9.6e-5, and the others change by less than 5%. `'aligned'`
+  on the grid is lower on all nine. In a cube of side 0.15 of the parameter
+  range, the part of the knots' values that is not linear in the parameters
+  is 10 to 17 times smaller than that of the grid values for
+  `kinematic_edge` and `viscous_shock`, 2.7 and 1.6 times smaller for
+  `zprime_spectrum` and `mixture_density`, and 4 times larger for the eight
+  peaks of `cmb_peaks`.
+* **`'aligned'` leaves on the coefficients**, which are in the order of the
+  grid. With 48 coefficients the error is within 5% of that of `'aligned'`
+  on the grid for `sir_epidemic`, `mixture_density` and `z_lineshape`, in 9
+  to 11 s against 13 to 18 s. It is 2 to 30 times higher where 48 functions
+  do not represent the curve: the basis alone has an error of 3e-3 on
+  `zprime_spectrum`, 2e-3 on `kinematic_edge`, 7e-3 on `viscous_shock` and
+  4e-4 on `matter_power`. With 96 coefficients for 128 grid points the
+  error is that of the grid on `zprime_spectrum` and `cmb_peaks`, and 2.2
+  and 2.4 times higher on `kinematic_edge` and `viscous_shock`. On the
+  arc-length knots it is never below `'aligned'` on the grid.
+* **Time of the 800 curves**: 4 to 8 s for `'shared'` and 7 to 23 s for
+  `'aligned'` on the grid, 86 to 128 s with a GP per coefficient, 6 to 13 s
+  for the arc-length knots, 6 to 11 s and 10 to 18 s for `'aligned'` on 48
+  and 96 coefficients.
+
+### 10.11 Parameters with mixed effects, and oblique leaves
+
+A family is evaluated in a rotated cube of its parameter space, so that each
+input of the tree is a combination of the family's parameters:
+`theta_family = 0.5 + (theta - 0.5) R / s` with a random rotation `R` and `s`
+the largest column sum of `|R|`, for which the cube stays inside the unit
+cube. The reference is the cube of the same size along the family's own axes
+(`R = 1`). 800 curves added with `batch_update_tree`, default leaves and
+`Default_GPR(oblique=True)`, two rotations. NRMSE on 300 test curves,
+geometric mean of the two rotations:
+
+| family | leaves | own axes | own axes, oblique | rotated | rotated, oblique | rotated / own | rotated / rotated oblique | rotated oblique / own |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `zprime_spectrum` | shared | 3.5e-3 | 2.8e-3 | 1.3e-2 | 4.7e-3 | 3.9 | 2.9 | 1.3 |
+| | aligned | 3.1e-4 | 3.2e-4 | 1.2e-3 | 6.3e-4 | 3.8 | 1.9 | 2.0 |
+| `sir_epidemic` | shared | 3.4e-4 | 1.8e-4 | 6.9e-4 | 3.8e-4 | 2.0 | 1.8 | 1.1 |
+| | aligned | 7.5e-5 | 7.5e-5 | 1.9e-4 | 1.1e-4 | 2.6 | 1.7 | 1.5 |
+| `cmb_peaks` | shared | 5.5e-5 | 5.5e-5 | 1.2e-4 | 7.4e-5 | 2.2 | 1.7 | 1.3 |
+| | aligned | 3.5e-5 | 3.5e-5 | 5.4e-5 | 4.7e-5 | 1.5 | 1.2 | 1.3 |
+| `matter_power` | shared | 2.6e-5 | 2.6e-5 | 5.8e-5 | 3.0e-5 | 2.2 | 1.9 | 1.1 |
+| | aligned | 2.6e-5 | 2.6e-5 | 5.8e-5 | 3.0e-5 | 2.2 | 1.9 | 1.1 |
+| `mixture_density` | shared | 1.0e-3 | 1.0e-3 | 2.2e-3 | 1.4e-3 | 2.1 | 1.6 | 1.3 |
+| | aligned | 1.7e-4 | 1.7e-4 | 2.0e-4 | 2.0e-4 | 1.2 | 1.0 | 1.2 |
+| `kinematic_edge`, 128 points | shared | 1.6e-4 | 1.6e-4 | 5.1e-3 | 4.2e-4 | 32 | 12 | 2.7 |
+| | aligned | 4.4e-5 | 4.4e-5 | 7.6e-5 | 5.1e-5 | 1.7 | 1.5 | 1.2 |
+| `z_lineshape` | shared | 6.0e-5 | 6.0e-5 | 2.5e-4 | 6.2e-5 | 4.2 | 4.1 | 1.0 |
+| | aligned | 1.7e-5 | 1.7e-5 | 3.0e-5 | 2.1e-5 | 1.8 | 1.5 | 1.2 |
+
+* **The rotation costs `'shared'` a factor 2.0 to 4.2**, and 32 on
+  `kinematic_edge`, whose curves depend on one of the three parameters far
+  more than on the others. `'aligned'` loses a factor 1.2 to 3.8: its warp is
+  linear in the offsets in any direction.
+* **Oblique leaves recover a factor 1.6 to 4.1 for `'shared'`** (12 on
+  `kinematic_edge`) and 1.0 to 1.9 for `'aligned'`, and leave the error
+  within a factor 1.0 to 1.3 (2.7) and 1.1 to 2.0 of that on the family's own
+  axes.
+* **On the family's own axes** the leaves of five families declined the
+  shear, with unchanged predictions. Those of `zprime_spectrum` and
+  `sir_epidemic` kept it with `'shared'`, for an error 1.2 and 1.9 times
+  lower. With `'aligned'` the error changed by 2% at most.
+* **The kernel alone, in one leaf.** 100 curves of five of the families in a
+  cube of side 0.5 or 0.25 of the rotated space, 300 test curves, one
+  shared-kernel GP: the oblique kernel has 1.4 to 5.8 times the accuracy of
+  the default kernel, and 1.0 to 1.9 times that of the default kernel on the
+  parameters turned back onto the family's own axes.
+* **The kernel without the cuts**, in the tree: a factor 1.4 to 3.1 for
+  `'shared'` on the rotated families, and an error 1.3 to 3.1 times that on
+  the own axes (10 on `kinematic_edge`).
+* **Time of the 800 curves**: 1.1 to 2.8 times that of the default leaves.
+
+The eleven single-output targets of `examples/target_functions_physics.py`,
+2000 points added with `batch_update_tree`, one rotation. NRMSE on 1000 test
+points, and the time of the 2000 points on the own axes:
+
+| target | inputs | own axes | own axes, oblique | rotated | rotated, oblique | rotated / own | rotated / rotated oblique | s, default | s, oblique |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `resonance_xsec` | 4 | 2.4e-2 | 1.8e-2 | 2.9e-2 | 8.6e-3 | 1.2 | 3.4 | 15 | 34 |
+| `dilepton_spectrum` | 4 | 2.3e-2 | 7.2e-3 | 4.2e-2 | 8.0e-3 | 1.9 | 5.3 | 10 | 35 |
+| `jet_spectrum` | 4 | 1.1e-4 | 1.1e-4 | 7.5e-4 | 2.2e-4 | 6.7 | 3.5 | 18 | 41 |
+| `oscillation_probability` | 5 | 1.8e-3 | 1.4e-3 | 4.8e-2 | 9.9e-3 | 27 | 4.9 | 9 | 39 |
+| `branching_ratio` | 5 | 3.5e-2 | 2.6e-2 | 1.5e-1 | 7.1e-2 | 4.2 | 2.1 | 11 | 40 |
+| `loop_decay_width` | 4 | 1.9e-3 | 1.8e-3 | 1.1e-2 | 2.6e-3 | 5.8 | 4.3 | 10 | 29 |
+| `relic_density` | 4 | 1.2e-2 | 3.1e-3 | 4.3e-2 | 3.7e-3 | 3.7 | 12 | 16 | 42 |
+| `neutralino_mass` | 4 | 9.2e-4 | 1.1e-3 | 3.8e-3 | 1.3e-3 | 4.2 | 2.9 | 10 | 31 |
+| `eft_signal_strength` | 6 | 1.6e-3 | 1.8e-3 | 1.5e-3 | 1.7e-3 | 1.0 | 0.9 | 10 | 52 |
+| `signal_yield_mc` | 4 | 2.1e-3 | 2.1e-3 | 2.2e-3 | 2.3e-3 | 1.0 | 1.0 | 11 | 17 |
+| `global_fit_loglike` | 10 | 5.5e-3 | 5.9e-3 | 6.6e-2 | 4.2e-2 | 12 | 1.6 | 18 | 137 |
+
+* **On the rotated inputs** oblique leaves lower the error by a factor 2.1
+  to 12 on eight targets and 1.6 on the target with ten inputs. On the two
+  that the rotation does not make harder they change it by 5 to 10%.
+* **On the targets' own parameters** the error is lower on six targets, by a
+  factor 1.3 to 3.8 on five, and higher on three, by 7 to 20%. With one
+  output the leave-one-out error of 100 points decides on up to 45 entries
+  of the shear.
+* **The 2000 points take 1.5 to 5 times as long**, and 8 times with ten
+  inputs.
+* **The coverage** is 0.61 to 0.77 with the default and with the oblique
+  leaves (0.96 to 0.98 for the noisy target).
+
+A rotation of the whole parameter space, in place of a kernel per leaf (not
+in the code): the eigenvectors of the mean of `J J^T`, with `J` the slopes of
+the curves in the parameters from linear fits to the 18 to 24 nearest
+curves, as the inputs of a tree with default leaves. Same curves and
+rotations:
+
+| family | rotated / rotated with the learned rotation, shared | aligned | own axes / own axes with the learned rotation, shared | aligned |
+|---|---:|---:|---:|---:|
+| `zprime_spectrum` | 2.7 | 2.1 | 1.2 | 1.1 |
+| `sir_epidemic` | 1.5 | 1.3 | 1.3 | 0.7 |
+| `cmb_peaks` | 1.7 | 1.4 | 0.8 | 1.3 |
+| `matter_power` | 1.2 | 1.2 | 0.4 | 0.4 |
+| `mixture_density` | 1.3 | 0.5 | 0.9 | 0.9 |
+| `kinematic_edge`, 128 points | 12 | 1.9 | 0.8 | 1.4 |
+| `z_lineshape` | 4.2 | 1.7 | 1.0 | 1.1 |
+
+The directions in which the curves change most are not always those of their
+length scales: on the own axes of `matter_power` this rotation makes the
+error 2.4 times higher.
+
+### 10.12 Functions on a grid of two dimensions
+
+Five families of functions on a grid of 32 x 32 points (surfaces) with three
+parameters each, four of them in `examples/multioutput_surfaces.py`: a peak
+whose centre moves along both axes and whose width changes (`peak`), two
+peaks side by side that move in opposite directions along the second axis
+(`two_peaks`), a ring about the centre of the grid with a radius that
+changes (`ring`), a resonance along the first axis at a position that moves,
+on a spectrum that falls along the second axis at a rate that changes
+(`ridge`), and three fixed shapes with varying amplitudes (`smooth`). 800
+surfaces added with `batch_update_tree`, default leaves, one seed. NRMSE on
+300 test surfaces, for `'shared'`, for `'aligned'` with the surface taken as
+a curve of 1024 points, and for `'aligned'` with `output_shape=(32, 32)`:
+
+| family | shared | aligned, as a curve | aligned, as a surface | shared / as a curve | shared / as a surface | leaves aligned, as a surface |
+|---|---:|---:|---:|---:|---:|---:|
+| `peak` | 2.4e-3 | 6.3e-4 | 3.0e-4 | 3.9 | 8.2 | 1.00 |
+| `two_peaks` | 6.6e-4 | 2.2e-4 | 1.1e-4 | 3.0 | 5.8 | 1.00 |
+| `ring` | 5.1e-4 | 5.1e-4 | 2.6e-4 | 1.0 | 2.0 | 1.00 |
+| `ridge` | 4.0e-4 | 4.0e-4 | 4.0e-4 | 1.0 | 1.0 | 0.00 |
+| `smooth` | 1.6e-6 | 1.6e-6 | 1.6e-6 | 1.0 | 1.0 | 0.00 |
+
+* **The warp of both axes lowers the error by a factor 2.0 to 8.2** on the
+  three families with a feature that moves across the grid, and its leaves
+  decline on the other two, with the predictions of `'shared'`.
+* **As a curve** the surface gains where the feature moves along the rows,
+  which is the order of the outputs: half as much as with the warp of both
+  axes for the two families with peaks, and nothing for the ring.
+* **The coverage** is 0.61 to 0.69 for the three.
+
+Single leaves: 100 surfaces in a cube of side 0.5 or 0.3 of the parameter
+range, 200 test surfaces in the same cube, three positions of the cube, one
+shared-kernel GP on the surfaces or on the aligned surfaces. NRMSE on the test
+surfaces, and the ratio of the leave-one-out errors that decides on the
+alignment:
+
+| family | side | shared | aligned | shared / aligned | the same from leave-one-out |
+|---|---:|---:|---:|---:|---:|
+| `peak` | 0.5 | 2.8e-3 | 2.3e-4 | 12 | 14 |
+| | 0.3 | 8.7e-4 | 6.9e-5 | 13 | 14 |
+| `two_peaks` | 0.5 | 7.1e-4 | 1.2e-4 | 6.0 | 6.3 |
+| | 0.3 | 2.2e-4 | 4.2e-5 | 5.2 | 5.5 |
+| `ring` | 0.5 | 1.2e-3 | 4.7e-4 | 2.6 | 2.7 |
+| | 0.3 | 3.6e-4 | 2.1e-4 | 1.7 | 1.9 |
+| `ridge` | 0.5 | 2.1e-4 | 2.0e-4 | 1.1 | 1.1 |
+| | 0.3 | 5.9e-5 | 6.3e-5 | 0.9 | 0.9 |
+| `smooth` | 0.5 | 4.3e-6 | 3.7e-6 | 1.2 | 1.2 |
+| | 0.3 | 2.2e-6 | 2.2e-6 | 1.0 | 1.0 |
+
+* **The bound and the ridge of the warp.** With the hard bound of the curves
+  on the exponent of the warp and their ridge of 0.001, the leaves of `peak`
+  with side 0.5 had the test error of `'shared'` (2.8e-3) at a leave-one-out
+  error of 1.0e-3: the median error of a test surface was that of the
+  leave-one-out predictions, and the largest 300 times the median, at the
+  corners of the cube. With the `tanh` bound and ridges of 0.001, 0.01, 0.03,
+  0.1 and 0.3 the test error was 7.5e-4, 2.9e-4, 2.3e-4, 2.6e-4 and 3.6e-4,
+  and for `two_peaks` 2.0e-4, 1.4e-4, 1.2e-4, 1.1e-4 and 1.5e-4. The code has
+  0.03.
+* **The aligned surface read back, against each surface warped into the frame of
+  the query** (with the hard bound, side 0.25): with the aligned surfaces on
+  the grid itself the error was 6.6e-5 against 3.9e-5 for `peak` and 1.0e-4
+  against 3.2e-5 for `two_peaks`. On a grid with twice the points along each
+  axis it was 4.0e-5 against 4.0e-5 and 3.9e-5 against 3.3e-5, at 7 ms for
+  a prediction against 80 ms.
+* **A warp of each axis that is the same along the other one** cannot move
+  the two peaks of `two_peaks` in opposite directions. The network below has
+  such a warp, and no gain on that family.
+* **Time on one core**, 800 surfaces of `peak` and `two_peaks`: 46 to 48 s for
+  `'shared'`, 106 to 116 s for `'aligned'` as a curve and 178 to 204 s as an
+  surface. A prediction takes 0.1 ms, 10 ms and 5 to 6 ms.
+* **The same ridge for curves** changes little: with 0.03 in place of 0.001
+  in the warp of a curve, the error of `'aligned'` on 800 curves was 1.3
+  times lower for `zprime_spectrum`, 1.1 times higher for `kinematic_edge`
+  on 64 points, and within 3% for five other families (two seeds). The warp
+  of a curve is unchanged.
+
+A global warp from a network, in place of a warp per leaf (not in the code).
+A network with two hidden layers of 64 units maps the parameters to the knots
+of the warp, and is trained so that curves at neighbouring parameters agree
+after the warp: the squared difference of each curve and its 8 nearest
+neighbours, each read at its own warp and integrated over the grid of either
+curve, over the squared distance of their parameters. A tree with `'shared'`
+leaves learns the aligned curves on a grid three times as fine (twice for
+surfaces), and its prediction is read back through the warp of the query. 800
+curves or surfaces, one seed, NRMSE on 300 test curves:
+
+| family | shared | aligned | network warp, shared leaves |
+|---|---:|---:|---:|
+| `zprime_spectrum` | 6.9e-3 | 1.8e-3 | 1.5e-3 |
+| `viscous_shock` | 8.0e-3 | 9.5e-4 | 1.0e-3 |
+| `kinematic_edge`, 128 points | 5.3e-4 | 8.0e-5 | 2.4e-4 |
+| `mixture_density` | 5.3e-3 | 8.7e-4 | 2.0e-3 |
+| `sir_epidemic` | 1.5e-3 | 3.7e-4 | 5.9e-4 |
+| `z_lineshape` | 1.5e-4 | 4.0e-5 | 1.8e-4 |
+| `cmb_peaks` | 1.9e-4 | 1.0e-4 | 2.1e-4 |
+| `matter_power` | 5.2e-5 | 5.2e-5 | 1.7e-3 |
+| `peak` (surface) | 2.4e-3 | 3.0e-4 | 4.4e-4 |
+| `two_peaks` (surface) | 6.6e-4 | 1.1e-4 | 7.3e-4 |
+| `ring` (surface) | 5.1e-4 | 2.6e-4 | 4.3e-4 |
+| `ridge` (surface) | 4.0e-4 | 4.0e-4 | 9.4e-4 |
+
+For the surfaces the network gave one warp per axis, the same along the other
+axis. The network took 45 to 134 s to train for the curves, where the whole
+`'aligned'` tree takes 13 to 23 s, and 22 minutes for the surfaces. It has no
+test that declines it: where nothing moves the error is up to 33 times that
+of `'shared'`.
