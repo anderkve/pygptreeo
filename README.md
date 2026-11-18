@@ -67,6 +67,23 @@ for i in range(len(X_test)):
 # print(gpt.root)
 ```
 
+## Adding many points at once
+
+`update_tree` takes a single data point. A set of data points can be passed to `batch_update_tree`, which adds them to the tree one by one in the same way:
+
+```python
+gpt.batch_update_tree(X_train, y_train, sigma_train)   # arrays of shape (N, d), (N,) and (N,)
+```
+
+For a tree without data points there is also `fit`, which first builds the tree from all the data points and then trains each leaf GP once:
+
+```python
+gpt = GPTree(Nbar=50)
+gpt.fit(X_train, y_train, sigma_train)
+```
+
+This is faster, by a factor of about 2.5 for 5000 points in our tests, with a similar accuracy. However, the uncertainty calibration is based on the predictions made for each point before it is added to the tree, so after `fit` the predicted uncertainties are the uncalibrated GP uncertainties. They become calibrated as further points are added with `update_tree` or `batch_update_tree`. `fit` raises an error for a tree that already holds data points.
+
 ## Selecting a leaf kernel
 
 By default each leaf GP uses an anisotropic Matérn kernel, `ConstantKernel() * Matern(nu=1.5)`, with one length scale per input dimension. The fitted length scales also determine the split dimension: with the default setting `split_dimension_criteria='min_lengthscale'` a leaf is split along the dimension with the smallest length scale, i.e. the dimension along which the target function varies fastest. For kernels without per-dimension length scales the dimension with the largest spread in the data points is used instead.
@@ -99,7 +116,7 @@ gpt.fit(X_train, Y_train, sigma_train)    # Y_train has shape (N, 100)
 Y_pred, Y_std = gpt.predict(X_test)
 ```
 
-In this example the tree is trained in batch mode with `fit`. Note that the uncertainty calibration is based on the predictions made for each point before it is added to the tree in `update_tree`, so after a batch fit the predicted uncertainties are the uncalibrated GP uncertainties. See `examples/multioutput_function_learning_pca.py` for a comparison of the three options.
+In this example the tree is trained in batch mode with `fit`, so the predicted uncertainties are the uncalibrated GP uncertainties (see the section on adding many points at once). See `examples/multioutput_function_learning_pca.py` for a comparison of the three options.
 
 ## Global models (optional)
 
@@ -137,7 +154,7 @@ gpt = GPTree(Nbar=100, predict_from='neighbours')
 
 The leaf that the input point falls in still provides the kernel hyperparameters and the calibration of the predicted uncertainty. Where the nearest data points are poorly described by that kernel, e.g. across a jump in the target function or for an input point far from all data, the prediction gradually changes over to that of the leaf's own GP. Most leaves are kept asleep (see the next section), which in our tests reduced the memory use of the tree to between a quarter and two thirds.
 
-In our tests with streams of 20 000 points the prediction error was reduced by 29% on average, and by 27-37% for input streams that move through the input space. A prediction takes about 4 times as long as with the default setting (0.7-0.9 ms instead of about 0.2 ms), and an `update_tree` call 40-70% longer. This option requires the scikit-learn interface. See [`docs/benchmarks.md`](docs/benchmarks.md) (section 8) for the benchmark results and [`docs/design.md`](docs/design.md) for the details.
+In our tests with streams of 20 000 points the prediction error was reduced by 29% on average, and by 27-37% for input streams that move through the input space. A prediction takes about 4 times as long as with the default setting (0.7-0.9 ms instead of about 0.2 ms), and an `update_tree` call 40-70% longer. This option requires the scikit-learn interface. See [`docs/benchmarks.md`](docs/benchmarks.md) (section 9) for the benchmark results and [`docs/design.md`](docs/design.md) for the details.
 
 
 ## Limiting the memory use (optional)
@@ -154,6 +171,29 @@ The tree then keeps its own estimate of its size, available as `gpt.memory_mb`, 
 - When putting leaves to sleep is no longer enough, it removes the leaf that has gone longest without receiving a data point, together with its data points and its GP. The leaf's sibling in the tree takes over its region.
 
 With `predict_from='neighbours'` most leaves are asleep already (see above). The limit is then reached later, and leaves are only removed once the tree with its leaves asleep exceeds the limit. In our tests the tree kept about 50% more data points at the same limit than with all leaves awake.
+
+## Fitting the leaves in other processes (optional)
+
+Most of the time of an update is spent on optimising the kernel hyperparameters of a leaf. This step can be carried out in other processes, for instance by MPI workers, while one process holds the tree:
+
+```python
+from pygptreeo import GPTree, solve_fit_task
+
+gpt = GPTree(Nbar=100)
+
+# In the process that holds the tree
+task = gpt.update_tree(x, y, sigma, defer_fits=True)   # a fit task, or None
+if task is not None:
+    send_to_a_worker(task)
+gpt.apply_fit_result(result)                           # for each result that comes back
+
+# In a worker process
+result = solve_fit_task(task)
+```
+
+With `defer_fits=True` a leaf that is due a fit is not fitted in `update_tree`. The fit is returned as a task: a small dictionary that can be pickled, with the data points of the leaf. `solve_fit_task` optimises the hyperparameters and returns them, and `apply_fit_result` refits the leaf with these hyperparameters to the data points that it holds by then. Until the result is applied the leaf keeps its previous hyperparameters, and new data points are added to its GP as usual. For a set of data points, `batch_update_tree(X, y, sigma, defer_fits=True)` returns the list of tasks.
+
+pyGPTreeO only creates the tasks and applies the results. Sending them between processes is left to the user. `examples/mpi_fit_workers.py` is a complete example with `mpi4py`, in which the process that holds the tree handled around three times as many data points per second with fit workers. Note that this option requires the scikit-learn interface and, for multi-output targets, `output_model='independent'`. Otherwise the leaves are fitted in `update_tree` as before.
 
 ## Using GPyTorch
 

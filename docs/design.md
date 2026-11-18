@@ -3,7 +3,8 @@
 Why the tree has a global model, how the mechanism works, how the tree stays
 within a fixed size, how a point reaches a leaf's GP between two fits, how a
 prediction can use the points of other leaves, how the leaf of a point is
-found, what was tried and dropped, and what is still open. The measurements
+found, how a leaf's fit can run in another process, how a batch of points is
+added, what was tried and dropped, and what is still open. The measurements
 are in [`benchmarks.md`](benchmarks.md).
 
 ## What is global and what is local
@@ -165,7 +166,7 @@ fixed size: a fitted leaf takes 40 kB at `Nbar=50` in three dimensions and
 `GPTree(predict_from='neighbours')` conditions a prediction on the stored
 points nearest to the query, in place of the points of the query's leaf
 (`pygptreeo/neighbours.py`). The measurements are in `docs/benchmarks.md`,
-section 8.
+section 9.
 
 * **Most queries lie at an edge of their leaf.** The points of a leaf lie on
   one side of each of its cuts, and in several dimensions most of a cell is
@@ -180,7 +181,7 @@ section 8.
   says how many points a prediction can rest on. With 100 points in a leaf,
   150 neighbours gave an error 6% lower at more than three times the
   factorisation, and 100 neighbours the same error with 200 points in a
-  leaf as with 100 (`docs/benchmarks.md`, sections 8.2 and 8.20). The other
+  leaf as with 100 (`docs/benchmarks.md`, sections 9.2 and 9.20). The other
   settings are constants of `pygptreeo/neighbours.py`, named
   `NEIGHBOUR_...` below, with the values of the benchmarks. A tree keeps
   what it was built with on its `NeighbourSearch`, so a saved tree predicts
@@ -212,7 +213,7 @@ section 8.
   switch at the limit the prediction steps where the consistency crosses
   it: along lines across the whole input space the steps above one sigma
   are fewer by a third to two thirds with the mixture, and the largest
-  about half as high (`docs/benchmarks.md`, section 8.20).
+  about half as high (`docs/benchmarks.md`, section 9.20).
 * **A lower limit for a query outside its neighbours**
   (`NEIGHBOUR_CONSISTENCY_OUTSIDE`, 3). Away from the data the neighbours
   of a query come from several leaves and span many times the range of
@@ -252,7 +253,7 @@ section 8.
   continuous in the query while its leaf and the leaves searched stay the
   same. It then steps as often as the leaves' own predictions and by less,
   for 1% more error than without fading in the median run and 3% in the
-  mean of 150 runs (`docs/benchmarks.md`, sections 8.14 and 8.15).
+  mean of 150 runs (`docs/benchmarks.md`, sections 9.14 and 9.15).
 * **The unit of that noise** is what decides whether a point still counts:
   its variance given the other neighbours, which the kernel sets. The
   median variance that the leaf's GPs gave their last predictions is of that
@@ -336,11 +337,11 @@ section 8.
   an update takes 40 to 70% longer. Both times grow slowly with the stream,
   by about a quarter from
   5000 to 200 000 points, as leaves get faces along more inputs
-  (`docs/benchmarks.md`, section 8.17). The gradual change to the leaf's
+  (`docs/benchmarks.md`, section 9.17). The gradual change to the leaf's
   own GP asks for that GP wherever the weight of the neighbours is below
   1, and wakes its leaf for it: at most 0.5% on an update, 4% on a
   prediction along the stream and 11% on one at a uniform test point
-  (section 8.21).
+  (section 9.21).
 
 ## An index of the leaves
 
@@ -363,7 +364,7 @@ section 8.
   those cuts, so the boxes of the groups do not overlap, and a search opens
   few groups however many there are: 5 at 20 000 points and 9 at a million
   for the 16 nearest leaves in six dimensions (`docs/benchmarks.md`,
-  section 8.9).
+  section 9.9).
 * **Three boxes per leaf.** The cell that the cuts give the leaf, which
   finds the leaf of a point; the bounding box of its stored points, which
   bounds the distance from a query to the leaf's points for the neighbour
@@ -382,6 +383,61 @@ section 8.
   it, so that saving does not recurse through the levels. A node that is
   pickled or copied on its own, without its tree, comes back without its
   links.
+
+## Fits in other processes
+
+`update_tree(defer_fits=True)` returns the fit that a leaf is due as a task,
+`solve_fit_task` carries it out in any process, and `apply_fit_result` gives
+its result to the tree. The tree has no part in sending them.
+
+* **A fitted leaf is its points and its hyperparameters.** Optimising the
+  hyperparameters takes 60 ms for 100 points in six dimensions, and three
+  quarters of the time of an update. The factorisation that follows from the
+  points and the hyperparameters takes 1.3 ms. So the points stay with the
+  tree and only the optimisation is handed out.
+* **The result is the hyperparameters alone.** The leaf is refitted with them
+  to the points it holds when the result arrives, which include those that
+  arrived in the meantime. A GP fitted by the worker would lack them. Applied
+  at once, the result gives the same leaf as a fit in place.
+* **The result is applied in the frame of its task.** The hyperparameters
+  belong to the scaling of the points they were found for, so the tree keeps
+  the scalers of a task until its result arrives and the leaf takes them with
+  the hyperparameters. The leaf is then as fitted in place when the task was
+  made, with the points since then appended. Scalers fitted to the leaf's
+  points at that moment would differ once it has split: a result applied to
+  six leaves two splits below its task gave twice the error. The residual of
+  a task is that of one snapshot of the global model, so a result is dropped
+  if there is a newer snapshot.
+* **A task is self-contained.** It holds an unfitted copy of each GP of the
+  leaf with the scaled inputs, targets and noise, about 7 kB for 100 points in
+  six dimensions, so a worker needs no tree and no settings. The result is the
+  task's number and one array per GP.
+* **A leaf waits for its result.** It is handed no other task before the
+  result is applied, so no more tasks are out than the tree has leaves, and
+  results cannot arrive in the wrong order. Under load a leaf is refitted
+  less often and nothing queues up. A worker has to answer every task, with
+  `hyperparameters=None` for a fit that failed.
+* **A full leaf splits without its fit.** It asks for the fit and splits with
+  the hyperparameters it has. Its children inherit the wait, and the result
+  refits every leaf under the node the task was made for.
+* **Tasks that are out are not saved with the tree.** A loaded tree has none,
+  and a leaf of it asks again with its next full retrain buffer.
+
+## A batch of points
+
+* **`batch_update_tree` adds the points one by one**, whatever the tree
+  holds. Point by point is the most accurate way into a tree with points in
+  every case measured (`docs/benchmarks.md`, section 8.2), and it keeps the
+  calibration, which needs the prediction of each point before it is added.
+* **It does not use `fit` for a tree without points.** `fit` is about 2.5
+  times as fast there at about the same error, but its sigma is not
+  calibrated, it shuffles the points and it hands no fits out, so the same
+  call would behave differently with the state of the tree. A tree of ten
+  points that takes 5000 is also in the situation of a tree without points:
+  what matters is the size of the batch against that of the tree. The choice
+  is the caller's.
+* **`fit` is for a tree without points.** It sets the root up anew, so it
+  raises an error for a tree that holds points.
 
 ## Tried and dropped
 
@@ -470,7 +526,7 @@ section 8.
   agreement with the own leaf rejects the neighbours where they differ from
   it, which is where they gain most, while the test of the neighbours
   against the kernel rejects them only where the kernel cannot describe them.
-* **Cuts that are not along the inputs** (`docs/benchmarks.md`, section 8.1).
+* **Cuts that are not along the inputs** (`docs/benchmarks.md`, section 9.1).
   A cut is a hyperplane with a free normal: the direction of largest spread
   of the leaf's points, the line between the centroids of two clusters of
   them, a random direction, the direction in which the mean of the leaf's GP
@@ -523,19 +579,19 @@ section 8.
   weights or weights from the two sigmas: 1 to 13% worse than the
   neighbours' prediction alone.
 * **A switch at a lower limit for queries outside their neighbours**, or
-  at a limit of 3 for every query (`docs/benchmarks.md`, section 8.20). Both
+  at a limit of 3 for every query (`docs/benchmarks.md`, section 9.20). Both
   remove the overshoots outside the data. On 5000-point streams the first
   costs 2.0% in error along the stream and the second 3.6%, where the
   gradual change costs 1.0%, and neither removes a step.
 * **The leaf's remaining points with the neighbours**, so that a
   prediction is conditioned on the 100 nearest points and on every other
-  point of its leaf (`docs/benchmarks.md`, section 8.20). The overshoots
+  point of its leaf (`docs/benchmarks.md`, section 9.20). The overshoots
   outside the data stay, since the points of other leaves near the query
   are still there, and without the test against the kernel they grow
   several times. The error along the stream is 6% lower, as with 150
   nearest neighbours, which need no rule for points that enter at a cut.
 * **A split into two clusters of the leaf's points**, each point going to
-  the child with the nearer centroid (`docs/benchmarks.md`, section 8.13).
+  the child with the nearer centroid (`docs/benchmarks.md`, section 9.13).
   This is a cut by the hyperplane half-way between the centroids. With
   clusters of the inputs it was 26 to 30% worse than the default cuts, and
   with distances in the fitted length scales of the leaf's kernel level with
@@ -585,7 +641,7 @@ section 8.
   additive kernel and a declared noise of a millionth of the value, a leaf's
   own GP predicted up to three times the target's largest value in corners
   without data, and the neighbours with it (`docs/benchmarks.md`, section
-  8.20). The lower limit for queries outside their neighbours removes the
+  9.20). The lower limit for queries outside their neighbours removes the
   overshoots that the neighbours added to these. On the benchmark targets,
   where the neighbours are the more accurate of the two outside the data
   as well, it costs 1% in error on 5000-point streams and nothing on
@@ -610,6 +666,10 @@ section 8.
   the same way as far from the data.
 * **GPyTorch leaves do not sleep.** The adapter cannot release and restore a
   fit, so a memory limit is met by removing leaves only.
+* **Not every fit can be handed out.** GPyTorch leaves and the leaves of the
+  `'shared'` and `'pca'` output models are fitted in place also with
+  `defer_fits`. So is a leaf that meets a new version of the additive global
+  GP: it refits before its next prediction.
 * **Calibration after a new network version.** Coverage can dip for a batch
   until the per-leaf calibration catches up with the shifted residual.
 
@@ -618,7 +678,7 @@ section 8.
 * **Oblique cuts where the target has a ridge across the inputs.** Cuts along
   the change of the GP's gradient with decorrelated leaf inputs halve the
   error on such targets and raise it on smooth ones (`docs/benchmarks.md`,
-  section 8.1). A leaf could try both kinds of cut on its own points when it
+  section 9.1). A leaf could try both kinds of cut on its own points when it
   splits and keep the better, as `enable_split_evaluation` does for the
   input of an axis-aligned cut.
 * **A kernel for the neighbours.** The leaf's kernel was fitted at the scale

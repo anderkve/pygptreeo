@@ -8,6 +8,7 @@ predictions with reliable uncertainty estimates are required.
 Main components:
     - GPTree: The core tree structure with local GP models at leaf nodes
     - GPNode: Individual nodes managing local data and GP models
+    - solve_fit_task: A leaf fit handed out by GPTree.update_tree(defer_fits=True), for another process
     - Default_GPR: Pre-configured Gaussian Process Regressor
     - GPRegressorInterface: Abstract interface for GP implementations
     - SklearnGPAdapter: Adapter for scikit-learn GP regressors
@@ -36,7 +37,7 @@ evaluations are reported at DEBUG level on the ``pygptreeo`` logger.
 
 from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gpnode import GPNode
-from pygptreeo.gptree import GPTree
+from pygptreeo.gptree import GPTree, solve_fit_task
 from pygptreeo.kernels import (
     AnisotropicRationalQuadratic,
     AdditiveKernel,

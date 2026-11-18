@@ -1,6 +1,6 @@
 # Partitioning study
 
-Scripts behind section 8 of `docs/benchmarks.md`: other ways to partition the
+Scripts behind section 9 of `docs/benchmarks.md`: other ways to partition the
 data than cuts along the inputs, and predictions from a query's nearest
 points. None of this is part of the package; the results that were kept are
 `GPTree(predict_from='neighbours')` and the index of the leaves.

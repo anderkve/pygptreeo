@@ -162,7 +162,7 @@ ax.text(0.0, 1.03, "Nbar = 100; the new leaf index stays 1 to 2 levels deep in a
         transform=ax.transAxes, fontsize=8.5, color=INK2)
 save(fig, "4_depth_of_the_cut_tree.png")
 
-# 5. prediction time along the drifting stream (one process; docs/benchmarks.md, section 8.8)
+# 5. prediction time along the drifting stream (one process; docs/benchmarks.md, section 9.8)
 points = [2000, 4000, 6000, 8000, 10000, 12000]
 fig, ax = plt.subplots(figsize=(7.4, 4.0))
 for name, t, colour in (("through the cuts (before)", [0.242, 0.368, 0.514, 0.637, 0.728, 0.827], RED),
@@ -180,7 +180,7 @@ ax.text(0.0, 1.03, "A 4D cluster that moves by its width every 120 points; the t
         transform=ax.transAxes, fontsize=8.5, color=INK2)
 save(fig, "5_drifting_stream_cost.png")
 
-# 6. groups of the index opened by a search for 16 leaves (GP-free simulation; section 8.9)
+# 6. groups of the index opened by a search for 16 leaves (GP-free simulation; section 9.9)
 n = [5000, 20000, 100000, 400000, 1000000]
 panels = [("uniform stream", {3: ([5.0, 6.9, 10.9, 14.8, 17.9], [3.9, 5.0, 6.8, 7.2, 7.4]),
                               6: ([4.5, 8.5, 19.3, 37.0, 55.3], [3.7, 5.4, 7.4, 8.6, 9.3]),
@@ -214,7 +214,7 @@ fig.suptitle("The search for a query's 16 nearest leaves stays cheap up to a mil
 fig.subplots_adjust(top=0.8, wspace=0.08)
 save(fig, "6_index_search_scaling.png")
 
-# 7. cost and error along a 200 000-point stream (one process; section 8.12)
+# 7. cost and error along a 200 000-point stream (one process; section 9.12)
 n = [5000, 20000, 50000, 100000, 200000]
 fig, axs = plt.subplots(1, 2, figsize=(10.5, 3.9))
 ax = axs[0]

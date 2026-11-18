@@ -93,10 +93,17 @@ class GPTree:
 
     Methods:
         fit(X_train, y_train, show_progress=False, shuffle=True, forward_GPR_to_next_leaf=False):
-            Constructs the tree from a batch of training data.
+            Constructs the tree from a batch of training data. Only for a tree
+            without points.
+        batch_update_tree(X, y, sigma):
+            Adds a batch of data points to the tree, one after the other as
+            `update_tree` does.
         update_tree(x, y, allow_training=True):
             Adds a single data point to the tree, potentially causing node
             splits and GPR retraining.
+        apply_fit_result(result):
+            Gives the result of a fit that `update_tree(defer_fits=True)`
+            handed out, and `solve_fit_task` carried out, to its leaf.
         predict(X_test, mode='recursive', show_progress=False):
             Predicts target values for X_test using the ensemble of GPRs in
             the leaf nodes.
@@ -335,11 +342,16 @@ class GPTree:
         # Balanced index over the leaves, built with the first point. None for
         # a tree whose cuts are not along the inputs.
         self.leaf_index = None
+        # The fits that update_tree(defer_fits=True) handed out and whose results
+        # are still to come: task id -> (the node the task was made for, the frame of the task)
+        self._fit_tasks = {}
+        self._n_fit_tasks = 0
 
         self.first_point = True
 
 
-    def update_tree(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray], allow_training=True):
+    def update_tree(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray],
+                    allow_training=True, defer_fits=False):
         """Updates the tree structure and node GPRs with a new data point (x, y, sigma).
 
         This method implements a process similar to Algorithm 1 in the DLGP
@@ -368,6 +380,18 @@ class GPTree:
                 is suppressed during this update. This is useful, for example,
                 during the initial `fit` method where tree construction is the
                 priority before a final training pass on all leaves.
+            defer_fits (bool): If True, a leaf that is due a fit is not fitted
+                here. The fit is returned as a task for `solve_fit_task`,
+                which can run in another process, and `apply_fit_result`
+                takes its result. Until then the leaf keeps its
+                hyperparameters and takes its points as appended points, and
+                neither it nor the leaves it splits into are handed another
+                task. A leaf that cannot hand its fit out is fitted here (see
+                `GPNode.fit_task`). Defaults to False.
+
+        Returns:
+            With `defer_fits`, the fit task if the leaf became due one: a dict
+            that can be pickled. None otherwise.
         """
 
         # The first input point is used to determine self.n_features
@@ -419,8 +443,12 @@ class GPTree:
             self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
 
         # Retrain GP? The node will decide based Nbar and/or its buffer of training points
+        task = None
         if allow_training:
-            did_retrain = node.fit_my_GPR()
+            if defer_fits:
+                task = self._fit_task(node)
+            # A node with a fit handed out waits for its result
+            did_retrain = node.fit_task_id not in self._fit_tasks and node.fit_my_GPR()
             # Between two fits the point is added to the fitted GPs as they are
             if self.append_points_between_fits and not did_retrain:
                 node.append_point(x, y, sigma)
@@ -478,11 +506,101 @@ class GPTree:
             node.delete_my_GPR()
 
         self._after_update(node)
+        return task
+
+
+    def batch_update_tree(self, X: np.ndarray, y: np.ndarray, sigma: Union[float, np.ndarray],
+                          defer_fits=False, show_progress=False) -> list:
+        """Updates the tree with a batch of points, one after the other as `update_tree` does.
+
+        Args:
+            X (np.ndarray): The inputs, of shape (N, n_features).
+            y (np.ndarray): The targets, of shape (N, n_outputs), or (N,) for a
+                single output.
+            sigma (float or np.ndarray): The uncertainties (standard deviations)
+                of the targets: one number for all of them, or an array of
+                shape (N,) or (N, n_outputs).
+            defer_fits (bool): As for `update_tree`. Defaults to False.
+            show_progress (bool): Display a progress bar. Defaults to False.
+
+        Returns:
+            The fit tasks handed out, as a list. It is empty without `defer_fits`.
+        """
+        X = np.array(X, dtype=float)
+        y = np.array(y, dtype=float)
+        sigma = np.array(sigma, dtype=float)
+        if X.ndim != 2:
+            raise ValueError(f"X must have shape (N, n_features), not {X.shape}")
+        if not self.first_point and X.shape[1] != self.n_features:
+            raise ValueError(f"X has {X.shape[1]} features, and the points of the tree have {self.n_features}")
+        N = X.shape[0]
+        if y.ndim == 1:
+            y = y[:, None]
+        if y.shape != (N, self.n_outputs):
+            raise ValueError(f"y must have one row of {self.n_outputs} target(s) for each of the {N} rows of X, not shape {y.shape}")
+        if sigma.ndim == 1:
+            sigma = sigma[:, None]
+        if sigma.ndim == 2 and sigma.shape not in ((N, 1), (N, self.n_outputs)) or sigma.ndim > 2:
+            raise ValueError(f"sigma must be a number or have shape ({N},) or ({N}, {self.n_outputs}), not {sigma.shape}")
+        sigma = np.array(np.broadcast_to(sigma, (N, self.n_outputs)))
+
+        tasks = []
+        for i in tqdm(range(N), disable=not show_progress, desc="Updating the tree"):
+            task = self.update_tree(X[i:i+1], y[i:i+1], sigma[i:i+1], defer_fits=defer_fits)
+            if task is not None:
+                tasks.append(task)
+        return tasks
+
+
+    def _fit_task(self, node: GPNode):
+        """The fit that `node` is due as a task to hand out, or None if it is not
+        due one, waits for the result of one, or has to be fitted in place."""
+        if node.fit_task_id in self._fit_tasks or not node.fit_due():
+            return None
+        made = node.fit_task()
+        if made is None:
+            return None
+        task, frame = made
+        self._n_fit_tasks += 1
+        task['id'] = node.fit_task_id = self._n_fit_tasks
+        self._fit_tasks[task['id']] = (node, frame)
+        return task
+
+
+    def apply_fit_result(self, result: dict) -> bool:
+        """Take the result of `solve_fit_task` for a task from `update_tree`.
+
+        The leaf of the task is refitted to the points it holds now, with the
+        hyperparameters found and the scaling of the task, without optimising.
+        If the leaf has split since, the leaves under it are refitted. A
+        result with ``hyperparameters=None``, for a fit that failed, only lets
+        the leaf be handed a new task. Returns False if no leaf was refitted:
+        the fit failed, the leaf was removed, the global model has a new
+        version since the task was made, or the tree was saved and loaded
+        since.
+        """
+        node, frame = self._fit_tasks.pop(result['id'], (None, None))
+        if node is None or result['hyperparameters'] is None:
+            return False
+        # The leaves have refitted to a newer snapshot of the global model, or will with their next prediction
+        if self.global_mean is not None and self.global_mean.current is not frame[1]:
+            return False
+        # A node that was removed from the tree has no parent, or lost its children
+        leaves = [leaf for leaf in node.leaves if leaf.is_leaf and (leaf.parent is not None or leaf is self.root)]
+        for leaf in leaves:
+            leaf.apply_fit(result['hyperparameters'], frame)
+            if self.max_memory_mb is not None:
+                self._account(leaf)
+        self._let_leaves_sleep()
+        if self.max_memory_mb is not None:
+            self._enforce_memory_limit(remove=False)
+        return bool(leaves)
 
 
     def __getstate__(self):
-        """The nodes are saved as a list, with their links as positions in it."""
-        state = self.__dict__.copy()
+        """The nodes are saved as a list, with their links as positions in it.
+        The fits handed out are not saved: their results cannot reach a loaded tree."""
+        state = {**self.__dict__, '_fit_tasks': {}}
         nodes, links = [self.root], []
         for node in nodes:              # breadth first; the list grows while it is read
             if node.is_leaf:
@@ -750,6 +868,9 @@ class GPTree:
         """
         Construct the binary tree by assigning a set of training samples to nodes and train the leaf-node GPs.
 
+        Only for a tree without points; a tree that holds points takes more with
+        `batch_update_tree` or `update_tree`.
+
         Arguments
         ----------
         X_train: np.ndarray
@@ -779,6 +900,9 @@ class GPTree:
         use_calibrated_sigma. With a global model the leaves are fitted against each
         of its versions while the tree is built, and their predictions are used.
         """
+        if not self.first_point:
+            raise ValueError("fit builds a tree from scratch, and this tree holds points already. "
+                             "Use batch_update_tree to add points to it, or fit a new GPTree.")
         self.n_features = X_train.shape[1]
         N = X_train.shape[0]
         self.root.init_data_set(self.n_features)
@@ -1088,3 +1212,14 @@ class GPTree:
             path (str): The file path where the GPTree object will be saved.
         """
         joblib.dump(self, path)
+
+
+def solve_fit_task(task: dict) -> dict:
+    """Carry out a fit task from `GPTree.update_tree(defer_fits=True)`: optimise
+    the hyperparameters of its GPs. Needs no tree, so it can run in any process.
+    `GPTree.apply_fit_result` takes the result, which can be pickled."""
+    hyperparameters = []
+    for gpr, y in zip(task['gprs'], task['y']):
+        gpr.fit(task['X'], y)
+        hyperparameters.append(gpr.get_hyperparameters())
+    return {'id': task['id'], 'hyperparameters': hyperparameters}

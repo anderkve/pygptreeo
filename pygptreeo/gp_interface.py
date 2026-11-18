@@ -162,14 +162,32 @@ class GPRegressorInterface(ABC):
         """
         return None
 
-    def refit_fixed(self, X: np.ndarray, y: np.ndarray) -> bool:
-        """Fit to ``(X, y)`` with the hyperparameters of the last fit kept.
+    def refit_fixed(self, X: np.ndarray, y: np.ndarray, hyperparameters: Optional[np.ndarray] = None) -> bool:
+        """Fit to ``(X, y)`` without optimising: with ``hyperparameters`` (as
+        ``get_hyperparameters`` returns them), or with those of the last fit.
 
-        Optional capability used by global models with ``cheap_leaf_refresh``.
-        Returns False if the backend cannot, in which case the caller does a
-        full fit.
+        Optional capability used by global models with ``cheap_leaf_refresh``
+        and by ``GPTree.apply_fit_result``. Returns False if the backend
+        cannot, in which case the caller does a full fit.
         """
         return False
+
+    def get_hyperparameters(self) -> Optional[np.ndarray]:
+        """The hyperparameters of the last fit as a 1-D array that
+        ``refit_fixed`` takes, or None without a fit or if the backend cannot.
+
+        Optional capability used by ``GPTree.update_tree(defer_fits=True)``.
+        """
+        return None
+
+    def unfitted_copy(self) -> Optional['GPRegressorInterface']:
+        """A copy with the settings of this GP and nothing of its fits, to be
+        fitted in another process, or None if the backend cannot.
+
+        Optional capability used by ``GPTree.update_tree(defer_fits=True)``. A
+        backend without it has its leaves fitted in place.
+        """
+        return None
 
     def append(self, x: np.ndarray, y, noise: float) -> bool:
         """Condition the fitted GP on one more point, with its hyperparameters kept.

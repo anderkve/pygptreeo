@@ -15,7 +15,7 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from pygptreeo import GPTree, Default_GPR, GPRegressorInterface
+from pygptreeo import GPTree, Default_GPR, GPRegressorInterface, solve_fit_task
 from pygptreeo import gpnode as gpnode_module
 from pygptreeo.neighbours import NeighbourSearch
 
@@ -1044,6 +1044,65 @@ class TestAsleep(unittest.TestCase):
         _stream(leaf_tree, X)
         leaf_tree.predict(X[:50])
         self.assertEqual(sum(leaf.asleep for leaf in leaf_tree.root.leaves), 0)        # predictions from the leaves: all awake
+
+
+class TestWithOtherWaysToUpdate(unittest.TestCase):
+    """Fits handed out to other processes (``defer_fits``) and batches of points."""
+
+    def test_a_fit_applied_at_once_is_the_fit_in_place(self):
+        rng = np.random.RandomState(0)
+        X, X_test = rng.rand(90, 2), rng.rand(30, 2)
+        in_place = GPTree(Nbar=100, retrain_every_n_points=20, predict_from='neighbours')
+        deferred = GPTree(Nbar=100, retrain_every_n_points=20, predict_from='neighbours')
+        n_tasks = 0
+        for i in range(90):
+            x, y = X[i:i + 1], np.atleast_2d(_target(X[i:i + 1]))
+            in_place.update_tree(x, y, 1e-3)
+            task = deferred.update_tree(x, y, 1e-3, defer_fits=True)
+            if task is not None:
+                n_tasks += 1
+                self.assertTrue(deferred.apply_fit_result(solve_fit_task(task)))
+            for a, b in zip(deferred.predict(X_test), in_place.predict(X_test)):
+                np.testing.assert_array_equal(a, b)
+        self.assertEqual(n_tasks, 4)
+
+    def test_late_results_leave_no_more_leaves_awake(self):
+        rng = np.random.RandomState(1)
+        np.random.seed(1)
+        X = rng.rand(900, 2)
+        y = _target(X)
+        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours')
+        errors, results = [], []
+        for i in range(900):
+            while results and results[0][0] <= i:
+                gpt.apply_fit_result(results.pop(0)[1])
+                awake = [leaf for leaf in gpt.root.leaves if leaf._is_fitted() and not leaf.asleep and not leaf.prefers_own]
+                self.assertLessEqual(len(awake), gpt.neighbours.awake)
+            if i >= 600:
+                errors.append(gpt.predict(X[i:i + 1])[0][0, 0] - y[i])
+            task = gpt.update_tree(X[i:i + 1], np.atleast_2d(y[i]), 1e-3, defer_fits=True)
+            if task is not None:
+                results.append((i + 15, solve_fit_task(task)))
+        self.assertGreater(len(gpt.root.leaves), 20)
+        self.assertGreater(sum(leaf.asleep for leaf in gpt.root.leaves), 10)
+        self.assertLess(np.sqrt(np.mean(np.square(errors))), 0.02)
+
+    def test_a_batch_is_its_points_one_by_one(self):
+        rng = np.random.RandomState(2)
+        X, X_test = rng.rand(300, 2), rng.rand(40, 2)
+        y = _target(X)[:, None]
+        trees = []
+        for batch in (False, True):
+            np.random.seed(2)
+            gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours')
+            if batch:
+                gpt.batch_update_tree(X, y, 1e-3)
+            else:
+                for i in range(300):
+                    gpt.update_tree(X[i:i + 1], y[i:i + 1], 1e-3)
+            trees.append(gpt)
+        for a, b in zip(trees[0].predict(X_test), trees[1].predict(X_test)):
+            np.testing.assert_array_equal(a, b)
 
 
 class TestChoice(unittest.TestCase):
