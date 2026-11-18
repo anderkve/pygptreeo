@@ -1698,3 +1698,34 @@ queries of the two patches.
   target's range with a noise of 1e-6 and 1.3 times with 1e-3, where the
   leaf's own GP stays at 0.8. With the default kernel it is 1.1 to 1.2
   times for both.
+
+Two more variants on the same runs: the limit of the test at 3 for every
+query (`neighbour_consistency=3`), and the 100 nearest points together with
+the rest of the leaf's own points (`research/partitioning/with_leaf.py`, not
+in the code), 127 to 141 points per prediction on average. Largest
+prediction and RMSE away from the data:
+
+| seed, noise | neighbours | limit 3 for every query | with the leaf's points | the same without the test |
+|---|---|---|---|---|
+| 4, 1e-6 | 148.8, 11.7 | 72.9, 10.6 | 157.5, 12.7 | 620.8, 44.3 |
+| 4, 1e-3 | 74.8, 10.8 | 74.8, 11.0 | 73.1, 14.5 | 73.1, 15.0 |
+| 1, 1e-6 | 239.3, 33.3 | 239.3, 36.8 | 239.3, 34.6 | 581.0, 50.3 |
+| 1, 1e-3 | 86.4, 12.6 | 86.4, 12.5 | 86.6, 13.1 | 88.8, 19.3 |
+| 2, 1e-6 | 125.6, 13.2 | 125.6, 12.1 | 125.6, 13.5 | 249.2, 25.9 |
+| 2, 1e-3 | 73.0, 16.7 | 73.0, 6.9 | 73.1, 19.0 | 73.0, 6.1 |
+
+* **The leaf's remaining points do not remove the patches.** The two worst
+  queries are predicted as 157 from 151 points and -14.8 from 161: the
+  points of other leaves near the query are still there, and the leaf's own
+  lie further away. The consistency falls to 6.0 and 6.4, since the leaf's
+  own points fit its kernel.
+* **Without the test the predictions reach 621**, and in one run the error
+  near the data is 26.7 where it was 3.6.
+* **On the 33 runs of 5000 points the leaf's points lower the error along
+  the stream by 6.9%** (3.6% at the median), and 150 nearest neighbours by
+  6.8% (3.0%): the gain is that of more points. Without the test it is
+  5.9%.
+* **A limit of 3 for every query costs 2.3%** along the stream and at
+  uniform test points, with 16 runs more than 2% worse and 3 better, against
+  0.7% and 1.7% for the limit of 3 outside the neighbours only. On the grids
+  the two do the same.

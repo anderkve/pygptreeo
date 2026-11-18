@@ -118,6 +118,15 @@ def _guarded(d, seed, measure='centroid', far=0.65, limit=3.0, **opts):
     return guarded_tree(measure=measure, far=far, limit=limit, **kw)
 
 
+@register('withleaf')
+def _withleaf(d, seed, **opts):
+    """The shipped neighbours together with the rest of the leaf's own points."""
+    from with_leaf import with_leaf_tree
+    kw = dict(BASE)
+    kw.update(opts)
+    return with_leaf_tree(**kw)
+
+
 @register('anchored')
 def _anchored(d, seed, depth=2, **opts):
     """Neighbours of one of 2**depth cells of the query's leaf, shared by the queries of the cell."""

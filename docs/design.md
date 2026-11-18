@@ -484,6 +484,13 @@ section 8.
 * **A blend of the neighbours' prediction and the leaf's own**, with equal
   weights or weights from the two sigmas: 1 to 13% worse than the
   neighbours' prediction alone.
+* **The leaf's remaining points with the neighbours**, so that a
+  prediction is conditioned on the 100 nearest points and on every other
+  point of its leaf (`docs/benchmarks.md`, section 8.20). The overshoots
+  outside the data stay, since the points of other leaves near the query
+  are still there, and without the test against the kernel they grow
+  several times. The error along the stream is 7% lower, as with 150
+  nearest neighbours, which need no rule for points that enter at a cut.
 * **A split into two clusters of the leaf's points**, each point going to
   the child with the nearer centroid (`docs/benchmarks.md`, section 8.13).
   This is a cut by the hyperplane half-way between the centroids. With

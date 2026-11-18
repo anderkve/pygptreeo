@@ -1,11 +1,11 @@
 """Predictions over the unit square at the end of the README animation's stream.
 
-    python animation_grid.py seed noise [leaf|neighbours|guarded]
+    python animation_grid.py seed noise [leaf|neighbours|guarded|withleaf] [option=value ...]
 
 The stream and the tree are those of `examples/make_readme_gif.py --alt`
 (Himmelblau, 1500 points, additive kernel), with the declared noise as a share
-of the target value. Prints the largest prediction on a 70 x 70 grid and the
-errors of the cells near the data and away from it.
+of the target value; the options go to the tree. Prints the largest prediction
+on a 70 x 70 grid and the errors of the cells near the data and away from it.
 """
 import os
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -54,13 +54,18 @@ def stream(seed):
 def main():
     seed, noise = int(sys.argv[1]), float(sys.argv[2])
     mode = sys.argv[3] if len(sys.argv) > 3 else 'neighbours'
+    options = {name: float(value) for name, value in (item.split('=') for item in sys.argv[4:])}
     X, y = stream(seed)
     tree = GPTree(GPR=Default_GPR(kernel=AdditiveMaternKernel(d=2, order=2, nu=1.5), alpha=1e-6), Nbar=100, theta=0.05,
                   splitting_strategy='gradual', split_position_method='median', retrain_every_n_points=2,
-                  use_calibrated_sigma=True, predict_from='leaf' if mode == 'leaf' else 'neighbours')
+                  use_calibrated_sigma=True, predict_from='leaf' if mode == 'leaf' else 'neighbours', **options)
     if mode == 'guarded':
         from guarded import guard
         guard(tree)
+    elif mode == 'withleaf':
+        from with_leaf import with_leaf
+        with_leaf(tree)
+    mode = ' '.join([mode] + sys.argv[4:])
     for i in range(N_POINTS):
         tree.update_tree(X[i:i + 1], y[i:i + 1], noise * np.abs(y[i:i + 1]))
     axis = np.linspace(0.0, 1.0, 70)
@@ -68,7 +73,7 @@ def main():
     truth = np.array([target(x) for x in grid])
     mean = tree.predict(grid)[0][:, 0]
     error, away = np.abs(mean - truth), cKDTree(X).query(grid)[0] > AWAY
-    print('seed %d noise %g %-10s largest prediction %6.1f (target at most %.1f)  rmse away from the data %6.2f, near it %6.3f  '
+    print('seed %d noise %g %-36s largest prediction %6.1f (target at most %.1f)  rmse away from the data %6.2f, near it %6.3f  '
           'largest error %6.1f  cells off by more than 30: %d' % (seed, noise, mode, mean.max(), truth.max(), np.sqrt((error[away] ** 2).mean()),
                                                                  np.sqrt((error[~away] ** 2).mean()), error.max(), (error > 30).sum()), flush=True)
 

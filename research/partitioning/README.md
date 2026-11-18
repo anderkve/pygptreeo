@@ -11,7 +11,7 @@ Records go to `results/` (not in the repository).
 | File | What it does |
 |---|---|
 | `bench.py` | Targets, streams and one prequential run; each run stores its per-point predictions |
-| `variants.py` | The models compared, by name: `base`, `nbf` (the shipped neighbours), `nb:...`, `oblique:...`, `mr`, `knn:...`, `fisheye:...`, `anchored:...`, `tapered:...`, `blended:...`, `mixed:...`, `hybrid:...`, `guarded:...` |
+| `variants.py` | The models compared, by name: `base`, `nbf` (the shipped neighbours), `nb:...`, `oblique:...`, `mr`, `knn:...`, `fisheye:...`, `anchored:...`, `tapered:...`, `blended:...`, `mixed:...`, `hybrid:...`, `guarded:...`, `withleaf` |
 | `run_matrix.py` | Runs variants x targets x streams x seeds in parallel; finished runs are skipped |
 | `report.py`, `tables.py`, `plots.py` | Tables and figures from the records |
 | `oblique.py` | Hyperplane cuts with a free normal (among them two clusters of the leaf's points), cut positions from the GP's gradient, decorrelated leaf inputs |
@@ -25,6 +25,7 @@ Records go to `results/` (not in the repository).
 | `animation_grid.py` | The README animation's stream and tree: predictions over the whole square, near the data and away from it |
 | `extrapolation_diag.py`, `extrapolation_report.py` | Uniform test points: the neighbours against the leaf's own GP by how far a query lies outside the data, and rules that choose between them |
 | `guarded.py` | A stricter test against the kernel for queries outside their neighbours |
+| `with_leaf.py` | The nearest neighbours together with the rest of the leaf's own points |
 | `knn.py` | The first version of the neighbours (brute-force search, optional far points and per-level samples) |
 | `diag_knn.py`, `diag_batch.py`, `diag_knn_report.py` | Replay: the leaf's prediction against that of its kernel on the nearest points, for every size of the neighbour set, and rules for the test against the kernel |
 | `diag_kernel.py`, `diag_kernel_report.py` | Replay: which leaf's kernel the neighbours should use |
