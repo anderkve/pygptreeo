@@ -125,13 +125,14 @@ A typical multi-output target is a function `f(t; x)` evaluated on a grid in `t`
 - A quantity that varies over orders of magnitude should be given as its logarithm, with `sigma` as the uncertainty of the logarithm. For a spectrum over ten decades this lowered the relative error by one to three orders of magnitude, depending on the output model.
 - If the position of a feature is known as a function of the inputs, e.g. a resonance at a mass `M` that is one of the parameters, the simplest remedy is a grid relative to that position (in `m / M`), on which the feature no longer moves. For a spectrum with such a peak this lowered the error of `'shared'` by a factor 7, and for a kinematic endpoint by a factor 13, which is what `'aligned'` reached on the fixed grid without that knowledge.
 - For `'aligned'` the grid has to resolve the feature that moves, with at least two to three grid points across a peak or an edge. A finer grid costs little, since the time of a fit hardly depends on the number of grid points.
-- The global models (see below) also take a curve as their target, and the leaves then model the residual curves. `global_mean='additive_gp'` gains most where the curves have a low-order additive structure in the inputs (an EFT distribution that is quadratic in six Wilson coefficients: a factor 100 beyond the Matérn 5/2 leaves). For our other curves it added little to Matérn 5/2 leaves, and it does not help with a sharp feature that moves. With `output_model='aligned'` a leaf that aligns its curves models them directly, and only the other leaves use the global model, so the two can be combined.
+- The global models (see below) also take a curve as their target, and the leaves then model the residual curves. For curves that are smooth in the inputs the additive GP should get a smoother kernel as well (`global_mean_kwargs=dict(nu=2.5)`). On top of Matérn 5/2 leaves it then lowered the error by a factor 1.3 in the geometric mean, and by far more where the curves have a low-order additive structure in the inputs (a factor 40 for an EFT distribution that is quadratic in six Wilson coefficients). It does not help with a sharp feature that moves. With `output_model='aligned'` a leaf that aligns its curves models them directly, and only the other leaves use the global model, so the two can be combined:
 
 ```python
-gpt = GPTree(GPR=Default_GPR(nu=2.5), Nbar=100, n_outputs=100, output_model='aligned', global_mean='additive_gp')
+gpt = GPTree(GPR=Default_GPR(nu=2.5), Nbar=100, n_outputs=100, output_model='aligned',
+             global_mean='additive_gp', global_mean_kwargs=dict(nu=2.5))
 ```
 
-With this configuration the error was 1.1 to 69 times lower than with the default `'shared'` leaves on our twelve families, and 4.5 times lower in the geometric mean (4.0 times without the global model).
+With this configuration the error was 1.1 to 110 times lower than with the default `'shared'` leaves on our twelve families, and 5.3 times lower in the geometric mean. Without the global model the factor was 4.0, and with `'shared'` leaves and the Matérn 5/2 kernel alone it was 3.1.
 
 See `examples/multioutput_physics_curves.py` for a comparison of the output models on these curve families, and `examples/multioutput_function_learning_pca.py` for the `'pca'` model compared with a B-spline representation of the curves. The benchmark results are given in [`docs/benchmarks.md`](docs/benchmarks.md), section 9.
 

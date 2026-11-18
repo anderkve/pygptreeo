@@ -309,12 +309,17 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   to 2.2 on the other seven, where the tree alone is as accurate as the
   network (`benchmarks.md`, section 9.7).
 * **Much of that gain is the gain of a smoother model.** With Matérn 5/2
-  leaves the additive GP adds a factor 1.1 in the geometric mean over the
-  twelve families, and 1.9 at most. It keeps a large gain where its kernel
-  fits the structure of the target: `eft_distribution_6d` is quadratic in six
-  coefficients, which is what an additive kernel of order 2 describes, and
-  its error falls by a factor 2700 against the default leaves and 126
-  against Matérn 5/2 leaves.
+  leaves the additive GP with its default kernel raises the error on four of
+  eight families (`cmb_peaks`: 1.1e-4 against 3.3e-5): its Matérn 3/2 part
+  leaves a residual that is rougher than the curves. With Matérn 5/2 in the
+  global kernel too (`global_mean_kwargs=dict(nu=2.5)`) it lowers the error
+  of `'shared'` leaves on the ten families without a sharp feature, by a
+  factor 1.2 to 2.4, and raises it by 10% on the other two.
+* **The additive GP gains most where its kernel fits the target.**
+  `eft_distribution_6d` is quadratic in six coefficients, which is what an
+  additive kernel of order 2 describes: the error is 40 to 130 times lower
+  than with Matérn 5/2 leaves alone, and 850 to 2700 times lower than with
+  the default leaves.
 * **No global model follows a sharp feature that moves.** On
   `zprime_spectrum` and `kinematic_edge` the additive GP changed the error by
   less than a factor 1.3 and the network raised it by up to 1.6.
@@ -327,7 +332,9 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   global model, as a leaf of `'shared'` does. With the additive GP the error
   on each of the thirteen streams was then within 10% of the lower of
   `'aligned'` alone and `'shared'` with the global GP, and 3.6 times lower
-  than that of `'shared'` alone in the geometric mean.
+  than that of `'shared'` alone in the geometric mean. With Matérn 5/2 in
+  the leaves and in the global GP it was 5.3 times lower than that of the
+  default `'shared'` leaves, and 4.0 times without the global model.
 
 ## Tried and dropped
 
@@ -439,18 +446,22 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
     that moves, 20 to 65 times less accurate on smooth and oscillating
     curves, at 15 times the time of a fit.
   * A warp of the output grid, from a second head that gives the knots of a
-    monotone map at which the network's curve is read: 2.5 times more
-    accurate on the sharp features and 1.3 to 1.8 on the noisy histograms,
-    up to 9 times less accurate on eight other families. As the global model
-    of `'shared'` leaves it lowered the error on `zprime_spectrum` by a
-    factor 1.4 and on `kinematic_edge` by 1.6, where the alignment in the
-    leaves gives 4 and 14.
+    monotone map at which the network's curve is read: 2.2 to 2.5 times more
+    accurate on the sharp features and 1.8 on the noisy histograms, 2 to 5
+    times less accurate on `matter_power`, `cmb_peaks` and `ringdown`. As
+    the global model of `'shared'` leaves it lowered the error on
+    `zprime_spectrum` by a factor 1.4 and on `kinematic_edge` by 1.6, where
+    the alignment in the leaves gives 4 and 14.
 * **A shared-kernel GP on outputs in units of their noise**, for noise that
   differs between the outputs: within 2% of the common scale with 800 and
   3200 noisy curves, and 5 to 16% worse with 200.
 * **`x` as one more input of a single-output tree**, in place of the curve as
-  a multi-output target: 2 to 80 times the error with 200 curves, and a fit
-  that takes 12 to 65 seconds where `'shared'` takes less than one.
+  a multi-output target: with `fit` 2 to 80 times the error with 200 curves,
+  and a fit that takes 12 to 65 seconds where `'shared'` takes less than one.
+  On a stream, and with the network as its global model, the single-output
+  tree has the error of `'shared'` with Matérn 5/2 leaves on `z_lineshape`
+  and half of it on `zprime_spectrum`, at 100 times the time
+  (`docs/benchmarks.md`, section 9.7).
 
 ## Known limitations
 
