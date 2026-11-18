@@ -28,8 +28,10 @@ repository; they are in its history up to commit `cd27934`
 (`examples/benchmark_*.py`, `examples/compare_tree_vs_hybrid.py`,
 `examples/results/`). `examples/streaming_performance.py` runs the same kind of
 comparison on one stream. Sections 6 and 7 were measured later, with scripts
-that are not in the repository, section 8 with `examples/mpi_fit_workers.py`
-and section 9 with the scripts of `research/partitioning`.
+that are not in the repository, and section 8 with
+`examples/mpi_fit_workers.py`. The scripts of section 9
+(`research/partitioning/`) were removed from the repository as well; they are
+in its history up to commit `25a4673`.
 
 ## 1. Split-dimension criterion
 
