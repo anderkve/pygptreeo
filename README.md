@@ -114,12 +114,14 @@ Any other scikit-learn kernel can be used in the same way, e.g. `ConstantKernel(
 
 ## Multi-output targets
 
-pyGPTreeO also supports multi-output targets. Set `n_outputs=p` and pass `y` and `sigma` as arrays with `p` columns. The `output_model` option determines how the outputs are modelled within each leaf:
+Set `n_outputs=p` and pass `y` and `sigma` as arrays with `p` columns. The `output_model` option determines how the outputs are modelled within each leaf:
 
 - `'independent'` (default): One GP per output, each with its own kernel hyperparameters.
-- `'shared'`: One GP with a single kernel shared by all outputs. This requires one Cholesky factorisation per leaf instead of `p`, and the time of a fit hardly depends on `p`. The accuracy is similar when the outputs have similar length scales. This option is only available with the scikit-learn interface.
-- `'pca'`: The tree learns a global linear basis for the output space, using PCA on a subsample of the input stream, and each leaf models the leading principal components with one GP each. Predictions and uncertainties are transformed back to the output space. This is suitable for strongly correlated outputs, e.g. a function `f(t; x)` evaluated on a grid in `t`. By default only the components with a variance above the observation noise level (given by `sigma`) are kept. The number of components can also be set explicitly with `output_basis_components`.
-- `'aligned'`: For outputs that are a curve on a grid, given in the order of the grid, with features whose position depends on the inputs: a resonance peak, a kinematic edge, the phase of an oscillation. A prediction is a weighted combination of the curves in a leaf, and a combination of curves with a peak at different positions has several smaller peaks instead of one in between. This option works as `'shared'`, but each leaf also learns how to stretch and compress the grid of each of its curves, depending on the inputs, so that the features of the curves lie on top of each other. It fits its GP to these aligned curves and applies the reverse transformation to its predictions. A leaf only keeps the alignment if it lowers the leave-one-out error of its curves, so for curves without such features, and for outputs that are in no order, the predictions are those of `'shared'`, at 1.3 to 1.8 times the run time. This option is only available with the scikit-learn interface.
+- `'shared'`: One GP with a single kernel for all outputs. The accuracy is similar when the outputs have similar length scales, at a small fraction of the run time.
+- `'pca'`: The tree learns a global linear basis for the outputs by PCA, and each leaf models the leading components with one GP each. Suitable for strongly correlated outputs.
+- `'aligned'`: As `'shared'`, for outputs that are a function on an ordered grid with features whose position depends on the inputs, e.g. a resonance peak or a kinematic edge. Each leaf stretches and compresses the grid of its curves so that their features line up, and keeps this alignment only if it lowers its leave-one-out error.
+
+`'shared'` and `'aligned'` require the scikit-learn interface.
 
 ```python
 gpt = GPTree(Nbar=100, n_outputs=100, output_model='aligned')
@@ -128,31 +130,16 @@ for x, y, sigma in data_stream:               # y and sigma have shape (1, 100)
     gpt.update_tree(x, y, sigma)
 ```
 
-The outputs can also be a function on a grid of two dimensions (a surface), e.g. a double-differential distribution `f(u, v; x)` evaluated on a grid in `u` and `v`. They are passed as flattened arrays (`values.ravel()`, row by row), with the shape of the grid as `output_shape`. The leaves of `'aligned'` then stretch and compress the grid along both axes, by amounts that can differ from row to row and from column to column:
+For a function on a grid of two dimensions, pass the flattened values (`values.ravel()`) and the shape of the grid, e.g. `output_shape=(32, 32)`. The leaves of `'aligned'` then align along both axes.
 
-```python
-gpt = GPTree(Nbar=100, n_outputs=32 * 32, output_model='aligned', output_shape=(32, 32))
-```
+Some recommendations for a function `f(t; x)` on a grid in `t`, e.g. a spectrum that depends on the model parameters `x`:
 
-In our tests with 800 surfaces on a grid of 32 x 32 points this lowered the error of `'shared'` by a factor 8 for a peak that moves along both axes, 6 for two peaks that move in opposite directions and 2 for a ring whose radius changes. For a resonance band that moves along one axis and for surfaces in which nothing moves the leaves declined the alignment, and the predictions were those of `'shared'`. Training took about four times as long as with `'shared'`, and a prediction 6 ms instead of 0.1 ms. Without `output_shape` the outputs are taken as one curve, which aligns features along the rows only (a factor 4, 3 and 1 for the same three families). See `examples/multioutput_surfaces.py`.
+- Start with `'shared'`. Use `'aligned'` if a feature moves along the grid with the inputs. In our tests this lowered the error by a factor 2 to 12, at two to four times the run time. The grid should have at least two to three points across the feature.
+- If the function changes smoothly with the inputs, use a smoother leaf kernel, `GPR=Default_GPR(nu=2.5)`. In our tests this lowered the error by a factor 3 on average.
+- Give a quantity that varies over orders of magnitude as its logarithm.
+- A global model (see below) works with all output models. For smooth functions, give the additive GP the same smoothness with `global_mean_kwargs=dict(nu=2.5)`.
 
-A typical multi-output target is a function `f(t; x)` evaluated on a grid in `t`, e.g. a spectrum or a differential cross-section that depends on the model parameters `x`. Some recommendations for such targets, from our tests on twelve families of physics-like curves:
-
-- `'shared'` reaches the accuracy of `'independent'` (within a factor 2) at a small fraction of the run time, and is a good first choice. For curves with a feature that moves with the inputs, `'aligned'` lowered the error by a factor 1.6 to 12 (3.6 to 3.9 for a resonance peak), at two to three times the run time of `'shared'`.
-- For curves that change smoothly with a few inputs, a smoother leaf kernel than the default is the simplest improvement: with `GPR=Default_GPR(nu=2.5)` (Matérn 5/2) the error was 3 times lower in the geometric mean over our twelve families, and up to 58 times lower for a single family, at no cost. An RBF kernel was better still for some families, but failed for curves with a sharp peak. Peaks and kinks along the grid do not matter for this choice, as long as they do not move with the inputs.
-- A quantity that varies over orders of magnitude should be given as its logarithm, with `sigma` as the uncertainty of the logarithm. For a spectrum over ten decades this lowered the relative error by one to three orders of magnitude, depending on the output model.
-- If the position of a feature is known as a function of the inputs, e.g. a resonance at a mass `M` that is one of the parameters, the simplest remedy is a grid relative to that position (in `m / M`), on which the feature no longer moves. For a spectrum with such a peak this lowered the error of `'shared'` by a factor 7, and for a kinematic endpoint by a factor 13, which is what `'aligned'` reached on the fixed grid without that knowledge.
-- For `'aligned'` the grid has to resolve the feature that moves, with at least two to three grid points across a peak or an edge. A finer grid costs little, since the time of a fit hardly depends on the number of grid points.
-- The global models (see below) also take a curve as their target, and the leaves then model the residual curves. For curves that are smooth in the inputs the additive GP should get a smoother kernel as well (`global_mean_kwargs=dict(nu=2.5)`). On top of Matérn 5/2 leaves it then lowered the error by a factor 1.3 in the geometric mean, and by far more where the curves have a low-order additive structure in the inputs (a factor 40 for an EFT distribution that is quadratic in six Wilson coefficients). It does not help with a sharp feature that moves. With `output_model='aligned'` a leaf that aligns its curves models them directly, and only the other leaves use the global model, so the two can be combined:
-
-```python
-gpt = GPTree(GPR=Default_GPR(nu=2.5), Nbar=100, n_outputs=100, output_model='aligned',
-             global_mean='additive_gp', global_mean_kwargs=dict(nu=2.5))
-```
-
-With this configuration the error was up to 130 times lower than with the default `'shared'` leaves on our twelve families, never more than 3% higher, and 5 times lower in the geometric mean (4.8 to 5.3 over three seeds). Without the global model the factor was 4, and with `'shared'` leaves and the Matérn 5/2 kernel alone it was 3.
-
-See `examples/multioutput_physics_curves.py` for a comparison of the output models on these curve families, and `examples/multioutput_function_learning_pca.py` for the `'pca'` model compared with a B-spline representation of the curves. The benchmark results are given in [`docs/benchmarks.md`](docs/benchmarks.md), section 9.
+See `examples/multioutput_physics_curves.py`, `examples/multioutput_surfaces.py` and `examples/multioutput_function_learning_pca.py` for examples, and section 9 of [`docs/benchmarks.md`](docs/benchmarks.md) for the test results.
 
 ## Global models (optional)
 
