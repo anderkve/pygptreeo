@@ -26,9 +26,12 @@ def _fixed_gpr(d):
     return Default_GPR(kernel=kernel)
 
 
-def _tree(d, **kw):
+def _tree(d, n_neighbours=None, **kw):
     kw.setdefault('Nbar', 20)
-    return GPTree(GPR=_fixed_gpr(d), **kw)
+    gpt = GPTree(GPR=_fixed_gpr(d), **kw)
+    if n_neighbours is not None:
+        gpt.neighbours.n_neighbours = n_neighbours
+    return gpt
 
 
 def _stream(gpt, X):

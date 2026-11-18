@@ -23,8 +23,8 @@ from pygptreeo.neighbours import NeighbourSearch
 warnings.filterwarnings("ignore")
 
 
-# the settings of a tree's search, by the names of the package's NEIGHBOUR_ constants
-SETTINGS = {'neighbour_leaves': 'max_leaves', 'neighbour_fade': 'fade', 'neighbour_blend': 'blend', 'neighbour_awake': 'awake',
+# the settings of a tree's search: its number of neighbours, and the rest by the names of the package's NEIGHBOUR_ constants
+SETTINGS = {'n_neighbours': 'n_neighbours', 'neighbour_leaves': 'max_leaves', 'neighbour_fade': 'fade', 'neighbour_blend': 'blend', 'neighbour_awake': 'awake',
             'neighbour_consistency': 'consistency_limit', 'neighbour_consistency_outside': 'outside_limit',
             'neighbour_transition': 'transition'}
 
@@ -650,7 +650,7 @@ class TestBlend(unittest.TestCase):
         """Leaves woken for the prediction of a zone are counted, so that the limit holds."""
         np.random.seed(17)
         rng = np.random.RandomState(17)
-        gpt = GPTree(Nbar=100, retrain_every_n_points=25, predict_from='neighbours', n_neighbours=40, max_memory_mb=1.2)
+        gpt = _tree(Nbar=100, retrain_every_n_points=25, predict_from='neighbours', n_neighbours=40, max_memory_mb=1.2)
         X = rng.rand(1500, 2)
         y = np.sin(3.0 * X[:, 0]) + X[:, 1] + 3.0 * (X[:, 0] > 0.5)
         for i in range(len(X)):
@@ -924,6 +924,8 @@ class TestGradual(unittest.TestCase):
 
     def test_a_tree_takes_the_constants_of_the_package(self):
         search = GPTree(predict_from='neighbours').neighbours
+        self.assertEqual(search.n_neighbours, 100)
+        self.assertEqual(GPTree(Nbar=35, predict_from='neighbours').neighbours.n_neighbours, 35)       # as many as a leaf holds
         self.assertEqual((search.max_leaves, search.fade, search.blend, search.awake), (16, 0.9, 0.1, 8))
         self.assertEqual((search.consistency_limit, search.outside_limit, search.transition), (10.0, 3.0, 2.0))
         with mock.patch.object(neighbours_module, 'NEIGHBOUR_FADE', None), \

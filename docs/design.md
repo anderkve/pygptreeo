@@ -175,11 +175,16 @@ section 8.
   from the neighbours grows with that distance: none for those 4%, 23%
   between 1.25 and 1.75 standard deviations (45% of the queries) and 32%
   beyond 2.5.
-* **One option, `n_neighbours`.** The other settings are constants of
-  `pygptreeo/neighbours.py`, named `NEIGHBOUR_...` below, with the values
-  of the benchmarks. A tree keeps those it was built with on its
-  `NeighbourSearch`, so a saved tree predicts as it did whatever the
-  constants are later.
+* **No options of its own.** A prediction is conditioned on `Nbar`
+  neighbours, as many points as a leaf holds at most, so that one setting
+  says how many points a prediction can rest on. With 100 points in a leaf,
+  150 neighbours gave an error 6% lower at more than three times the
+  factorisation, and 100 neighbours the same error with 200 points in a
+  leaf as with 100 (`docs/benchmarks.md`, sections 8.2 and 8.20). The other
+  settings are constants of `pygptreeo/neighbours.py`, named
+  `NEIGHBOUR_...` below, with the values of the benchmarks. A tree keeps
+  what it was built with on its `NeighbourSearch`, so a saved tree predicts
+  as it did whatever the constants are later.
 * **The leaf supplies the kernel.** The hyperparameters, the scaling of the
   inputs and targets, the calibration of sigma and the global-model snapshot
   are those of the query's leaf. Leaves are fitted, split, put to sleep and

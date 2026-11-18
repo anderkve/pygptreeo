@@ -131,7 +131,6 @@ class GPTree:
                  append_points_between_fits: bool = True,
                  widen_sigma_with_distance: bool = True,
                  predict_from: str = 'leaf',
-                 n_neighbours: Optional[int] = None,
                  **kwargs):
         """Initializes the GPTree.
 
@@ -245,9 +244,9 @@ class GPTree:
                 `use_calibrated_sigma` it has no effect.
             predict_from (str): The points a prediction is conditioned on.
                 'leaf' (default): the points of the leaf that the query falls
-                in, through the leaf's fitted GP. 'neighbours': the
-                ``n_neighbours`` stored points nearest to the query, from
-                whichever leaves hold them, with the kernel of the query's
+                in, through the leaf's fitted GP. 'neighbours': the ``Nbar``
+                stored points nearest to the query, from whichever leaves
+                hold them, with the kernel of the query's
                 leaf. Distances are in units of the spread of that leaf's
                 points along each input. The neighbours fade out towards the
                 furthest of them and the kernels of the leaves are mixed in
@@ -261,8 +260,6 @@ class GPTree:
                 The settings of these are the ``NEIGHBOUR_`` constants of
                 ``pygptreeo/neighbours.py``. Needs a GP backend with
                 ``supports_conditioning()`` (the scikit-learn adapter).
-            n_neighbours (Optional[int]): For 'neighbours': the number of
-                points a prediction is conditioned on. Defaults to ``Nbar``.
             **kwargs: Additional keyword arguments passed to the constructor
                 of the root `GPNode`. These can include parameters like
                 `split_position_method`, `retrain_every_n_points`, and
@@ -316,7 +313,7 @@ class GPTree:
                 raise ValueError("predict_from='neighbours' needs a GP backend with supports_conditioning() == True "
                                  "(e.g. the scikit-learn adapter returned by Default_GPR)")
             self.neighbours = NeighbourSearch(
-                self, n_neighbours=Nbar if n_neighbours is None else n_neighbours,
+                self, n_neighbours=Nbar,
                 consistency_limit=neighbour_settings.NEIGHBOUR_CONSISTENCY, max_leaves=neighbour_settings.NEIGHBOUR_LEAVES,
                 fade=neighbour_settings.NEIGHBOUR_FADE, blend=neighbour_settings.NEIGHBOUR_BLEND,
                 awake=neighbour_settings.NEIGHBOUR_AWAKE, outside_limit=neighbour_settings.NEIGHBOUR_CONSISTENCY_OUTSIDE,

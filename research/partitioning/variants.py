@@ -7,15 +7,16 @@ from pygptreeo import GPTree
 
 BASE = dict(Nbar=100, theta=1e-4, retrain_every_n_points=25, splitting_strategy='gradual')
 
-# the settings of a tree's neighbour search, by the names of the package's NEIGHBOUR_ constants
-SETTINGS = {'neighbour_leaves': 'max_leaves', 'neighbour_fade': 'fade', 'neighbour_blend': 'blend', 'neighbour_awake': 'awake',
+# the settings of a tree's neighbour search: its number of neighbours, and the rest by the names of the package's NEIGHBOUR_ constants
+SETTINGS = {'n_neighbours': 'n_neighbours', 'neighbour_leaves': 'max_leaves', 'neighbour_fade': 'fade', 'neighbour_blend': 'blend', 'neighbour_awake': 'awake',
             'neighbour_consistency': 'consistency_limit', 'neighbour_consistency_outside': 'outside_limit',
             'neighbour_transition': 'transition'}
 
 
 def neighbour_tree(**kw):
     """A tree that predicts from neighbours. Options named as in SETTINGS set
-    its search in place of the package's constants, e.g. ``neighbour_fade=None``."""
+    its search in place of the package's constants and of ``Nbar`` neighbours,
+    e.g. ``neighbour_fade=None`` or ``n_neighbours=150``."""
     settings = {SETTINGS[name]: kw.pop(name) for name in list(kw) if name in SETTINGS}
     kw.setdefault('predict_from', 'neighbours')
     tree = GPTree(**kw)
