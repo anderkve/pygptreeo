@@ -1729,3 +1729,41 @@ prediction and RMSE away from the data:
   uniform test points, with 16 runs more than 2% worse and 3 better, against
   0.7% and 1.7% for the limit of 3 outside the neighbours only. On the grids
   the two do the same.
+
+A gradual change in place of the two limits
+(`research/partitioning/smooth_guard.py`, not in the code): the
+neighbours' prediction and the leaf's own are mixed, with a weight for the
+neighbours that falls from 1 to 0 as their consistency rises from half the
+limit to twice it, linearly in its logarithm. The limit slides from 10 to 3
+as the centre of the neighbours moves from 0.5 to 0.8 of the distance of the
+furthest one. Largest prediction and RMSE away from the data, and the steps
+of the mean along 40 straight lines across the square, of 1000 steps each
+(a step counts by how far it departs from the mean of the steps on either
+side of it, in units of sigma):
+
+| seed, noise | neighbours | limit 3 outside | gradual | gradual, without the slide |
+|---|---|---|---|---|
+| 4, 1e-6 | 148.8, 11.7 | 72.9, 10.5 | 74.0, 9.1 | 137.2, 10.1 |
+| 4, 1e-3 | 74.8, 10.8 | 74.8, 11.0 | 74.8, 11.0 | 74.8, 10.8 |
+| 1, 1e-6 | 239.3, 33.3 | 239.3, 36.8 | 239.3, 36.4 | 239.3, 32.7 |
+| 1, 1e-3 | 86.4, 12.6 | 86.4, 12.5 | 86.4, 12.3 | 86.4, 12.6 |
+| 2, 1e-6 | 125.6, 13.2 | 125.6, 12.1 | 125.6, 12.2 | 125.6, 13.1 |
+| 2, 1e-3 | 73.0, 16.7 | 73.0, 7.3 | 73.0, 8.3 | 73.0, 13.2 |
+
+| seed, noise | steps above 1 sigma per line: neighbours | limit 3 outside | gradual | leaves | largest step on the worst line: neighbours | limit 3 outside | gradual | leaves |
+|---|---|---|---|---|---|---|---|---|
+| 4, 1e-6 | 9.2 | 9.4 | 6.5 | 0.8 | 101 | 99 | 45 | 28 |
+| 2, 1e-3 | 1.0 | 1.1 | 0.3 | 0.0 | 12.6 | 12.6 | 5.5 | 0.4 |
+
+* **The patches go as with the limit of 3 outside the neighbours**, and
+  the largest error of the first is 32 where that leaves 41. Without the
+  slide of the limit the first patch stays.
+* **On the 33 runs of 5000 points the error along the stream is 0.2%
+  higher** and that of uniform test points 1.4%, against 0.7% and 1.7%
+  with the limit of 3 outside. A change over a factor of 3 on either side
+  of the limit in place of 2 gives -0.5% and 1.3%.
+* **The large steps are fewer by a third to two thirds** and the largest
+  about half as high. Steps above 0.1 sigma are as many as before, 53 and
+  15 per line, where the leaves' own predictions have 10 and 1: across
+  the whole square most steps of the neighbours' predictions have other
+  causes.

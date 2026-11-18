@@ -1,11 +1,12 @@
 """Predictions over the unit square at the end of the README animation's stream.
 
-    python animation_grid.py seed noise [leaf|neighbours|guarded|withleaf] [option=value ...]
+    python animation_grid.py seed noise [leaf|neighbours|guarded|withleaf|smooth] [option=value ...]
 
 The stream and the tree are those of `examples/make_readme_gif.py --alt`
 (Himmelblau, 1500 points, additive kernel), with the declared noise as a share
 of the target value; the options go to the tree. Prints the largest prediction
-on a 70 x 70 grid and the errors of the cells near the data and away from it.
+on a 70 x 70 grid, the errors of the cells near the data and away from it,
+and the steps of the mean along straight lines across the square.
 """
 import os
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -22,7 +23,7 @@ from scipy.spatial import cKDTree                                # noqa: E402
 from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel  # noqa: E402
 from target_functions import Himmelblau                          # noqa: E402
 
-N_POINTS, AWAY = 1500, 0.05
+N_POINTS, AWAY, LINES = 1500, 0.05, 40
 START, END, BOW, HOLD = np.array([0.20, 0.20]), np.array([0.80, 0.70]), 0.12, 0.45
 WIDTH_FIRST, WIDTH_LAST = 0.20, 0.04
 
@@ -55,6 +56,7 @@ def main():
     seed, noise = int(sys.argv[1]), float(sys.argv[2])
     mode = sys.argv[3] if len(sys.argv) > 3 else 'neighbours'
     options = {name: float(value) for name, value in (item.split('=') for item in sys.argv[4:])}
+    prototype = {name: options.pop(name) for name in ('inside', 'outside', 'far', 'width') if name in options}
     X, y = stream(seed)
     tree = GPTree(GPR=Default_GPR(kernel=AdditiveMaternKernel(d=2, order=2, nu=1.5), alpha=1e-6), Nbar=100, theta=0.05,
                   splitting_strategy='gradual', split_position_method='median', retrain_every_n_points=2,
@@ -65,6 +67,9 @@ def main():
     elif mode == 'withleaf':
         from with_leaf import with_leaf
         with_leaf(tree)
+    elif mode == 'smooth':
+        from smooth_guard import smooth
+        smooth(tree, **prototype)
     mode = ' '.join([mode] + sys.argv[4:])
     for i in range(N_POINTS):
         tree.update_tree(X[i:i + 1], y[i:i + 1], noise * np.abs(y[i:i + 1]))
@@ -76,7 +81,17 @@ def main():
     print('seed %d noise %g %-36s largest prediction %6.1f (target at most %.1f)  rmse away from the data %6.2f, near it %6.3f  '
           'largest error %6.1f  cells off by more than 30: %d' % (seed, noise, mode, mean.max(), truth.max(), np.sqrt((error[away] ** 2).mean()),
                                                                  np.sqrt((error[~away] ** 2).mean()), error.max(), (error > 30).sum()), flush=True)
-
+    # steps of the mean along straight lines across the square, as in jitter.py
+    rng, steps, largest = np.random.RandomState(0), [], []
+    for _ in range(LINES):
+        a, b = rng.rand(2), rng.rand(2)
+        mu, sd = tree.predict(a + np.linspace(0.0, 1.0, 1001)[:, None] * (b - a))
+        step = np.diff(mu[:, 0])
+        jump = np.abs(step[1:-1] - 0.5 * (step[:-2] + step[2:])) / sd[1:-2, 0]
+        steps.append([(jump > level).sum() for level in (0.1, 1.0)])
+        largest.append(jump.max())
+    print('seed %d noise %g %-36s steps per line across the square: %.1f above 0.1 sigma, %.1f above 1 sigma; largest %.1f sigma at the median, %.1f on the worst line'
+          % (seed, noise, mode, *np.mean(steps, axis=0), np.median(largest), np.max(largest)), flush=True)
 
 if __name__ == '__main__':
     main()

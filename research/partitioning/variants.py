@@ -127,6 +127,15 @@ def _withleaf(d, seed, **opts):
     return with_leaf_tree(**kw)
 
 
+@register('smooth')
+def _smooth(d, seed, inside=0.5, outside=0.8, far=3.0, width=2.0, **opts):
+    """The shipped neighbours with a gradual change to the leaf's own prediction."""
+    from smooth_guard import smooth_tree
+    kw = dict(BASE)
+    kw.update(opts)
+    return smooth_tree(inside=inside, outside=outside, far=far, width=width, **kw)
+
+
 @register('anchored')
 def _anchored(d, seed, depth=2, **opts):
     """Neighbours of one of 2**depth cells of the query's leaf, shared by the queries of the cell."""
