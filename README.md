@@ -128,6 +128,14 @@ for x, y, sigma in data_stream:               # y and sigma have shape (1, 100)
     gpt.update_tree(x, y, sigma)
 ```
 
+Outputs on a grid of two dimensions, e.g. a double-differential distribution or an image, are passed as flattened arrays (`image.ravel()`), with the shape of the grid as `output_shape`. The leaves of `'aligned'` then stretch and compress the grid along both axes, by amounts that can differ from row to row and from column to column:
+
+```python
+gpt = GPTree(Nbar=100, n_outputs=32 * 32, output_model='aligned', output_shape=(32, 32))
+```
+
+In our tests with 800 images of 32 x 32 points this lowered the error of `'shared'` by a factor 8 for a blob that moves along both axes, 6 for two blobs that move in opposite directions and 2 for a ring whose radius changes. For a resonance band that moves along one axis and for images in which nothing moves the leaves declined the alignment, and the predictions were those of `'shared'`. Training took about four times as long as with `'shared'`, and a prediction 6 ms instead of 0.1 ms. Without `output_shape` the outputs are taken as one curve, which aligns features along the rows only (a factor 4, 3 and 1 for the same three families). See `examples/multioutput_image_alignment.py`.
+
 A typical multi-output target is a function `f(t; x)` evaluated on a grid in `t`, e.g. a spectrum or a differential cross-section that depends on the model parameters `x`. Some recommendations for such targets, from our tests on twelve families of physics-like curves:
 
 - `'shared'` reaches the accuracy of `'independent'` (within a factor 2) at a small fraction of the run time, and is a good first choice. For curves with a feature that moves with the inputs, `'aligned'` lowered the error by a factor 1.6 to 12 (3.6 to 3.9 for a resonance peak), at two to three times the run time of `'shared'`.
