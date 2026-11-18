@@ -16,7 +16,7 @@ the small linear-algebra calls of the leaves and gives consistent timings.
 | `example_hybrid.py` | The hybrid (`global_mean='net'`) against the plain tree on a 6D stream | PyTorch | 1 min |
 | `multioutput_function_learning_pca.py` | The multi-output models `independent`, `shared` and `pca` on a function f(t; x) observed on a t-grid, against a B-spline representation of the curves | matplotlib for the figure | 15 s |
 | `multioutput_physics_curves.py` | The multi-output models on a stream of physics-like curves f(x; theta), e.g. a resonance, a spectrum with a peak that moves, a kinematic edge. `aligned` against `shared` as a figure | matplotlib for the figure | 20 s |
-| `multioutput_image_alignment.py` | `shared` and `aligned` leaves on families of images f(u, v; theta), e.g. a blob that moves along both axes, with and without `output_shape` | | 7 min |
+| `multioutput_surfaces.py` | `shared` and `aligned` leaves on families of functions f(u, v; theta) on a grid of two dimensions, e.g. a peak that moves along both axes, with and without `output_shape` | | 7 min |
 | `gpytorch_backend.py` | GPyTorch models as the leaf GPs, against the scikit-learn default | GPyTorch | 10 s |
 | `streaming_performance.py` | Accuracy, coverage and time per point along a stream, for the plain tree, the hybrid and the additive global GP, as a figure. `--max_memory_mb` limits the memory of the trees | matplotlib (PyTorch for the hybrid) | 2 min |
 | `mpi_fit_workers.py` | An MPI trainer that holds the tree and hands the leaf fits to fit workers (`update_tree(defer_fits=True)`), against a trainer that fits the leaves itself | mpi4py | 15 s on 4 processes |
@@ -27,7 +27,7 @@ python examples/example.py
 OMP_NUM_THREADS=1 python examples/example_hybrid.py
 python examples/multioutput_function_learning_pca.py [n_train] [easy|hard] [noise_std]
 OMP_NUM_THREADS=1 python examples/multioutput_physics_curves.py zprime_spectrum 400 shared,aligned
-OMP_NUM_THREADS=1 python examples/multioutput_image_alignment.py blob 800
+OMP_NUM_THREADS=1 python examples/multioutput_surfaces.py peak 800
 python examples/gpytorch_backend.py
 OMP_NUM_THREADS=1 python examples/streaming_performance.py --target eggholder --d 3 --N 20000
 OMP_NUM_THREADS=1 python examples/streaming_performance.py --target relic_density --stream walker --configs tree,hybrid,global_gp

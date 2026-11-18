@@ -174,8 +174,9 @@ class GPTree:
                 curves. Suited to curves with features whose position depends
                 on the inputs; needs the scikit-learn adapter.
             output_shape (Optional[tuple]): For 'aligned': the shape ``(p1, p2)``
-                of the grid of outputs that are an image, flattened row by row
-                (``image.ravel()``). The leaves then warp both axes of the
+                of the grid, for outputs that are a function on a grid of two
+                dimensions (a surface), flattened row by row
+                (``values.ravel()``). The leaves then warp both axes of the
                 grid. Defaults to a curve, ``(n_outputs,)``.
             output_basis_components ('noise', int or float): For 'pca': how many
                 basis components to keep. 'noise' (default) keeps every component

@@ -15,14 +15,15 @@ The leaf's GP is fitted to the aligned curves. A prediction combines the leaf's
 curves with the weights of the GP mean, each curve warped from its own frame
 into that of the query (:meth:`AlignedCurves.combine`).
 
-Outputs on a grid of two dimensions (``GPTree(output_shape=(p1, p2))``) have a
-warp of each axis that varies along the other one (:class:`GridWarp`):
+Outputs that are a function on a grid of two dimensions, a surface
+(``GPTree(output_shape=(p1, p2))``), have a warp of each axis that varies
+along the other one (:class:`GridWarp`):
 
     (u, v) -> (phi_1(u; v, delta), phi_2(v; u, delta))
 
-The GP is fitted to the aligned images on a finer grid, and a prediction is
+The GP is fitted to the aligned surfaces on a finer grid, and a prediction is
 its mean read where each grid point of the query comes from
-(:meth:`AlignedImages.combine`).
+(:meth:`AlignedSurfaces.combine`).
 """
 
 import numpy as np
@@ -36,11 +37,11 @@ MAX_LOG_STRETCH = 2.0   # bound on |delta . w|: the grid is locally stretched by
 RIDGE = 1e-3            # weight of |w|^2 in the fit, which keeps a warp that the curves do not determine at zero
 FIT_TOLERANCE = 1e-4    # relative change of the fit's cost or of the warp at which the fit stops
 MIN_OUTPUTS = 16        # grid points below which there is no curve to align
-N_CROSS = 2             # knots along the other axis of an image, between which the warp of an axis varies linearly
+N_CROSS = 2             # knots along the other axis of a surface, between which the warp of an axis varies linearly
 GRID_BLUR = 1 / 8       # width of the blur that a fit of a GridWarp from C = 0 also starts from, over the length of an axis
-MAX_FIT_POINTS = 32     # points along an axis on which a GridWarp is fitted; a finer image is blurred and thinned out
-OVERSAMPLING = 2        # points of an aligned image for each grid point along an axis
-MIN_GRID = 8            # points along an axis below which an image is not aligned
+MAX_FIT_POINTS = 32     # points along an axis on which a GridWarp is fitted; a finer surface is blurred and thinned out
+OVERSAMPLING = 2        # points of an aligned surface for each grid point along an axis
+MIN_GRID = 8            # points along an axis below which a surface is not aligned
 GRID_RIDGE = 3e-2       # weight of |C|^2 in the fit of a GridWarp, which keeps it within the range of the offsets it is fitted on
 
 
@@ -226,8 +227,8 @@ class AlignedCurves:
 
 
 class _GridSplines:
-    """Tensor-product cubic splines through the images ``F`` (n, p1, p2),
-    evaluated at one set of positions per image."""
+    """Tensor-product cubic splines through the surfaces ``F`` (n, p1, p2),
+    evaluated at one set of positions per surface."""
 
     def __init__(self, F: np.ndarray):
         self.n, self.p1, self.p2 = F.shape
@@ -300,7 +301,7 @@ class GridWarp:
         return self._axis(delta, C, 0), self._axis(delta, C, 1)
 
     def register(self, F: np.ndarray, delta: np.ndarray) -> np.ndarray:
-        """The aligned images of the rows of ``F`` (n, p1 p2), on the finer grid."""
+        """The aligned surfaces of the rows of ``F`` (n, p1 p2), on the finer grid."""
         n = F.shape[0]
         a, b = self.phi(delta)
         u, v = (np.broadcast_to(g, (n, g.size)) for g in _grid(self.shape, self.fine))
@@ -323,7 +324,7 @@ class GridWarp:
         return np.clip(u, 0.0, p1 - 1.0), np.clip(v, 0.0, p2 - 1.0)
 
     def unwarp(self, G: np.ndarray, delta: np.ndarray) -> np.ndarray:
-        """The images on the grid of the aligned images ``G`` (n, fine points)."""
+        """The surfaces on the grid of the aligned surfaces ``G`` (n, fine points)."""
         u, v = self.inverse(delta)
         return _GridSplines(G.reshape((G.shape[0],) + self.fine))(OVERSAMPLING * u, OVERSAMPLING * v)
 
@@ -331,36 +332,36 @@ class GridWarp:
         """Take the warp of ``other``, whose offsets are ``ratio`` times these."""
         self.C = other.C * ratio[None, :, None, None]
 
-    def curves(self, F: np.ndarray, aligned: np.ndarray, delta: np.ndarray) -> 'AlignedImages':
-        """What a leaf with the aligned images at the offsets ``delta`` predicts with."""
-        return AlignedImages(self, aligned, delta)
+    def curves(self, F: np.ndarray, aligned: np.ndarray, delta: np.ndarray) -> 'AlignedSurfaces':
+        """What a leaf with the aligned surfaces at the offsets ``delta`` predicts with."""
+        return AlignedSurfaces(self, aligned, delta)
 
     def fit(self, F: np.ndarray, delta: np.ndarray, max_iter: int = 30) -> float:
-        """Choose ``C`` so that the aligned images are as linear in ``delta`` as
+        """Choose ``C`` so that the aligned surfaces are as linear in ``delta`` as
         possible, starting from the current ``C``, and from ``C = 0`` also from a
-        fit to blurred images: as :meth:`OutputWarp.fit`."""
-        images = F.reshape((F.shape[0],) + self.shape)
+        fit to blurred surfaces: as :meth:`OutputWarp.fit`."""
+        surfaces = F.reshape((F.shape[0],) + self.shape)
         step = [-(-p // MAX_FIT_POINTS) for p in self.shape]
         if max(step) > 1:
-            images = gaussian_filter(images, [0.0] + [0.5 * (st - 1) for st in step], mode="nearest")[:, ::step[0], ::step[1]]
+            surfaces = gaussian_filter(surfaces, [0.0] + [0.5 * (st - 1) for st in step], mode="nearest")[:, ::step[0], ::step[1]]
         cold = not np.any(self.C)
-        left = self._fit(images, delta, max_iter)
+        left = self._fit(surfaces, delta, max_iter)
         if cold:
             direct, self.C = self.C, np.zeros_like(self.C)
-            widths = [GRID_BLUR * p for p in images.shape[1:]]
+            widths = [GRID_BLUR * p for p in surfaces.shape[1:]]
             step = [max(1, int(w // 2)) for w in widths]
-            self._fit(gaussian_filter(images, [0.0] + widths, mode="nearest")[:, ::step[0], ::step[1]], delta, max_iter)
-            from_blurred = self._fit(images, delta, max_iter)
+            self._fit(gaussian_filter(surfaces, [0.0] + widths, mode="nearest")[:, ::step[0], ::step[1]], delta, max_iter)
+            from_blurred = self._fit(surfaces, delta, max_iter)
             if from_blurred < left:
                 left = from_blurred
             else:
                 self.C = direct
         return left
 
-    def _fit(self, images, delta, max_iter):
-        """Damped Gauss-Newton steps from the current ``C`` on ``images``
+    def _fit(self, surfaces, delta, max_iter):
+        """Damped Gauss-Newton steps from the current ``C`` on ``surfaces``
         (n, q1, q2), a grid of any number of points over the same square."""
-        n, shape = images.shape[0], images.shape[1:]
+        n, shape = surfaces.shape[0], surfaces.shape[1:]
         q = shape[0] * shape[1]
         warp = self if shape == self.shape else GridWarp(shape, self.d, self.K, self.Kc)
         Q = np.linalg.qr(np.hstack([np.ones((n, 1)), delta]))[0]
@@ -368,10 +369,10 @@ class GridWarp:
         def nonlinear(G):
             return G - Q @ (Q.T @ G)
 
-        norm = np.sqrt(np.sum(nonlinear(images.reshape(n, q)) ** 2))
+        norm = np.sqrt(np.sum(nonlinear(surfaces.reshape(n, q)) ** 2))
         if not norm > 0.0:
             return 1.0
-        splines = _GridSplines(images)
+        splines = _GridSplines(surfaces)
         factors = [np.einsum("ni,ol->ilno", delta, cross).reshape(self.d * self.Kc, 1, n, -1) for cross in warp.cross]
 
         def residual(c):
@@ -413,9 +414,9 @@ class GridWarp:
         return float(np.sum(r ** 2))
 
 
-class AlignedImages:
-    """The aligned images of a leaf and their warp: what a prediction of the leaf
-    combines. ``G`` (n, fine points) are the aligned images in the order of the
+class AlignedSurfaces:
+    """The aligned surfaces of a leaf and their warp: what a prediction of the leaf
+    combines. ``G`` (n, fine points) are the aligned surfaces in the order of the
     GP's training points, ``delta`` their offsets and ``centre_weights`` as for
     :class:`AlignedCurves`."""
 
@@ -423,16 +424,16 @@ class AlignedImages:
         self.warp, self.G, self.delta = warp, G, delta
         self.centre_weights = np.full(G.shape[0], 1.0 / G.shape[0])
 
-    def with_curve(self, f: np.ndarray, delta: np.ndarray) -> 'AlignedImages':
-        """These images and one more, which has no part in the mean."""
+    def with_curve(self, f: np.ndarray, delta: np.ndarray) -> 'AlignedSurfaces':
+        """These surfaces and one more, which has no part in the mean."""
         delta = delta.reshape(1, -1)
-        more = AlignedImages(self.warp, np.vstack((self.G, self.warp.register(f.reshape(1, -1), delta))), np.vstack((self.delta, delta)))
+        more = AlignedSurfaces(self.warp, np.vstack((self.G, self.warp.register(f.reshape(1, -1), delta))), np.vstack((self.delta, delta)))
         more.centre_weights = np.append(self.centre_weights, 0.0)
         return more
 
     def combine(self, delta: np.ndarray, weights: np.ndarray) -> np.ndarray:
-        """The images at the offsets ``delta`` (m, d), given the weights (m, n) of
-        the GP mean for the centred aligned images: their combination, read
+        """The surfaces at the offsets ``delta`` (m, d), given the weights (m, n) of
+        the GP mean for the centred aligned surfaces: their combination, read
         where each grid point of the query comes from."""
         weights = weights + (1.0 - weights.sum(axis=1, keepdims=True)) * self.centre_weights
         return self.warp.unwarp(weights @ self.G, delta)
@@ -441,7 +442,7 @@ class AlignedImages:
         """Nothing is kept that ``combine`` could compute again."""
 
     def nbytes(self) -> int:
-        """Bytes of the aligned images and their offsets."""
+        """Bytes of the aligned surfaces and their offsets."""
         return self.G.nbytes + self.delta.nbytes + self.centre_weights.nbytes
 
 

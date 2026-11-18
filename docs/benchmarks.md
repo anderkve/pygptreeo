@@ -1229,7 +1229,7 @@ of the leaves that hold an alignment, and the ratio with Matérn 5/2 leaves:
 | Black-Scholes call price against the strike (3) | nothing | 2.4e-4 | 2.3e-4 | 1.00, 1.06 | 0.08 | 1.00, 1.00 |
 | five fixed shapes with varying amplitudes (3) | nothing | 1.6e-3 | 1.6e-3 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
 | a jump between two grid points (2) | a jump | 2.4e-2 | 2.4e-2 | 1.00, 1.00 | 0.00 | 1.00, 1.48 |
-| 12 x 12 image of a blob, row by row (3) | a blob, in two directions | 2.6e-3 | 1.5e-3 | 1.83, 1.64 | 0.96 | 1.15, 0.98 |
+| a peak on a grid of 12 x 12 points, row by row (3) | a peak, in two directions | 2.6e-3 | 1.5e-3 | 1.83, 1.64 | 0.96 | 1.15, 0.98 |
 | 64 unrelated functions of the inputs (3) | not a curve | 3.2e-3 | 3.2e-3 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
 | `sir_epidemic` with its grid shuffled | not a curve | 2.9e-3 | 2.9e-3 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
 | `viscous_shock` with its grid shuffled | not a curve | 1.2e-2 | 1.2e-2 | 1.00, 1.00 | 0.00 | 1.00, 1.00 |
@@ -1247,9 +1247,10 @@ of the leaves that hold an alignment, and the ratio with Matérn 5/2 leaves:
   than `'shared'` in two, by 10% at most, and on the test curves after the
   stream in one, by 21% (`stress_strain`).
 * **A stream takes 1.3 to 2.8 times as long** as with `'shared'`.
-* **An image is not a curve.** Row by row, the blob gains a factor 1.7 with
-  the default leaves and nothing with Matérn 5/2 leaves: a warp of one
-  ordered grid follows a shift along the rows only.
+* **A surface is not a curve.** Row by row, the peak on the grid of two
+  dimensions gains a factor 1.7 with the default leaves and nothing with
+  Matérn 5/2 leaves: a warp of one ordered grid follows a shift along the
+  rows only. Section 9.12 has the warp of both axes.
 * **Matérn 5/2 leaves and a jump.** They lower the error of `'shared'` on 13
   of these targets, by a factor 1.3 to 6.2, change nothing on the shock, and
   raise it by a factor 4 on the jump (0.10 against 0.024), where each output
@@ -1419,47 +1420,47 @@ The directions in which the curves change most are not always those of their
 length scales: on the own axes of `matter_power` this rotation makes the
 error 2.4 times higher.
 
-### 9.12 Images: outputs on a grid of two dimensions
+### 9.12 Functions on a grid of two dimensions
 
-Five families of images of 32 x 32 points with three parameters each, four of
-them in `examples/multioutput_image_alignment.py`: a blob whose centre moves
-along both axes and whose width changes (`blob`), two blobs side by side
-that move in opposite directions along the second axis (`two_blobs`), a ring
-about the centre of the image with a radius that changes (`ring`), a
-resonance along the first axis at a position that moves, on a spectrum that
-falls along the second axis at a rate that changes (`ridge`), and three fixed
-shapes with varying amplitudes (`smooth`). 800 images added with
-`batch_update_tree`, default leaves, one seed. NRMSE on 300 test images, for
-`'shared'`, for `'aligned'` with the image taken as a curve of 1024 points,
-and for `'aligned'` with `output_shape=(32, 32)`:
+Five families of functions on a grid of 32 x 32 points (surfaces) with three
+parameters each, four of them in `examples/multioutput_surfaces.py`: a peak
+whose centre moves along both axes and whose width changes (`peak`), two
+peaks side by side that move in opposite directions along the second axis
+(`two_peaks`), a ring about the centre of the grid with a radius that
+changes (`ring`), a resonance along the first axis at a position that moves,
+on a spectrum that falls along the second axis at a rate that changes
+(`ridge`), and three fixed shapes with varying amplitudes (`smooth`). 800
+surfaces added with `batch_update_tree`, default leaves, one seed. NRMSE on
+300 test surfaces, for `'shared'`, for `'aligned'` with the surface taken as
+a curve of 1024 points, and for `'aligned'` with `output_shape=(32, 32)`:
 
-| family | shared | aligned, as a curve | aligned, as an image | shared / as a curve | shared / as an image | leaves aligned, as an image |
+| family | shared | aligned, as a curve | aligned, as a surface | shared / as a curve | shared / as a surface | leaves aligned, as a surface |
 |---|---:|---:|---:|---:|---:|---:|
-| `blob` | 2.4e-3 | 6.3e-4 | 3.0e-4 | 3.9 | 8.2 | 1.00 |
-| `two_blobs` | 6.6e-4 | 2.2e-4 | 1.1e-4 | 3.0 | 5.8 | 1.00 |
+| `peak` | 2.4e-3 | 6.3e-4 | 3.0e-4 | 3.9 | 8.2 | 1.00 |
+| `two_peaks` | 6.6e-4 | 2.2e-4 | 1.1e-4 | 3.0 | 5.8 | 1.00 |
 | `ring` | 5.1e-4 | 5.1e-4 | 2.6e-4 | 1.0 | 2.0 | 1.00 |
 | `ridge` | 4.0e-4 | 4.0e-4 | 4.0e-4 | 1.0 | 1.0 | 0.00 |
 | `smooth` | 1.6e-6 | 1.6e-6 | 1.6e-6 | 1.0 | 1.0 | 0.00 |
 
 * **The warp of both axes lowers the error by a factor 2.0 to 8.2** on the
-  three families with a feature that moves across the image, and its leaves
+  three families with a feature that moves across the grid, and its leaves
   decline on the other two, with the predictions of `'shared'`.
-* **As a curve** the image gains where the feature moves along the rows,
+* **As a curve** the surface gains where the feature moves along the rows,
   which is the order of the outputs: half as much as with the warp of both
-  axes for the two families with blobs, and nothing for the ring.
+  axes for the two families with peaks, and nothing for the ring.
 * **The coverage** is 0.61 to 0.69 for the three.
 
-Single leaves: 100 images in a cube of side 0.5 or 0.3 of the parameter
-range, 200 test images in the same cube, three positions of the cube, one
-shared-kernel GP on the images or on the aligned images. NRMSE on the test
-images, and the ratio of the leave-one-out errors that decides on the
+Single leaves: 100 surfaces in a cube of side 0.5 or 0.3 of the parameter
+range, 200 test surfaces in the same cube, three positions of the cube, one
+shared-kernel GP on the surfaces or on the aligned surfaces. NRMSE on the test
+surfaces, and the ratio of the leave-one-out errors that decides on the
 alignment:
 
 | family | side | shared | aligned | shared / aligned | the same from leave-one-out |
 |---|---:|---:|---:|---:|---:|
-| `blob` | 0.5 | 2.8e-3 | 2.3e-4 | 12 | 14 |
+| `peak` | 0.5 | 2.8e-3 | 2.3e-4 | 12 | 14 |
 | | 0.3 | 8.7e-4 | 6.9e-5 | 13 | 14 |
-| `two_blobs` | 0.5 | 7.1e-4 | 1.2e-4 | 6.0 | 6.3 |
+| `two_peaks` | 0.5 | 7.1e-4 | 1.2e-4 | 6.0 | 6.3 |
 | | 0.3 | 2.2e-4 | 4.2e-5 | 5.2 | 5.5 |
 | `ring` | 0.5 | 1.2e-3 | 4.7e-4 | 2.6 | 2.7 |
 | | 0.3 | 3.6e-4 | 2.1e-4 | 1.7 | 1.9 |
@@ -1469,26 +1470,26 @@ alignment:
 | | 0.3 | 2.2e-6 | 2.2e-6 | 1.0 | 1.0 |
 
 * **The bound and the ridge of the warp.** With the hard bound of the curves
-  on the exponent of the warp and their ridge of 0.001, the leaves of `blob`
+  on the exponent of the warp and their ridge of 0.001, the leaves of `peak`
   with side 0.5 had the test error of `'shared'` (2.8e-3) at a leave-one-out
-  error of 1.0e-3: the median error of a test image was that of the
+  error of 1.0e-3: the median error of a test surface was that of the
   leave-one-out predictions, and the largest 300 times the median, at the
   corners of the cube. With the `tanh` bound and ridges of 0.001, 0.01, 0.03,
   0.1 and 0.3 the test error was 7.5e-4, 2.9e-4, 2.3e-4, 2.6e-4 and 3.6e-4,
-  and for `two_blobs` 2.0e-4, 1.4e-4, 1.2e-4, 1.1e-4 and 1.5e-4. The code has
+  and for `two_peaks` 2.0e-4, 1.4e-4, 1.2e-4, 1.1e-4 and 1.5e-4. The code has
   0.03.
-* **The aligned image read back, against each image warped into the frame of
-  the query** (with the hard bound, side 0.25): with the aligned images on
-  the grid itself the error was 6.6e-5 against 3.9e-5 for `blob` and 1.0e-4
-  against 3.2e-5 for `two_blobs`. On a grid with twice the points along each
+* **The aligned surface read back, against each surface warped into the frame of
+  the query** (with the hard bound, side 0.25): with the aligned surfaces on
+  the grid itself the error was 6.6e-5 against 3.9e-5 for `peak` and 1.0e-4
+  against 3.2e-5 for `two_peaks`. On a grid with twice the points along each
   axis it was 4.0e-5 against 4.0e-5 and 3.9e-5 against 3.3e-5, at 7 ms for
   a prediction against 80 ms.
 * **A warp of each axis that is the same along the other one** cannot move
-  the two blobs of `two_blobs` in opposite directions. The network below has
+  the two peaks of `two_peaks` in opposite directions. The network below has
   such a warp, and no gain on that family.
-* **Time on one core**, 800 images of `blob` and `two_blobs`: 46 to 48 s for
+* **Time on one core**, 800 surfaces of `peak` and `two_peaks`: 46 to 48 s for
   `'shared'`, 106 to 116 s for `'aligned'` as a curve and 178 to 204 s as an
-  image. A prediction takes 0.1 ms, 10 ms and 5 to 6 ms.
+  surface. A prediction takes 0.1 ms, 10 ms and 5 to 6 ms.
 * **The same ridge for curves** changes little: with 0.03 in place of 0.001
   in the warp of a curve, the error of `'aligned'` on 800 curves was 1.3
   times lower for `zprime_spectrum`, 1.1 times higher for `kinematic_edge`
@@ -1502,8 +1503,8 @@ after the warp: the squared difference of each curve and its 8 nearest
 neighbours, each read at its own warp and integrated over the grid of either
 curve, over the squared distance of their parameters. A tree with `'shared'`
 leaves learns the aligned curves on a grid three times as fine (twice for
-images), and its prediction is read back through the warp of the query. 800
-curves or images, one seed, NRMSE on 300 test curves:
+surfaces), and its prediction is read back through the warp of the query. 800
+curves or surfaces, one seed, NRMSE on 300 test curves:
 
 | family | shared | aligned | network warp, shared leaves |
 |---|---:|---:|---:|
@@ -1515,13 +1516,13 @@ curves or images, one seed, NRMSE on 300 test curves:
 | `z_lineshape` | 1.5e-4 | 4.0e-5 | 1.8e-4 |
 | `cmb_peaks` | 1.9e-4 | 1.0e-4 | 2.1e-4 |
 | `matter_power` | 5.2e-5 | 5.2e-5 | 1.7e-3 |
-| `blob` (image) | 2.4e-3 | 3.0e-4 | 4.4e-4 |
-| `two_blobs` (image) | 6.6e-4 | 1.1e-4 | 7.3e-4 |
-| `ring` (image) | 5.1e-4 | 2.6e-4 | 4.3e-4 |
-| `ridge` (image) | 4.0e-4 | 4.0e-4 | 9.4e-4 |
+| `peak` (surface) | 2.4e-3 | 3.0e-4 | 4.4e-4 |
+| `two_peaks` (surface) | 6.6e-4 | 1.1e-4 | 7.3e-4 |
+| `ring` (surface) | 5.1e-4 | 2.6e-4 | 4.3e-4 |
+| `ridge` (surface) | 4.0e-4 | 4.0e-4 | 9.4e-4 |
 
-For the images the network gave one warp per axis, the same along the other
+For the surfaces the network gave one warp per axis, the same along the other
 axis. The network took 45 to 134 s to train for the curves, where the whole
-`'aligned'` tree takes 13 to 23 s, and 22 minutes for the images. It has no
+`'aligned'` tree takes 13 to 23 s, and 22 minutes for the surfaces. It has no
 test that declines it: where nothing moves the error is up to 33 times that
 of `'shared'`.

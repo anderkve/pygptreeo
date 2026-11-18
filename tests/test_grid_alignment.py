@@ -13,7 +13,7 @@ from scipy.interpolate import RectBivariateSpline
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from pygptreeo import GPTree, Default_GPR, GridWarp, AlignedImages, OutputWarp
+from pygptreeo import GPTree, Default_GPR, GridWarp, AlignedSurfaces, OutputWarp
 from pygptreeo.output_alignment import OVERSAMPLING, _GridSplines, _grid, output_warp
 
 warnings.filterwarnings("ignore")
@@ -21,16 +21,16 @@ warnings.filterwarnings("ignore")
 SHAPE = (16, 16)
 
 
-def _blob(U, shape=SHAPE):
-    """Images of a blob whose centre moves along both axes with the first two
-    inputs, and whose width grows with the third. Rows are flattened images."""
+def _peak(U, shape=SHAPE):
+    """Surfaces with a peak whose centre moves along both axes with the first
+    two inputs, and whose width grows with the third. Rows are flattened surfaces."""
     u, v = np.meshgrid(*[(np.arange(p) + 0.5) / p for p in shape], indexing="ij")
     cu, cv, width = (c[:, None, None] for c in (0.35 + 0.3 * U[:, 0], 0.35 + 0.3 * U[:, 1], 0.10 + 0.05 * U[:, 2]))
     return np.exp(-0.5 * ((u - cu) ** 2 + (v - cv) ** 2) / width ** 2).reshape(U.shape[0], -1)
 
 
 def _fixed_shapes(U, shape=SHAPE):
-    """Images in which nothing moves: two shapes with amplitudes from the inputs."""
+    """Surfaces in which nothing moves: two shapes with amplitudes from the inputs."""
     u, v = np.meshgrid(*[(np.arange(p) + 0.5) / p for p in shape], indexing="ij")
     first, second = np.sin(np.pi * u) * np.sin(np.pi * v), np.sin(2.0 * np.pi * u) * np.sin(np.pi * v)
     return ((1.0 + U[:, :1, None]) * first + U[:, 1:2, None] * second).reshape(U.shape[0], -1)
@@ -48,7 +48,7 @@ class TestGridSplines(unittest.TestCase):
         self.a, self.b = 11.0 * rng.rand(3, 40), 8.0 * rng.rand(3, 40)
         self.splines = _GridSplines(self.F)
 
-    def test_interpolates_the_images(self):
+    def test_interpolates_the_surfaces(self):
         u, v = (np.tile(g, (3, 1)) for g in _grid((12, 9)))
         np.testing.assert_allclose(self.splines(u, v), self.F.reshape(3, -1), atol=1e-12)
 
@@ -134,16 +134,16 @@ class TestGridWarpFit(unittest.TestCase):
         self.U = 0.3 + 0.4 * rng.rand(60, 3)
         self.delta = _offsets(self.U)
 
-    def test_aligns_a_blob_that_moves(self):
-        F = _blob(self.U)
+    def test_aligns_a_peak_that_moves(self):
+        F = _peak(self.U)
         warp = GridWarp(SHAPE, 3)
         left = warp.fit(F, self.delta)
         self.assertLess(left, 0.05)
 
-        def centres(images, shape):
-            """The centre of mass of each image along the two axes."""
-            images = images.reshape((-1,) + shape)
-            return np.column_stack([(images.sum(axis=2 - axis) @ np.arange(shape[axis])) / images.sum(axis=(1, 2)) for axis in (0, 1)])
+        def centres(surfaces, shape):
+            """The centre of mass of each surface along the two axes."""
+            surfaces = surfaces.reshape((-1,) + shape)
+            return np.column_stack([(surfaces.sum(axis=2 - axis) @ np.arange(shape[axis])) / surfaces.sum(axis=(1, 2)) for axis in (0, 1)])
 
         before = centres(F, SHAPE).std(axis=0)
         after = centres(warp.register(F, self.delta), warp.fine).std(axis=0) / OVERSAMPLING
@@ -151,7 +151,7 @@ class TestGridWarpFit(unittest.TestCase):
 
     def test_a_finer_grid_is_fitted_on_fewer_points(self):
         shape = (40, 36)                                  # more than MAX_FIT_POINTS along both axes
-        F = _blob(self.U[:40], shape)
+        F = _peak(self.U[:40], shape)
         warp = GridWarp(shape, 3)
         self.assertLess(warp.fit(F, self.delta[:40]), 0.05)
         self.assertEqual(warp.C.shape, GridWarp(SHAPE, 3).C.shape)
@@ -163,7 +163,7 @@ class TestGridWarpFit(unittest.TestCase):
         self.assertLess(np.abs(warp.C).max(), 1e-2)
 
     def test_warm_fit_stays(self):
-        F = _blob(self.U)
+        F = _peak(self.U)
         warp = GridWarp(SHAPE, 3)
         left = warp.fit(F, self.delta)
         C = warp.C.copy()
@@ -171,40 +171,40 @@ class TestGridWarpFit(unittest.TestCase):
         self.assertLess(np.abs(warp.C - C).max(), 0.1 * np.abs(C).max())
 
 
-class TestAlignedImages(unittest.TestCase):
+class TestAlignedSurfaces(unittest.TestCase):
 
     def setUp(self):
         rng = np.random.RandomState(3)
         self.U = 0.3 + 0.4 * rng.rand(40, 3)
         self.delta = _offsets(self.U)
-        self.F = _blob(self.U)
+        self.F = _peak(self.U)
         self.warp = GridWarp(SHAPE, 3)
         self.warp.fit(self.F, self.delta)
-        self.images = self.warp.curves(self.F, self.warp.register(self.F, self.delta), self.delta)
+        self.surfaces = self.warp.curves(self.F, self.warp.register(self.F, self.delta), self.delta)
 
-    def test_combine_returns_an_image_from_its_own_weight(self):
-        self.assertIsInstance(self.images, AlignedImages)
-        weights = np.eye(40)[:5] - self.images.centre_weights        # the weights of the GP mean are for centred images
-        np.testing.assert_allclose(self.images.combine(self.delta[:5], weights), self.F[:5], atol=5e-3)
+    def test_combine_returns_a_surface_from_its_own_weight(self):
+        self.assertIsInstance(self.surfaces, AlignedSurfaces)
+        weights = np.eye(40)[:5] - self.surfaces.centre_weights        # the weights of the GP mean are for centred surfaces
+        np.testing.assert_allclose(self.surfaces.combine(self.delta[:5], weights), self.F[:5], atol=5e-3)
 
     def test_with_curve(self):
-        f, d = _blob(np.array([[0.5, 0.45, 0.55]])), np.array([[0.1, -0.2, 0.3]])
-        more = self.images.with_curve(f[0], d[0])
+        f, d = _peak(np.array([[0.5, 0.45, 0.55]])), np.array([[0.1, -0.2, 0.3]])
+        more = self.surfaces.with_curve(f[0], d[0])
         self.assertEqual(more.G.shape[0], 41)
         self.assertEqual(more.centre_weights[-1], 0.0)
         np.testing.assert_allclose(more.combine(d, np.eye(41)[-1:] - more.centre_weights), f, atol=5e-3)
-        self.assertGreater(more.nbytes(), self.images.nbytes())
+        self.assertGreater(more.nbytes(), self.surfaces.nbytes())
 
 
-class TestAlignedImageTree(unittest.TestCase):
+class TestAlignedSurfaceTree(unittest.TestCase):
 
     def _tree(self, model, shape=SHAPE, **kw):
         return GPTree(GPR=Default_GPR(), Nbar=60, retrain_every_n_points=20, n_outputs=int(np.prod(shape)), output_model=model, output_shape=shape, **kw)
 
-    def test_lower_error_than_shared_for_a_blob_that_moves(self):
+    def test_lower_error_than_shared_for_a_peak_that_moves(self):
         rng = np.random.RandomState(4)
         U, U_test = rng.rand(300, 3), rng.rand(100, 3)
-        Y, truth = _blob(U), _blob(U_test)
+        Y, truth = _peak(U), _peak(U_test)
         errors = {}
         for model in ('shared', 'aligned'):
             np.random.seed(0)
@@ -215,7 +215,7 @@ class TestAlignedImageTree(unittest.TestCase):
             self.assertTrue(np.all(sigma > 0.0))
             errors[model] = np.sqrt(np.mean((mean - truth) ** 2))
             if model == 'aligned':
-                self.assertTrue(any(isinstance(leaf.alignment, AlignedImages) for leaf in gpt.root.leaves))
+                self.assertTrue(any(isinstance(leaf.alignment, AlignedSurfaces) for leaf in gpt.root.leaves))
                 with tempfile.TemporaryDirectory() as folder:
                     gpt.save(os.path.join(folder, 'tree.joblib'))
                     loaded = joblib.load(os.path.join(folder, 'tree.joblib'))
@@ -225,7 +225,7 @@ class TestAlignedImageTree(unittest.TestCase):
     def test_stream_with_points_between_fits(self):
         rng = np.random.RandomState(5)
         U = 0.3 + 0.4 * rng.rand(70, 3)
-        Y = _blob(U)
+        Y = _peak(U)
         gpt = self._tree('aligned')
         for i in range(70):
             gpt.update_tree(U[i:i + 1], Y[i:i + 1], np.full((1, Y.shape[1]), 1e-4))

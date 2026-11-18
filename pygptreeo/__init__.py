@@ -21,7 +21,7 @@ Main components:
     - ObliqueMatern: Matern kernel whose length scales need not lie along the inputs (Default_GPR(oblique=True))
     - OutputBasis / OutputBasisLearner: Global PCA output basis for multi-output trees
     - OutputWarp / AlignedCurves: Alignment of curve-valued outputs within a leaf (output_model='aligned')
-    - GridWarp / AlignedImages: The same for outputs on a grid of two dimensions (output_shape=(p1, p2))
+    - GridWarp / AlignedSurfaces: The same for outputs that are a function on a grid of two dimensions (output_shape=(p1, p2))
     - AdditiveGPGlobalMean / GlobalMeanLearner: Tree-wide global model whose residual the leaves model
     - FeatureNetLearner / NetGlobalMean: Feature network as the tree-wide global model (needs PyTorch)
 
@@ -52,7 +52,7 @@ from pygptreeo.kernels import (
 )
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.adapters import SklearnGPAdapter
-from pygptreeo.output_alignment import AlignedCurves, AlignedImages, GridWarp, OutputWarp
+from pygptreeo.output_alignment import AlignedCurves, AlignedSurfaces, GridWarp, OutputWarp
 from pygptreeo.output_basis import OutputBasis, OutputBasisLearner
 from pygptreeo.global_mean import (
     GlobalMeanLearner,
