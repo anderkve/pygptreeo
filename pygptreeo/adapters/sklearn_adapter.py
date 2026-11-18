@@ -11,7 +11,9 @@ import numpy as np
 from copy import deepcopy
 
 from scipy.linalg import cho_solve, cholesky, solve_triangular
+from scipy.optimize import minimize
 from sklearn.base import clone as sklearn_clone
+from sklearn.utils import check_random_state
 from sklearn.gaussian_process import GaussianProcessRegressor
 
 from ..gp_interface import GPRegressorInterface
@@ -95,7 +97,46 @@ class SklearnGPAdapter(GPRegressorInterface):
             The fitted adapter instance.
         """
         self._ensure_kernel(np.asarray(X).shape[1])
+        y = np.asarray(y)
+        if y.ndim == 2 and y.shape[1] > 1 and self._gpr.optimizer == "fmin_l_bfgs_b" and not self._gpr.normalize_y:
+            return self._fit_multitarget(np.asarray(X, dtype=float), y.astype(float))
         self._gpr.fit(X, y)
+        return self
+
+    def _fit_multitarget(self, X: np.ndarray, y: np.ndarray) -> 'SklearnGPAdapter':
+        """The fit of scikit-learn for several targets, with the likelihood
+        computed from ``y @ y.T``: its cost does not grow with the number of
+        targets."""
+        sk = self._gpr
+        n, n_targets = y.shape
+        gram = y @ y.T
+        noise = np.broadcast_to(np.asarray(sk.alpha, dtype=float), (n,))
+
+        def negative_log_likelihood(theta):
+            K, K_gradient = sk.kernel.clone_with_theta(theta)(X, eval_gradient=True)
+            K[np.diag_indices_from(K)] += noise
+            try:
+                L = cholesky(K, lower=True, check_finite=False)
+            except np.linalg.LinAlgError:
+                return np.inf, np.zeros_like(theta)
+            K_inv = cho_solve((L, True), np.eye(n), check_finite=False)
+            weighted = K_inv @ gram
+            value = -0.5 * np.trace(weighted) - n_targets * np.log(np.diag(L)).sum() - 0.5 * n * n_targets * np.log(2 * np.pi)
+            gradient = 0.5 * np.einsum("ij,jik->k", weighted @ K_inv - n_targets * K_inv, K_gradient)
+            return -value, -gradient
+
+        bounds = sk.kernel.bounds
+        starts = [sk.kernel.theta]
+        if sk.n_restarts_optimizer > 0:
+            rng = check_random_state(sk.random_state)
+            starts += [rng.uniform(bounds[:, 0], bounds[:, 1]) for _ in range(sk.n_restarts_optimizer)]
+        best = None
+        if sk.kernel.n_dims > 0:
+            for start in starts:
+                result = minimize(negative_log_likelihood, start, method="L-BFGS-B", jac=True, bounds=bounds)
+                if best is None or result.fun < best.fun:
+                    best = result
+        self.refit_fixed(X, y, sk.kernel.theta if best is None else best.x)
         return self
 
     def supports_multitarget(self) -> bool:

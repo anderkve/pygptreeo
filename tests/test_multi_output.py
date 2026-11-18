@@ -150,6 +150,52 @@ class TestOutputBasis(unittest.TestCase):
         self.assertEqual(learner._reservoir.shape[0], 50)
 
 
+class TestMultiTargetFit(unittest.TestCase):
+    """The adapter's fit of several targets must be scikit-learn's own."""
+
+    def setUp(self):
+        rng = np.random.RandomState(9)
+        self.X = rng.rand(40, 2)
+        t = np.linspace(0, 1, 30)
+        Y = np.sin(4 * self.X[:, :1] + 3 * t) * self.X[:, 1:] + 0.01 * rng.randn(40, 30)
+        self.Y = Y - Y.mean(axis=0)
+        self.alpha = np.full(40, 1e-4)
+        self.Xt = rng.rand(10, 2)
+
+    def _reference(self, kernel, **kwargs):
+        from sklearn.gaussian_process import GaussianProcessRegressor
+        return GaussianProcessRegressor(kernel=kernel, alpha=self.alpha, **kwargs).fit(self.X, self.Y)
+
+    def test_same_fit_as_scikit_learn(self):
+        kernel = ConstantKernel() * Matern(nu=1.5, length_scale=np.ones(2))
+        reference = self._reference(kernel)
+        gpr = Default_GPR(kernel=kernel, alpha=self.alpha)
+        gpr.fit(self.X, self.Y)
+        sk = gpr.sklearn_gpr
+        np.testing.assert_allclose(sk.kernel_.theta, reference.kernel_.theta, atol=1e-2)
+        np.testing.assert_allclose(sk.log_marginal_likelihood_value_, reference.log_marginal_likelihood_value_, rtol=1e-6)
+        mean, std = gpr.predict(self.Xt, return_std=True)
+        mean_ref, std_ref = reference.predict(self.Xt, return_std=True)
+        np.testing.assert_allclose(mean, mean_ref, atol=1e-4)
+        np.testing.assert_allclose(std, std_ref, atol=1e-4)
+
+    def test_likelihood_does_not_fall_with_restarts(self):
+        kernel = ConstantKernel() * Matern(nu=1.5, length_scale=np.ones(2))
+        one = Default_GPR(kernel=kernel, alpha=self.alpha)
+        one.fit(self.X, self.Y)
+        more = Default_GPR(kernel=kernel, alpha=self.alpha, n_restarts_optimizer=3, random_state=0)
+        more.fit(self.X, self.Y)
+        self.assertGreaterEqual(more.sklearn_gpr.log_marginal_likelihood_value_,
+                                one.sklearn_gpr.log_marginal_likelihood_value_ - 1e-6)
+
+    def test_kernel_without_free_hyperparameters(self):
+        kernel = ConstantKernel(2.0, "fixed") * RBF(0.5, "fixed")
+        reference = self._reference(kernel)
+        gpr = Default_GPR(kernel=kernel, alpha=self.alpha)
+        gpr.fit(self.X, self.Y)
+        np.testing.assert_allclose(gpr.predict(self.Xt), reference.predict(self.Xt), atol=1e-8)
+
+
 class TestOutputModels(unittest.TestCase):
 
     def _data(self, n=120, p=8, seed=3):
