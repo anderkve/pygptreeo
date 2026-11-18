@@ -1008,7 +1008,9 @@ model and the default leaves. NRMSE of the last 400 predictions:
   9.7e-3 on `zprime_spectrum`.
 * **Coverage**: 0.63 to 0.72 with the GP and 0.53 to 0.72 with the network on
   the exact curves, and 0.95 and 0.93 on `peak_counts_mc`, where it is 0.99
-  without a global model.
+  without a global model. It dips after each new version of the global
+  model: on a stream of 400 curves of `matter_power`, with the GP fitted at
+  200 and at 400, it was 0.48 over the last 200.
 * **Time for the stream**: 4 to 16 s with `'shared'`, 18 to 68 s with the GP,
   which is fitted three times, and 17 to 41 s with the network.
 
@@ -1194,3 +1196,13 @@ and 6.1 (1.3 to 13) with Matérn 5/2 in the global GP
 too. On `matter_power` the error of Matérn 5/2 leaves is higher with 3200
 curves than with 800 (2.1e-5 against 1.2e-5), and the global GP lowers it to
 5.8e-6.
+
+The eleven single-output targets of `examples/target_functions_physics.py`,
+streams of 4000 uniform points, NRMSE of the last 2000 predictions: with
+Matérn 5/2 leaves the error is 8 to 19% higher on eight targets and lower on
+three (`eft_signal_strength` by a factor 2.1, `oscillation_probability` 1.3,
+`signal_yield_mc` 1.1), 1.02 times lower in the geometric mean. Their
+thresholds, cusps and resonances lie in the input space. With a curve as the
+target such a feature lies along the grid, and the kernel only sees how the
+curve changes with the parameters: `jet_spectrum` gains a factor 3.3 from
+Matérn 5/2 leaves as a curve in `p_T`, and loses 18% with `p_T` as an input.

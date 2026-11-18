@@ -242,8 +242,11 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   (`Default_GPR(nu=2.5)`) the error of `'shared'` is 3.1 times lower in the
   geometric mean over the twelve families, between 0.9 and 58 times. RBF
   leaves are better still on `z_lineshape` and `cmb_peaks`, by a factor 2 to
-  4, and 7 times worse on `zprime_spectrum`. The default is unchanged
-  (section 9.8).
+  4, and 7 times worse on `zprime_spectrum`. The default is unchanged: on
+  the eleven single-output physics targets, whose thresholds and cusps lie in
+  the input space, Matérn 5/2 leaves have the same error in the geometric
+  mean and a higher one on eight. A feature along the grid of a curve costs
+  the kernel nothing as long as it does not move (section 9.8).
 * **What limits the accuracy is a feature that moves.** Where a peak, an edge
   or the phase of an oscillation has a position in `x` that depends on
   `theta`, a combination of curves with the feature at different positions

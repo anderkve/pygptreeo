@@ -45,8 +45,9 @@ COLOURS = ["#2a78d6", "#eb6834"]
 def learn(family, model, U, Y, S, truth, U_test, global_mean=None):
     """Stream the curves through a tree. Returns the predictions along the stream,
     those for the test set, and the time per update in ms."""
+    kwargs = dict(nu=NU) if global_mean == 'additive_gp' else None        # the same smoothness for the global GP
     gpt = GPTree(GPR=Default_GPR(nu=NU), Nbar=100, retrain_every_n_points=25, n_outputs=family.n_outputs, output_model=model,
-                 global_mean=global_mean)
+                 global_mean=global_mean, global_mean_kwargs=kwargs)
     N = len(U)
     mean, sigma = np.zeros_like(Y), np.zeros_like(Y)
     t_update = 0.0
