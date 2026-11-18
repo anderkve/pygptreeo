@@ -28,6 +28,8 @@ import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.preprocessing import StandardScaler
 
+from pygptreeo.adapters.sklearn_adapter import SklearnGPAdapter
+
 
 class GlobalMeanSnapshot:
     """An immutable fitted global model.
@@ -168,8 +170,11 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
     Parameters
     ----------
     kernel : sklearn kernel, optional
-        Kernel of the global GP. Default: ``AdditiveMaternKernel(d, order=2)``,
+        Kernel of the global GP. Default: ``AdditiveMaternKernel(d, order=2, nu=nu)``,
         built at the first observation when the input dimension is known.
+    nu : float, default=1.5
+        Smoothness of the default kernel. 2.5 suits a target that is smooth in
+        its inputs.
     reservoir_size : int, default=500
         Size of the coverage reservoir the model is fitted on.
     min_points : int, default=200
@@ -195,12 +200,13 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
     def __init__(self, kernel=None, reservoir_size: int = 500, min_points: int = 200,
                  min_turnover: float = 0.25, refit_cap: Optional[int] = None,
                  n_restarts_optimizer: int = 2, alpha_floor: float = 1e-8,
-                 random_state: Optional[int] = None):
+                 random_state: Optional[int] = None, nu: float = 1.5):
         if min_points < 2:
             raise ValueError("min_points must be at least 2")
         if not (0.0 <= min_turnover <= 1.0):
             raise ValueError("min_turnover must be in [0, 1]")
         self.kernel = kernel
+        self.nu = float(nu)
         self.reservoir_size = int(reservoir_size)
         self.min_points = int(min_points)
         self.min_turnover = float(min_turnover)
@@ -233,7 +239,7 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
             self.reservoir = CoverageReservoir(self.reservoir_size, x.shape[1], y.shape[1])
             if self.kernel is None:
                 from pygptreeo.kernels import AdditiveMaternKernel
-                self.kernel = AdditiveMaternKernel(d=x.shape[1], order=min(2, x.shape[1]))
+                self.kernel = AdditiveMaternKernel(d=x.shape[1], order=min(2, x.shape[1]), nu=self.nu)
         self.n_seen += 1
         if self.current is not None:
             # Prequential error of the current snapshot at this point. Its expectation
@@ -287,7 +293,8 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
         gp = GaussianProcessRegressor(kernel=kernel, alpha=alpha,
                                       n_restarts_optimizer=self.n_restarts_optimizer,
                                       random_state=self.random_state)
-        gp.fit(x_scaler.transform(res.X), Y if Y.shape[1] > 1 else Y[:, 0])
+        # through the adapter, whose fit of several outputs does not grow with their number
+        SklearnGPAdapter(gp).fit(x_scaler.transform(res.X), Y if Y.shape[1] > 1 else Y[:, 0])
         version = 1 if self.current is None else self.current.version + 1
         if self.current is None:
             self.n_seen_at_first_fit = self.n_seen

@@ -12,10 +12,17 @@ from copy import deepcopy
 
 from scipy.linalg import cho_solve, cholesky, solve_triangular
 from scipy.linalg.lapack import dpotrf, dtrtrs
+from scipy.optimize import minimize
 from sklearn.base import clone as sklearn_clone
+from sklearn.utils import check_random_state
 from sklearn.gaussian_process import GaussianProcessRegressor
 
 from ..gp_interface import GPRegressorInterface
+from ..kernels import ObliqueMatern, shear_dims
+
+OBLIQUE_MARGIN = 1.1    # a fit with a free shear is kept if it lowers the leave-one-out error by this factor
+OBLIQUE_STEPS = 50      # iterations of the optimiser of a fit with a free shear
+OBLIQUE_MAX_WAIT = 8    # after repeated rejections a free shear is tried at one fit in this many
 
 
 class SklearnGPAdapter(GPRegressorInterface):
@@ -72,6 +79,8 @@ class SklearnGPAdapter(GPRegressorInterface):
             )
         self._gpr = gpr
         self._kernel_factory = kernel_factory
+        self._shear_rejections = 0      # free shears rejected in a row, and the fits to pass before the next try
+        self._shear_wait = 0
 
     def _ensure_kernel(self, n_features: int) -> None:
         """Build the kernel from the factory (once) now that n_features is known."""
@@ -96,8 +105,95 @@ class SklearnGPAdapter(GPRegressorInterface):
             The fitted adapter instance.
         """
         self._ensure_kernel(np.asarray(X).shape[1])
+        y = np.asarray(y)
+        if self._gpr.optimizer == "fmin_l_bfgs_b" and not self._gpr.normalize_y:
+            if shear_dims(self._gpr.kernel).size > 0:
+                return self._fit_oblique(np.asarray(X, dtype=float), y.astype(float))
+            if y.ndim == 2 and y.shape[1] > 1:
+                return self._fit_multitarget(np.asarray(X, dtype=float), y.astype(float))
         self._gpr.fit(X, y)
         return self
+
+    def _fit_multitarget(self, X: np.ndarray, y: np.ndarray) -> 'SklearnGPAdapter':
+        """The fit of scikit-learn for several targets, with the likelihood
+        computed from ``y @ y.T``: its cost does not grow with the number of
+        targets."""
+        sk = self._gpr
+        self.refit_fixed(X, y, self._maximise_likelihood(X, y, [sk.kernel.theta], sk.kernel.bounds))
+        return self
+
+    def _maximise_likelihood(self, X: np.ndarray, y: np.ndarray, starts, bounds, max_steps=None) -> np.ndarray:
+        """The ``theta`` within ``bounds`` of the largest likelihood found from
+        ``starts`` and from the regressor's number of random restarts, in at
+        most ``max_steps`` iterations from each."""
+        sk = self._gpr
+        y = y.reshape(y.shape[0], -1)
+        n, n_targets = y.shape
+        gram = y @ y.T
+        noise = np.broadcast_to(np.asarray(sk.alpha, dtype=float), (n,))
+
+        def negative_log_likelihood(theta):
+            K, K_gradient = sk.kernel.clone_with_theta(theta)(X, eval_gradient=True)
+            K[np.diag_indices_from(K)] += noise
+            try:
+                L = cholesky(K, lower=True, check_finite=False)
+            except np.linalg.LinAlgError:
+                return np.inf, np.zeros_like(theta)
+            K_inv = cho_solve((L, True), np.eye(n), check_finite=False)
+            weighted = K_inv @ gram
+            value = -0.5 * np.trace(weighted) - n_targets * np.log(np.diag(L)).sum() - 0.5 * n * n_targets * np.log(2 * np.pi)
+            gradient = 0.5 * np.einsum("ij,jik->k", weighted @ K_inv - n_targets * K_inv, K_gradient)
+            return -value, -gradient
+
+        starts = list(starts)
+        if sk.n_restarts_optimizer > 0:
+            rng = check_random_state(sk.random_state)
+            starts += [rng.uniform(bounds[:, 0], bounds[:, 1]) for _ in range(sk.n_restarts_optimizer)]
+        best = None
+        if sk.kernel.n_dims > 0:
+            for start in starts:
+                result = minimize(negative_log_likelihood, start, method="L-BFGS-B", jac=True, bounds=bounds,
+                                  options={} if max_steps is None else {"maxiter": max_steps})
+                if best is None or result.fun < best.fun:
+                    best = result
+        return starts[0] if best is None else best.x
+
+    def _fit_oblique(self, X: np.ndarray, y: np.ndarray) -> 'SklearnGPAdapter':
+        """Fit a kernel with ObliqueMatern parts: with their shear at zero, and
+        with it free, from that fit and from the kernel's own shear. The free
+        fit is kept if its leave-one-out error is lower by OBLIQUE_MARGIN.
+        After a rejection the free fit is left out of the next 1, 3, then 7 fits."""
+        sk = self._gpr
+        theta, bounds = sk.kernel.theta, sk.kernel.bounds
+        shear = shear_dims(sk.kernel)
+        pinned, start = bounds.copy(), theta.copy()
+        pinned[shear], start[shear] = 0.0, 0.0
+        along_axes = self._maximise_likelihood(X, y, [start], pinned)
+        chosen = along_axes
+        if self._shear_wait > 0:
+            self._shear_wait -= 1
+        elif X.shape[0] > theta.size:
+            starts = [along_axes] + ([theta] if np.any(theta[shear] != 0.0) else [])
+            free = self._maximise_likelihood(X, y, starts, bounds, max_steps=OBLIQUE_STEPS)
+            if self._leave_one_out_error(X, y, free) * OBLIQUE_MARGIN < self._leave_one_out_error(X, y, along_axes):
+                chosen, self._shear_rejections = free, 0
+            else:
+                self._shear_rejections += 1
+                self._shear_wait = min(2 ** self._shear_rejections, OBLIQUE_MAX_WAIT) - 1
+        self.refit_fixed(X, y, chosen)
+        return self
+
+    def _leave_one_out_error(self, X: np.ndarray, y: np.ndarray, theta: np.ndarray) -> float:
+        """Root mean square of the leave-one-out errors with the kernel at ``theta``."""
+        sk = self._gpr
+        K = sk.kernel.clone_with_theta(theta)(X)
+        K[np.diag_indices_from(K)] += sk.alpha
+        try:
+            K_inv = cho_solve((cholesky(K, lower=True, check_finite=False), True), np.eye(K.shape[0]), check_finite=False)
+        except np.linalg.LinAlgError:
+            return np.inf
+        errors = K_inv @ y.reshape(y.shape[0], -1) / np.diag(K_inv)[:, None]
+        return float(np.sqrt(np.mean(errors ** 2)))
 
     def supports_multitarget(self) -> bool:
         """scikit-learn's GPR fits a 2-D ``y`` with one shared kernel (multi-target)."""
@@ -194,7 +290,9 @@ class SklearnGPAdapter(GPRegressorInterface):
         SklearnGPAdapter
             A deep copy of this adapter instance.
         """
-        return SklearnGPAdapter(deepcopy(self._gpr), kernel_factory=self._kernel_factory)
+        copy = SklearnGPAdapter(deepcopy(self._gpr), kernel_factory=self._kernel_factory)
+        copy._shear_rejections, copy._shear_wait = self._shear_rejections, self._shear_wait
+        return copy
 
     def get_kernel(self):
         """
@@ -248,9 +346,15 @@ class SklearnGPAdapter(GPRegressorInterface):
             return None
 
         ls_arrays = []
+        oblique = [key for key, val in params.items() if isinstance(val, ObliqueMatern)]
+        if isinstance(kernel, ObliqueMatern):
+            oblique, ls_arrays = [''], [kernel.axis_length_scales()]
+        ls_arrays += [params[key].axis_length_scales() for key in oblique if key]
         for key, val in params.items():
             if not key.endswith('length_scale'):  # excludes 'length_scale_bounds'
                 continue
+            if key == 'length_scale' and '' in oblique or any(key.startswith(part + '__') for part in oblique if part):
+                continue                          # the length scales of an oblique part are not along the inputs
             arr = np.atleast_1d(np.asarray(val, dtype=float)).ravel()
             if arr.size == n_features and n_features > 1:
                 ls_arrays.append(arr)
@@ -258,6 +362,14 @@ class SklearnGPAdapter(GPRegressorInterface):
         if not ls_arrays:
             return None
         return np.min(np.vstack(ls_arrays), axis=0)
+
+    def get_metric(self, n_features: int):
+        """The sum of the metrics of the fitted kernel's ObliqueMatern parts, or
+        None if none of them has a shear."""
+        kernel = self.get_kernel()
+        parts = [kernel] + list(kernel.get_params(deep=True).values())
+        parts = [part for part in parts if isinstance(part, ObliqueMatern) and part.n_features == n_features and np.any(part._shear())]
+        return sum(part.metric() for part in parts) if parts else None
 
     def refit_fixed(self, X: np.ndarray, y: np.ndarray, hyperparameters=None) -> bool:
         """Fit without optimising: with the kernel at ``hyperparameters`` (its
@@ -311,6 +423,25 @@ class SklearnGPAdapter(GPRegressorInterface):
         sk.L_ = L
         sk.alpha_ = cho_solve((L, True), sk.y_train_, check_finite=False)
         return True
+
+    def mean_weights(self, X):
+        """``K(X, X_train) K^-1``."""
+        sk = self._gpr
+        if not hasattr(sk, 'L_') or sk.normalize_y:
+            return None
+        return cho_solve((sk.L_, True), sk.kernel_(sk.X_train_, np.asarray(X, dtype=float)), check_finite=False).T
+
+    def leave_one_out(self):
+        """From the inverse of the kernel matrix: the weights are its rows over
+        its diagonal, negated, and the variances the inverse of its diagonal."""
+        sk = self._gpr
+        if not hasattr(sk, 'L_') or sk.normalize_y:
+            return None
+        K_inv = cho_solve((sk.L_, True), np.eye(sk.L_.shape[0]), check_finite=False)
+        diagonal = np.diag(K_inv).copy()
+        weights = -K_inv / diagonal[:, None]
+        np.fill_diagonal(weights, 0.0)
+        return weights, 1.0 / diagonal
 
     def supports_conditioning(self) -> bool:
         return True

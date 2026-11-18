@@ -1229,3 +1229,156 @@ def AdditivePeriodicMaternKernel(
                    length_scale_bounds=catch_all_length_scale_bounds)
     catch = ConstantKernel(constant_value, constant_value_bounds) * base
     return periodic + catch
+
+
+class ObliqueMatern(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
+    """Matern kernel whose length scales need not lie along the inputs.
+
+    The distance is ``r^2 = sum_k w_k^2`` with ``w = (x - x') @ L / length_scale``
+    and ``L`` unit lower triangular: ``w_k`` is input ``k`` plus ``shear`` times
+    the inputs after it. With ``shear = 0`` this is the anisotropic Matern kernel.
+    The metric ``L diag(length_scale^-2) L^T`` can be any positive definite one.
+
+    ``theta`` holds the logarithms of the length scales, then the shear as it is
+    (the entries of ``L`` below its diagonal, row by row).
+
+    Parameters
+    ----------
+    length_scale : ndarray of shape (n_features,)
+    shear : ndarray of shape (n_features (n_features - 1) / 2,), default zeros
+    nu : 0.5, 1.5, 2.5 or inf
+    """
+
+    def __init__(self, length_scale, shear=None, nu=1.5, length_scale_bounds=(1e-5, 1e5), shear_bounds=(-10.0, 10.0)):
+        self.length_scale = length_scale
+        self.shear = shear
+        self.nu = nu
+        self.length_scale_bounds = length_scale_bounds
+        self.shear_bounds = shear_bounds
+
+    @property
+    def n_features(self):
+        return np.size(self.length_scale)
+
+    @property
+    def n_shear(self):
+        return self.n_features * (self.n_features - 1) // 2
+
+    @property
+    def hyperparameter_length_scale(self):
+        return Hyperparameter("length_scale", "numeric", self.length_scale_bounds, self.n_features)
+
+    @property
+    def hyperparameter_shear(self):
+        return Hyperparameter("shear", "numeric", self.shear_bounds, self.n_shear)
+
+    def _shear(self):
+        return np.zeros(self.n_shear) if self.shear is None else np.asarray(self.shear, dtype=float)
+
+    def _free(self):
+        """Whether the length scales and the shear are free."""
+        return not self.hyperparameter_length_scale.fixed, not self.hyperparameter_shear.fixed and self.n_shear > 0
+
+    @property
+    def theta(self):
+        scales, shear = self._free()
+        return np.concatenate([np.log(np.atleast_1d(self.length_scale).astype(float)) if scales else [], self._shear() if shear else []])
+
+    @theta.setter
+    def theta(self, theta):
+        scales, shear = self._free()
+        n = self.n_features if scales else 0
+        if len(theta) != n + (self.n_shear if shear else 0):
+            raise ValueError(f"theta has {len(theta)} entries, the kernel {n + (self.n_shear if shear else 0)}")
+        if scales:
+            self.length_scale = np.exp(theta[:n])
+        if shear:
+            self.shear = np.array(theta[n:], dtype=float)
+
+    @property
+    def bounds(self):
+        scales, shear = self._free()
+        rows = []
+        if scales:
+            rows.append(np.log(self.hyperparameter_length_scale.bounds))
+        if shear:
+            rows.append(self.hyperparameter_shear.bounds)
+        return np.vstack(rows) if rows else np.empty((0, 2))
+
+    def mixing(self):
+        """The unit lower triangular ``L``."""
+        L = np.eye(self.n_features)
+        L[np.tril_indices(self.n_features, -1)] = self._shear()
+        return L
+
+    def metric(self):
+        """``M`` with ``r^2 = (x - x') M (x - x')^T``."""
+        scaled = self.mixing() / np.atleast_1d(self.length_scale)
+        return scaled @ scaled.T
+
+    def axis_length_scales(self):
+        """The length scale along each input: the distance over which ``r`` grows
+        by one when only that input changes."""
+        scaled = self.mixing() / np.atleast_1d(self.length_scale)
+        return 1.0 / np.sqrt(np.sum(scaled ** 2, axis=1))
+
+    def _correlation(self, r2):
+        """The kernel and its derivative with respect to ``r^2``."""
+        r = np.sqrt(r2)
+        if self.nu == 0.5:
+            K = np.exp(-r)
+            return K, -0.5 * K / np.where(r > 0.0, r, np.inf)
+        if self.nu == 1.5:
+            e = np.exp(-np.sqrt(3.0) * r)
+            return (1.0 + np.sqrt(3.0) * r) * e, -1.5 * e
+        if self.nu == 2.5:
+            e = np.exp(-np.sqrt(5.0) * r)
+            return (1.0 + np.sqrt(5.0) * r + 5.0 / 3.0 * r2) * e, -5.0 / 6.0 * (1.0 + np.sqrt(5.0) * r) * e
+        if self.nu == np.inf:
+            K = np.exp(-0.5 * r2)
+            return K, -0.5 * K
+        raise ValueError(f"ObliqueMatern has nu = 0.5, 1.5, 2.5 or inf, not {self.nu!r}")
+
+    def __call__(self, X, Y=None, eval_gradient=False):
+        X = np.atleast_2d(X)
+        if X.shape[1] != self.n_features:
+            raise ValueError(f"The kernel has {self.n_features} length scales and X {X.shape[1]} features")
+        L, scale = self.mixing(), np.atleast_1d(self.length_scale).astype(float)
+        W = (X @ L / scale).T                                                # (n_features, n)
+        if Y is None:
+            D = W[:, :, None] - W[:, None, :]
+        elif eval_gradient:
+            raise ValueError("Gradient can only be evaluated when Y is None.")
+        else:
+            D = W[:, :, None] - (np.atleast_2d(Y) @ L / scale).T[:, None, :]
+        K, dK = self._correlation(np.einsum("kij,kij->ij", D, D))
+        if not eval_gradient:
+            return K
+        scales, shear = self._free()
+        gradient = np.empty((self.n_features * scales + self.n_shear * shear,) + K.shape)
+        if scales:
+            np.multiply(D, D, out=gradient[:self.n_features])
+            gradient[:self.n_features] *= -2.0 * dK                         # d r^2 / d log(length_scale_k)
+        if shear:
+            raw = X.T[:, :, None] - X.T[:, None, :]
+            D *= 2.0 * dK / scale[:, None, None]
+            for m, (j, k) in enumerate(zip(*np.tril_indices(self.n_features, -1))):
+                np.multiply(D[k], raw[j], out=gradient[m - self.n_shear])   # d r^2 / d L_jk
+        return K, np.moveaxis(gradient, 0, -1)
+
+    def __repr__(self):
+        return (f"{self.__class__.__name__}(length_scale=[{', '.join(f'{v:.3g}' for v in np.atleast_1d(self.length_scale))}], "
+                f"shear=[{', '.join(f'{v:.3g}' for v in self._shear())}], nu={self.nu:.3g})")
+
+
+def shear_dims(kernel):
+    """The positions in ``kernel.theta`` of the shear of its ObliqueMatern parts."""
+    if isinstance(kernel, ObliqueMatern):
+        scales, shear = kernel._free()
+        first = kernel.n_features if scales else 0
+        return np.arange(first, first + (kernel.n_shear if shear else 0))
+    if hasattr(kernel, "k1") and hasattr(kernel, "k2"):
+        return np.concatenate([shear_dims(kernel.k1), kernel.k1.n_dims + shear_dims(kernel.k2)]).astype(int)
+    if hasattr(kernel, "kernel"):
+        return shear_dims(kernel.kernel)
+    return np.arange(0)

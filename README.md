@@ -86,9 +86,9 @@ This is faster, by a factor of about 2.5 for 5000 points in our tests, with a si
 
 ## Selecting a leaf kernel
 
-By default each leaf GP uses an anisotropic Matérn kernel, `ConstantKernel() * Matern(nu=1.5)`, with one length scale per input dimension. The fitted length scales also determine the split dimension: with the default setting `split_dimension_criteria='min_lengthscale'` a leaf is split along the dimension with the smallest length scale, i.e. the dimension along which the target function varies fastest. For kernels without per-dimension length scales the dimension with the largest spread in the data points is used instead.
+By default each leaf GP uses an anisotropic Matérn kernel, `ConstantKernel() * Matern(nu=1.5)`, with one length scale per input dimension. With the default setting `split_dimension_criteria='min_lengthscale'` a leaf is split along the dimension with the smallest length scale, i.e. the dimension along which the target function varies fastest. For kernels without per-dimension length scales the dimension with the largest spread in the data points is used instead.
 
-For many target functions `AdditiveMaternKernel` is a better choice. It combines the Matérn kernel with a low-order additive kernel, which models the target as a sum of main effects (`order=1`), or of main effects and pairwise interactions (`order=2`).
+For many target functions `AdditiveMaternKernel` is a better choice. It adds a low-order additive kernel, which models the target as a sum of main effects (`order=1`), or of main effects and pairwise interactions (`order=2`). It requires fewer data points when the target has approximately this structure, and there is typically little harm otherwise, except for a longer run time.
 
 ```python
 from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
@@ -98,25 +98,38 @@ kernel = AdditiveMaternKernel(d=d, order=2, nu=1.5)
 gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
 ```
 
-The additive component only has `d` length scales and one variance per interaction order, so it requires fewer data points when the target has (approximately) this structure. The Matérn component captures the remaining, non-additive variation. So even when the target has no additive structure there is typically little harm in using `AdditiveMaternKernel`, except for the increased run time from fitting more hyperparameters. The hyperparameters are tuned per leaf by marginal-likelihood maximisation.
+If the target varies fastest along a combination of the inputs, e.g. for parameters with partly degenerate effects, use `GPR=Default_GPR(oblique=True)`. Each leaf can then learn length scales along combinations of the inputs, keeps them only if they lower its leave-one-out error, and is split across the direction of fastest variation. In our tests this lowered the error by a factor of up to 12 for such targets, at 1.1 to 5 times the run time.
 
-Any other scikit-learn kernel can be used in the same way, e.g. `ConstantKernel() * (Matern(nu=1.5, length_scale=[1.0] * d) + RBF(length_scale=[1.0] * d))` as a simpler and computationally cheaper alternative. For periodic inputs there is also `AdditivePeriodicMaternKernel(d=d)`, which is typically only beneficial when several oscillation periods fall within a single leaf.
+Any other scikit-learn kernel can be used in the same way, e.g. `ConstantKernel() * (Matern(nu=1.5, length_scale=[1.0] * d) + RBF(length_scale=[1.0] * d))` as a cheaper alternative. For periodic inputs there is also `AdditivePeriodicMaternKernel(d=d)`, which is typically only beneficial when several oscillation periods fall within a single leaf.
 
 ## Multi-output targets
 
-pyGPTreeO also supports multi-output targets. Set `n_outputs=p` and pass `y` and `sigma` as arrays with `p` columns. The `output_model` option determines how the outputs are modelled within each leaf:
+Set `n_outputs=p` and pass `y` and `sigma` as arrays with `p` columns. The `output_model` option determines how the outputs are modelled within each leaf:
 
 - `'independent'` (default): One GP per output, each with its own kernel hyperparameters.
-- `'shared'`: One GP with a single kernel shared by all outputs. This requires one Cholesky factorisation per leaf instead of `p`, with similar accuracy when the outputs have similar length scales. This option is only available with the scikit-learn interface.
-- `'pca'`: The tree learns a global linear basis for the output space, using PCA on a subsample of the input stream, and each leaf models the leading principal components with one GP each. Predictions and uncertainties are transformed back to the output space. This is suitable for strongly correlated outputs, e.g. a function `f(t; x)` evaluated on a grid in `t`. By default only the components with a variance above the observation noise level (given by `sigma`) are kept. The number of components can also be set explicitly with `output_basis_components`.
+- `'shared'`: One GP with a single kernel for all outputs. The accuracy is similar when the outputs have similar length scales, at a small fraction of the run time.
+- `'pca'`: The tree learns a global linear basis for the outputs by PCA, and each leaf models the leading components with one GP each. Suitable for strongly correlated outputs.
+- `'aligned'`: As `'shared'`, for outputs that are a function on an ordered grid with features whose position depends on the inputs, e.g. a resonance peak or a kinematic edge. Each leaf stretches and compresses the grid of its curves so that their features line up, and keeps this alignment only if it lowers its leave-one-out error.
+
+`'shared'` and `'aligned'` require the scikit-learn interface.
 
 ```python
-gpt = GPTree(Nbar=50, n_outputs=100, output_model='pca')
-gpt.fit(X_train, Y_train, sigma_train)    # Y_train has shape (N, 100)
-Y_pred, Y_std = gpt.predict(X_test)
+gpt = GPTree(Nbar=100, n_outputs=100, output_model='aligned')
+for x, y, sigma in data_stream:               # y and sigma have shape (1, 100)
+    y_pred, y_std = gpt.predict(x)
+    gpt.update_tree(x, y, sigma)
 ```
 
-In this example the tree is trained in batch mode with `fit`, so the predicted uncertainties are the uncalibrated GP uncertainties (see the section on adding many points at once). See `examples/multioutput_function_learning_pca.py` for a comparison of the three options.
+For a function on a grid of two dimensions, pass the flattened values (`values.ravel()`) and the shape of the grid, e.g. `output_shape=(32, 32)`. The leaves of `'aligned'` then align along both axes.
+
+Some recommendations for a function `f(t; x)` on a grid in `t`, e.g. a spectrum that depends on the model parameters `x`:
+
+- Start with `'shared'`. Use `'aligned'` if a feature moves along the grid with the inputs. In our tests this lowered the error by a factor 2 to 12, at two to four times the run time. The grid should have at least two to three points across the feature.
+- If the function changes smoothly with the inputs, use a smoother leaf kernel, `GPR=Default_GPR(nu=2.5)`.
+- Give a quantity that varies over orders of magnitude as its logarithm.
+- A global model (see below) works with all output models. For smooth functions, give the additive GP the same smoothness with `global_mean_kwargs=dict(nu=2.5)`.
+
+See `examples/multioutput_physics_curves.py`, `examples/multioutput_surfaces.py` and `examples/multioutput_function_learning_pca.py` for examples, and section 10 of [`docs/benchmarks.md`](docs/benchmarks.md) for the test results.
 
 ## Global models (optional)
 

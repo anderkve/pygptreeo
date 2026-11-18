@@ -15,6 +15,7 @@ from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 
 # Local imports
 from pygptreeo.adapters import SklearnGPAdapter
+from pygptreeo.kernels import ObliqueMatern
 
 
 class DefaultKernelFactory:
@@ -24,16 +25,22 @@ class DefaultKernelFactory:
     :func:`Default_GPR` when no kernel is given: the input dimensionality is only
     known at the first ``fit``, so the kernel is created lazily. A class (rather
     than a lambda) keeps the adapter picklable for ``GPTree.save``.
+
+    With ``oblique`` and more than one input the Matern kernel is an
+    :class:`~pygptreeo.kernels.ObliqueMatern`.
     """
 
-    def __init__(self, nu: float = 1.5):
+    def __init__(self, nu: float = 1.5, oblique: bool = False):
         self.nu = nu
+        self.oblique = oblique
 
     def __call__(self, n_features: int):
+        if self.oblique and n_features > 1:
+            return ConstantKernel() * ObliqueMatern(nu=self.nu, length_scale=np.ones(int(n_features)))
         return ConstantKernel() * Matern(nu=self.nu, length_scale=np.ones(int(n_features)))
 
     def __repr__(self) -> str:
-        return f"DefaultKernelFactory(nu={self.nu})"
+        return f"DefaultKernelFactory(nu={self.nu}, oblique={self.oblique})"
 
 
 def Default_GPR(
@@ -47,6 +54,7 @@ def Default_GPR(
     n_targets=None,
     random_state=None,
     nu=1.5,
+    oblique=False,
 ):
     """Create a default GaussianProcessRegressor adapter for GPTreeO.
 
@@ -94,6 +102,11 @@ def Default_GPR(
         Determines random number generation used to initialize the centers.
     nu : float, default=1.5
         Smoothness of the default Matern kernel (only used when ``kernel`` is None).
+    oblique : bool, default=False
+        Let the default kernel's length scales lie along combinations of the
+        inputs (:class:`~pygptreeo.kernels.ObliqueMatern`; only used when
+        ``kernel`` is None). Each fit keeps such a kernel only if it lowers the
+        leave-one-out error over the kernel with a length scale per input.
 
     Returns
     -------
@@ -115,7 +128,7 @@ def Default_GPR(
     if kernel is None:
         # Placeholder kernel; the factory replaces it with the per-dimension (ARD)
         # version at the first fit, when the input dimension is known.
-        kernel_factory = DefaultKernelFactory(nu=nu)
+        kernel_factory = DefaultKernelFactory(nu=nu, oblique=oblique)
         kernel = ConstantKernel() * Matern(nu=nu)
 
     # Create the underlying sklearn GPR
