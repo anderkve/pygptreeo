@@ -925,15 +925,19 @@ class GPTree:
             # The default: mixture of experts, following the DLGP paper
             if self.aggregation == "default" or self.aggregation == "moe":
 
+                # The spread of the leaves' means is summed apart from their
+                # variances, which can be smaller than its rounding error
+                second_moment = np.zeros(self.n_outputs)
                 for leaf, ptilde in zip(leaves, pred_leaf_probs):
 
                     mu_leaf, sigma_leaf = self._predict_leaf(leaf, x)
                     # mu_leaf and sigma_leaf have shape (1, n_outputs)
 
                     mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
-                    var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + mu_leaf[0, :]**2)
+                    var_DLGP[i, :] += ptilde * sigma_leaf[0, :]**2
+                    second_moment += ptilde * mu_leaf[0, :]**2
 
-                var_DLGP[i, :] += -mean_DLGP[i, :]**2
+                var_DLGP[i, :] += np.maximum(second_moment - mean_DLGP[i, :]**2, 0.0)
 
             # Generalized product of experts
             elif self.aggregation == "poe":
@@ -999,6 +1003,9 @@ class GPTree:
         """
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
         var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
+        # The spread of the leaves' means is summed apart from their variances,
+        # which can be smaller than its rounding error
+        second_moment = np.zeros((X_test.shape[0], self.n_outputs))
 
         for leaf in tqdm(self.root.leaves, disable=not show_progress, desc="Predicting"):
 
@@ -1015,9 +1022,10 @@ class GPTree:
 
             # Broadcast ptilde to match shape (n_masked, n_outputs)
             mean_DLGP[mask] += ptilde[mask] * mu_leaf
-            var_DLGP[mask] += ptilde[mask] * (sigma_leaf**2 + mu_leaf**2)
+            var_DLGP[mask] += ptilde[mask] * sigma_leaf**2
+            second_moment[mask] += ptilde[mask] * mu_leaf**2
 
-        var_DLGP += -mean_DLGP**2
+        var_DLGP += np.maximum(second_moment - mean_DLGP**2, 0.0)
 
         return mean_DLGP, np.sqrt(var_DLGP)
 

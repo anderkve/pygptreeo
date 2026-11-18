@@ -296,3 +296,17 @@ class TestPredictModesAgree(unittest.TestCase):
         m_rec, s_rec = gpt.predict(Xt, mode='recursive')
         np.testing.assert_allclose(m_loop, m_rec, rtol=1e-6, atol=1e-7)
         np.testing.assert_allclose(s_loop, s_rec, rtol=1e-6, atol=1e-7)
+
+    def test_sigma_far_below_the_prediction(self):
+        # the variance of the mixture must not vanish in the rounding of the squared mean
+        import io, contextlib
+        rng = np.random.RandomState(0)
+        np.random.seed(0)
+        X = rng.rand(250, 2); y = 1e6 + np.sin(4 * X[:, 0]) * X[:, 1]
+        gpt = GPTree(GPR=Default_GPR(), Nbar=100)
+        with contextlib.redirect_stdout(io.StringIO()):
+            gpt.batch_update_tree(X, y, 1e-4)
+        Xt = rng.rand(50, 2)
+        for mode in ('recursive', 'loop'):
+            _, sd = gpt.predict(Xt, mode=mode)
+            self.assertTrue(np.all(sd > 0))
