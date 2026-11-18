@@ -342,6 +342,31 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   edge was a factor 9 where the grid has three points across the edge or
   more, 1.4 to 3 with half as many, and none with a quarter, where every leaf
   declined.
+* **Images: a warp of each axis that varies along the other.** With
+  `output_shape=(p1, p2)` the outputs are an image, flattened row by row, and
+  its grid is warped as
+
+      (u, v) -> (phi_1(u; v, delta), phi_2(v; u, delta))
+
+  `phi_1` is the warp above along the first axis, with a `w` that varies
+  linearly between two knots along the second axis, and `phi_2` the same with
+  the axes exchanged: 32 numbers per input. Rows can so move by different
+  amounts, and so can columns. The warp is fitted like that of a curve, by
+  damped Gauss-Newton steps on at most 32 points along each axis.
+* **The exponent of that warp is bounded by a `tanh` and has a ridge.** Where
+  an image is flat nothing determines the warp. With the hard bound and the
+  weak ridge of the curves it grew there until it met the bound, and at the
+  corners of a leaf, where several offsets are large at once, it misplaced
+  the feature: a few queries had 30 times the median error, which the
+  leave-one-out errors did not show. With the smooth bound and a ridge of
+  0.03 the leave-one-out error of a leaf is that of its test points
+  (`docs/benchmarks.md`, section 9.12).
+* **A prediction of an image is the aligned image, read back.** The GP is
+  fitted to the aligned images on a grid with twice the points along each
+  axis, and its mean is read where each grid point of the query comes from,
+  found by Newton steps on the warp. Warping each of the leaf's images into
+  the frame of the query, as for curves, is the same prediction where the
+  finer grid resolves the aligned images, and took 12 times as long.
 * **Both global models take the curve as their target.** The network has one
   output per grid point and the additive GP one kernel for all outputs, fitted
   from `Y Y^T` like the GP of a leaf, and a leaf models the residual curves.
