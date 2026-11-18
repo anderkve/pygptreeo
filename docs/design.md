@@ -444,6 +444,21 @@ curves, and `benchmarks.md`, section 9, what was measured on them.
   * Every fit started from blurred curves: the gain on a narrow peak rose
     from 2.0 to 3.2, and that on a damped oscillation fell from 2.6 to 1.3,
     since the blur removes the oscillation. Hence both starts.
+* **Weights of a representation of the curve as the outputs**
+  (`docs/benchmarks.md`, section 9.10):
+  * Coefficients of a fixed B-spline basis. With a shared kernel the
+    predictions are those of `'shared'`, and a GP per coefficient helped on
+    one of four families at 15 times the time: a feature that moves makes
+    every coefficient as rough in the parameters as the curve is in `x`.
+  * Knots at equal steps of each curve's own arc length, and the values
+    there. 1.2 to 3.3 times more accurate than `'shared'` on a single sharp
+    feature, 1.6 to 23 times less accurate on two peaks, eight peaks and noisy
+    curves, and behind `'aligned'` on every family. For one sharp feature the
+    knots are far closer to linear in the parameters than the grid values,
+    and for eight peaks further from it.
+  * `'aligned'` leaves on the B-spline coefficients: the error of `'aligned'`
+    on the grid at half the time where half as many coefficients as grid
+    points represent the curve, and far worse where they do not.
 * **Global networks that take `x` into account** (`docs/benchmarks.md`,
   section 9.7), each alone on 800 curves against the network with one output
   per grid point:

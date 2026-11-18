@@ -1254,3 +1254,67 @@ of the leaves that hold an alignment, and the ratio with Matérn 5/2 leaves:
   of these targets, by a factor 1.3 to 6.2, change nothing on the shock, and
   raise it by a factor 4 on the jump (0.10 against 0.024), where each output
   is a step in the parameters.
+
+### 9.10 Other representations of the curve as the outputs (not in the code)
+
+The outputs of the tree are the weights of a representation of the curve, in
+place of its values on the grid, and a prediction is turned back into a curve:
+
+* **B-spline coefficients**: the least-squares coefficients of the curve in a
+  cubic B-spline basis of 48, 64 or 96 functions on uniform knots.
+* **Arc-length knots**: for each curve one position per grid point, at equal
+  steps of the curve's arc length (grid and values each scaled to a length of
+  one), and the curve's values at these positions. The predicted curve is the
+  interpolant through the predicted positions and values.
+
+800 curves added with `batch_update_tree`, default leaves, one seed. NRMSE on
+300 test curves; the first two columns are the curve on its grid:
+
+| family | points in x | shared | aligned | 96 coefficients, shared | 64 coefficients, independent | arc-length knots, shared | 48 coefficients, aligned | 96 coefficients, aligned | arc-length knots, aligned |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `zprime_spectrum` | 128 | 6.9e-3 | 1.8e-3 | 7.0e-3 | 7.7e-3 | 3.2e-3 | 3.7e-3 | 1.6e-3 | 3.2e-3 |
+| `kinematic_edge` | 128 | 5.3e-4 | 8.0e-5 | 5.2e-4 | 1.1e-3 | 3.7e-4 | 2.4e-3 | 1.8e-4 | 1.9e-4 |
+| `viscous_shock` | 128 | 8.0e-3 | 9.5e-4 | 8.4e-3 | | 2.4e-3 | 9.2e-3 | 2.3e-3 | 2.4e-3 |
+| `cmb_peaks` | 128 | 1.9e-4 | 1.0e-4 | 1.9e-4 | | 4.5e-3 | 1.7e-4 | 9.8e-5 | 2.0e-3 |
+| `sir_epidemic` | 97 | 1.5e-3 | 3.7e-4 | 1.5e-3 | 1.4e-3 | 1.3e-3 | 3.9e-4 | 4.9e-4 | 1.2e-3 |
+| `mixture_density` | 96 | 5.3e-3 | 8.7e-4 | 5.3e-3 | 2.3e-3 | 8.3e-3 | 8.4e-4 | 8.5e-4 | 2.8e-3 |
+| `z_lineshape` | 64 | 1.5e-4 | 4.0e-5 | 1.5e-4 | | 3.5e-4 | 3.8e-5 | 1.5e-4 | 3.5e-4 |
+| `matter_power` | 64 | 5.2e-5 | 5.2e-5 | 5.0e-5 | | 3.0e-4 | 4.4e-4 | 5.0e-5 | 3.0e-4 |
+| `peak_counts_mc` | 60 | 3.5e-3 | 3.5e-3 | 3.8e-3 | | 5.8e-3 | 9.5e-3 | 3.8e-3 | 5.8e-3 |
+
+* **A fixed basis with a shared kernel is `'shared'`**: with 96 coefficients
+  the error is within 5% of that on the grid (9% on the noisy histograms).
+  The prediction is the same weighted sum of the leaf's curves, in other
+  coordinates. A peak that moves along the grid passes from one basis function
+  to the next, so each coefficient is as narrow a function of the parameters
+  as the peak is of `x`.
+* **A GP per coefficient** lowers the error on `mixture_density` by a factor
+  2.3 and on none of the other three, at about 15 times the time. With 64
+  coefficients the basis itself has an error of 2e-3 on `zprime_spectrum` and
+  8e-4 on `kinematic_edge`.
+* **Arc-length knots follow a feature without a fit**: against `'shared'` the
+  error is lower by a factor 2.1 on `zprime_spectrum`, 3.3 on `viscous_shock`,
+  1.4 on `kinematic_edge` and 1.2 on `sir_epidemic`. It is higher by 1.6 on
+  `mixture_density`, 1.7 on the noisy histograms and 23 on `cmb_peaks`. With
+  two positions per grid point the error on `z_lineshape` is 1.2e-4 and on
+  `matter_power` 9.6e-5, and the others change by less than 5%. `'aligned'`
+  on the grid is lower on all nine. In a cube of side 0.15 of the parameter
+  range, the part of the knots' values that is not linear in the parameters
+  is 10 to 17 times smaller than that of the grid values for
+  `kinematic_edge` and `viscous_shock`, 2.7 and 1.6 times smaller for
+  `zprime_spectrum` and `mixture_density`, and 4 times larger for the eight
+  peaks of `cmb_peaks`.
+* **`'aligned'` leaves on the coefficients**, which are in the order of the
+  grid. With 48 coefficients the error is within 5% of that of `'aligned'`
+  on the grid for `sir_epidemic`, `mixture_density` and `z_lineshape`, in 9
+  to 11 s against 13 to 18 s. It is 2 to 30 times higher where 48 functions
+  do not represent the curve: the basis alone has an error of 3e-3 on
+  `zprime_spectrum`, 2e-3 on `kinematic_edge`, 7e-3 on `viscous_shock` and
+  4e-4 on `matter_power`. With 96 coefficients for 128 grid points the
+  error is that of the grid on `zprime_spectrum` and `cmb_peaks`, and 2.2
+  and 2.4 times higher on `kinematic_edge` and `viscous_shock`. On the
+  arc-length knots it is never below `'aligned'` on the grid.
+* **Time of the 800 curves**: 4 to 8 s for `'shared'` and 7 to 23 s for
+  `'aligned'` on the grid, 86 to 128 s with a GP per coefficient, 6 to 13 s
+  for the arc-length knots, 6 to 11 s and 10 to 18 s for `'aligned'` on 48
+  and 96 coefficients.
