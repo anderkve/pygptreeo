@@ -109,6 +109,15 @@ def _nbf(d, seed, **opts):
     return GPTree(predict_from='neighbours', **kw)
 
 
+@register('guarded')
+def _guarded(d, seed, measure='centroid', far=0.65, limit=3.0, **opts):
+    """The shipped neighbours with a stricter test against the kernel for a query outside them."""
+    from guarded import guarded_tree
+    kw = dict(BASE)
+    kw.update(opts)
+    return guarded_tree(measure=measure, far=far, limit=limit, **kw)
+
+
 @register('anchored')
 def _anchored(d, seed, depth=2, **opts):
     """Neighbours of one of 2**depth cells of the query's leaf, shared by the queries of the cell."""

@@ -531,6 +531,16 @@ section 8.
   median run. Near a leaf's points the sigma that grows with the distance
   changes nothing: 2.5% of the predictions within a distance of 2 are off by
   more than 5 sigma.
+* **Predictions from neighbours can overshoot outside the data.** Away
+  from the data the neighbours of a query come from several leaves and span
+  many times the range of targets of the query's leaf, whose kernel carries
+  their trend on to the query; the leaf's own GP returns to the mean of its
+  points instead. With the additive kernel in two dimensions this gave
+  patches of twice the target's largest value, or below its smallest, in
+  corners without data, more so with a declared noise near zero
+  (`docs/benchmarks.md`, section 8.20). On the benchmark targets the
+  neighbours are the more accurate of the two outside the data as well, and
+  a stricter test against the kernel for such queries cost 1 to 2% there.
 * **GPyTorch leaves take no appended points.** The adapter cannot extend a
   fit, so a point enters the GPs with the leaf's next fit.
 * **GPyTorch leaves predict from their own points.** The adapter cannot

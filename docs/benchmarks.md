@@ -1595,3 +1595,106 @@ points):
 
 * **At 12 MB nothing is removed**, and at 6 MB half of the points are kept
   where a third was, with an error 19 to 20% lower.
+
+### 8.20 Predictions from neighbours outside the data
+
+The stream and tree of the README's animation
+(`research/partitioning/animation_grid.py`: `Himmelblau` in two dimensions,
+1500 points of a cloud that moves and contracts, `Nbar=100`, a fit every 2
+points, the additive kernel with an RBF base), predicted on a 70 x 70 grid
+over the unit square. The target is at most 77.9 there. "Away" are the
+cells further than 0.05 from the nearest point of the stream, a quarter of
+the grid. The declared noise is a share of the target value.
+
+| seed | noise | leaves: largest prediction | RMSE away | near | neighbours: largest prediction | RMSE away | near |
+|---|---|---|---|---|---|---|---|
+| 4 | 1e-3 | 73.1 | 14.9 | 1.21 | 74.8 | 10.8 | 0.85 |
+| | 1e-4 | 74.9 | 13.0 | 1.94 | 86.1 | 9.2 | 1.09 |
+| | 1e-5 | 73.0 | 10.6 | 2.04 | 107.3 | 9.1 | 1.21 |
+| | 1e-6 | 73.0 | 11.6 | 2.03 | 148.8 | 11.7 | 1.32 |
+| 1 | 1e-3 | 74.9 | 11.2 | 1.24 | 86.4 | 12.6 | 0.97 |
+| | 1e-4 | 77.1 | 11.0 | 1.30 | 92.0 | 10.2 | 1.02 |
+| | 1e-5 | 73.8 | 16.5 | 1.34 | 75.9 | 14.4 | 0.98 |
+| | 1e-6 | 237.8 | 36.5 | 2.70 | 239.3 | 33.3 | 2.17 |
+| 2 | 1e-3 | 73.0 | 7.0 | 1.52 | 73.0 | 16.7 | 1.50 |
+| | 1e-4 | 73.6 | 7.8 | 1.63 | 76.9 | 9.8 | 1.83 |
+| | 1e-5 | 94.8 | 8.3 | 2.49 | 94.8 | 11.1 | 2.52 |
+| | 1e-6 | 125.6 | 11.1 | 3.96 | 125.6 | 13.2 | 3.55 |
+
+* **Away from the data the two are equally accurate on average**, 13.3 and
+  13.5 over the twelve runs, **and fail in different places.** Near the
+  data the neighbours have the lower error in 10 of the 12.
+* **With a noise of 1e-6 of the value a leaf's own GP can overshoot**: to
+  238 with seed 1 and 126 with seed 2, in both modes.
+* **The neighbours add failures of their own.** With seed 4 and a noise of
+  1e-6 they predict up to 149 at the upper edge of the square, where the
+  target is 65 and the leaf's own GP predicts 40. With seed 2 and a noise
+  of 1e-3 they predict -15 in the lower right corner, where the target is
+  50 and the leaf's own GP predicts 51, and 114 cells are off by more than
+  30 against 3.
+
+The worst query of each of the two:
+
+| | (0.275, 1.0), seed 4, noise 1e-6 | (0.91, 0.19), seed 2, noise 1e-3 |
+|---|---|---|
+| target | 65.2 | 49.8 |
+| from the neighbours | 149.2 +- 21.1 | -14.8 +- 43.2 |
+| the leaf's own GP | 40.4 +- 12.3 | 51.1 +- 7.8 |
+| neighbours among the leaf's own points | 28 of 100 | 27 of 100 |
+| extent of the neighbours along x1, of the leaf's points | 0.14 to 0.46, 0.21 to 0.35 | 0.39 to 1.00, 0.21 to 0.66 |
+| targets of the neighbours, in the leaf's standard deviations from its mean | -6.4 to 1.3 | -9.1 to 2.2 |
+| consistency with the leaf's kernel | 7.6 | 9.5 (13.2 before the fading) |
+| a GP fitted to the 100 neighbours | 66.5 +- 7.7 | -42.1 +- 6.1 |
+
+* **The leaf of the query supplies the kernel, other leaves most of the
+  points.** Away from the data the 100 nearest points reach across several
+  leaves, and their targets lie 6 to 9 of the leaf's standard deviations
+  from its mean. The kernel carries their trend on to the query, where the
+  leaf's own GP, given only its own points, returns to their mean. Both
+  sets pass the test against the kernel, with a consistency just under the
+  limit of 10.
+* **In the first case the kernel is at fault.** A GP fitted to the same 100
+  points predicts 66.5. With the leaf's kernel the matrix has a condition
+  number of 7e12 and the weights of the neighbours reach 3e5, for targets of
+  at most 6.4. The same conditioning with a noise of 1e-5, 1e-4 and 1e-3 of
+  the value gives 122, 83 and 57, and with the 44 neighbours inside the
+  leaf's own range of x1 it gives 91.
+* **In the second the extrapolation itself is.** The targets of the
+  neighbours fall towards the query, and a GP fitted to them predicts -42.
+
+A stricter test for such queries (`research/partitioning/guarded.py`, not
+in the code): where the centre of the neighbours lies further from the
+query than 0.65 of the distance of the furthest neighbour, they predict only
+with a consistency of at most 3. That ratio is at most 0.6 for 95% of the
+stream's own points, in two dimensions and in six, and 0.67 to 0.78 for the
+queries of the two patches.
+
+| seed, noise | neighbours: largest prediction | RMSE away | stricter test: largest prediction | RMSE away | leaves: RMSE away |
+|---|---|---|---|---|---|
+| 4, 1e-6 | 148.8 | 11.7 | 72.9 | 10.5 | 11.6 |
+| 4, 1e-3 | 74.8 | 10.8 | 74.8 | 11.0 | 14.9 |
+| 1, 1e-6 | 239.3 | 33.3 | 239.3 | 36.8 | 36.5 |
+| 1, 1e-3 | 86.4 | 12.6 | 86.4 | 12.5 | 11.2 |
+| 2, 1e-6 | 125.6 | 13.2 | 125.6 | 12.1 | 11.1 |
+| 2, 1e-3 | 73.0 | 16.7 | 73.0 | 7.3 | 7.0 |
+
+* **Both patches go.** The error near the data is within 2% in 5 of the 6
+  runs and 8% higher in the sixth (seed 1, noise 1e-3).
+* **On the 33 runs of 5000 points the stricter test costs accuracy**: the
+  error along the stream is 0.7% higher and that of uniform test points
+  1.7% (3.1% on the sweeping stream), with 14 runs more than 2% worse and 6
+  better. With "the nearest neighbour is further than one of the leaf's
+  spreads" as the mark of such a query the two numbers are 1.0% and 2.3%:
+  in six dimensions the nearest neighbour of a point of the stream itself
+  is 0.9 to 1.2 spreads away at the median.
+* **On those targets the neighbours are the better choice outside the data
+  as well.** For uniform test points after 5000 points of a stream, eight
+  of the targets on three streams (`extrapolation_diag.py`), the leaf's own
+  GP for every query has an RMSE 3% higher overall and 31 to 36% higher on
+  `eft_signal_strength` and `GaussianPeaks`. On six targets after 3000
+  points, with a noise of 1e-3 and of 1e-6 of the value and with the default
+  and the additive kernel (72 runs), it is 1.2 to 5.7% higher. The largest
+  single error is another matter with the additive kernel: 1.9 times the
+  target's range with a noise of 1e-6 and 1.3 times with 1e-3, where the
+  leaf's own GP stays at 0.8. With the default kernel it is 1.1 to 1.2
+  times for both.
