@@ -303,16 +303,12 @@ class SklearnGPAdapter(GPRegressorInterface):
     def covariance(self, X: np.ndarray):
         """The prior of the fitted kernel at ``X``; see the interface."""
         sk = self._gpr
-        if not hasattr(sk, 'kernel_'):
-            return None
         return (sk.kernel_(X), np.atleast_1d(np.asarray(sk._y_train_std, dtype=float)) ** 2,
                 np.atleast_1d(np.asarray(sk._y_train_mean, dtype=float)))
 
     def condition(self, X: np.ndarray, y: np.ndarray, noise: np.ndarray, X_query: np.ndarray):
         """The posterior of the fitted kernel given ``(X, y)``; see the interface."""
         sk = self._gpr
-        if not hasattr(sk, 'kernel_'):
-            return None
         n = X.shape[0]
         # one kernel call for the matrix of the points and their covariances with the queries
         K_all = sk.kernel_(np.vstack((X, X_query)))

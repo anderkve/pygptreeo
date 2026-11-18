@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from pygptreeo import GPTree, Default_GPR, GPRegressorInterface
 from pygptreeo import gpnode as gpnode_module
-from pygptreeo import neighbours as neighbours_module
 from pygptreeo.neighbours import NeighbourSearch
 
 warnings.filterwarnings("ignore")
@@ -32,11 +31,19 @@ SETTINGS = {'n_neighbours': 'n_neighbours', 'neighbour_leaves': 'max_leaves', 'n
 def _tree(**options):
     """A GPTree whose search has the given settings in place of the package's."""
     settings = {SETTINGS[name]: options.pop(name) for name in list(options) if name in SETTINGS}
+    if settings.get('consistency_limit') in (0.0, np.inf):
+        settings.setdefault('outside_limit', None)          # no test of the neighbours, or none that they pass
     gpt = GPTree(**options)
     if gpt.neighbours is not None:
         for name, value in settings.items():
             setattr(gpt.neighbours, name, value)
     return gpt
+
+
+def _search(tree, n_neighbours, **settings):
+    """A search with every mechanism off that is not set."""
+    plain = dict(max_leaves=None, fade=None, blend=None, awake=None, outside_limit=None, transition=None)
+    return NeighbourSearch(tree, n_neighbours, **{**plain, **settings})
 
 
 def _fixed_gpr(d, length_scale=1.0):
@@ -87,7 +94,6 @@ class TestCondition(unittest.TestCase):
             def values(Z):
                 return np.column_stack([np.sin(3 * Z[:, 0]) * (1 + k) + Z[:, 1] ** 2 for k in range(n_targets)])
             gpr = Default_GPR()
-            self.assertIsNone(gpr.condition(X_other, values(X_other), noise, X_query))       # no fit
             gpr.set_observation_noise(np.full(50, 1e-6))
             gpr.fit(X, values(X))
             mean, std, consistency = gpr.condition(X_other, values(X_other), noise, X_query)
@@ -153,7 +159,7 @@ class TestSearch(unittest.TestCase):
 
     def _check_exact(self, gpt, d, k=25, n_queries=60, seed=0):
         X, y, sigma = _stored_points(gpt)
-        search = NeighbourSearch(gpt, n_neighbours=k)
+        search = _search(gpt, k)
         rng = np.random.RandomState(seed)
         for _ in range(n_queries):
             q = rng.uniform(-0.2, 1.2, d)
@@ -187,10 +193,10 @@ class TestSearch(unittest.TestCase):
     def test_fewer_points_than_asked_for(self):
         gpt = _grown_tree(n=12, d=2)
         for fade in (None, 0.5):
-            Xn, yn, sn, growth = NeighbourSearch(gpt, n_neighbours=50, fade=fade).find(np.array([0.5, 0.5]), np.ones(2))
+            Xn, yn, sn, growth = _search(gpt, 50, fade=fade).find(np.array([0.5, 0.5]), np.ones(2))
             self.assertEqual(Xn.shape, (12, 2))
             self.assertIsNone(growth)           # no stored point beyond the neighbours
-        self.assertIsNone(NeighbourSearch(GPTree(), n_neighbours=5).find(np.zeros(2), np.ones(2)))     # an empty tree
+        self.assertIsNone(_search(GPTree(), 5).find(np.zeros(2), np.ones(2)))     # an empty tree
 
     def test_neighbours_that_fade_out(self):
         """The same points, with a noise that grows from ``fade`` to the first point beyond them."""
@@ -201,8 +207,8 @@ class TestSearch(unittest.TestCase):
             rng = np.random.RandomState(d)
             for q in rng.uniform(-0.1, 1.1, (40, d)):
                 w = rng.uniform(0.05, 1.0, d)
-                plain = NeighbourSearch(gpt, n_neighbours=k, max_leaves=max_leaves).find(q, w)[0]
-                Xn, _, _, growth = NeighbourSearch(gpt, n_neighbours=k, max_leaves=max_leaves, fade=0.6).find(q, w)
+                plain = _search(gpt, k, max_leaves=max_leaves).find(q, w)[0]
+                Xn, _, _, growth = _search(gpt, k, max_leaves=max_leaves, fade=0.6).find(q, w)
                 distance = np.sqrt((((Xn - q) / w) ** 2).sum(axis=1))
                 np.testing.assert_allclose(np.sort(distance), np.sort(np.sqrt((((plain - q) / w) ** 2).sum(axis=1))), rtol=1e-12)
                 self.assertEqual(growth.shape, (k,))
@@ -213,10 +219,6 @@ class TestSearch(unittest.TestCase):
                     self.assertTrue(np.all(growth[distance <= 0.6 * beyond] == 0.0))        # the near ones keep their noise
                 self.assertTrue(np.all(np.diff(growth[np.argsort(distance)]) >= 0.0))
                 self.assertGreater(growth.max(), 0.0)
-        with self.assertRaises(ValueError):
-            NeighbourSearch(gpt, n_neighbours=k, fade=1.0)
-        with self.assertRaises(ValueError):
-            NeighbourSearch(gpt, n_neighbours=k, fade=-0.1)
 
     def test_a_limit_on_the_leaves_searched(self):
         """The points then come from the leaves whose points' boxes are nearest to the query."""
@@ -225,7 +227,7 @@ class TestSearch(unittest.TestCase):
         rng = np.random.RandomState(0)
         for q in rng.uniform(-0.1, 1.1, (40, 2)):
             for m in (1, 3):
-                Xn = NeighbourSearch(gpt, n_neighbours=10, max_leaves=m).find(q, np.ones(2))[0]
+                Xn = _search(gpt, 10, max_leaves=m).find(q, np.ones(2))[0]
                 gaps = [np.maximum(leaf.my_X_data.min(axis=0) - q, 0.0) + np.maximum(q - leaf.my_X_data.max(axis=0), 0.0)
                         for leaf in leaves]
                 nearest = np.argsort([(gap ** 2).sum() for gap in gaps], kind='stable')[:m]
@@ -499,7 +501,6 @@ class TestBlend(unittest.TestCase):
         Y = np.column_stack((np.sin(3 * X[:, 0]), 40.0 * X[:, 1] + 100.0))
         for normalize_y in (False, True):
             gpr = Default_GPR(normalize_y=normalize_y)
-            self.assertIsNone(gpr.covariance(Z))
             gpr.set_observation_noise(np.full(40, 1e-6))
             gpr.fit(X, Y)
             K, scale, mean = gpr.covariance(Z)
@@ -737,9 +738,6 @@ class TestBlend(unittest.TestCase):
             self.assertGreater(mixed, 5)
 
     def test_the_options(self):
-        for blend in (0.0, 1.5, -0.1):
-            with self.assertRaises(ValueError):
-                NeighbourSearch(None, n_neighbours=10, blend=blend)
         np.random.seed(14)
         rng = np.random.RandomState(14)
         plain = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', neighbour_blend=None)
@@ -759,7 +757,7 @@ class TestGradual(unittest.TestCase):
     (``NEIGHBOUR_TRANSITION``, ``NEIGHBOUR_CONSISTENCY_OUTSIDE``)."""
 
     def test_the_weight_of_the_neighbours(self):
-        search = NeighbourSearch(None, n_neighbours=10, consistency_limit=10.0, transition=2.0)
+        search = _search(None, 10, consistency_limit=10.0, transition=2.0)
         for consistency, share in ((0.5, 1.0), (5.0, 1.0), (10.0, 0.5), (20.0, 0.0), (300.0, 0.0), (np.nan, 0.0),
                                    (10.0 * 2 ** 0.5, 0.25), (10.0 / 2 ** 0.5, 0.75)):
             self.assertAlmostEqual(search.share(consistency), share, places=12)
@@ -768,7 +766,7 @@ class TestGradual(unittest.TestCase):
         self.assertTrue(np.all(np.diff(shares) <= 0.0))
         self.assertLess(np.abs(np.diff(shares)).max(), 0.02)
 
-        search = NeighbourSearch(None, n_neighbours=10, consistency_limit=10.0, transition=2.0, outside_limit=3.0)
+        search = _search(None, 10, consistency_limit=10.0, transition=2.0, outside_limit=3.0)
         for outside, limit in ((0.0, 10.0), (0.5, 10.0), (0.65, 30.0 ** 0.5), (0.8, 3.0), (1.0, 3.0)):
             self.assertAlmostEqual(search.share(limit, outside), 0.5, places=12)
             self.assertEqual(search.share(limit / 2.0, outside), 1.0)
@@ -777,22 +775,16 @@ class TestGradual(unittest.TestCase):
         self.assertTrue(np.all(np.diff(limits) <= 0.0))
         self.assertLess(np.abs(np.diff(limits)).max(), 0.05)
 
-        switch = NeighbourSearch(None, n_neighbours=10, consistency_limit=10.0)
+        switch = _search(None, 10, consistency_limit=10.0)
         self.assertEqual([switch.share(c) for c in (9.99, 10.0, 10.01, np.nan)], [1.0, 1.0, 0.0, 0.0])
         for limit, share in ((np.inf, 1.0), (0.0, 0.0)):
-            for options in (dict(), dict(transition=2.0, outside_limit=3.0)):
-                search = NeighbourSearch(None, n_neighbours=10, consistency_limit=limit, **options)
+            for transition in (None, 2.0):
+                search = _search(None, 10, consistency_limit=limit, transition=transition)
                 self.assertEqual([search.share(c, 0.9) for c in (1e-3, 1.0, 1e6)], [share] * 3)
-                self.assertEqual(search.share(np.nan, 0.9), 0.0)
-
-    def test_a_search_saved_before_the_options_switches(self):
-        search = NeighbourSearch.__new__(NeighbourSearch)
-        search.consistency_limit = 10.0
-        self.assertEqual([search.share(c, 0.9) for c in (9.0, 11.0)], [1.0, 0.0])
 
     def test_how_far_a_query_lies_outside(self):
         rng = np.random.RandomState(0)
-        search = NeighbourSearch(None, n_neighbours=10)
+        search = _search(None, 10)
         q, w = np.array([0.3, -0.2, 0.5]), np.array([0.5, 2.0, 1.0])
         around = q + rng.randn(400, 3) * w
         self.assertLess(search.outside(around, q, w), 0.1)
@@ -812,10 +804,10 @@ class TestGradual(unittest.TestCase):
 
     def test_the_mixture_of_two_predictions(self):
         share = np.array([[1.0, 0.0, 0.5], [0.25, 1.0, 0.0]])
-        mu, sigma = np.array([[1.0, np.nan, 3.0], [4.0, 5.0, np.inf]]), np.array([[0.1, np.nan, 0.3], [0.4, 0.5, np.inf]])
+        mu, sigma = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]), np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
         mu_other, sigma_other = np.array([[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]]), np.full((2, 3), 2.0)
         mean, std = NeighbourSearch.mix(share, mu, sigma, mu_other, sigma_other)
-        np.testing.assert_array_equal(mean[[0, 0, 1, 1], [0, 1, 1, 2]], [1.0, 8.0, 5.0, 12.0])
+        np.testing.assert_array_equal(mean[[0, 0, 1, 1], [0, 1, 1, 2]], [1.0, 8.0, 5.0, 12.0])      # one of the two alone
         np.testing.assert_array_equal(std[[0, 0, 1, 1], [0, 1, 1, 2]], [0.1, 2.0, 0.5, 2.0])
         np.testing.assert_allclose(mean[[0, 1], [2, 0]], [6.0, 8.5])
         np.testing.assert_allclose(std[0, 2] ** 2, 0.5 * 0.3 ** 2 + 0.5 * 2.0 ** 2 + 0.25 * 6.0 ** 2)
@@ -824,11 +816,12 @@ class TestGradual(unittest.TestCase):
     def _neighbours_and_own(self, gpt, leaf, x):
         """The two predictions of a leaf at ``x`` and the consistency of the neighbours."""
         search = gpt.neighbours
-        limit, search.consistency_limit = search.consistency_limit, np.inf
+        limits = search.consistency_limit, search.outside_limit
+        search.consistency_limit, search.outside_limit = np.inf, None
         try:
             from_neighbours = leaf._predict_from_neighbours(x)
         finally:
-            search.consistency_limit = limit
+            search.consistency_limit, search.outside_limit = limits
         Xn, yn, sn, growth = search.find(x[0], leaf.fit_std, leaf=leaf)
         ys = leaf.y_scalers[0]
         consistency = leaf.my_GPRs[0].condition(leaf.X_scaler.transform(Xn), ys.transform(yn)[:, 0],
@@ -917,22 +910,12 @@ class TestGradual(unittest.TestCase):
         self.assertGreater(checked, 300)
         self.assertGreater(between, 30)
 
-    def test_the_settings(self):
-        for options in (dict(transition=1.0), dict(transition=0.5), dict(outside_limit=0.0)):
-            with self.assertRaises(ValueError):
-                NeighbourSearch(None, n_neighbours=10, **options)
-
     def test_a_tree_takes_the_constants_of_the_package(self):
         search = GPTree(predict_from='neighbours').neighbours
         self.assertEqual(search.n_neighbours, 100)
         self.assertEqual(GPTree(Nbar=35, predict_from='neighbours').neighbours.n_neighbours, 35)       # as many as a leaf holds
         self.assertEqual((search.max_leaves, search.fade, search.blend, search.awake), (16, 0.9, 0.1, 8))
         self.assertEqual((search.consistency_limit, search.outside_limit, search.transition), (10.0, 3.0, 2.0))
-        with mock.patch.object(neighbours_module, 'NEIGHBOUR_FADE', None), \
-                mock.patch.object(neighbours_module, 'NEIGHBOUR_TRANSITION', None), \
-                mock.patch.object(neighbours_module, 'NEIGHBOUR_LEAVES', 4):
-            search = GPTree(predict_from='neighbours').neighbours
-        self.assertEqual((search.max_leaves, search.fade, search.transition, search.blend), (4, None, None, 0.1))
         for name in SETTINGS:           # they are no longer options of the tree
             with self.assertRaises(TypeError):
                 GPTree(predict_from='neighbours', **{name: None})
@@ -1054,9 +1037,6 @@ class TestAsleep(unittest.TestCase):
         self.assertLessEqual(len(self._awake(gpt, own=False)), 3)
 
     def test_the_options(self):
-        for awake in (0, -1):
-            with self.assertRaises(ValueError):
-                NeighbourSearch(None, n_neighbours=10, awake=awake)
         rng = np.random.RandomState(25)
         X = rng.rand(400, 2)
         np.random.seed(25)

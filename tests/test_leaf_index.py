@@ -71,7 +71,7 @@ class TestIndex(unittest.TestCase):
     def _check(self, index, leaves, rng, n_queries=200):
         d = index.n_features
         self.assertEqual(len(index), len(leaves))
-        self.assertTrue(all(leaf in index for leaf in leaves))
+        self.assertTrue(all(leaf in index._group for leaf in leaves))
         # the boxes of a group hold those of its children
         groups = [index.root]
         while groups:
@@ -398,27 +398,6 @@ class TestTree(unittest.TestCase):
                         self.assertIn(expected, gpt._leaves_of(q[None, :])[0])
             self.assertGreater(located, 250)
 
-    def test_an_index_saved_without_faces_is_dropped(self):
-        rng = np.random.RandomState(9)
-        np.random.seed(9)
-        gpt = _tree(2, predict_from='neighbours', n_neighbours=10)
-        X = rng.rand(200, 2)
-        _stream(gpt, X)
-        index, gpt.leaf_index = gpt.leaf_index, _IndexWithoutFaces()
-        try:
-            saved = pickle.dumps(gpt)
-        finally:
-            gpt.leaf_index = index
-        loaded = pickle.loads(saved)
-        self.assertIsNone(loaded.leaf_index)
-        self.assertFalse(loaded._blends())
-        self.assertTrue(np.all(np.isfinite(loaded.predict(X[:20])[0])))
-        _stream(loaded, rng.rand(60, 2))
-        search = NeighbourSearch.__new__(NeighbourSearch)
-        self.assertIsNone(search.blend)
-        self.assertIsNone(search.fade)
-        self.assertEqual(LeafIndex.__new__(LeafIndex).blend_width, 0.0)
-
     def test_a_tree_without_an_index(self):
         """As one saved before the index existed: the cuts are followed."""
         rng = np.random.RandomState(5)
@@ -476,7 +455,7 @@ class TestTree(unittest.TestCase):
         leaf = gpt.root.leaves[3]
         loaded_leaf, loaded = pickle.loads(pickle.dumps((leaf, gpt)))
         self.assertIs(loaded_leaf.parent.children[0 if loaded_leaf.is_left else 1], loaded_leaf)
-        self.assertIn(loaded_leaf, loaded.leaf_index)
+        self.assertIn(loaded_leaf, loaded.leaf_index._group)
         self.assertTrue(any(node is loaded_leaf for node in loaded.root.leaves))
         np.testing.assert_array_equal(loaded.predict(X[:30])[0], gpt.predict(X[:30])[0])
         copied = copy.deepcopy(gpt)
@@ -489,17 +468,12 @@ class TestTree(unittest.TestCase):
         np.random.seed(4)
         gpt = _tree(3, Nbar=30)
         _stream(gpt, np.vstack((rng.rand(700, 3), _drifting(500, 3, rng, step=0.002))))
-        search = NeighbourSearch(gpt, n_neighbours=40)
-        plain = NeighbourSearch(_without_index(gpt), n_neighbours=40)
+        search = NeighbourSearch(gpt, 40, max_leaves=None)
+        plain = NeighbourSearch(_without_index(gpt), 40, max_leaves=None)
         for q in rng.uniform(-0.1, 1.1, (80, 3)):
             w = rng.uniform(0.05, 1.0, 3)
             np.testing.assert_allclose(np.sort((((search.find(q, w)[0] - q) / w) ** 2).sum(axis=1)),
                                        np.sort((((plain.find(q, w)[0] - q) / w) ** 2).sum(axis=1)), rtol=1e-12)
-
-
-class _IndexWithoutFaces:
-    """As an index saved before the leaves had faces."""
-    root = None
 
 
 class _without_index:

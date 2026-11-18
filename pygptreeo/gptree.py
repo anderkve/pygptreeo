@@ -34,7 +34,6 @@ from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_basis import OutputBasisLearner
 from pygptreeo.global_mean import GlobalMeanLearner, make_global_mean
 from pygptreeo.leaf_index import LeafIndex
-from pygptreeo import neighbours as neighbour_settings
 from pygptreeo.neighbours import NeighbourSearch
 
 logger = logging.getLogger(__name__)
@@ -104,7 +103,7 @@ class GPTree:
         save(path):
             Saves the trained GPTree object to a file.
     """
-    # for a tree saved before these existed
+    # for a tree saved by a version without them
     predict_from = 'leaf'
     neighbours = None
     leaf_index = None
@@ -246,18 +245,10 @@ class GPTree:
                 'leaf' (default): the points of the leaf that the query falls
                 in, through the leaf's fitted GP. 'neighbours': the ``Nbar``
                 stored points nearest to the query, from whichever leaves
-                hold them, with the kernel of the query's
-                leaf. Distances are in units of the spread of that leaf's
-                points along each input. The neighbours fade out towards the
-                furthest of them and the kernels of the leaves are mixed in
-                a zone around each cut, so that the prediction is continuous
-                in the query. Where the neighbours fit the kernel badly, the
-                more so for a query outside them, the prediction passes to
-                that of the leaf's own GP. A leaf whose own GP predicted the
-                last points it received clearly better than their neighbours
-                did predicts from its own points. All but a few leaves
-                sleep, which releases about three quarters of their memory.
-                The settings of these are the ``NEIGHBOUR_`` constants of
+                hold them, with the kernel of the query's leaf; where they
+                fit that kernel badly the prediction passes to that of the
+                leaf's own GP, and all but a few leaves sleep. The settings
+                are the ``NEIGHBOUR_`` constants of
                 ``pygptreeo/neighbours.py``. Needs a GP backend with
                 ``supports_conditioning()`` (the scikit-learn adapter).
             **kwargs: Additional keyword arguments passed to the constructor
@@ -308,16 +299,10 @@ class GPTree:
         # Tree-wide nearest-neighbour search (None by default; shared by reference with every node)
         self.neighbours = None
         if predict_from == 'neighbours':
-            supports = getattr(GPR, 'supports_conditioning', None)
-            if supports is None or not supports():
+            if not GPR.supports_conditioning():
                 raise ValueError("predict_from='neighbours' needs a GP backend with supports_conditioning() == True "
                                  "(e.g. the scikit-learn adapter returned by Default_GPR)")
-            self.neighbours = NeighbourSearch(
-                self, n_neighbours=Nbar,
-                consistency_limit=neighbour_settings.NEIGHBOUR_CONSISTENCY, max_leaves=neighbour_settings.NEIGHBOUR_LEAVES,
-                fade=neighbour_settings.NEIGHBOUR_FADE, blend=neighbour_settings.NEIGHBOUR_BLEND,
-                awake=neighbour_settings.NEIGHBOUR_AWAKE, outside_limit=neighbour_settings.NEIGHBOUR_CONSISTENCY_OUTSIDE,
-                transition=neighbour_settings.NEIGHBOUR_TRANSITION)
+            self.neighbours = NeighbourSearch(self, Nbar)
 
         self.root = GPNode(0, my_GPR=GPR, Nbar=Nbar, split_dimension_criteria=split_dimension_criteria,
                           splitting_strategy=self.splitting_strategy, n_outputs=n_outputs,
@@ -512,8 +497,6 @@ class GPTree:
     def __setstate__(self, state):
         nodes, links = state.pop('_saved_nodes', ()), state.pop('_saved_links', ())
         self.__dict__.update(state)
-        if self.leaf_index is not None and not hasattr(self.leaf_index.root, 'face_lo'):
-            self.leaf_index = None      # an index saved without the faces of the leaves: the cuts are followed
         for node, first in zip(nodes, links):
             if first is not None:
                 node.left, node.right = nodes[first], nodes[first + 1]

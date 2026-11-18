@@ -185,9 +185,8 @@ class GPRegressorInterface(ABC):
         return False
 
     def supports_conditioning(self) -> bool:
-        """Whether ``condition`` is implemented. Required by
-        ``GPTree(predict_from='neighbours')``. Backends default to False.
-        """
+        """Whether ``condition`` is implemented, as
+        ``GPTree(predict_from='neighbours')`` needs."""
         return False
 
     def covariance(self, X: np.ndarray):
@@ -196,7 +195,7 @@ class GPRegressorInterface(ABC):
 
         Returns ``(K, scale, mean)``: the covariance of target ``t`` between
         the points is ``scale[t] * K`` and its mean ``mean[t]``. Returns None
-        if there is no fit or the backend cannot.
+        if the backend cannot.
         """
         return None
 
@@ -206,15 +205,13 @@ class GPRegressorInterface(ABC):
 
         ``X`` has shape (n, n_features), ``y`` shape (n,) or (n, n_targets) and
         ``noise`` holds the n noise variances, all as ``fit`` takes them;
-        ``X_query`` has shape (m, n_features). The fit itself is not changed.
+        ``X_query`` has shape (m, n_features). The fit is not changed.
 
         Returns ``(mean, std, consistency)``: the mean and the standard
-        deviation with shape (m, n_targets), and per target the mean squared
-        value of ``y`` after whitening with the kernel matrix,
-        ``y^T K^-1 y / n``. That number is about 1 for points the kernel
-        describes as well as those it was fitted to, and many times larger for
-        points it does not describe. Returns None if there is no fit or the
-        backend cannot.
+        deviation with shape (m, n_targets), and per target
+        ``y^T K^-1 y / n``, which is about 1 for points the kernel describes
+        and many times larger for points it does not. Returns None if the
+        factorisation fails or the backend cannot.
         """
         return None
 

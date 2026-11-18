@@ -70,40 +70,28 @@ class LeafIndex:
     by half the overlap of the two children. The box of a leaf's points is
     empty (``lo = inf``, ``hi = -inf``) while the leaf holds none. The faces
     of a leaf are its cuts themselves. With ``blend`` a leaf has a zone at
-    each face, half of it on either side: its width is the share ``blend`` of
-    the leaf's width along that input, measured between its faces, or to the
-    edge of its points where no cut bounds it. The reach of a leaf is the box
-    of its faces with the outer halves of its zones. The boxes of a group
-    contain those of its children; they are not shrunk when a leaf is
-    removed.
-
-    Args:
-        n_features (int): Number of inputs.
-        fanout (int): Largest number of children of a group.
-        blend (Optional[float]): Width of the zone at a cut as a share of a
-            leaf's width; None for none.
+    each face, half of it on either side, as wide as the share ``blend`` of
+    the leaf's width along that input (to the edge of its points where no
+    cut bounds it); its reach is the box of its faces with the outer halves
+    of its zones. The boxes of a group contain those of its children, and
+    are not shrunk when a leaf is removed.
     """
-
-    blend_width = 0.0       # for an index saved before the zones existed
 
     def __init__(self, n_features: int, fanout: int = 32, blend=None):
         self.n_features = n_features
         self.fanout = fanout
-        self.blend_width = 0.0 if blend is None else float(blend)
+        self.blend_width = 0.0 if blend is None else blend
         self.root = _Group(True, fanout + 1, n_features)
         self._group = {}                # leaf -> the group that holds it
 
     def __len__(self):
         return len(self._group)
 
-    def __contains__(self, leaf):
-        return leaf in self._group
-
     @staticmethod
     def data_box(leaf):
         """The bounding box of the points a leaf stores."""
         X = leaf.my_X_data
-        if X is None or X.shape[0] == 0:
+        if X.shape[0] == 0:
             d = leaf.n_features
             return np.full(d, np.inf), np.full(d, -np.inf)
         return X.min(axis=0), X.max(axis=0)

@@ -78,11 +78,7 @@ class GPNode(Node):
         asleep (bool): True while the node's fitted GPs are partly released to
             save memory (see `sleep`). The next prediction restores them.
     """
-    # for a node saved before these existed
-    neighbours = None
-    prefers_own = False
-    _scores = None
-    _variance_unit = None
+    neighbours = None       # for a node saved by a version without it
 
     def __init__(self, *args,
                  my_GPR: GPRegressorInterface,
@@ -184,10 +180,8 @@ class GPNode(Node):
                 node that is asked to predict while a newer snapshot exists refits
                 against it first (see ``predict``).
             neighbours (Optional[NeighbourSearch]): The tree's search for the
-                stored points nearest to a query, shared by reference between
-                all nodes, or None (default). When present, a prediction of
-                the node is conditioned on those points in place of the points
-                of the node's last fit (see ``predict``).
+                stored points nearest to a query, with which the node predicts
+                from those points (see ``predict``), or None (default).
             my_GPRs (Optional[list]): Explicit list of GP regressors for this node
                 (used when creating children: one clone per parent GP). If None, the
                 list is built from ``my_GPR`` according to ``output_model``.
@@ -223,13 +217,13 @@ class GPNode(Node):
         self.global_mean = global_mean
         self._fitted_global = None
 
-        # Tree-wide nearest-neighbour search (shared by reference; None when
-        # the node predicts from the points of its own fit), the squared errors
-        # of the neighbours' and of the node's own prediction at the last points
-        # the node received, and whether the node's own GPs predict for now.
+        # The tree's neighbour search, the squared errors of the neighbours' and of
+        # the node's own prediction at the last points it received, whether its own
+        # GPs predict for now, and the variance of its last predictions
         self.neighbours = neighbours
         self._scores = deque(maxlen=N_SCORES)
         self.prefers_own = False
+        self._variance_unit = None
 
         # Mean and standard deviation per input of the points of the last fit
         self.fit_mean = None
@@ -338,9 +332,8 @@ class GPNode(Node):
 
 
     def __getstate__(self):
-        """A node is saved without its links to other nodes. The tree saves and
-        restores them (``GPTree.__getstate__``), so that saving a tree does not
-        recurse through its levels."""
+        """A node is saved without its links to other nodes: the tree saves
+        them, so that saving does not recurse through its levels."""
         state = self.__dict__.copy()
         for link in NODE_LINKS:
             state.pop(link, None)
@@ -511,10 +504,11 @@ class GPNode(Node):
         self.right._fitted_global = self._fitted_global
         self.left.fit_mean = self.right.fit_mean = self.fit_mean
         self.left.fit_std = self.right.fit_std = self.fit_std
-        for child in self.children:
-            child._scores = deque(self._scores or (), maxlen=N_SCORES)
-            child.prefers_own = self.prefers_own
-            child._used()       # its GPs are copies of the parent's, fit and all
+        if self.neighbours is not None:
+            for child in self.children:
+                child._scores = deque(self._scores, maxlen=N_SCORES)
+                child.prefers_own = self.prefers_own
+                child._used()       # its GPs are copies of the parent's, fit and all
 
 
     def delete_point(self, index=-1, shared_point=True):
@@ -1150,8 +1144,7 @@ class GPNode(Node):
 
 
     def _used(self):
-        """Tell a tree that predicts from neighbours that the node's GPs hold
-        their fit in full: it keeps only the last ones used awake."""
+        """Tell a tree that predicts from neighbours that the node's GPs are awake."""
         if self.neighbours is not None:
             self.neighbours.used(self)
 
@@ -1767,18 +1760,14 @@ class GPNode(Node):
     def _predict_from_neighbours(self, x: np.ndarray):
         """The prediction of the node's kernels given, for each row of ``x``, the
         stored points nearest to it, before the global model is added back.
-
         Distances are in units of the spread of the points of the node's last
         fit. Where the neighbours fit a kernel badly the prediction is mixed
-        with that of the node's own GP, or is that alone
-        (``NeighbourSearch.share``).
-        """
+        with that of the node's own GP (``NeighbourSearch.share``)."""
         n = x.shape[0]
         mu, sigma, share = (np.zeros((n, self.n_outputs)) for _ in range(3))
         for r in range(n):
             found = self.neighbours.find(x[r], self.fit_std, leaf=self)
-            if found is not None:
-                share[r] = self._condition_on(found, x[r:r + 1], mu[r], sigma[r])
+            share[r] = self._condition_on(found, x[r:r + 1], mu[r], sigma[r])
         rows = (share < 1.0).any(axis=1)
         if rows.any():
             mu_own, sigma_own = self._predict_own(x[rows])
@@ -1790,9 +1779,8 @@ class GPNode(Node):
         """Fill ``mu`` and ``sigma`` (one entry per output) with the posterior at
         the single query ``xq`` of the node's kernels given ``points``, and
         return the weight of that prediction per output against the node's
-        own (``NeighbourSearch.share``). An output is left as it is, with the
-        weight 0, where the points do not fit its kernel or the backend
-        cannot condition."""
+        own (``NeighbourSearch.share``). An output with the weight 0 is left
+        as it is."""
         X, y, noise_std, growth = points
         share = np.zeros(self.n_outputs)
 
