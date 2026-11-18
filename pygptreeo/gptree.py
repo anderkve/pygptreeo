@@ -447,13 +447,13 @@ class GPTree:
 
                 # Since we are doing gradual splitting, give
                 # each child a copy of the other child's data
-                order = node.children[1].my_X_data[:,node.split_index].argsort()
+                order = node.split_coordinate(node.children[1].my_X_data).argsort()
                 node.children[0].shared_X_data = node.children[1].my_X_data[order]
                 node.children[0].shared_y_data = node.children[1].my_y_data[order]
                 node.children[0].shared_sigma_data = node.children[1].my_sigma_data[order]
                 node.children[0].n_shared_points = node.children[0].shared_X_data.shape[0]
 
-                order = node.children[0].my_X_data[:,node.split_index].argsort()[::-1]
+                order = node.split_coordinate(node.children[0].my_X_data).argsort()[::-1]
                 node.children[1].shared_X_data = node.children[0].my_X_data[order]
                 node.children[1].shared_y_data = node.children[0].my_y_data[order]
                 node.children[1].shared_sigma_data = node.children[0].my_sigma_data[order]

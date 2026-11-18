@@ -296,6 +296,7 @@ class GPNode(Node):
         self.n_shared_points = 0
 
         self.split_index = 0       # 'j' in the DLGP article
+        self.split_direction = None  # the direction of a split that is not along an input, as weights of the inputs
         self.split_position = 0.0  # 's' in the DLGP article
         self.overlap = DEFAULT_OVERLAP  # 'o' in the DLGP article
         self.name = name
@@ -834,6 +835,29 @@ class GPNode(Node):
             gpr.set_observation_noise(alpha)
         else:  # a bare scikit-learn GaussianProcessRegressor
             gpr.alpha = alpha
+
+    def split_coordinate(self, X):
+        """The coordinate of the rows of ``X`` along which this node is split."""
+        direction = getattr(self, 'split_direction', None)
+        return X[:, self.split_index] if direction is None else X @ direction
+
+    def _fastest_direction(self):
+        """For GPs whose kernels are not along the inputs: the direction of their
+        shortest length scale, as weights of the inputs, or None. The metrics of
+        several GPs are added, and inputs are compared in units of their spread."""
+        metrics = [gpr.get_metric(self.n_features) for gpr in self.my_GPRs if gpr.is_trained() and hasattr(gpr, 'get_metric')]
+        metrics = [m for m in metrics if m is not None]
+        if not metrics or self.my_X_data.shape[0] < 2:
+            return None
+        stds = np.std(self.my_X_data, axis=0)
+        stds = np.where(stds > 0, stds, 1.0)
+        metric = sum(metrics)
+        if not self.use_standard_scaling:
+            metric = metric * np.outer(stds, stds)
+        direction = np.linalg.eigh(metric)[1][:, -1] / stds
+        if np.ptp(self.my_X_data @ direction) == 0:
+            return None
+        return direction / np.linalg.norm(direction)
 
     def _pooled_length_scales(self):
         """Per-dimension length scales pooled over all of this node's fitted GPs
@@ -1558,6 +1582,7 @@ class GPNode(Node):
             # If evaluation failed, fall through to use default criteria
 
         # Determine the split index based on the chosen criteria
+        self.split_direction = None
         if self.split_dimension_criteria == 'max_spread':
             if self.my_X_data.shape[0] > 0:
                 w = np.empty(self.n_features)
@@ -1607,6 +1632,7 @@ class GPNode(Node):
             length_scales = None
             if self.my_X_data.shape[0] > 1:
                 length_scales = self._pooled_length_scales()
+                self.split_direction = self._fastest_direction()
             if length_scales is not None:
                 # Compare length scales in units of each dimension's std so the
                 # choice is scale-invariant. With standard scaling the GP frame
@@ -1637,10 +1663,11 @@ class GPNode(Node):
             if spreads[self.split_index] == 0:
                 self.split_index = int(np.argmax(spreads))
 
-        # Calculate spread for the chosen split_index, used for overlap calculation
+        # Calculate spread along the split, used for overlap calculation
         # and potentially for split_position if data is scarce for other methods.
+        along_split = self.split_coordinate(self.my_X_data)
         if self.my_X_data.shape[0] > 0:
-            current_dim_spread = np.max(self.my_X_data[:, self.split_index]) - np.min(self.my_X_data[:, self.split_index])
+            current_dim_spread = np.max(along_split) - np.min(along_split)
         else:
             current_dim_spread = 0.0 # Default if no data
 
@@ -1649,18 +1676,18 @@ class GPNode(Node):
             self.split_position = 0.0
         elif self.split_position_method == 'median':
             if self.my_X_data.shape[0] > 0:
-                self.split_position = np.median(self.my_X_data[:, self.split_index])
+                self.split_position = np.median(along_split)
             else: # Should not happen if split_index logic is robust
                 self.split_position = 0.0
         elif self.split_position_method == 'mean':
             if self.my_X_data.shape[0] > 0:
-                self.split_position = np.mean(self.my_X_data[:, self.split_index])
+                self.split_position = np.mean(along_split)
             else: # Should not happen
                 self.split_position = 0.0
         elif self.split_position_method == 'random':
             if self.my_X_data.shape[0] > 0:
-                min_val = np.min(self.my_X_data[:, self.split_index])
-                max_val = np.max(self.my_X_data[:, self.split_index])
+                min_val = np.min(along_split)
+                max_val = np.max(along_split)
                 if min_val == max_val: # All points are the same
                     self.split_position = min_val
                 else:
@@ -1669,7 +1696,7 @@ class GPNode(Node):
                 self.split_position = 0.0
         elif self.split_position_method == 'randomchoice':
             if self.my_X_data.shape[0] > 0:
-                self.split_position = np.random.choice(self.my_X_data[:, self.split_index])
+                self.split_position = np.random.choice(along_split)
             else: # Should not happen
                 self.split_position = 0.0
         else:
@@ -1682,7 +1709,7 @@ class GPNode(Node):
         """The probability that x belongs to the right child: linear across the
         overlap region around the split position, as suggested in the DLGP article.
         Without an overlap the split is hard, and a point on it gets 0.5."""
-        dist = x[:, self.split_index] - self.split_position
+        dist = self.split_coordinate(x) - self.split_position
         if self.overlap > 0:
             prob = dist/self.overlap + 0.5
             prob[prob < 0] = 0

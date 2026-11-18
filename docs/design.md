@@ -25,7 +25,8 @@ calibration of that uncertainty from local residuals.
 
 * **A partition that follows the data.** A leaf only has to be right in its
   box. The `min_lengthscale` criterion cuts along the dimension in which the
-  leaf's GP says the function varies fastest.
+  leaf's GP says the function varies fastest, or across the direction of its
+  shortest length scale if its kernel is oblique (below).
 * **A bounded cost per point.** A point is placed once, a retrain touches at
   most `Nbar` points, and inner nodes drop their data (Lederer et al. 2020).
 * **Per-leaf calibration.** Each leaf keeps its last 25 normalised prediction
@@ -42,6 +43,33 @@ calibration of that uncertainty from local residuals.
   on a stream that stays in a region hardly any query is beyond 2.
 * **Blending near a cut.** A prediction in the overlap region of a split is a
   mixture over the leaves the point could belong to.
+
+## Length scales along combinations of the inputs
+
+A kernel with one length scale per input, in a tree that cuts along one input,
+fits a target whose effects lie along the inputs. If the target changes fastest
+along a combination of them (parameters with partly degenerate effects), every
+input involved gets a short length scale and no cut separates the fast
+direction: the leaf resolves more dimensions than the target has.
+
+* **The kernel.** `Default_GPR(oblique=True)` gives the leaves an
+  `ObliqueMatern` kernel: a Matern kernel of the distance
+  `r^2 = |(x - x') L / length_scale|^2` with `L` unit lower triangular. Its
+  entries below the diagonal (the shear) are hyperparameters, any positive
+  definite metric is of this form, and without shear it is the default
+  kernel. The likelihood has a slope in the shear where all length scales are
+  equal, which it does not have in the angles of a rotation.
+* **A fit keeps the shear if it helps.** A leaf is fitted with the shear at
+  zero and then with it free, from that fit and from the shear its kernel
+  started with. The free fit is kept if its leave-one-out error is lower by a
+  factor 1.1. A leaf that declines predicts as with the default kernel.
+* **The cut.** A leaf whose kernel has a shear is cut across the eigenvector
+  of its metric with the largest eigenvalue, with the inputs in units of
+  their spread, at the median of its points along that direction.
+* **Both are needed.** In one leaf of curves in a rotated parameter space the
+  kernel alone gave the error of the default kernel on the unrotated
+  parameters or less. In the tree, with cuts along the inputs, it recovered
+  half of what the rotation cost (`docs/benchmarks.md`, section 9.11).
 
 ## The global model
 

@@ -162,6 +162,15 @@ class GPRegressorInterface(ABC):
         """
         return None
 
+    def get_metric(self, n_features: int) -> Optional[np.ndarray]:
+        """The matrix ``M`` (n_features, n_features) of a fitted kernel whose
+        distance ``(x - x') M (x - x')^T`` is not along the inputs, or None.
+
+        Optional capability used by the 'min_lengthscale' split criterion: such
+        a leaf is cut across the direction of its shortest length scale.
+        """
+        return None
+
     def refit_fixed(self, X: np.ndarray, y: np.ndarray, hyperparameters: Optional[np.ndarray] = None) -> bool:
         """Fit to ``(X, y)`` without optimising: with ``hyperparameters`` (as
         ``get_hyperparameters`` returns them), or with those of the last fit.

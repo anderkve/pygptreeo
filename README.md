@@ -100,6 +100,14 @@ gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
 
 The additive component only has `d` length scales and one variance per interaction order, so it requires fewer data points when the target has (approximately) this structure. The Matérn component captures the remaining, non-additive variation. So even when the target has no additive structure there is typically little harm in using `AdditiveMaternKernel`, except for the increased run time from fitting more hyperparameters. The hyperparameters are tuned per leaf by marginal-likelihood maximisation.
 
+If the target varies fastest along a combination of the inputs, e.g. for parameters with partly degenerate effects, one length scale per input and splits along single inputs are a poor fit. With `oblique=True` each leaf also fits a Matérn kernel whose length scales can lie along combinations of the inputs (`ObliqueMatern`). A leaf keeps this kernel only if it lowers the leave-one-out error of its points, and is then split across the direction of its shortest length scale instead of along one input.
+
+```python
+gpt = GPTree(GPR=Default_GPR(oblique=True), Nbar=100)
+```
+
+In our tests on seven families of curves with `output_model='shared'`, rotating the parameter space raised the error of the default tree by a factor 2 to 4, and by 32 for a kinematic edge whose position depends on a single parameter. With `oblique=True` the error on the rotated parameters was 1.6 to 4 times lower (11 times for the edge), and within a factor 1.0 to 1.3 (2.9) of that on the original parameters. On the original parameters the leaves declined the kernel for five families, with unchanged predictions, and kept it for two, with a 1.2 and 1.9 times lower error.
+
 Any other scikit-learn kernel can be used in the same way, e.g. `ConstantKernel() * (Matern(nu=1.5, length_scale=[1.0] * d) + RBF(length_scale=[1.0] * d))` as a simpler and computationally cheaper alternative. For periodic inputs there is also `AdditivePeriodicMaternKernel(d=d)`, which is typically only beneficial when several oscillation periods fall within a single leaf.
 
 ## Multi-output targets

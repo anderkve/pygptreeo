@@ -18,6 +18,7 @@ Main components:
     - AdditiveMaternKernel: Shorthand for the additive + Matern catch-all leaf kernel
     - AdditivePeriodicKernel: Per-dimension additive periodic kernel
     - AdditivePeriodicMaternKernel: Shorthand for additive-periodic + catch-all leaf kernel
+    - ObliqueMatern: Matern kernel whose length scales need not lie along the inputs (Default_GPR(oblique=True))
     - OutputBasis / OutputBasisLearner: Global PCA output basis for multi-output trees
     - OutputWarp / AlignedCurves: Alignment of curve-valued outputs within a leaf (output_model='aligned')
     - AdditiveGPGlobalMean / GlobalMeanLearner: Tree-wide global model whose residual the leaves model
@@ -46,6 +47,7 @@ from pygptreeo.kernels import (
     AdditiveMaternKernel,
     AdditivePeriodicKernel,
     AdditivePeriodicMaternKernel,
+    ObliqueMatern,
 )
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.adapters import SklearnGPAdapter
