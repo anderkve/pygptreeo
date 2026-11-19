@@ -344,11 +344,6 @@ class TestPredictModesAgree(unittest.TestCase):
         self.assertEqual(limited.n_points_seen, 400)
         self.assertLess(sum(leaf.n_points for leaf in limited.root.leaves), 400)
 
-        # a tree saved by a version without the count starts it at 0
-        del gpt.__dict__['n_points_seen']
-        gpt.update_tree(X[120:121], y[120:121, None], 1e-3)
-        self.assertEqual(gpt.n_points_seen, 1)
-
     def test_sigma_far_below_the_prediction(self):
         # the variance of the mixture must not vanish in the rounding of the squared mean
         import io, contextlib

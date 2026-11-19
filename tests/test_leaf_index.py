@@ -398,30 +398,19 @@ class TestTree(unittest.TestCase):
             self.assertGreater(located, 250)
 
     def test_a_tree_without_an_index(self):
-        """As one saved before the index existed: the cuts are followed."""
+        """As one with a cut that is not along an input: the cuts are followed."""
         rng = np.random.RandomState(5)
         np.random.seed(5)
         gpt = _tree(2)
         X = rng.rand(400, 2)
         _stream(gpt, X)
         expected = gpt.predict(X[:50])
-        state = dict(gpt.__dict__)
-        for name in ('leaf_index', 'neighbours', 'predict_from'):
-            del state[name]
-        nodes = [gpt.root]
-        while nodes:
-            node = nodes.pop()
-            for name in ('neighbours', 'prefers_own', '_scores'):
-                node.__dict__.pop(name, None)
-            nodes += node.children or []
-        old = GPTree.__new__(GPTree)
-        old.__setstate__(state)
-        self.assertIsNone(old.leaf_index)
-        np.testing.assert_array_equal(old.predict(X[:50])[0], expected[0])
-        n_leaves = len(gpt.root.leaves)
-        self.assertEqual(old.n_leaves, n_leaves)
-        _stream(old, rng.rand(200, 2))
-        self.assertGreater(old.n_leaves, n_leaves + 3)        # its leaves split
+        n_leaves = gpt.n_leaves
+        gpt.leaf_index = None
+        np.testing.assert_array_equal(gpt.predict(X[:50])[0], expected[0])
+        self.assertEqual(gpt.n_leaves, n_leaves)
+        _stream(gpt, rng.rand(200, 2))
+        self.assertGreater(gpt.n_leaves, n_leaves + 3)        # its leaves split
 
     def test_a_point_on_a_cut_without_overlap(self):
         """Inputs on a grid, ``theta=0``: a point on a cut belongs to both children."""

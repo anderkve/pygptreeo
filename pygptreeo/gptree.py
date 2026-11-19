@@ -118,11 +118,6 @@ class GPTree:
         load(path):
             Loads a tree from a file that `save` wrote.
     """
-    # for a tree saved by a version without them
-    predict_from = 'leaf'
-    neighbours = None
-    leaf_index = None
-    n_points_seen = 0
 
     def __init__(self,
                  GPR: Optional[GPRegressorInterface] = None,
@@ -622,7 +617,7 @@ class GPTree:
 
 
     def __setstate__(self, state):
-        nodes, links = state.pop('_saved_nodes', ()), state.pop('_saved_links', ())
+        nodes, links = state.pop('_saved_nodes'), state.pop('_saved_links')
         self.__dict__.update(state)
         for node, first in zip(nodes, links):
             if first is not None:

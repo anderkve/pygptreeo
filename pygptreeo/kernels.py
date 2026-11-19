@@ -742,22 +742,21 @@ class NewtonGirardAdditiveKernel(Kernel):
         ``r_i = sqrt(D_i)/l_i`` (once differentiable). ``G_i = dZ_i / dlog l_i``.
         """
         ls = np.atleast_1d(self.length_scale)
-        base = getattr(self, "base", "rbf")
         Zs, Gs = [], []
         for i in range(X.shape[1]):
             Di = (X[:, i][:, None] - Y[:, i][None, :]) ** 2
-            if base == "rbf":
+            if self.base == "rbf":
                 Zi = np.exp(-Di / (2.0 * ls[i] ** 2))
                 Zs.append(Zi)
                 Gs.append(Zi * (Di / ls[i] ** 2))               # dZ_i/dlog l_i (RBF)
-            elif base == "matern":
+            elif self.base == "matern":
                 s3 = np.sqrt(3.0)
                 ri = np.sqrt(Di) / ls[i]
                 e = np.exp(-s3 * ri)
                 Zs.append((1.0 + s3 * ri) * e)                  # Matern-3/2
                 Gs.append(3.0 * (Di / ls[i] ** 2) * e)          # dZ_i/dlog l_i (Matern)
             else:
-                raise ValueError(f"Unknown base {base!r}; use 'rbf' or 'matern'")
+                raise ValueError(f"Unknown base {self.base!r}; use 'rbf' or 'matern'")
         return Zs, Gs, ls
 
     @staticmethod
@@ -818,7 +817,7 @@ class NewtonGirardAdditiveKernel(Kernel):
         ls = np.atleast_1d(self.length_scale)
         sig = np.atleast_1d(self.order_std)
         return (f"{self.__class__.__name__}(d={len(ls)}, max_order={len(sig)}, "
-                f"base='{getattr(self, 'base', 'rbf')}', "
+                f"base='{self.base}', "
                 f"order_std=[{', '.join(f'{s:.3g}' for s in sig)}])")
 
 

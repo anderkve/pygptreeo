@@ -77,7 +77,6 @@ class GPNode(Node):
         asleep (bool): True while the node's fitted GPs are partly released to
             save memory (see `sleep`). The next prediction restores them.
     """
-    neighbours = None       # for a node saved by a version without it
 
     def __init__(self, *args,
                  my_GPR: GPRegressorInterface,
@@ -288,13 +287,13 @@ class GPNode(Node):
         state = self.__dict__.copy()
         for link in NODE_LINKS:
             state.pop(link, None)
-        state['_scores'] = np.array(state.get('_scores', ()))
+        state['_scores'] = np.array(state['_scores'])
         return state
 
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self._scores = deque(state.get('_scores', ()), maxlen=N_SCORES)
+        self._scores = deque(state['_scores'], maxlen=N_SCORES)
         # links that the tree has already restored are kept
         for link in NODE_LINKS:
             self.__dict__.setdefault(link, None)
