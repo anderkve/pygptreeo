@@ -113,6 +113,16 @@ class TestSaveAndLoad(unittest.TestCase):
         _stream(loaded, 4.0 * self.rng.rand(100, 2))
         self.assertEqual(sum(leaf.n_points for leaf in loaded.root.leaves), 100)
 
+    def test_the_count_of_points_is_saved(self):
+        gpt = _tree()
+        X = 4.0 * self.rng.rand(150, 2)
+        _stream(gpt, X[:100])
+        gpt.save(self.path)
+        loaded = GPTree.load(self.path)
+        self.assertEqual(loaded.n_points_seen, 100)
+        _stream(loaded, X[100:])
+        self.assertEqual(loaded.n_points_seen, 150)
+
     def test_the_file_is_replaced_in_one_step(self):
         gpt = _tree()
         X = 4.0 * self.rng.rand(300, 2)

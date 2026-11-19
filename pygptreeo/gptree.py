@@ -91,6 +91,9 @@ class GPTree:
             or None for no limit.
         memory_mb (float): The tree's estimate of its own size, in MB.
         n_leaves (int): Number of leaves of the tree.
+        n_points_seen (int): Number of points passed to `update_tree` so far.
+            The tree can hold fewer: a point may be merged or rejected, and
+            leaves are removed under a memory limit.
         leaf_index (Optional[LeafIndex]): A balanced index over the leaves,
             through which the leaf of a point is found whatever the depth of
             the tree of cuts.
@@ -120,6 +123,7 @@ class GPTree:
     predict_from = 'leaf'
     neighbours = None
     leaf_index = None
+    n_points_seen = 0
 
     def __init__(self,
                  GPR: Optional[GPRegressorInterface] = None,
@@ -378,6 +382,7 @@ class GPTree:
         self._n_fit_tasks = 0
 
         self.first_point = True
+        self.n_points_seen = 0
 
 
     def update_tree(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray],
@@ -423,6 +428,8 @@ class GPTree:
             With `defer_fits`, the fit task if the leaf became due one: a dict
             that can be pickled. None otherwise.
         """
+
+        self.n_points_seen += 1
 
         # The first input point is used to determine self.n_features
         if self.first_point:
