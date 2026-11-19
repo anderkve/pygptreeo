@@ -222,13 +222,13 @@ class TestAlignedTree(unittest.TestCase):
         self.assertFalse(leaf.asleep)
 
     def test_saved_tree_predicts_as_before(self):
-        import joblib, tempfile
+        import tempfile
         gpt = _fit('aligned', moving_peak, n=60)
         x = np.random.RandomState(8).rand(5, 2)
         before = gpt.predict(x)
         with tempfile.TemporaryDirectory() as folder:
-            gpt.save(os.path.join(folder, 'tree.joblib'))
-            loaded = joblib.load(os.path.join(folder, 'tree.joblib'))
+            gpt.save(os.path.join(folder, 'tree.pkl'))
+            loaded = GPTree.load(os.path.join(folder, 'tree.pkl'))
         for a, b in zip(before, loaded.predict(x)):
             np.testing.assert_allclose(a, b)
 

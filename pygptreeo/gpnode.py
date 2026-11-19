@@ -351,15 +351,18 @@ class GPNode(Node):
 
     def __getstate__(self):
         """A node is saved without its links to other nodes: the tree saves
-        them, so that saving does not recurse through its levels."""
+        them, so that saving does not recurse through its levels. Its scores
+        are saved as one array."""
         state = self.__dict__.copy()
         for link in NODE_LINKS:
             state.pop(link, None)
+        state['_scores'] = np.array(state.get('_scores', ()))
         return state
 
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+        self._scores = deque(state.get('_scores', ()), maxlen=N_SCORES)
         # links that the tree has already restored are kept
         for link in NODE_LINKS:
             self.__dict__.setdefault(link, None)

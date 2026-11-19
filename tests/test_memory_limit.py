@@ -201,15 +201,16 @@ class TestMemoryLimit(TreeChecks):
 
     def test_a_saved_tree_carries_on(self):
         import tempfile
-        import joblib
         np.random.seed(11)
         gpt = _tree(max_memory_mb=0.5)
         X = _uniform(1600, 12)
         _stream(gpt, X[:1200])
         with tempfile.TemporaryDirectory() as folder:
-            gpt.save(os.path.join(folder, "tree.joblib"))
-            loaded = joblib.load(os.path.join(folder, "tree.joblib"))
-        self.assertAccountsMatch(loaded)
+            gpt.save(os.path.join(folder, "tree.pkl"))
+            loaded = GPTree.load(os.path.join(folder, "tree.pkl"))
+        for tree in (gpt, loaded):
+            self.assertAccountsMatch(tree)
+            self.assertEqual(tree._fitted_bytes, 0)         # every leaf was put to sleep
         np.testing.assert_array_equal(loaded.predict(X[:30])[0], gpt.predict(X[:30])[0])
         _stream(loaded, X[1200:])
         self.assertLessEqual(loaded.memory_mb, 0.5)

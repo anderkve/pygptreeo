@@ -20,7 +20,6 @@ setuptools.setup(
         'scikit-learn',
         'binarytree',
         'tqdm',
-        'joblib',
     ],
     extras_require={
         'gpytorch': ['gpytorch', 'torch'],  # For GPyTorch backend support

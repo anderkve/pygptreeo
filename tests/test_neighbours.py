@@ -8,7 +8,6 @@ import unittest
 import warnings
 from unittest import mock
 
-import joblib
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel
@@ -469,9 +468,9 @@ class TestPredictions(unittest.TestCase):
         mean, std = gpt.predict(X_test)
         self.assertLess(np.sqrt(np.mean((mean[:, 0] - _target(X_test)) ** 2)), 0.02)
         with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, 'tree.joblib')
+            path = os.path.join(folder, 'tree.pkl')
             gpt.save(path)
-            loaded = joblib.load(path)
+            loaded = GPTree.load(path)
         self.assertIs(loaded.neighbours.tree, loaded)
         np.testing.assert_allclose(loaded.predict(X_test)[0], mean, rtol=1e-12)
 
@@ -1015,9 +1014,9 @@ class TestAsleep(unittest.TestCase):
         X_test = rng.rand(40, 2)
         mean, std = gpt.predict(X_test)
         with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, 'tree.joblib')
+            path = os.path.join(folder, 'tree.pkl')
             gpt.save(path)
-            loaded = joblib.load(path)
+            loaded = GPTree.load(path)
         self.assertEqual(sum(leaf.asleep for leaf in loaded.root.leaves), sum(leaf.asleep for leaf in gpt.root.leaves))
         self.assertTrue(all(leaf in loaded.neighbours.in_use for leaf in self._awake(loaded, own=False)))
         np.testing.assert_allclose(loaded.predict(X_test)[0], mean, rtol=1e-9)

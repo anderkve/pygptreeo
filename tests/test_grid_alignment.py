@@ -7,7 +7,6 @@ import tempfile
 import unittest
 import warnings
 
-import joblib
 import numpy as np
 from scipy.interpolate import RectBivariateSpline
 
@@ -217,9 +216,9 @@ class TestAlignedSurfaceTree(unittest.TestCase):
             if model == 'aligned':
                 self.assertTrue(any(isinstance(leaf.alignment, AlignedSurfaces) for leaf in gpt.root.leaves))
                 with tempfile.TemporaryDirectory() as folder:
-                    gpt.save(os.path.join(folder, 'tree.joblib'))
-                    loaded = joblib.load(os.path.join(folder, 'tree.joblib'))
-                np.testing.assert_allclose(loaded.predict(U_test[:10])[0], mean[:10])
+                    gpt.save(os.path.join(folder, 'tree.pkl'))
+                    loaded = GPTree.load(os.path.join(folder, 'tree.pkl'))
+                np.testing.assert_allclose(loaded.predict(U_test[:10])[0], mean[:10], atol=1e-8)
         self.assertLess(1.5 * errors['aligned'], errors['shared'])
 
     def test_stream_with_points_between_fits(self):

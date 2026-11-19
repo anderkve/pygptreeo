@@ -16,13 +16,16 @@ arrives sequentially and the model needs to adapt continuously.
 """
 
 # Standard library imports
+import gc
 import logging
+import os
+import pickle
 from collections import OrderedDict, deque
+from contextlib import contextmanager
 from copy import deepcopy
 from typing import Callable, Optional, Type, Union
 
 # Third-party imports
-import joblib
 import numpy as np
 from sklearn.utils import resample
 from tqdm import tqdm
@@ -109,7 +112,9 @@ class GPTree:
             Predicts target values for X_test using the ensemble of GPRs in
             the leaf nodes.
         save(path):
-            Saves the trained GPTree object to a file.
+            Saves the tree to a file.
+        load(path):
+            Loads a tree from a file that `save` wrote.
     """
     # for a tree saved by a version without them
     predict_from = 'leaf'
@@ -1229,15 +1234,44 @@ class GPTree:
 
 
     def save(self, path: str):
-        """Saves the trained GPTree object to a file using joblib.
+        """Save the tree to a file, which `GPTree.load` reads.
 
-        This method serializes the entire GPTree instance, including its
-        structure (all GPNodes) and the trained GPR models within each node.
+        The leaves are put to sleep first (see `GPNode.sleep`), so the file
+        holds no Cholesky factors: a leaf computes its factor again when it
+        is next used. The file is written under a temporary name and then
+        renamed, so a process that reads `path` meanwhile gets the previous
+        file.
 
         Args:
-            path (str): The file path where the GPTree object will be saved.
+            path (str): The file path where the tree will be saved.
         """
-        joblib.dump(self, path)
+        for leaf in self.root.leaves:
+            if leaf.sleep() and self.max_memory_mb is not None:
+                self._account(leaf)
+        temporary = f"{path}.tmp"
+        with _gc_paused(), open(temporary, 'wb') as file:
+            pickle.dump(self, file, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(temporary, path)
+
+
+    @staticmethod
+    def load(path: str) -> 'GPTree':
+        """Load a tree from a file that `save` wrote. Its leaves are asleep."""
+        with _gc_paused(), open(path, 'rb') as file:
+            return pickle.load(file)
+
+
+@contextmanager
+def _gc_paused():
+    """The garbage collector is off within the block: it takes much of the time
+    of pickling and unpickling the many objects of a large tree."""
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
 
 
 def solve_fit_task(task: dict) -> dict:

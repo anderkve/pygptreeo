@@ -8,7 +8,6 @@ import tempfile
 import unittest
 import warnings
 
-import joblib
 import numpy as np
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel
 
@@ -371,8 +370,8 @@ class TestTree(unittest.TestCase):
         self.assertIs(leaves[0], gpt.leaf_index.locate(X[-1]))
         # a tree this deep is saved, and the copy predicts and learns
         with tempfile.TemporaryDirectory() as folder:
-            gpt.save(os.path.join(folder, 'tree.joblib'))
-            loaded = joblib.load(os.path.join(folder, 'tree.joblib'))
+            gpt.save(os.path.join(folder, 'tree.pkl'))
+            loaded = GPTree.load(os.path.join(folder, 'tree.pkl'))
         np.testing.assert_array_equal(loaded.predict(X[-200:])[0], mean)
         self.assertEqual(len(loaded.root.leaves), len(gpt.root.leaves))
         self.assertTrue(all(leaf.parent.children[0 if leaf.is_left else 1] is leaf for leaf in loaded.root.leaves))

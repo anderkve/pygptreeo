@@ -290,7 +290,9 @@ class SklearnGPAdapter(GPRegressorInterface):
         SklearnGPAdapter
             A deep copy of this adapter instance.
         """
-        copy = SklearnGPAdapter(deepcopy(self._gpr), kernel_factory=self._kernel_factory)
+        # the random state, which each fit replaces, is shared and not copied
+        rng = getattr(self._gpr, '_rng', None)
+        copy = SklearnGPAdapter(deepcopy(self._gpr, {id(rng): rng}), kernel_factory=self._kernel_factory)
         copy._shear_rejections, copy._shear_wait = self._shear_rejections, self._shear_wait
         return copy
 
