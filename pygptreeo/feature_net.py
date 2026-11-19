@@ -27,10 +27,10 @@ def _require_torch():
 
 
 class _PointStore:
-    """Every point of the stream, or with ``size`` a uniform random sample of that
-    many (reservoir sampling with ``rng``)."""
+    """Every point of the stream until it is longer than ``size``, then a uniform
+    random sample of that many (reservoir sampling with ``rng``)."""
 
-    def __init__(self, n_features: int, n_outputs: int, size: Optional[int] = None, rng=None):
+    def __init__(self, n_features: int, n_outputs: int, size: int, rng):
         self.X = np.empty((0, n_features)); self.y = np.empty((0, n_outputs)); self.sigma = np.empty((0, n_outputs))
         self._bx, self._by, self._bs = [], [], []
         self.size = size; self.rng = rng
@@ -48,7 +48,7 @@ class _PointStore:
 
     def add(self, x, y, sigma) -> bool:
         self.n_seen += 1
-        if self.size is not None and self.n >= self.size:
+        if self.n >= self.size:
             j = self.rng.randint(self.n_seen)
             if j >= self.size:
                 return False
@@ -112,9 +112,8 @@ class FeatureNetLearner:
         Adam's learning rate.
     min_points : int, default=200
         Observations before the first fit.
-    reservoir_size : int or None, default=5000
-        Points of the coverage reservoir (``CoverageReservoir``); None trains the
-        L-BFGS phase on every point, at a cost per iteration that grows with the stream.
+    reservoir_size : int, default=5000
+        Points of the coverage reservoir (``CoverageReservoir``).
     steps_per_update : int or None, default=None
         None: a due refit runs at once inside the ``observe`` call. An int spreads
         it over the following observations, this many L-BFGS iterations (and
@@ -126,16 +125,16 @@ class FeatureNetLearner:
         weights, so without held-out points a fit to few or noisy points is carried
         along. 0 trains on every point and publishes the last weights.
     random_state : int or None
-    store_size : int or None, default=100000
+    store_size : int, default=100000
         Points stored for the Adam phase, at ``d + 2`` floats per point: every
         point of the stream until it is longer than this, then a uniform random
-        sample of it. None stores every point.
+        sample of it.
     """
 
     def __init__(self, hidden: int = 128, depth: int = 3, steps: int = 300, polish_steps: int = 3000,
-                 lr: float = 1e-3, min_points: int = 200, reservoir_size: Optional[int] = 5000,
+                 lr: float = 1e-3, min_points: int = 200, reservoir_size: int = 5000,
                  steps_per_update: Optional[int] = None, holdout: float = 0.2,
-                 random_state: Optional[int] = None, store_size: Optional[int] = 100000):
+                 random_state: Optional[int] = None, store_size: int = 100000):
         _require_torch()
         if not (0.0 <= holdout < 1.0):
             raise ValueError("holdout must be in [0, 1)")
@@ -148,27 +147,27 @@ class FeatureNetLearner:
             raise ValueError("min_points must be at least 2")
         if steps_per_update is not None and steps_per_update < 1:
             raise ValueError("steps_per_update must be at least 1")
-        if store_size is not None and store_size < 2:
+        if store_size < 2:
             raise ValueError("store_size must be at least 2")
         self.hidden, self.depth, self.steps, self.polish_steps = int(hidden), int(depth), int(steps), int(polish_steps)
         self.lr = float(lr)
         self.min_points = int(min_points)
-        self.reservoir_size = int(reservoir_size) if reservoir_size is not None else None
-        self.store_size = int(store_size) if store_size is not None else None
+        self.reservoir_size = int(reservoir_size)
+        self.store_size = int(store_size)
         self.steps_per_update = int(steps_per_update) if steps_per_update is not None else None
         self.random_state = random_state
         self.rng = np.random.RandomState(random_state)
         self.gen = torch.Generator().manual_seed(int(self.rng.randint(1 << 30)))
 
-        self.sample = None                       # the reservoir (or every point when unbounded)
-        self.store = None                        # the points of the polish phase of a bounded reservoir
+        self.sample = None                       # the coverage reservoir
+        self.store = None                        # the points of the polish phase
         self._shadow = None                      # an in-progress amortised refit
         self.n_features = None; self.n_outputs = None
         self.net = None
         self.x_mu = None; self.x_sd = None; self.y_mu = None; self.y_sd = None
         self.version = 0
         self.n_seen = 0; self.n_seen_at_fit = 0
-        self.n_refits = 0; self.fit_seconds = 0.0; self.n_seen_at_first_fit = 0
+        self.n_seen_at_first_fit = 0
         self.error_var = None; self.noise_var = None; self.error_scale = None
 
     # -- stream -------------------------------------------------------------------------
@@ -184,12 +183,9 @@ class FeatureNetLearner:
             sigma = np.tile(sigma, (1, y.shape[1]))
         if self.sample is None:
             self.n_features, self.n_outputs = x.shape[1], y.shape[1]
-            if self.reservoir_size is None:
-                self.sample = _PointStore(self.n_features, self.n_outputs)
-            else:
-                self.sample = CoverageReservoir(self.reservoir_size, self.n_features, self.n_outputs)
-                if self.polish_steps > 0:
-                    self.store = _PointStore(self.n_features, self.n_outputs, self.store_size, self.rng)
+            self.sample = CoverageReservoir(self.reservoir_size, self.n_features, self.n_outputs)
+            if self.polish_steps > 0:
+                self.store = _PointStore(self.n_features, self.n_outputs, self.store_size, self.rng)
         self.n_seen += 1
         if self.net is not None:
             # Prequential error of the head; its expectation is (h - f)^2 + noise^2.
@@ -285,10 +281,9 @@ class FeatureNetLearner:
 
     def _polish_phase(self, net, scal, best=None):
         """The Adam phase over the stored points, with this refit's scaling; None when off."""
-        source = self.store if self.store is not None else self.sample
-        if self.polish_steps == 0 or source.n < 2:
+        if self.polish_steps == 0 or self.store.n < 2:
             return None
-        Xt, Yt, Wt, _, hold = self._training_set(source, scal)
+        Xt, Yt, Wt, _, hold = self._training_set(self.store, scal)
         Xt, Yt, Wt, best = self._split(Xt, Yt, Wt, hold, best)
         opt = torch.optim.Adam(net.parameters(), lr=self.lr)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=self.polish_steps, eta_min=0.0)
@@ -337,19 +332,16 @@ class FeatureNetLearner:
             check()
         net.eval()
 
-    def _publish(self, net, scal, t_spent):
+    def _publish(self, net, scal):
         self.net = net
         self.x_mu, self.x_sd, self.y_mu, self.y_sd = scal
-        if self.n_refits == 0:
+        if self.version == 0:
             self.n_seen_at_first_fit = self.n_seen
-        self.version += 1; self.n_refits += 1
+        self.version += 1
         self.n_seen_at_fit = self.n_seen
-        self.fit_seconds += t_spent
 
     def fit(self):
         """(Re)fit the network in one go, discarding any amortised refit in progress."""
-        import time
-        t0 = time.time()
         self._shadow = None
         net = self.net if self.net is not None else self._new_net()
         ph, scal = self._lbfgs_phase(net)
@@ -361,18 +353,17 @@ class FeatureNetLearner:
             self._train(net, ph, self.polish_steps); best = ph['best']
         if best is not None:
             best.restore(net)
-        self._publish(net, scal, time.time() - t0)
+        self._publish(net, scal)
 
     def _start_shadow(self):
         """Begin an amortised refit on a copy of the network."""
         net = copy.deepcopy(self.net)
         ph, scal = self._lbfgs_phase(net)
-        self._shadow = dict(net=net, scal=scal, lbfgs=ph, done=0, polish=None, polish_started=False, polish_done=0, t=0.0)
+        self._shadow = dict(net=net, scal=scal, lbfgs=ph, done=0, polish=None, polish_started=False, polish_done=0)
         self.n_seen_at_fit = self.n_seen         # no second refit is due while this one runs
 
     def _advance_shadow(self) -> bool:
-        import time
-        t0 = time.time(); s = self._shadow
+        s = self._shadow
         if s['done'] < self.steps:
             k = min(self.steps_per_update, self.steps - s['done'])
             self._train(s['net'], s['lbfgs'], k)
@@ -385,25 +376,18 @@ class FeatureNetLearner:
             k = min(POLISH_STEPS_PER_UPDATE * self.steps_per_update, self.polish_steps - s['polish_done'])
             self._train(s['net'], s['polish'], k)
             s['polish_done'] += k
-        s['t'] += time.time() - t0
         if s['done'] >= self.steps and (s['polish'] is None or s['polish_done'] >= self.polish_steps):
             last = s['polish'] if s['polish'] is not None else s['lbfgs']
             if last is not None and last['best'] is not None:
                 last['best'].restore(s['net'])
             self._shadow = None
-            self._publish(s['net'], s['scal'], s['t'])
+            self._publish(s['net'], s['scal'])
             return True
         return False
 
-    @property
-    def refit_in_progress(self) -> bool:
-        return self._shadow is not None
-
-    def max_nbytes(self, n_features: int, n_outputs: int) -> float:
+    def max_nbytes(self, n_features: int, n_outputs: int) -> int:
         """Bytes of the reservoir, the point store and the weights once the samples
-        are full; inf if either sample keeps every point."""
-        if self.reservoir_size is None or (self.polish_steps > 0 and self.store_size is None):
-            return float('inf')
+        are full."""
         size = CoverageReservoir.max_nbytes(self.reservoir_size, n_features, n_outputs)
         if self.polish_steps > 0:
             size += 8 * self.store_size * (n_features + 2 * n_outputs)
@@ -423,8 +407,7 @@ class FeatureNetLearner:
     def __repr__(self) -> str:
         return (f"FeatureNetLearner(hidden={self.hidden}, depth={self.depth}, steps={self.steps}, "
                 f"polish_steps={self.polish_steps}, reservoir_size={self.reservoir_size}, store_size={self.store_size}, "
-                f"holdout={self.holdout}, n_seen={self.n_seen}, "
-                f"n_refits={self.n_refits}, version={self.version})")
+                f"holdout={self.holdout}, n_seen={self.n_seen}, version={self.version})")
 
 
 class _NetSnapshot(GlobalMeanSnapshot):
@@ -463,7 +446,7 @@ class NetGlobalMean(GlobalMeanLearner):
         self.current = None
         self.error_scale = None
 
-    def max_nbytes(self, n_features: int, n_outputs: int) -> float:
+    def max_nbytes(self, n_features: int, n_outputs: int) -> int:
         return self.learner.max_nbytes(n_features, n_outputs)
 
     def observe(self, x, y, sigma) -> bool:

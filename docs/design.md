@@ -1010,8 +1010,7 @@ curves, and `benchmarks.md`, section 10, what was measured on them.
   the change of the GP's gradient with decorrelated leaf inputs halve the
   error on such targets and raise it on smooth ones (`docs/benchmarks.md`,
   section 9.1). A leaf could try both kinds of cut on its own points when it
-  splits and keep the better, as `enable_split_evaluation` does for the
-  input of an axis-aligned cut. With `Default_GPR(oblique=True)` a leaf
+  splits and keep the better. With `Default_GPR(oblique=True)` a leaf
   decides by its kernel instead: it is cut across the direction of its
   shortest length scale if it kept an oblique kernel.
 * **A kernel for the neighbours.** The leaf's kernel was fitted at the scale

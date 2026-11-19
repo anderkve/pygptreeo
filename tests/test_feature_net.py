@@ -38,17 +38,12 @@ class TestPointStore(unittest.TestCase):
         store._flush()
         return store
 
-    def test_keeps_every_point_without_a_size(self):
-        store = self._fill(feature_net._PointStore(2, 1), 700)
-        self.assertEqual(store.n, 700)
-        np.testing.assert_array_equal(store.X[:, 0], np.arange(700.0))
-
     def test_keeps_every_point_until_full(self):
         store = self._fill(feature_net._PointStore(2, 1, size=500, rng=np.random.RandomState(0)), 500)
-        every = self._fill(feature_net._PointStore(2, 1), 500)
-        np.testing.assert_array_equal(store.X, every.X)
-        np.testing.assert_array_equal(store.y, every.y)
-        np.testing.assert_array_equal(store.sigma, every.sigma)
+        index = np.arange(500.0)
+        np.testing.assert_array_equal(store.X, np.column_stack((index, 0.5 * index)))
+        np.testing.assert_array_equal(store.y[:, 0], 2.0 * index)
+        np.testing.assert_array_equal(store.sigma[:, 0], np.full(500, 1e-3))
 
     def test_is_a_uniform_sample_of_a_longer_stream(self):
         n, size = 20000, 500
@@ -80,7 +75,7 @@ class TestFeatureNet(unittest.TestCase):
             learner.observe(X[i], y[i], 1e-3)
         self.assertEqual(learner.sample.n, 100)
         self.assertEqual(learner.n_seen, 500)
-        self.assertGreaterEqual(learner.n_refits, 1)
+        self.assertGreaterEqual(learner.version, 1)
 
     def test_fixed_refit_cost(self):
         """A refit runs a fixed number of steps on a bounded sample, so its cost does not grow with the stream."""
@@ -90,9 +85,12 @@ class TestFeatureNet(unittest.TestCase):
         for n in (200, 1600):
             X = rng.rand(n, 3); y = _target(X)
             learner = self._learner(min_points=n, steps=100, reservoir_size=200)
-            for i in range(n):
+            for i in range(n - 1):
                 learner.observe(X[i], y[i], 1e-3)
-            times.append(learner.fit_seconds)
+            start = time.time()
+            learner.observe(X[n - 1], y[n - 1], 1e-3)             # the fit, at min_points
+            times.append(time.time() - start)
+            self.assertEqual(learner.version, 1)
         self.assertLess(times[1], 3 * times[0] + 0.5)
 
     def test_amortised_refit_publishes_once_complete(self):
@@ -102,16 +100,16 @@ class TestFeatureNet(unittest.TestCase):
         for i in range(100):
             learner.observe(X[i], y[i], 1e-3)
         self.assertEqual(learner.version, 1)                  # the first fit runs at once
-        self.assertFalse(learner.refit_in_progress)
+        self.assertIsNone(learner._shadow)
         head_v1 = learner.head(X[:5]).copy()
         for i in range(100, 200):
             learner.observe(X[i], y[i], 1e-3)                 # a refit becomes due at 200
-        self.assertTrue(learner.refit_in_progress)
+        self.assertIsNotNone(learner._shadow)
         self.assertEqual(learner.version, 1)
         np.testing.assert_allclose(learner.head(X[:5]), head_v1)   # the old network until published
         for i in range(200, 230):                             # 30 x 4 = 120 steps: complete
             learner.observe(X[i], y[i], 1e-3)
-        self.assertFalse(learner.refit_in_progress)
+        self.assertIsNone(learner._shadow)
         self.assertEqual(learner.version, 2)
         self.assertFalse(np.allclose(learner.head(X[:5]), head_v1))
 
@@ -131,10 +129,10 @@ class TestFeatureNet(unittest.TestCase):
         learner = self._learner(min_points=100, steps=20, steps_per_update=2)
         for i in range(200):
             learner.observe(X[i], y[i], 1e-3)                 # first fit at 100, a refit due at 200
-        self.assertTrue(learner.refit_in_progress)
+        self.assertIsNotNone(learner._shadow)
         for i in range(200, 210):                             # 10 x 2 = 20 iterations: complete
             learner.observe(X[i], y[i], 1e-3)
-        self.assertFalse(learner.refit_in_progress)
+        self.assertIsNone(learner._shadow)
         self.assertEqual(learner.version, 2)
 
     def test_lbfgs_iterations_share_optimiser_calls(self):
@@ -196,13 +194,13 @@ class TestFeatureNet(unittest.TestCase):
         learner = self._learner(min_points=100, steps=20, reservoir_size=100, polish_steps=80, steps_per_update=1)
         for i in range(200):
             learner.observe(X[i], y[i], 1e-3)                     # a refit due at 200
-        self.assertTrue(learner.refit_in_progress)
+        self.assertIsNotNone(learner._shadow)
         # the polish starts in the update that ends the L-BFGS phase: 20 + 9 updates leave 8 steps to go
         for i in range(200, 228):
             learner.observe(X[i], y[i], 1e-3)
-        self.assertTrue(learner.refit_in_progress)
+        self.assertIsNotNone(learner._shadow)
         learner.observe(X[228], y[228], 1e-3)                     # the 10th polish update completes it
-        self.assertFalse(learner.refit_in_progress)
+        self.assertIsNone(learner._shadow)
         self.assertEqual(learner.version, 2)
 
     def test_bounded_store_for_the_polish_phase(self):
@@ -212,12 +210,8 @@ class TestFeatureNet(unittest.TestCase):
         for i in range(1200):
             learner.observe(X[i], y[i], 1e-3)
         self.assertEqual(learner.store.n, 300)
-        self.assertEqual(learner.n_refits, 3)                     # at 300, 600 and 1200 points
+        self.assertEqual(learner.version, 3)                     # at 300, 600 and 1200 points
         self.assertLess(np.sqrt(np.mean((learner.head(Xt)[:, 0] - yt) ** 2)) / (yt.max() - yt.min()), 0.05)
-        unbounded = self._learner(min_points=1200, reservoir_size=200, polish_steps=400, store_size=None)
-        for i in range(1200):
-            unbounded.observe(X[i], y[i], 1e-3)
-        self.assertEqual(unbounded.store.n, 1200)
         with self.assertRaises(ValueError):
             self._learner(store_size=1)
 
@@ -276,7 +270,7 @@ class TestFeatureNet(unittest.TestCase):
                 learner = self._learner(min_points=N, steps=100, polish_steps=600, steps_per_update=steps_per_update)
                 for i in range(N):
                     learner.observe(X[i], y[i], 0.5 * f.std())
-            self.assertEqual(learner.n_refits, 1)
+            self.assertEqual(learner.version, 1)
             self.assertGreater(len(seen['losses']), 4)
             best = seen['best']
             with feature_net.torch.no_grad():
@@ -305,7 +299,7 @@ class TestFeatureNet(unittest.TestCase):
         gm = NetGlobalMean(steps=100, polish_steps=0, min_points=60, steps_per_update=1, random_state=0)
         gpt = GPTree(GPR=Default_GPR(), Nbar=60, retrain_every_n_points=20, global_mean=gm)
         _stream(gpt, X, Y, S)
-        self.assertGreaterEqual(gm.learner.n_refits, 2)
+        self.assertGreaterEqual(gm.learner.version, 2)
         Xt = rng.rand(200, 3); yt = _target(Xt)
         P, _ = gpt.predict(Xt)
         self.assertLess(np.sqrt(np.mean((P[:, 0] - yt) ** 2)) / (yt.max() - yt.min()), 0.05)
@@ -321,7 +315,7 @@ class TestFeatureNet(unittest.TestCase):
         self.assertTrue(gpt.root.use_standard_scaling)        # the leaves are ordinary GPs
         _stream(gpt, X, Y, S)
         gm = gpt.global_mean
-        self.assertGreaterEqual(gm.learner.n_refits, 2)
+        self.assertGreaterEqual(gm.learner.version, 2)
         self.assertEqual(gm.current.version, gm.learner.version)
         self.assertIsNotNone(gm.error_scale)
         Xt = rng.rand(200, 3); yt = _target(Xt)
@@ -353,16 +347,12 @@ class TestFeatureNet(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(P)) and np.all(Sd > 0))
         self.assertLess(np.sqrt(np.mean((P[:, 0] - yt) ** 2)) / (yt.max() - yt.min()), 0.1)
 
-    def test_memory_limit_below_the_network_or_without_a_fixed_size(self):
+    def test_memory_limit_below_the_network(self):
         x, y = np.zeros((1, 3)), np.zeros((1, 1))
         gpt = GPTree(max_memory_mb=100, global_mean='net')                       # the default reservoir takes 200 MB
         with self.assertRaisesRegex(ValueError, "global model"):
             gpt.update_tree(x, y, 1e-3)
-        for kwargs in (dict(store_size=None), dict(reservoir_size=None)):
-            gpt = GPTree(max_memory_mb=1000, global_mean='net', global_mean_kwargs=kwargs)
-            with self.assertRaisesRegex(ValueError, "fixed size"):
-                gpt.update_tree(x, y, 1e-3)
-        self.assertEqual(GPTree(global_mean='net', global_mean_kwargs=dict(polish_steps=0, store_size=None))
+        self.assertEqual(GPTree(global_mean='net', global_mean_kwargs=dict(polish_steps=0))
                          .global_mean.max_nbytes(3, 1), 8 * 5000 * (5001 + 3 + 2) + 4 * (4 * 128 + 2 * 129 * 128 + 129))
 
     def test_hybrid_defaults(self):

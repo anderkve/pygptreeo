@@ -34,8 +34,8 @@ Typical usage:
         y_pred, y_std = gpt.predict(x)
         gpt.update_tree(x, y, sigma)  # sigma: observation-noise std for this point
 
-New nodes, sleeping and removed leaves, merged and rejected points and split
-evaluations are reported at DEBUG level on the ``pygptreeo`` logger.
+New nodes, sleeping and removed leaves and merged points are reported at DEBUG
+level on the ``pygptreeo`` logger.
 """
 
 from pygptreeo.default_gpr import Default_GPR

@@ -14,7 +14,6 @@ Key responsibilities:
 
 # Standard library imports
 import logging
-import warnings
 from collections import deque
 from copy import deepcopy
 from typing import Optional, Union
@@ -90,16 +89,9 @@ class GPNode(Node):
                  splitting_strategy: Optional[str] = 'gradual',
                  use_standard_scaling: Optional[bool] = True,
                  use_hyperparameter_inheritance: Optional[bool] = False,
-                 enable_point_rejection: Optional[bool] = False,
-                 rejection_threshold: Optional[float] = 1e-4,
-                 min_points_before_rejection: Optional[int] = 50,
                  enable_point_merging: Optional[bool] = False,
                  merge_distance_threshold: Optional[float] = 0.01,
                  min_points_before_merging: Optional[int] = 10,
-                 enable_split_evaluation: Optional[bool] = False,
-                 n_split_candidates: Optional[int] = 3,
-                 split_eval_train_fraction: Optional[float] = 0.6,
-                 split_eval_min_points: Optional[int] = 20,
                  n_outputs: Optional[int] = 1,
                  output_model: Optional[str] = 'independent',
                  output_shape: Optional[tuple] = None,
@@ -140,28 +132,12 @@ class GPNode(Node):
             use_hyperparameter_inheritance (Optional[bool]): If True, child nodes inherit
                 their parent's optimized kernel hyperparameters as starting values.
                 Defaults to True. Cannot be used together with use_standard_scaling.
-            enable_point_rejection (Optional[bool]): If True, rejects new points that
-                are well-predicted by the current GP. Defaults to False.
-            rejection_threshold (Optional[float]): Relative error threshold below which
-                points are rejected. E.g., 1e-3 means reject if |y - y_pred| / |y| < 0.001.
-                Defaults to 1e-3.
-            min_points_before_rejection (Optional[int]): Minimum number of points required
-                before rejection starts. Ensures we have enough data before being selective.
-                Defaults to 50.
             enable_point_merging (Optional[bool]): If True, merges new points with nearby
                 existing points via weighted averaging. Defaults to False.
             merge_distance_threshold (Optional[float]): Distance threshold below which points
                 are merged. Measured as Euclidean distance in input space. Defaults to 0.01.
             min_points_before_merging (Optional[int]): Minimum number of points required
                 before merging starts. Defaults to 10.
-            enable_split_evaluation (Optional[bool]): If True, evaluates multiple candidate
-                split dimensions before choosing the best one. Defaults to False.
-            n_split_candidates (Optional[int]): Number of candidate split dimensions to
-                evaluate. Defaults to 3.
-            split_eval_train_fraction (Optional[float]): Fraction of points in each region
-                to use for training during split evaluation. Defaults to 0.6.
-            split_eval_min_points (Optional[int]): Minimum points required in a region
-                to evaluate that split. Defaults to 20.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
             output_model (Optional[str]): How several outputs are modelled (ignored for
                 n_outputs=1). 'independent': one GP per output, each with its own kernel
@@ -260,11 +236,6 @@ class GPNode(Node):
         self.use_standard_scaling = use_standard_scaling
         self.use_hyperparameter_inheritance = use_hyperparameter_inheritance
 
-        # Point rejection parameters
-        self.enable_point_rejection = enable_point_rejection
-        self.rejection_threshold = rejection_threshold
-        self.min_points_before_rejection = min_points_before_rejection
-
         # Point merging parameters
         self.enable_point_merging = enable_point_merging
         self.merge_distance_threshold = merge_distance_threshold
@@ -272,12 +243,6 @@ class GPNode(Node):
 
         # Number of merges per stored point
         self.merge_counts = None  # Will be initialized with data
-
-        # Split evaluation parameters
-        self.enable_split_evaluation = enable_split_evaluation
-        self.n_split_candidates = n_split_candidates
-        self.split_eval_train_fraction = split_eval_train_fraction
-        self.split_eval_min_points = split_eval_min_points
 
         # Standard scalers for X and y (fitted during GP training), one y scaler per output
         self.X_scaler = None
@@ -389,16 +354,9 @@ class GPNode(Node):
             'splitting_strategy': self.splitting_strategy,
             'use_standard_scaling': self.use_standard_scaling,
             'use_hyperparameter_inheritance': self.use_hyperparameter_inheritance,
-            'enable_point_rejection': self.enable_point_rejection,
-            'rejection_threshold': self.rejection_threshold,
-            'min_points_before_rejection': self.min_points_before_rejection,
             'enable_point_merging': self.enable_point_merging,
             'merge_distance_threshold': self.merge_distance_threshold,
             'min_points_before_merging': self.min_points_before_merging,
-            'enable_split_evaluation': self.enable_split_evaluation,
-            'n_split_candidates': self.n_split_candidates,
-            'split_eval_train_fraction': self.split_eval_train_fraction,
-            'split_eval_min_points': self.split_eval_min_points,
             'n_outputs': self.n_outputs,  # Pass n_outputs to children
             'output_model': self.output_model,
             'output_shape': self.output_shape,
@@ -687,62 +645,6 @@ class GPNode(Node):
             return None
         return nearest_idx
 
-
-    def should_reject_point(self, x: np.ndarray, y: Union[float, np.ndarray]):
-        """Determines if a new training point should be rejected.
-
-        A point is rejected if:
-        1. Point rejection is enabled
-        2. Node has enough points (>= min_points_before_rejection)
-        3. GP has been trained (has kernel_)
-        4. The point is well-predicted (average relative error < rejection_threshold)
-
-        For multi-output: uses average relative error across all outputs.
-
-        Args:
-            x (np.ndarray): Input features of the new point
-            y (float or np.ndarray): Target value(s) of the new point
-
-        Returns:
-            bool: True if point should be rejected, False if it should be stored
-        """
-        # Point rejection disabled or not enough points yet
-        if not self.enable_point_rejection:
-            return False
-
-        if self.n_points < self.min_points_before_rejection:
-            return False
-
-        # GP not trained yet
-        if not self._is_fitted():
-            return False
-
-        # Ensure y is array
-        if isinstance(y, (int, float, np.floating)):
-            y = np.array([y])
-        else:
-            y = np.atleast_1d(y).flatten()
-
-        # Get prediction for this point
-        try:
-            y_pred, _ = self.predict(x, use_calibrated_sigma=False)
-        except Exception:
-            # If prediction fails, don't reject (be conservative)
-            return False
-
-        # Compute relative error per output, then average
-        abs_errors = np.abs(y - y_pred.flatten())
-        relative_errors = abs_errors / np.maximum(np.abs(y), 1e-10)
-        avg_relative_error = np.mean(relative_errors)
-
-        # Reject if average error is below threshold
-        is_rejected = bool(avg_relative_error < self.rejection_threshold)
-
-        if is_rejected:
-            logger.debug("Node %s: Rejected point (avg_rel_err=%.2e < %.2e)",
-                         self.name, float(avg_relative_error), self.rejection_threshold)
-
-        return is_rejected
 
     def _is_fitted(self) -> bool:
         """True once this node can predict from data (its GPs have been fitted, or it
@@ -1272,207 +1174,12 @@ class GPNode(Node):
         return uncertainty_scores
 
 
-    def evaluate_candidate_split(self, split_index: int, split_position: float, overlap: float):
-        """Evaluates prediction performance of a candidate split.
-
-        For a given split (dimension and position), this method:
-        1. Partitions data into left/right regions using prob_func
-        2. For each region:
-           - Splits into train/test subsets
-           - Trains a small GP on train subset
-           - Evaluates RMSE on test subset
-        3. Returns combined error score (lower is better)
-
-        Args:
-            split_index (int): Dimension to split on
-            split_position (float): Position along dimension to split at
-            overlap (float): Overlap parameter for prob_func
-
-        Returns:
-            float: Combined RMSE score (weighted average of left and right errors)
-                   Returns np.inf if evaluation fails or insufficient data
-        """
-        if self.my_X_data.shape[0] < 2 * self.split_eval_min_points:
-            # Not enough data to evaluate split
-            return np.inf
-
-        # Temporarily set split parameters for prob_func
-        old_split_index = self.split_index
-        old_split_position = self.split_position
-        old_overlap = self.overlap
-
-        self.split_index = split_index
-        self.split_position = split_position
-        self.overlap = overlap
-
-        try:
-            # Partition data into left/right using prob_func
-            left_indices = []
-            right_indices = []
-
-            for i in range(self.my_X_data.shape[0]):
-                x = self.my_X_data[i:i+1]
-                prob_right = self.prob_func(x)[0][0]
-                # Deterministically assign based on probability
-                if prob_right < 0.5:
-                    left_indices.append(i)
-                else:
-                    right_indices.append(i)
-
-            left_indices = np.array(left_indices)
-            right_indices = np.array(right_indices)
-
-            # Check if we have enough points in each region
-            if len(left_indices) < self.split_eval_min_points or len(right_indices) < self.split_eval_min_points:
-                return np.inf
-
-            rmse_left, n_test_left = self._region_holdout_rmse(left_indices)
-            rmse_right, n_test_right = self._region_holdout_rmse(right_indices)
-            if not (np.isfinite(rmse_left) and np.isfinite(rmse_right)):
-                return np.inf
-
-            # Combined score: weighted average by number of test points
-            combined_rmse = (n_test_left * rmse_left + n_test_right * rmse_right) / (n_test_left + n_test_right)
-
-            return combined_rmse
-
-        except Exception as e:
-            # If evaluation fails, return infinity (worst score)
-            warnings.warn(f"Node {self.name}: Split evaluation failed: {e}", RuntimeWarning)
-            return np.inf
-
-        finally:
-            # Restore original split parameters
-            self.split_index = old_split_index
-            self.split_position = old_split_position
-            self.overlap = old_overlap
-
-
-    def _region_holdout_rmse(self, indices: np.ndarray):
-        """Train a fresh GP on a random subset of the node's points at ``indices``
-        and return ``(RMSE on the held-out rest, number of held-out points)``.
-        A multi-output region is fitted as one shared-kernel GP, a cheap proxy
-        for the leaf's own model."""
-        X_r = self.my_X_data[indices]
-        y_r = self.my_y_data[indices]
-        s_r = self.my_sigma_data[indices]
-        if self.global_mean is not None and self.global_mean.current is not None:
-            y_r = y_r - self.global_mean.current.predict(X_r)   # score splits on what the leaves model
-        n_train = max(int(len(indices) * self.split_eval_train_fraction), 10)
-        n_train = min(n_train, len(indices) - 5)  # leave at least 5 for testing
-        if n_train < 1 or n_train >= len(indices):
-            return np.inf, 0
-        perm = np.random.permutation(len(indices))
-        tr, te = perm[:n_train], perm[n_train:]
-        gp = self.my_GPRs[0].clone()
-        X_tr, y_tr, s_tr = X_r[tr], y_r[tr], s_r[tr]
-        if self.use_standard_scaling:
-            sx = StandardScaler().fit(X_tr)
-            sy = StandardScaler().fit(y_tr)
-            self._set_noise(gp, np.mean((s_tr / sy.scale_) ** 2, axis=1))
-            gp.fit(sx.transform(X_tr), sy.transform(y_tr))
-            pred = np.asarray(gp.predict(sx.transform(X_r[te]), return_std=False)).reshape(len(te), -1)
-            pred = sy.inverse_transform(pred)
-        else:
-            self._set_noise(gp, np.mean(s_tr ** 2, axis=1))
-            gp.fit(X_tr, y_tr)
-            pred = np.asarray(gp.predict(X_r[te], return_std=False)).reshape(len(te), -1)
-        rmse = float(np.sqrt(np.mean((y_r[te] - pred) ** 2)))
-        return rmse, len(te)
-
-
-    def find_best_split_dimension(self, theta: float):
-        """Finds the best split dimension by evaluating multiple candidates.
-
-        Tests several candidate dimensions and selects the one with lowest
-        prediction error. Candidates are chosen using different criteria
-        (max_variance, max_spread, max_uncertainty).
-
-        Args:
-            theta (float): Theta parameter for computing overlap
-
-        Returns:
-            tuple: (best_split_index, best_split_position) or (None, None) if evaluation fails
-        """
-        if self.my_X_data.shape[0] < 2 * self.split_eval_min_points:
-            # Not enough data for evaluation
-            return None, None
-
-        # Generate candidate dimensions to test
-        candidates = []
-
-        # Candidate 1: Max variance
-        if self.my_X_data.shape[0] > 1:
-            variances = np.var(self.my_X_data, axis=0)
-            dim_max_var = np.argmax(variances)
-            candidates.append(('max_variance', dim_max_var))
-
-        # Candidate 2: Max spread
-        if self.my_X_data.shape[0] > 0:
-            spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
-            dim_max_spread = np.argmax(spreads)
-            candidates.append(('max_spread', dim_max_spread))
-
-        # Candidate 3: Max uncertainty (if GP is trained)
-        if self._is_fitted() and self.my_X_data.shape[0] > 1:
-            uncertainty_scores = self._compute_dimensional_uncertainty()
-            dim_max_unc = np.argmax(uncertainty_scores)
-            candidates.append(('max_uncertainty', dim_max_unc))
-
-        # Remove duplicates (keep unique dimensions)
-        unique_candidates = []
-        seen_dims = set()
-        for name, dim in candidates:
-            if dim not in seen_dims:
-                unique_candidates.append((name, dim))
-                seen_dims.add(dim)
-
-        # Limit to n_split_candidates
-        unique_candidates = unique_candidates[:self.n_split_candidates]
-
-        if len(unique_candidates) == 0:
-            return None, None
-
-        logger.debug("Node %s: Evaluating %d candidate splits...", self.name, len(unique_candidates))
-
-        # Evaluate each candidate
-        best_score = np.inf
-        best_index = None
-        best_position = None
-
-        for name, split_index in unique_candidates:
-            # Compute split position (use median)
-            split_position = np.median(self.my_X_data[:, split_index])
-
-            # Compute overlap
-            spread = np.max(self.my_X_data[:, split_index]) - np.min(self.my_X_data[:, split_index])
-            overlap = theta * spread
-
-            # Evaluate this candidate
-            score = self.evaluate_candidate_split(split_index, split_position, overlap)
-
-            logger.debug("  Candidate: %s (dim %d), score: %.4e", name, split_index, score)
-
-            if score < best_score:
-                best_score = score
-                best_index = split_index
-                best_position = split_position
-
-        if best_index is not None:
-            logger.debug("  Best: dim %d with score %.4e", best_index, best_score)
-
-        return best_index, best_position
-
-
     def compute_split_position_and_overlap(self, theta: float):
         """Computes the split dimension, position, and overlap for node splitting.
 
         This method determines which feature dimension (`self.split_index`) to
         split on, typically by selecting the dimension with the maximum spread
         (range of values) in the node's current training data (`self.my_X_data`).
-
-        If `enable_split_evaluation` is True, it evaluates multiple candidate
-        splits and selects the best one based on prediction performance.
 
         The actual split position (`self.split_position`) along this dimension is
         then calculated based on the `self.split_position_method` (e.g., median,
@@ -1488,18 +1195,6 @@ class GPNode(Node):
                 the extent of the overlap. It's a fraction of the data range
                 in the chosen split dimension.
         """
-
-        # If split evaluation is enabled, find best split by testing candidates
-        if self.enable_split_evaluation:
-            best_index, best_position = self.find_best_split_dimension(theta)
-            if best_index is not None:
-                self.split_index = best_index
-                self.split_position = best_position
-                # Compute overlap for the chosen dimension
-                current_dim_spread = np.max(self.my_X_data[:, self.split_index]) - np.min(self.my_X_data[:, self.split_index])
-                self.overlap = theta * current_dim_spread
-                return  # Done - we have split_index, split_position, and overlap
-            # If evaluation failed, fall through to use default criteria
 
         # Determine the split index based on the chosen criteria
         self.split_direction = None

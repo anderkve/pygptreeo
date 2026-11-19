@@ -157,10 +157,10 @@ class GlobalMeanLearner:
         """Register one observation; return True if a new snapshot was published."""
         raise NotImplementedError
 
-    def max_nbytes(self, n_features: int, n_outputs: int) -> float:
-        """Bytes the learner's data take once its samples are full (inf if they
-        grow with the stream). Counted by ``GPTree(max_memory_mb=...)``; a
-        learner that does not report it is not counted."""
+    def max_nbytes(self, n_features: int, n_outputs: int) -> int:
+        """Bytes the learner's data take once its samples are full. Counted by
+        ``GPTree(max_memory_mb=...)``; a learner that does not report it is not
+        counted."""
         return 0
 
 
@@ -224,8 +224,6 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
         self.n_seen = 0
         self.n_seen_at_fit = 0
         self.turnover_at_fit = 0
-        self.n_refits = 0
-        self.n_skipped = 0
         self.n_seen_at_first_fit = 0
 
     # -- stream ------------------------------------------------------------------------
@@ -268,7 +266,6 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
             return False
         if self.reservoir.turnover - self.turnover_at_fit < self.min_turnover * self.reservoir.size:
             # Too little new coverage: postpone and restart the schedule.
-            self.n_skipped += 1
             self.n_seen_at_fit = self.n_seen
             return False
         self.fit()
@@ -301,7 +298,6 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
         self.current = GlobalMeanSnapshot(version, x_scaler, y_mean, y_scale, gp, res.n)
         self.n_seen_at_fit = self.n_seen
         self.turnover_at_fit = res.turnover
-        self.n_refits += 1
         return self.current
 
     def max_nbytes(self, n_features: int, n_outputs: int) -> int:
@@ -312,7 +308,7 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
     def __repr__(self) -> str:
         return (f"AdditiveGPGlobalMean(reservoir_size={self.reservoir_size}, min_points={self.min_points}, "
                 f"min_turnover={self.min_turnover}, n_restarts_optimizer={self.n_restarts_optimizer}, "
-                f"n_seen={self.n_seen}, n_refits={self.n_refits}, current={self.current!r})")
+                f"n_seen={self.n_seen}, current={self.current!r})")
 
 
 def make_global_mean(spec: Union[None, str, GlobalMeanLearner], **kwargs) -> Optional[GlobalMeanLearner]:

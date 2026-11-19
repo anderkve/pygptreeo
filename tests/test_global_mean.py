@@ -119,7 +119,6 @@ class TestAdditiveGPGlobalMean(unittest.TestCase):
         _, _, published = self._feed(learner_all, 130)
         self.assertEqual(published, [30, 60, 90, 120])
         self.assertEqual(learner_all.current.version, 4)
-        self.assertEqual(learner_all.n_skipped, 0)
         # A high turnover requirement skips most due refits once the coverage reservoir
         # has settled (a uniform stream then rarely improves the minimum separation).
         learner_all = AdditiveGPGlobalMean(reservoir_size=30, min_points=30, min_turnover=0.0,
@@ -128,7 +127,6 @@ class TestAdditiveGPGlobalMean(unittest.TestCase):
                                               n_restarts_optimizer=0)
         self._feed(learner_all, 400)
         self._feed(learner_strict, 400)
-        self.assertGreater(learner_strict.n_skipped, 0)
         self.assertLess(learner_strict.current.version, learner_all.current.version)
         self.assertLessEqual(learner_strict.current.version, 3)
 

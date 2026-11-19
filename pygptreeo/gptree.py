@@ -91,8 +91,8 @@ class GPTree:
         memory_mb (float): The tree's estimate of its own size, in MB.
         n_leaves (int): Number of leaves of the tree.
         n_points_seen (int): Number of points passed to `update_tree` so far.
-            The tree can hold fewer: a point may be merged or rejected, and
-            leaves are removed under a memory limit.
+            The tree can hold fewer: a point may be merged, and leaves are
+            removed under a memory limit.
         leaf_index (Optional[LeafIndex]): A balanced index over the leaves,
             through which the leaf of a point is found whatever the depth of
             the tree of cuts.
@@ -131,8 +131,6 @@ class GPTree:
                  use_calibrated_sigma: Optional[bool] = True,
                  split_dimension_criteria: Optional[str] = 'min_lengthscale',
                  splitting_strategy: Optional[str] = 'gradual',
-                 max_n_pred_leaves: Optional[int] = None,
-                 aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
                  output_model: Optional[str] = 'independent',
                  output_shape: Optional[tuple] = None,
@@ -172,10 +170,6 @@ class GPTree:
                 or 'gradual' (each child also receives a copy of its sibling's
                 points, dropped as its own arrive, so it starts with a full-size
                 fit and stays continuous across the split). Defaults to 'gradual'.
-            max_n_pred_leaves (Optional[int]): Maximum number of leaves to use
-                for prediction. Defaults to None (use all).
-            aggregation (Optional[str]): Method for aggregating predictions.
-                'default'/'moe' or 'poe'. Defaults to 'default'.
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
             output_model (Optional[str]): How the outputs of a multi-output problem are
                 modelled inside each leaf (ignored when n_outputs=1):
@@ -355,8 +349,6 @@ class GPTree:
 
         self.use_calibrated_sigma = use_calibrated_sigma
 
-        self.max_n_pred_leaves = max_n_pred_leaves
-
         if max_memory_mb is not None and max_memory_mb <= 0:
             raise ValueError("max_memory_mb must be positive")
         self.max_memory_mb = max_memory_mb
@@ -368,8 +360,6 @@ class GPTree:
         self._leaf_bytes = 0
         self._fitted_bytes = 0
         self._fixed_bytes = None    # global model and output basis; known at the first point
-
-        self.aggregation = aggregation
 
         # Balanced index over the leaves, built with the first point. None for
         # a tree whose cuts are not along the inputs.
@@ -459,12 +449,6 @@ class GPTree:
             node.merge_with_point(x, y, sigma, nearest)
             if self.leaf_index is not None:
                 self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
-            self._after_update(node)
-            return
-
-        # Check if this point should be rejected (if well-predicted by current GP)
-        if node.should_reject_point(x, y):
-            # Point is well-predicted, don't store it
             self._after_update(node)
             return
 
@@ -662,17 +646,6 @@ class GPTree:
         return node
 
 
-    def _prediction_leaves(self, x: np.ndarray):
-        """The leaves of ``_leaves_of`` and their weights, of which no more than
-        ``max_n_pred_leaves`` are kept, those with the largest weights."""
-        leaves, weights = self._leaves_of(x)
-        if self.max_n_pred_leaves:
-            ordering = np.argsort(weights)[::-1][:self.max_n_pred_leaves]
-            kept = np.array(weights)[ordering]
-            leaves, weights = [leaves[idx] for idx in ordering], list(kept / kept.sum())
-        return leaves, weights
-
-
     def _blends(self) -> bool:
         """Whether predictions pass from one leaf to the next within zones at the cuts."""
         return self.neighbours is not None and self.neighbours.blend is not None and self.leaf_index is not None
@@ -754,9 +727,6 @@ class GPTree:
 
     def _start_accounting(self):
         self._fixed_bytes = self._fixed_size()
-        if self._fixed_bytes == float('inf'):
-            raise ValueError("max_memory_mb needs a global model of a fixed size, and this one keeps every "
-                             "point of the stream: give it a reservoir_size and a store_size")
         if self._fixed_bytes >= 1e6 * self.max_memory_mb:
             raise ValueError(f"max_memory_mb={self.max_memory_mb} is less than the {self._fixed_bytes / 1e6:.3g} MB of the "
                              "global model and output basis alone: raise it, or reduce their reservoir_size")
@@ -973,7 +943,7 @@ class GPTree:
         prediction = None
         if self._blends() and not self.first_point and (allow_training or node._is_fitted()):
             # within the zones of several leaves the prediction to calibrate is theirs together
-            leaves, weights = self._prediction_leaves(x)
+            leaves, weights = self._leaves_of(x)
             if len(leaves) > 1:
                 mu, sigma = self._predict_blended(x, leaves, weights, calibrated=False)
                 prediction = mu[None, :], sigma[None, :]
@@ -1069,57 +1039,23 @@ class GPTree:
             x = x.reshape((1, x.shape[0]))
             self._let_leaves_sleep()
 
-            leaves, pred_leaf_probs = self._prediction_leaves(x)
+            leaves, pred_leaf_probs = self._leaves_of(x)
 
             if len(leaves) > 1 and self._blends():
                 mu, sigma = self._predict_blended(x, leaves, pred_leaf_probs)
                 mean_DLGP[i, :], var_DLGP[i, :] = mu, sigma ** 2
                 continue
 
-            # Compute joint prediciton
-            # The default: mixture of experts, following the DLGP paper
-            if self.aggregation == "default" or self.aggregation == "moe":
-
-                # mu_leaf and sigma_leaf have shape (1, n_outputs)
-                parts = [(ptilde,) + self._predict_leaf(leaf, x) for leaf, ptilde in zip(leaves, pred_leaf_probs)]
-                for ptilde, mu_leaf, _ in parts:
-                    mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
-                # The variance of the mixture: that of each leaf, and the spread of
-                # their means about the mixture's. In this form a small sigma
-                # survives a large mean.
-                for ptilde, mu_leaf, sigma_leaf in parts:
-                    var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + (mu_leaf[0, :] - mean_DLGP[i, :])**2)
-
-            # Generalized product of experts
-            elif self.aggregation == "poe":
-
-                # Collect individual predictions
-                mus = []
-                vars_ = []
-                betas = pred_leaf_probs
-                for leaf, ptilde in zip(leaves, pred_leaf_probs):
-                    mu_leaf, sigma_leaf = self._predict_leaf(leaf, x)
-                    # mu_leaf and sigma_leaf have shape (1, n_outputs)
-                    mus.append(mu_leaf[0, :])
-                    vars_.append(sigma_leaf[0, :]**2)
-                mus = np.array(mus)  # Shape: (n_leaves, n_outputs)
-                vars_ = np.array(vars_)  # Shape: (n_leaves, n_outputs)
-
-                # Compute weighted precisions
-                betas = np.array(betas)[:, None]  # shape (M, 1)
-                precisions = betas / vars_        # shape (M, n_outputs)
-
-                # Combined precision and variance
-                total_precision = np.sum(precisions, axis=0)  # shape (n_outputs,)
-                var_poe = 1.0 / total_precision                # shape (n_outputs,)
-
-                # Combined mean
-                weighted_means = np.sum(precisions * mus, axis=0)  # shape (n_outputs,)
-                mu_poe = var_poe * weighted_means                  # shape (n_outputs,)
-
-                # Store in result arrays
-                mean_DLGP[i, :] = mu_poe
-                var_DLGP[i, :] = var_poe
+            # Mixture of experts, following the DLGP paper.
+            # mu_leaf and sigma_leaf have shape (1, n_outputs)
+            parts = [(ptilde,) + self._predict_leaf(leaf, x) for leaf, ptilde in zip(leaves, pred_leaf_probs)]
+            for ptilde, mu_leaf, _ in parts:
+                mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
+            # The variance of the mixture: that of each leaf, and the spread of
+            # their means about the mixture's. In this form a small sigma
+            # survives a large mean.
+            for ptilde, mu_leaf, sigma_leaf in parts:
+                var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + (mu_leaf[0, :] - mean_DLGP[i, :])**2)
 
         self._let_leaves_sleep()
         return mean_DLGP, np.sqrt(var_DLGP)
