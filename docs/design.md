@@ -189,6 +189,55 @@ fixed size: a fitted leaf takes 40 kB at `Nbar=50` in three dimensions and
   distribution of points. The Adam phase of a refit draws about 400 000 points
   (3000 steps of 128), a few passes over the store.
 
+## Saving and loading
+
+`save` writes the tree to one file and `GPTree.load` reads it. They are made
+for a tree that one process trains and saves again and again while other
+processes load it to predict, so both have to be fast for a tree of many
+leaves (`docs/benchmarks.md`, section 11).
+
+* **The leaves are saved asleep.** `save` puts every leaf to sleep before it
+  writes, so the file holds no Cholesky factor. The factors are 80% of a
+  tree at `Nbar=100` in eight dimensions, 60% at `Nbar=50` in twelve and 90%
+  at `Nbar=200` in eight. A leaf wakes when it is next used, in the tree
+  that was saved as in a loaded one, and then predicts as before it slept
+  (see "A memory limit"). Waking takes about 0.2, 0.4 and 1.0 ms at
+  `Nbar=50`, 100 and 200. A process that loads a tree to predict holds the
+  factors of the leaves it uses and of no others.
+* **They sleep in the tree itself, not in a copy of it.** The tree's
+  accounts of its memory then hold for the file as they are, nothing is
+  computed for a save, and the next save finds asleep all leaves but those
+  used since. A tree that is saved often is a tree whose leaves are asleep,
+  as with `predict_from='neighbours'`.
+* **A pickle, not a joblib file.** joblib writes each array apart from the
+  rest, with a header of its own, and uses the pickler written in Python.
+  That suits a few large arrays. A sleeping tree has about 40 arrays and a
+  dozen other objects per leaf, most of them small, which the `pickle`
+  module writes and reads three to five times as fast. With joblib a tree
+  saved asleep took nearly as long to write and to read as one saved awake.
+* **Without the garbage collector.** Pickling and unpickling a tree create
+  millions of objects, and the collector goes through all of them again and
+  again without finding one to free. It is off during a save and a load,
+  which takes a third off the time of a save and two thirds off that of a
+  load.
+* **One random state.** A scikit-learn GP keeps the random state of its last
+  fit: 5 kB, and 0.1 ms to unpickle. A clone shares that of the GP it was
+  cloned from, since each fit replaces it before using it. A copy for every
+  leaf that has not been fitted since its split was 12% of the file.
+* **The scores of a node are saved as one array.** With predictions from
+  neighbours a node keeps two small arrays for each of its last 50 points
+  (`_scores`), and an array takes 1 microsecond to read and 3 to write
+  however small it is. As they are, they doubled the time of a save and
+  tripled that of a load.
+* **The file is replaced in one step.** `save` writes to `path + '.tmp'` and
+  renames that to `path`. A process that opens `path` gets the previous file
+  or the new one, whole, and one that is reading the previous file keeps it
+  until it closes it. This is what a file system does that follows POSIX;
+  over NFS a read from another machine can fail when the file is replaced.
+* **A save writes the whole tree**, also when one leaf has changed. Writing
+  takes 0.2 to 0.3 ms per leaf and reading 0.1 to 0.15 ms, at 20 to 40 kB
+  per leaf.
+
 ## Points between two fits of a leaf
 
 * **Appended points** (`append_points_between_fits`, on by default). Between
@@ -977,6 +1026,16 @@ curves, and `benchmarks.md`, section 10, what was measured on them.
   was better than fitting them again to the remaining points, and the
   calibration has to be redone, for which the discarded points are a held-out
   set.
+* **Leaves that are unpickled when they are first used.** With the state of
+  each leaf as a pickle of its own inside the file, a process that loads a
+  tree unpickles the inner nodes and the index of the leaves, and a leaf
+  when it first needs it. In a prototype of the file format this took a
+  third off the time of a load, and more than half with the file mapped
+  into memory, which also reads from disk only the leaves that are used and
+  lets the processes of one machine share them (`docs/benchmarks.md`,
+  section 11). A tree that keeps the pickle of each leaf it has not changed
+  could save in half the time. Both need a leaf that can be without its
+  state, and the second a record of which leaves have changed.
 * **A calibration that takes the declared noise out.** The scale `s` for
   which `sqrt(s^2 sigma^2 + noise^2)` covers 68% of the last residuals, in
   place of the one for which `s sigma` does. Where the noise dominates, 25
