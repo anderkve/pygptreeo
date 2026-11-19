@@ -40,8 +40,6 @@ class NeighbourSearch:
             blend, awake: The settings, as the constants above.
         in_use (OrderedDict): The leaves whose GPs were fitted or woken, the
             last one used last. The tree puts those beyond ``awake`` to sleep.
-        n_searches (int): Number of searches made so far.
-        n_leaves_searched (int): Number of leaves whose points they looked at.
     """
 
     def __init__(self, tree, n_neighbours, consistency_limit=NEIGHBOUR_CONSISTENCY, max_leaves=NEIGHBOUR_LEAVES,
@@ -57,8 +55,6 @@ class NeighbourSearch:
         self.outside_limit = outside_limit
         self.transition = transition
         self.in_use = OrderedDict()
-        self.n_searches = 0
-        self.n_leaves_searched = 0
 
     def used(self, leaf):
         """Note that the GPs of a leaf were fitted or woken just now."""
@@ -157,8 +153,6 @@ class NeighbourSearch:
                             radius = np.partition((((X - q) / w) ** 2).sum(axis=1), n_wanted - 1)[n_wanted - 1]
                             break
             leaves = [near for near in index.within(q, w, radius)[0] if near.n_points > 0]
-        self.n_searches += 1
-        self.n_leaves_searched += len(leaves)
         if not leaves:
             return None
         X = np.concatenate([near.my_X_data for near in leaves])
@@ -214,7 +208,7 @@ class NeighbourSearch:
             scale += weight * prior[2]
             if leaf._fitted_global is not None:
                 mean += weight * leaf._fitted_global.predict(Z)
-                error = getattr(leaf.global_mean, 'error_scale', None)
+                error = leaf.global_mean.error_scale
                 if error is not None:
                     global_error += weight * np.asarray(error, dtype=float).reshape(-1) ** 2
             variance = leaf._predicted_variance()

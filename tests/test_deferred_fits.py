@@ -106,7 +106,7 @@ class TestBackend(unittest.TestCase):
         with mock.patch.object(SklearnGPAdapter, 'unfitted_copy', lambda self: None):
             tasks = [_update(gpt, X, Y, i, defer_fits=True) for i in range(30)]
         self.assertEqual(tasks, [None] * 30)
-        self.assertTrue(gpt.root.my_GPR.is_trained())
+        self.assertTrue(gpt.root.my_GPRs[0].is_trained())
         self.assertEqual(gpt.root.n_points_since_retrain, 0)
 
 
@@ -162,10 +162,10 @@ class TestDeferredFits(unittest.TestCase):
         self.assertLess(len(pickle.dumps(_solve(task))), 400)
         self.assertEqual(gpt.root.n_points_since_retrain, 0)
         # The leaf has taken the point as an appended one and keeps its hyperparameters
-        self.assertEqual(gpt.root.my_GPR.sklearn_gpr.X_train_.shape[0], 40)
+        self.assertEqual(gpt.root.my_GPRs[0].sklearn_gpr.X_train_.shape[0], 40)
         after = gpt.predict(X_test)
         self.assertFalse(np.array_equal(before[0], after[0]))
-        theta = gpt.root.my_GPR.get_hyperparameters()
+        theta = gpt.root.my_GPRs[0].get_hyperparameters()
         np.testing.assert_array_equal(theta, _solve(tasks[0])['hyperparameters'][0])
 
     def test_a_leaf_waits_for_its_result(self):
@@ -173,11 +173,11 @@ class TestDeferredFits(unittest.TestCase):
         gpt = GPTree(Nbar=100, retrain_every_n_points=20)
         tasks = [task for task in (_update(gpt, X, Y, i, defer_fits=True) for i in range(70)) if task is not None]
         self.assertEqual(len(tasks), 1)                # due at 20, 40 and 60 points
-        self.assertFalse(gpt.root.my_GPR.is_trained())
+        self.assertFalse(gpt.root.my_GPRs[0].is_trained())
         self.assertEqual(gpt.root.n_points_since_retrain, 50)
         self.assertTrue(gpt.apply_fit_result(_solve(tasks[0])))
         # Fitted to the 70 points it holds, with the hyperparameters found for the first 20
-        self.assertEqual(gpt.root.my_GPR.sklearn_gpr.X_train_.shape[0], 70)
+        self.assertEqual(gpt.root.my_GPRs[0].sklearn_gpr.X_train_.shape[0], 70)
         self.assertFalse(gpt.apply_fit_result(_solve(tasks[0])))     # a result is taken once
         # It asks for the fit it is due with its next point
         task = _update(gpt, X, Y, 70, defer_fits=True)
@@ -189,7 +189,7 @@ class TestDeferredFits(unittest.TestCase):
         gpt = GPTree(Nbar=100, retrain_every_n_points=20)
         tasks = [task for task in (_update(gpt, X, Y, i, defer_fits=True) for i in range(25)) if task is not None]
         self.assertFalse(gpt.apply_fit_result({'id': tasks[0]['id'], 'hyperparameters': None}))
-        self.assertFalse(gpt.root.my_GPR.is_trained())
+        self.assertFalse(gpt.root.my_GPRs[0].is_trained())
         # As after a fit in place that failed: with the next full retrain buffer
         tasks = [_update(gpt, X, Y, i, defer_fits=True) for i in range(25, 40)]
         self.assertEqual([task is not None for task in tasks], [False] * 14 + [True])
@@ -206,19 +206,19 @@ class TestDeferredFits(unittest.TestCase):
         self.assertEqual(task['X'].shape[0], 40)
         left, right = gpt.root.children
         self.assertEqual((left.fit_task_id, right.fit_task_id), (task['id'], task['id']))
-        old = left.my_GPR.get_hyperparameters()
+        old = left.my_GPRs[0].get_hyperparameters()
         # Its children are handed no task before the result is there, also when they split
         for i in range(40, 100):
             self.assertIsNone(_update(gpt, X, Y, i, defer_fits=True))
         leaves = gpt.root.leaves
         self.assertGreater(len(leaves), 2)
         for leaf in leaves:
-            np.testing.assert_array_equal(leaf.my_GPR.get_hyperparameters(), old)
+            np.testing.assert_array_equal(leaf.my_GPRs[0].get_hyperparameters(), old)
         result = _solve(task)
         self.assertTrue(gpt.apply_fit_result(result))
         for leaf in leaves:
-            np.testing.assert_array_equal(leaf.my_GPR.get_hyperparameters(), result['hyperparameters'][0])
-            self.assertEqual(leaf.my_GPR.sklearn_gpr.X_train_.shape[0], leaf.n_points + leaf.n_shared_points)
+            np.testing.assert_array_equal(leaf.my_GPRs[0].get_hyperparameters(), result['hyperparameters'][0])
+            self.assertEqual(leaf.my_GPRs[0].sklearn_gpr.X_train_.shape[0], leaf.n_points + leaf.n_shared_points)
         tasks = [task for task in (_update(gpt, X, Y, i, defer_fits=True) for i in range(100, 200)) if task is not None]
         self.assertGreater(len(tasks), 1)
 
@@ -263,10 +263,10 @@ class TestDeferredFits(unittest.TestCase):
         self.assertIsNotNone(gpt.global_mean.current)
         # The leaf has refitted to the snapshot before predicting, and keeps that fit
         self.assertIs(gpt.root._fitted_global, gpt.global_mean.current)
-        theta = gpt.root.my_GPR.get_hyperparameters()
+        theta = gpt.root.my_GPRs[0].get_hyperparameters()
         self.assertFalse(gpt.apply_fit_result(_solve(tasks[0])))
         self.assertEqual(gpt._fit_tasks, {})
-        np.testing.assert_array_equal(gpt.root.my_GPR.get_hyperparameters(), theta)
+        np.testing.assert_array_equal(gpt.root.my_GPRs[0].get_hyperparameters(), theta)
         # Its next fit is of the residual of the snapshot, and its result is taken
         tasks = [task for task in (_update(gpt, X, Y, i, defer_fits=True) for i in range(35, 55)) if task is not None]
         self.assertEqual(len(tasks), 1)
@@ -280,7 +280,7 @@ class TestDeferredFits(unittest.TestCase):
         loaded = pickle.loads(pickle.dumps(gpt))
         result = _solve(tasks[0])
         self.assertFalse(loaded.apply_fit_result(result))
-        self.assertFalse(loaded.root.my_GPR.is_trained())
+        self.assertFalse(loaded.root.my_GPRs[0].is_trained())
         # The loaded tree asks again with its next full retrain buffer
         task = [_update(loaded, X, Y, i, defer_fits=True) for i in range(30, 40)][-1]
         self.assertGreater(task['id'], tasks[0]['id'])
@@ -316,7 +316,7 @@ class TestDeferredFits(unittest.TestCase):
         self.assertLess(rmse(predictions), 0.01 * np.ptp(Y))
         self.assertAlmostEqual(len(gpt.root.leaves), len(in_place.root.leaves), delta=5)
         self.assertLessEqual(len(gpt._fit_tasks), len(gpt.root.leaves))
-        self.assertTrue(all(leaf.my_GPR.is_trained() for leaf in gpt.root.leaves))
+        self.assertTrue(all(leaf.my_GPRs[0].is_trained() for leaf in gpt.root.leaves))
 
     def test_with_a_memory_limit(self):
         """Results reach leaves that sleep, and are dropped for leaves that were removed."""

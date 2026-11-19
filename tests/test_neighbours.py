@@ -412,11 +412,12 @@ class TestPredictions(unittest.TestCase):
             leaf = _leaf_of(gpt, x)
             if leaf.merge_candidate(x) is None:
                 continue
-            before, n_merges = gpt.predict(x)[0], leaf.n_merges
-            gpt.update_tree(x, np.array([[_target(x)[0] + 0.5]]), 1e-3)
-            self.assertEqual(leaf.n_merges, n_merges + 1)
+            before, n_merges = gpt.predict(x)[0], leaf.merge_counts.sum()
+            y = _target(x)[0] + 0.5
+            gpt.update_tree(x, np.array([[y]]), 1e-3)
+            self.assertEqual(leaf.merge_counts.sum(), n_merges + 1)
             merged += 1
-            np.testing.assert_allclose(leaf.mu_preds_list[0][0], np.ravel(before)[0])
+            np.testing.assert_allclose(y - leaf.residuals_list[0][0], np.ravel(before)[0])
             moved += not np.allclose(gpt.predict(x)[0], before)
         self.assertGreater(merged, 5)
         self.assertGreater(moved, 0)        # the merged point is among the neighbours afterwards
@@ -548,7 +549,7 @@ class TestBlend(unittest.TestCase):
             if len(leaves) > 1 or not leaves[0]._can_condition() or leaves[0].prefers_own:
                 continue
             mixed = gpt.neighbours.predict_mixed(x, leaves, np.array(weights))
-            mean, std = leaves[0].predict(x, return_std=True, use_calibrated_sigma=False)
+            mean, std = leaves[0].predict(x, use_calibrated_sigma=False)
             np.testing.assert_allclose(mixed[0], mean[0], rtol=1e-8, atol=1e-10)
             np.testing.assert_allclose(mixed[1], std[0], rtol=1e-6, atol=1e-10)
             alone += 1
@@ -587,7 +588,7 @@ class TestBlend(unittest.TestCase):
             leaves[0].prefers_own = True
             try:
                 self.assertIsNone(gpt.neighbours.predict_mixed(x, leaves, weights))
-                parts = [leaf.predict(x, return_std=True, use_calibrated_sigma=False) for leaf in leaves]
+                parts = [leaf.predict(x, use_calibrated_sigma=False) for leaf in leaves]
                 mean = sum(w * mu[0, 0] for w, (mu, _) in zip(weights, parts))
                 variance = sum(w * (sd[0, 0] ** 2 + (mu[0, 0] - mean) ** 2) for w, (mu, sd) in zip(weights, parts))
                 predicted = gpt.predict(x)
@@ -606,7 +607,7 @@ class TestBlend(unittest.TestCase):
             leaf = gpt.leaf_index.locate(q)
             if leaf is None or not leaf._can_condition() or leaf.prefers_own:
                 continue
-            mean, std = leaf.predict(x, return_std=True, use_calibrated_sigma=False)
+            mean, std = leaf.predict(x, use_calibrated_sigma=False)
             mixed = gpt.neighbours.predict_mixed(x, [leaf], np.array([1.0]))
             if mixed is None:
                 continue
@@ -713,9 +714,10 @@ class TestBlend(unittest.TestCase):
             owner = gpt.leaf_index.locate(x[0])
             if owner is None:
                 continue
-            gpt.update_tree(x, np.array([[_target(x)[0]]]), 1e-3)
+            y = _target(x)[0]
+            gpt.update_tree(x, np.array([[y]]), 1e-3)
             if owner.is_leaf:
-                np.testing.assert_allclose(owner.mu_preds_list[0][0], before, rtol=1e-9)
+                np.testing.assert_allclose(y - owner.residuals_list[0][0], before, rtol=1e-9)
                 in_zone += len(leaves) > 1
         self.assertGreater(in_zone, 20)
 
@@ -894,7 +896,7 @@ class TestGradual(unittest.TestCase):
             for limit in np.geomspace(0.05, 50.0, 13):
                 search.consistency_limit = limit
                 mixed = search.predict_mixed(x, leaves, weights)
-                parts = [leaf.predict(x, return_std=True, use_calibrated_sigma=False) for leaf in leaves]
+                parts = [leaf.predict(x, use_calibrated_sigma=False) for leaf in leaves]
                 mean = sum(w * mu[0, 0] for w, (mu, _) in zip(weights, parts))
                 variance = sum(w * (sd[0, 0] ** 2 + (mu[0, 0] - mean) ** 2) for w, (mu, sd) in zip(weights, parts))
                 share = 0.0 if mixed is None else mixed[2]

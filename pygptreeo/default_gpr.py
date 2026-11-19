@@ -5,9 +5,6 @@ instance suitable for use with GPTreeO. It sets up sensible defaults for kernel
 configuration and hyperparameters commonly used in online regression tasks.
 """
 
-# Standard library imports
-from typing import Optional
-
 # Third-party imports
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor

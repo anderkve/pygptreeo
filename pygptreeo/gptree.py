@@ -22,8 +22,7 @@ import os
 import pickle
 from collections import OrderedDict, deque
 from contextlib import contextmanager
-from copy import deepcopy
-from typing import Callable, Optional, Type, Union
+from typing import Optional, Union
 
 # Third-party imports
 import numpy as np
@@ -99,7 +98,7 @@ class GPTree:
             the tree of cuts.
 
     Methods:
-        fit(X_train, y_train, show_progress=False, shuffle=True, forward_GPR_to_next_leaf=False):
+        fit(X_train, y_train, sigma_train, show_progress=False, shuffle=True):
             Constructs the tree from a batch of training data. Only for a tree
             without points.
         batch_update_tree(X, y, sigma):
@@ -301,8 +300,7 @@ class GPTree:
         if n_outputs == 1:
             output_model = 'independent'
         if output_model in ('shared', 'aligned'):
-            supports = getattr(GPR, 'supports_multitarget', None)
-            if supports is None or not supports():
+            if not GPR.supports_multitarget():
                 raise ValueError(f"output_model='{output_model}' needs a GP backend with supports_multitarget() == True "
                                  "(e.g. the scikit-learn adapter returned by Default_GPR)")
         if output_model == 'aligned' and n_outputs < MIN_OUTPUTS:
@@ -475,7 +473,7 @@ class GPTree:
         # Without training, a node that has no fitted GP stays at its prior, which
         # says nothing about the fitted GP.
         self._register_prediction(node, x, y, allow_training)
-        node.store_point(x, y, sigma, remove_shared=True)
+        node.store_point(x, y, sigma)
         if self.leaf_index is not None:
             self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
 
@@ -493,16 +491,10 @@ class GPTree:
         # If the node is full, generate child nodes
         if node.n_points >= node.Nbar:
             # Create child nodes. Each child node gets a copy of the current parent GP.
-            node.generate_children(self.GPR, self.n_features)
-            
-            # Compute parameters for the probability function 
-            node.compute_split_position_and_overlap(self.theta)
+            node.generate_children(self.n_features)
 
-            # Now pass parent's split info to children
-            node.children[0].parent_split_index = node.split_index
-            node.children[0].parent_split_position = node.split_position
-            node.children[1].parent_split_index = node.split_index
-            node.children[1].parent_split_position = node.split_position
+            # Compute parameters for the probability function
+            node.compute_split_position_and_overlap(self.theta)
 
             if node.splitting_strategy == 'gradual':
 
@@ -527,10 +519,6 @@ class GPTree:
                 # Standard splitting
                 node.split_training_data()
 
-            # Retrain the child-node GPs?
-            # for child in node.children:
-            #     child.fit_my_GPR()
-
             if self.leaf_index is not None:
                 axis = node.cut_axis()
                 if axis is None:
@@ -539,7 +527,7 @@ class GPTree:
                     self.leaf_index.split(node, node.left, node.right, axis, node.split_position, 0.5 * node.overlap)
 
             # GP and training data of non-leaf nodes is not needed
-            node.delete_data(delete_own_data=True, delete_shared_data=True)
+            node.delete_data()
             node.delete_my_GPR()
 
         self._after_update(node)
@@ -878,8 +866,6 @@ class GPTree:
 
         sibling.parent = grandparent
         sibling.is_left = parent.is_left
-        sibling.parent_split_index = parent.parent_split_index
-        sibling.parent_split_position = parent.parent_split_position
         if grandparent is None:
             self.root = sibling
         elif parent.is_left:
@@ -901,8 +887,7 @@ class GPTree:
 
 
     def fit(self, X_train: np.ndarray, y_train: np.ndarray, sigma_train: np.ndarray,
-            show_progress: Optional[bool]=False, shuffle: Optional[bool]=True,
-            forward_GPR_to_next_leaf: Optional[bool]=False):
+            show_progress: Optional[bool]=False, shuffle: Optional[bool]=True):
         """
         Construct the binary tree by assigning a set of training samples to nodes and train the leaf-node GPs.
 
@@ -927,10 +912,6 @@ class GPTree:
 
         shuffle: Optional[bool]=True
             Shuffle the training set to avoid an unbalanced tree.
-
-        forward_GPR_to_next_leaf: Optional[bool]=False
-            When training the leaf-node GPs, let the next leaf start from a copy of the trained GP
-            from the previous leaf. Note: For multi-output, only the first GP is forwarded.
 
         The sigma calibration uses predictions of points made before they are added.
         Without a global model the leaf GPs are fitted only at the end, so there are
@@ -971,7 +952,7 @@ class GPTree:
             self.update_tree(x, y, sigma, allow_training=False)
 
         # Train all the leaves
-        for i, leaf in tqdm(enumerate(self.root.leaves), total=len(self.root.leaves), disable=not show_progress, desc="Training"):
+        for leaf in tqdm(self.root.leaves, disable=not show_progress, desc="Training"):
             leaf.fit_my_GPR(force_training=True)
             if self.max_memory_mb is not None:
                 self._account(leaf)
@@ -981,11 +962,6 @@ class GPTree:
             # No prediction of a fitted GP was registered: sigma is the GP's own
             if leaf.residuals_list[0].shape[0] == 0:
                 leaf.clear_pred_perf()
-            if forward_GPR_to_next_leaf and i != len(self.root.leaves) - 1:
-                # For multi-output, forward only the first GP
-                self.root.leaves[i+1].my_GPRs[0] = deepcopy(leaf.my_GPRs[0])
-                if self.n_outputs == 1:
-                    self.root.leaves[i+1].my_GPR = self.root.leaves[i+1].my_GPRs[0]
         if self.max_memory_mb is not None:
             self._enforce_memory_limit(remove=True)   # sleeping leaves keep the training data of their GPs
                 
@@ -1052,7 +1028,7 @@ class GPTree:
         the leaf's fitted points. Under a memory limit this counts as a use of the
         leaf's GPs, and if the leaf had to be woken another one is put to sleep.
         Without ``calibrated`` sigma is that of the GPs."""
-        mu, sigma = leaf.predict(x, return_std=True, use_calibrated_sigma=calibrated and self.use_calibrated_sigma)
+        mu, sigma = leaf.predict(x, use_calibrated_sigma=calibrated and self.use_calibrated_sigma)
         if calibrated and self._sigma_slope > 0.0:
             beyond = np.maximum(leaf.distance_from_fit(x) - SIGMA_DISTANCE_START, 0.0)
             sigma = sigma * (1.0 + self._sigma_slope * beyond)[:, None]
@@ -1062,7 +1038,7 @@ class GPTree:
         return mu, sigma
 
 
-    def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False, return_leaf_names: Optional[bool]=False):
+    def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False):
         """ 
         A predict function that, for each point, visits only the leaves it can belong to.
         Should be the fastest alternative when N_train >> Nbar. 
@@ -1076,20 +1052,14 @@ class GPTree:
         show_progress: Optional[bool]=False
             Display a progress bar in the terminal using tqdm.
 
-        return_leaf_names: Optional[bool]=False
-            Also return a list with the names of the leaves contributing to the prediction. 
-
         Returns
         -------
 
         mean_DLGP: np.ndarray
             The posterior mean used to predict the target function. Has shape=(N_test, 1).
-        
+
         std_DLGP: np.ndarray
             The posterior standard deviation used to quantify the uncertainty in the prediction. Has shape=(N_test, 1).
-        
-        leaf_names: Optional[list]
-            A list with the names of the leaves contributing to the prediction. Only returned if return_leaf_names=True.
         """
         
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
@@ -1151,13 +1121,7 @@ class GPTree:
                 mean_DLGP[i, :] = mu_poe
                 var_DLGP[i, :] = var_poe
 
-            # print(f"DEBUG: mean_DLGP: {mean_DLGP}  var_DLGP: {var_DLGP}")
-
         self._let_leaves_sleep()
-        if return_leaf_names:
-            leaf_names = [leaf.name for leaf in leaves]
-            return mean_DLGP, np.sqrt(var_DLGP), leaf_names
-
         return mean_DLGP, np.sqrt(var_DLGP)
 
 
@@ -1211,22 +1175,10 @@ class GPTree:
         return mean_DLGP, np.sqrt(var_DLGP)
 
 
-    def predict_each(self, X_test):
-        """ Get the prediction of each leaf node individually.  """
-        res = []
-        for leaf in self.root.leaves:
-            ptilde = leaf.marg_prob(X_test)
-            ptilde = ptilde.reshape(mean_DLGP.shape)
-
-            mu_leaf, sigma_leaf = self._predict_leaf(leaf, X_test)
-            res.append((mu_leaf, sigma_leaf, ptilde))
-        return res
-    
-
-    def predict(self, X_test: np.ndarray, mode: Optional[str]='recursive', show_progress: Optional[bool]=False, return_leaf_names: Optional[bool]=False):
+    def predict(self, X_test: np.ndarray, mode: Optional[str]='recursive', show_progress: Optional[bool]=False):
         """ Main predict function that calls a specific predict function according to the 'mode' argument.  """
         if mode == 'recursive':
-            return self.predict_recursive(X_test, show_progress=show_progress, return_leaf_names=return_leaf_names)
+            return self.predict_recursive(X_test, show_progress=show_progress)
         elif mode == 'loop':
             if self._blends():
                 # the zones at the cuts are those of the leaf index, which 'recursive' follows
@@ -1234,10 +1186,8 @@ class GPTree:
             result = self.predict_loop(X_test, show_progress=show_progress)
             self._let_leaves_sleep()
             return result
-        elif mode == 'each':
-            return self.predict_each(X_test, show_progress=show_progress)
         else:
-            raise ValueError(f"Unknown mode argument: '{mode}'. The valid options are 'recursive', 'loop' or 'each'")
+            raise ValueError(f"Unknown mode argument: '{mode}'. The valid options are 'recursive' or 'loop'")
 
 
     def save(self, path: str):

@@ -55,7 +55,7 @@ class TestStandardScaling(unittest.TestCase):
 
         # Initially scalers should be None
         self.assertIsNone(gpt.root.X_scaler)
-        self.assertIsNone(gpt.root.y_scaler)
+        self.assertIsNone(gpt.root.y_scalers[0])
 
         # Add some points
         X_train = np.array([[1.0], [2.0], [3.0], [4.0], [5.0]])
@@ -70,13 +70,13 @@ class TestStandardScaling(unittest.TestCase):
 
         # After training, scalers should be fitted
         self.assertIsNotNone(gpt.root.X_scaler)
-        self.assertIsNotNone(gpt.root.y_scaler)
+        self.assertIsNotNone(gpt.root.y_scalers[0])
 
         # Check that scalers have correct statistics
         # X: mean = 3.0, std ~ 1.58
         # y: mean = 30.0, std ~ 15.8
         np.testing.assert_almost_equal(gpt.root.X_scaler.mean_[0], 3.0, decimal=5)
-        np.testing.assert_almost_equal(gpt.root.y_scaler.mean_[0], 30.0, decimal=5)
+        np.testing.assert_almost_equal(gpt.root.y_scalers[0].mean_[0], 30.0, decimal=5)
 
     def test_raw_data_stored_unscaled(self):
         """Test that raw data is stored in original (unscaled) form."""
@@ -253,7 +253,7 @@ class TestStandardScaling(unittest.TestCase):
 
         # Scalers should be fitted (mean=value, scale=1)
         self.assertIsNotNone(gpt.root.X_scaler)
-        self.assertIsNotNone(gpt.root.y_scaler)
+        self.assertIsNotNone(gpt.root.y_scalers[0])
 
         # Prediction should work (though with high uncertainty)
         X_test = np.array([[3.5]])

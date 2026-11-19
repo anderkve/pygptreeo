@@ -319,7 +319,7 @@ class TestNodeResidual(unittest.TestCase):
         node, X, y = self._node(learner)
         with contextlib.redirect_stdout(io.StringIO()):
             node.fit_my_GPR(force_training=True)
-            node.generate_children(Default_GPR(), 1)
+            node.generate_children(1)
         for child in node.children:
             self.assertIs(child._fitted_global, node._fitted_global)
             self.assertIs(child.global_mean, learner)
