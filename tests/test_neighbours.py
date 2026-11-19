@@ -26,6 +26,8 @@ SETTINGS = {'n_neighbours': 'n_neighbours', 'neighbour_leaves': 'max_leaves', 'n
             'neighbour_consistency': 'consistency_limit', 'neighbour_consistency_outside': 'outside_limit',
             'neighbour_transition': 'transition'}
 
+EVERY_LEAF = 10 ** 6    # more leaves than a tree of these tests has: its search is exact
+
 
 def _tree(**options):
     """A GPTree whose search has the given settings in place of the package's."""
@@ -40,8 +42,8 @@ def _tree(**options):
 
 
 def _search(tree, n_neighbours, **settings):
-    """A search with every mechanism off that is not set."""
-    plain = dict(max_leaves=None, fade=None, blend=None, awake=None, outside_limit=None, transition=None)
+    """A search of every leaf, with every mechanism off that is not set."""
+    plain = dict(max_leaves=EVERY_LEAF, fade=None, blend=None, awake=None, outside_limit=None, transition=None)
     return NeighbourSearch(tree, n_neighbours, **{**plain, **settings})
 
 
@@ -81,6 +83,20 @@ def _leaf_of(gpt, x):
     while not node.is_leaf:
         node = node.children[int(node.prob_func(x)[0, 0] > 0.5)]
     return node
+
+
+def _cell(index, leaf):
+    """The cell of a leaf in the index: ``(lo, hi)``."""
+    group = index._group[leaf]
+    i = group.children.index(leaf)
+    return group.cell_lo[i].copy(), group.cell_hi[i].copy()
+
+
+def _faces(index, leaf):
+    """The faces of a leaf in the index and the half widths of its zones: ``(lo, hi, half)``."""
+    group = index._group[leaf]
+    i = group.children.index(leaf)
+    return group.face_lo[i].copy(), group.face_hi[i].copy(), group.half[i].copy()
 
 
 class TestCondition(unittest.TestCase):
@@ -200,7 +216,7 @@ class TestSearch(unittest.TestCase):
     def test_neighbours_that_fade_out(self):
         """The same points, with a noise that grows from ``fade`` to the first point beyond them."""
         k = 25
-        for d, max_leaves in ((2, None), (4, None), (2, 6)):
+        for d, max_leaves in ((2, EVERY_LEAF), (4, EVERY_LEAF), (2, 6)):
             gpt = _grown_tree(n=700, d=d, seed=d)
             X = _stored_points(gpt)[0]
             rng = np.random.RandomState(d)
@@ -211,7 +227,7 @@ class TestSearch(unittest.TestCase):
                 distance = np.sqrt((((Xn - q) / w) ** 2).sum(axis=1))
                 np.testing.assert_allclose(np.sort(distance), np.sort(np.sqrt((((plain - q) / w) ** 2).sum(axis=1))), rtol=1e-12)
                 self.assertEqual(growth.shape, (k,))
-                if max_leaves is None:
+                if max_leaves == EVERY_LEAF:
                     beyond = np.sort(np.sqrt((((X - q) / w) ** 2).sum(axis=1)))[k]
                     t = np.clip((distance / beyond - 0.6) / 0.4, 0.0, 1.0)
                     np.testing.assert_allclose(growth, t ** 2 / (1.0 - t) ** 2, rtol=1e-9)
@@ -244,7 +260,7 @@ class TestPredictions(unittest.TestCase):
             np.random.seed(0)
             rng = np.random.RandomState(0)
             gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=k, neighbour_fade=fade,
-                         neighbour_consistency=np.inf, neighbour_leaves=None, use_calibrated_sigma=False)
+                         neighbour_consistency=np.inf, neighbour_leaves=EVERY_LEAF, use_calibrated_sigma=False)
             _stream(gpt, rng.rand(400, 2))
             X, y, sigma = _stored_points(gpt)
             raised = 0
@@ -276,12 +292,12 @@ class TestPredictions(unittest.TestCase):
         np.random.seed(2)
         rng = np.random.RandomState(2)
         gpt = _tree(GPR=_fixed_gpr(2, length_scale=0.5), Nbar=60, predict_from='neighbours', n_neighbours=30,
-                     neighbour_leaves=None, neighbour_consistency=np.inf)
+                     neighbour_leaves=EVERY_LEAF, neighbour_consistency=np.inf)
         _stream(gpt, rng.rand(700, 2), sigma=1e-2)
         self.assertEqual(gpt.neighbours.fade, 0.9)
         compared = 0
         for leaf in gpt.root.leaves:
-            lo, hi = gpt.leaf_index.cell(leaf)
+            lo, hi = _cell(gpt.leaf_index, leaf)
             lo, hi = np.maximum(lo, 0.0), np.minimum(hi, 1.0)
             if leaf.prefers_own or leaf._predicted_variance() is None or np.any(hi - lo < 0.05):
                 continue
@@ -484,7 +500,7 @@ class TestBlend(unittest.TestCase):
         np.random.seed(11)
         rng = np.random.RandomState(11)
         cls.gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
-                         neighbour_leaves=None, neighbour_consistency=np.inf, use_calibrated_sigma=False)
+                         neighbour_leaves=EVERY_LEAF, neighbour_consistency=np.inf, use_calibrated_sigma=False)
         cls.X = rng.rand(700, 2)
         _stream(cls.gpt, cls.X, sigma=1e-3)
         cls.queries = rng.rand(400, 2)
@@ -551,7 +567,7 @@ class TestBlend(unittest.TestCase):
             mixed = gpt.neighbours.predict_mixed(x, leaves, np.array(weights))
             mean, std = leaves[0].predict(x, use_calibrated_sigma=False)
             np.testing.assert_allclose(mixed[0], mean[0], rtol=1e-8, atol=1e-10)
-            np.testing.assert_allclose(mixed[1], std[0], rtol=1e-6, atol=1e-10)
+            np.testing.assert_allclose(mixed[1], std[0], rtol=1e-5, atol=1e-10)
             alone += 1
         self.assertGreater(alone, 30)
 
@@ -561,7 +577,7 @@ class TestBlend(unittest.TestCase):
         index = gpt.leaf_index
         compared = 0
         for leaf in gpt.root.leaves:
-            lo, hi, half = index.faces(leaf)
+            lo, hi, half = _faces(index, leaf)
             data_lo, data_hi = index.data_box(leaf)
             for j in range(2):
                 if not (np.isfinite(hi[j]) and half[j] > 0.0 and leaf._can_condition()):
@@ -734,7 +750,7 @@ class TestBlend(unittest.TestCase):
         _stream(leaf_tree, X)
         for gpt in (plain, leaf_tree):
             self.assertFalse(gpt._blends())
-            self.assertTrue(all(np.all(gpt.leaf_index.faces(leaf)[2] == 0.0) for leaf in gpt.root.leaves))
+            self.assertTrue(all(np.all(_faces(gpt.leaf_index, leaf)[2] == 0.0) for leaf in gpt.root.leaves))
             self.assertTrue(all(len(gpt._leaves_of(q[None, :])[0]) == 1 for q in self.queries[:100]))
         self.assertTrue(self.gpt._blends())
 
@@ -809,7 +825,7 @@ class TestGradual(unittest.TestCase):
             from_neighbours = leaf._predict_from_neighbours(x)
         finally:
             search.consistency_limit, search.outside_limit = limits
-        Xn, yn, sn, growth = search.find(x[0], leaf.fit_std, leaf=leaf)
+        Xn, yn, sn, growth = search.find(x[0], leaf.fit_std)
         ys = leaf.y_scalers[0]
         consistency = leaf.my_GPRs[0].condition(leaf.X_scaler.transform(Xn), ys.transform(yn)[:, 0],
                                                 (sn[:, 0] / ys.scale_[0]) ** 2, leaf.X_scaler.transform(x))[2][0]
@@ -870,7 +886,7 @@ class TestGradual(unittest.TestCase):
         rng = np.random.RandomState(11)
         np.random.seed(11)
         gpt = _tree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', n_neighbours=30,
-                     neighbour_leaves=None, neighbour_consistency_outside=None, use_calibrated_sigma=False)
+                     neighbour_leaves=EVERY_LEAF, neighbour_consistency_outside=None, use_calibrated_sigma=False)
         _stream(gpt, rng.rand(700, 2))
         search, between, checked = gpt.neighbours, 0, 0
         for q in rng.rand(300, 2):

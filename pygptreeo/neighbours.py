@@ -2,9 +2,8 @@
 
 Used by ``GPTree(predict_from='neighbours')``: a leaf then supplies the kernel
 of a prediction, and the points the prediction is conditioned on are the
-query's nearest neighbours among all the points the tree holds. The leaves
-that can hold them are found through the tree's index of the leaves
-(``LeafIndex``).
+query's nearest neighbours among the points of the leaves nearest to it.
+Those leaves are found through the tree's index of the leaves (``LeafIndex``).
 """
 
 from collections import OrderedDict
@@ -14,8 +13,9 @@ from scipy.linalg.lapack import dpotrf, dtrtrs
 
 
 # The settings of a tree that predicts from neighbours, the defaults of
-# NeighbourSearch. None turns a mechanism off.
-NEIGHBOUR_LEAVES = 16                   # leaves whose points are searched for the neighbours
+# NeighbourSearch. None turns a mechanism off; the number of leaves and the
+# limit on the consistency are always numbers.
+NEIGHBOUR_LEAVES = 16                  # leaves whose points are searched for the neighbours
 NEIGHBOUR_FADE = 0.9                    # fraction of the neighbours' reach from which their noise grows
 NEIGHBOUR_BLEND = 0.1                   # share of a leaf's width over which kernels are mixed at a cut
 NEIGHBOUR_AWAKE = 8                     # leaves whose GPs stay awake
@@ -112,15 +112,11 @@ class NeighbourSearch:
         variance = share * sigma ** 2 + (1.0 - share) * sigma_other ** 2 + share * (1.0 - share) * (mu - mu_other) ** 2
         return mean, np.sqrt(variance)
 
-    def find(self, q: np.ndarray, w: np.ndarray, leaf=None):
+    def find(self, q: np.ndarray, w: np.ndarray):
         """The ``n_neighbours`` stored points nearest to the query ``q``, by
-        the Euclidean distance in the inputs divided by ``w``.
-
-        With ``max_leaves`` they are sought among the leaves whose points'
-        boxes are nearest to the query. Without it the search is exact:
-        ``leaf`` (by default the leaf of the query), with the leaves next to
-        it while they hold too few points, bounds the distance of the
-        neighbours, and the index gives every leaf with points within it.
+        the Euclidean distance in the inputs divided by ``w``, among the
+        points of the ``max_leaves`` leaves whose points' boxes are nearest
+        to the query.
 
         Returns ``(X, y, sigma, growth)`` in no particular order, or None if
         the tree holds no point. With ``fade``, the noise variance of a
@@ -132,27 +128,11 @@ class NeighbourSearch:
         """
         index = self.tree.leaf_index
         k = self.n_neighbours
-        n_wanted = k if self.fade is None else k + 1
         if index is None:
             # a tree without an index: every leaf
             leaves = [near for near in self.tree.root.leaves if near.n_points > 0]
-        elif self.max_leaves is not None:
-            leaves = index.nearest(q, w, self.max_leaves)
         else:
-            if leaf is None:
-                leaf = index.locate(q)
-            radius = np.inf             # squared distance within which the points looked for lie
-            if leaf is not None:
-                first, n_points = [], 0
-                for near in [leaf] + [other for other in index.siblings(leaf, q, w) if other is not leaf]:
-                    if near.n_points > 0:
-                        first.append(near.my_X_data)
-                        n_points += near.n_points
-                        if n_points >= n_wanted:
-                            X = np.concatenate(first) if len(first) > 1 else first[0]
-                            radius = np.partition((((X - q) / w) ** 2).sum(axis=1), n_wanted - 1)[n_wanted - 1]
-                            break
-            leaves = [near for near in index.within(q, w, radius)[0] if near.n_points > 0]
+            leaves = index.nearest(q, w, self.max_leaves)
         if not leaves:
             return None
         X = np.concatenate([near.my_X_data for near in leaves])
@@ -191,7 +171,7 @@ class NeighbourSearch:
         if any(not leaf._can_condition() or leaf.prefers_own or leaf.output_model != 'independent' for leaf in leaves):
             return None
         spread = sum(weight * leaf.fit_std for weight, leaf in zip(weights, leaves))
-        X, y, noise_std, growth = self.find(x[0], spread, leaf=leaves[int(np.argmax(weights))])
+        X, y, noise_std, growth = self.find(x[0], spread)
         n, n_outputs = y.shape
         Z = np.vstack((X, x))
         covariances = np.zeros((n_outputs, n + 1, n + 1))

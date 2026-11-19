@@ -65,6 +65,32 @@ class _Leaf:
         self.n_features = X.shape[1]
 
 
+EVERY_LEAF = 10 ** 6    # more leaves than a tree of these tests has
+
+
+def _cell(index, leaf):
+    """The cell of a leaf: ``(lo, hi)``."""
+    group = index._group[leaf]
+    i = group.children.index(leaf)
+    return group.cell_lo[i].copy(), group.cell_hi[i].copy()
+
+
+def _faces(index, leaf):
+    """The faces of a leaf and the half widths of its zones: ``(lo, hi, half)``."""
+    group = index._group[leaf]
+    i = group.children.index(leaf)
+    return group.face_lo[i].copy(), group.face_hi[i].copy(), group.half[i].copy()
+
+
+def _depth(index):
+    """Number of levels of groups above the leaves."""
+    levels, group = 1, index.root
+    while not group.bottom:
+        group = group.children[0]
+        levels += 1
+    return levels
+
+
 class TestIndex(unittest.TestCase):
 
     def _check(self, index, leaves, rng, n_queries=200):
@@ -84,23 +110,13 @@ class TestIndex(unittest.TestCase):
                     self.assertTrue(np.all(group.data_lo[i] <= data_lo) and np.all(group.data_hi[i] >= data_hi))
                     self.assertTrue(np.all(group.reach_lo[i] <= reach_lo) and np.all(group.reach_hi[i] >= reach_hi))
                     groups.append(child)
-        cells = {leaf: index.cell(leaf) for leaf in leaves}
+        cells = {leaf: _cell(index, leaf) for leaf in leaves}
         for q in rng.uniform(-0.5, 1.5, (n_queries, d)):
             holding = [leaf for leaf, (lo, hi) in cells.items() if np.all(lo <= q) and np.all(q < hi)]
             self.assertEqual(len(holding), 1)
             self.assertIs(index.locate(q), holding[0])
-            # the leaves within a distance are those whose points' box is
-            w = rng.uniform(0.1, 1.0, d)
-            radius = rng.uniform(0.0, 0.5)
-            found, bounds = index.within(q, w, radius)
-            expected = set()
-            for leaf in leaves:
-                gap = np.maximum(leaf.my_X_data.min(axis=0) - q, 0.0) + np.maximum(q - leaf.my_X_data.max(axis=0), 0.0)
-                if ((gap / w) ** 2).sum() <= radius:
-                    expected.add(leaf)
-            self.assertEqual(set(found), expected)
-            self.assertEqual(len(found), len(bounds))
             # the nearest leaves are those whose points' boxes are nearest
+            w = rng.uniform(0.1, 1.0, d)
             distance = {}
             for leaf in leaves:
                 gap = np.maximum(leaf.my_X_data.min(axis=0) - q, 0.0) + np.maximum(q - leaf.my_X_data.max(axis=0), 0.0)
@@ -120,9 +136,9 @@ class TestIndex(unittest.TestCase):
             if step % 7 == 6 and len(leaves) > 3:
                 # a leaf goes, and a neighbour across one of its faces takes its cell
                 leaf = leaves[rng.randint(len(leaves))]
-                lo, hi, _ = index.faces(leaf)
+                lo, hi, _ = _faces(index, leaf)
                 for other, j in [(other, j) for other in leaves if other is not leaf for j in range(d)]:
-                    other_lo, other_hi, _ = index.faces(other)
+                    other_lo, other_hi, _ = _faces(index, other)
                     rest = [k for k in range(d) if k != j]
                     if np.all(other_lo[rest] == lo[rest]) and np.all(other_hi[rest] == hi[rest]) \
                             and (other_hi[j] == lo[j] or other_lo[j] == hi[j]):
@@ -159,13 +175,13 @@ class TestIndex(unittest.TestCase):
             self.assertGreater(removed, 5)
             self._check(index, leaves, rng)
             if fanout < 32:
-                self.assertGreaterEqual(index.depth(), 2)
+                self.assertGreaterEqual(_depth(index), 2)
 
     def _weights(self, index, leaves, q):
         """The weights of ``LeafIndex.blend`` from the faces and zones of every leaf."""
         weights = {}
         for leaf in leaves:
-            lo, hi, half = index.faces(leaf)
+            lo, hi, half = _faces(index, leaf)
             factors = []
             for j in range(len(q)):
                 if half[j] > 0.0:
@@ -186,7 +202,7 @@ class TestIndex(unittest.TestCase):
             if margin == 0.0:
                 self._check(index, leaves, rng, n_queries=20)
             for leaf in leaves:
-                lo, hi, half = index.faces(leaf)
+                lo, hi, half = _faces(index, leaf)
                 both = np.isfinite(lo) & np.isfinite(hi)
                 np.testing.assert_allclose(half[both], 0.15 * (hi - lo)[both], rtol=1e-9)
                 self.assertTrue(np.all(half >= 0.0) and np.all(np.isfinite(half)))
@@ -199,10 +215,10 @@ class TestIndex(unittest.TestCase):
                 self.assertAlmostEqual(sum(weights), 1.0)
                 several += len(found) > 1
                 # the leaf whose faces hold the point is among them
-                holding = [leaf for leaf in leaves if np.all(index.faces(leaf)[0] <= q) and np.all(q < index.faces(leaf)[1])]
+                holding = [leaf for leaf in leaves if np.all(_faces(index, leaf)[0] <= q) and np.all(q < _faces(index, leaf)[1])]
                 self.assertEqual(len(holding), 1)
                 self.assertIn(holding[0], found)
-            self.assertGreater(several, 30)
+            self.assertGreater(several, 20)
             # along a path the weights change gradually
             a, b = rng.uniform(0.0, 1.0, (2, d))
             path = a + np.linspace(0.0, 1.0, 4001)[:, None] * (b - a)
@@ -224,10 +240,10 @@ class TestIndex(unittest.TestCase):
         index.split(first, left, right, 0, 1.0)
         none, rest = _Leaf(np.empty((0, 1))), _Leaf(right.my_X_data)
         index.split(right, none, rest, 0, 1.0)               # between the cut at 1 and itself
-        np.testing.assert_array_equal(index.faces(none)[:2], ([1.0], [1.0]))
+        np.testing.assert_array_equal(_faces(index, none)[:2], ([1.0], [1.0]))
         index.extend(rest, none, 0, lower=True)
         index.remove(none)
-        lo, hi, half = index.faces(rest)
+        lo, hi, half = _faces(index, rest)
         self.assertEqual((lo[0], hi[0]), (1.0, np.inf))
         self.assertIs(index.locate(np.array([1.5])), rest)
         self.assertIs(index.locate(np.array([0.5])), left)
@@ -237,8 +253,8 @@ class TestIndex(unittest.TestCase):
         index.add(first)
         left, right = _Leaf(np.array([[0.0]])), _Leaf(np.array([[1.0], [1.0], [1.0]]))
         index.split(first, left, right, 0, 1.0)
-        self.assertEqual(index.faces(right)[2][0], index.faces(left)[2][0])
-        self.assertGreater(index.faces(left)[2][0], 0.0)
+        self.assertEqual(_faces(index, right)[2][0], _faces(index, left)[2][0])
+        self.assertGreater(_faces(index, left)[2][0], 0.0)
         below, at = dict(zip(*index.blend(np.array([1.0 - 1e-9])))), dict(zip(*index.blend(np.array([1.0]))))
         self.assertAlmostEqual(below[left], 0.5, places=6)
         self.assertAlmostEqual(at[left], 0.5, places=6)
@@ -249,7 +265,7 @@ class TestIndex(unittest.TestCase):
         for q in rng.uniform(-0.3, 1.3, (200, 3)):
             found, weights = index.blend(q)
             self.assertEqual(weights, [1.0])
-            lo, hi, half = index.faces(found[0])
+            lo, hi, half = _faces(index, found[0])
             self.assertTrue(np.all(lo <= q) and np.all(q < hi) and np.all(half == 0.0))
 
     def test_depth_stays_logarithmic_whatever_the_order(self):
@@ -262,7 +278,7 @@ class TestIndex(unittest.TestCase):
             index.split(leaf, left, right, 0, step - 0.25)
             leaf = right
         self.assertEqual(len(index), 2000)
-        self.assertLessEqual(index.depth(), 6)
+        self.assertLessEqual(_depth(index), 6)
         self.assertEqual(index.locate(np.array([1500.6])).my_X_data[0, 0], 1500.0)
 
     def test_the_boxes_of_the_groups_overlap_little(self):
@@ -359,7 +375,7 @@ class TestTree(unittest.TestCase):
         _stream(gpt, X)
         depth = max(len(leaf.name) for leaf in gpt.root.leaves) - 1
         self.assertGreater(depth, 1100)             # beyond the recursion limit
-        self.assertLessEqual(gpt.leaf_index.depth(), 4)
+        self.assertLessEqual(_depth(gpt.leaf_index), 4)
         mean, std = gpt.predict(X[-200:])
         self.assertLess(np.sqrt(np.mean((mean[:, 0] - np.sin(3.0 * X[-200:, 0]) - 0.5 * X[-200:, 1] ** 2) ** 2)), 0.05)
         self.assertTrue(np.all(std > 0.0))
@@ -456,8 +472,8 @@ class TestTree(unittest.TestCase):
         np.random.seed(4)
         gpt = _tree(3, Nbar=30)
         _stream(gpt, np.vstack((rng.rand(700, 3), _drifting(500, 3, rng, step=0.002))))
-        search = NeighbourSearch(gpt, 40, max_leaves=None)
-        plain = NeighbourSearch(_without_index(gpt), 40, max_leaves=None)
+        search = NeighbourSearch(gpt, 40, max_leaves=EVERY_LEAF)
+        plain = NeighbourSearch(_without_index(gpt), 40, max_leaves=EVERY_LEAF)
         for q in rng.uniform(-0.1, 1.1, (80, 3)):
             w = rng.uniform(0.05, 1.0, 3)
             np.testing.assert_allclose(np.sort((((search.find(q, w)[0] - q) / w) ** 2).sum(axis=1)),

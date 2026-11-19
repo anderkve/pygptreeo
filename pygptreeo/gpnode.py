@@ -1507,7 +1507,7 @@ class GPNode(Node):
         n = x.shape[0]
         mu, sigma, share = (np.zeros((n, self.n_outputs)) for _ in range(3))
         for r in range(n):
-            found = self.neighbours.find(x[r], self.fit_std, leaf=self)
+            found = self.neighbours.find(x[r], self.fit_std)
             share[r] = self._condition_on(found, x[r:r + 1], mu[r], sigma[r])
         rows = (share < 1.0).any(axis=1)
         if rows.any():

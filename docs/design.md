@@ -414,11 +414,11 @@ section 9.
   calibration is made before the point is stored.
 * **The search.** The 16 leaves whose points' boxes are nearest to the query
   are taken from the index of the leaves (`NEIGHBOUR_LEAVES`), and the
-  neighbours are the nearest points among theirs. With `None` the search is
-  exact: the query's leaf bounds the distance of the neighbours, and every
-  leaf whose points can lie within it is looked at, 7 to 46 leaves in three
-  to five dimensions and 35 to 79 in six to ten at 20 000 points. Sixteen
-  leaves give the error of the exact search, eight 0.6% more, four 5%.
+  neighbours are the nearest points among theirs. An exact search has to
+  look at every leaf whose points can lie within the distance of the
+  neighbours, 7 to 46 leaves in three to five dimensions and 35 to 79 in six
+  to ten at 20 000 points. Sixteen leaves give the error of the exact
+  search, eight 0.6% more, four 5%.
 * **Cost.** A prediction factorises the kernel matrix of its neighbours, at a
   cost cubic in their number, where a leaf's own GP needs one triangular
   solve, and within a zone it evaluates the kernel of each leaf that takes

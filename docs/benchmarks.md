@@ -697,7 +697,11 @@ with a switch to the leaf's own GP at one limit (`NEIGHBOUR_TRANSITION` and
 change, which is the default as well. These settings are constants of
 `pygptreeo/neighbours.py`; they were options of the tree when the sections
 were measured, and `neighbour_tree` in `research/partitioning/variants.py`
-sets them for one tree.
+sets them for one tree. The exact search that some sections compare with
+looked at every leaf whose points can lie within the distance of the
+neighbours (`NEIGHBOUR_LEAVES` at None, when they were measured). The
+package now searches a number of leaves, and finds the same neighbours when
+that number is above the number of leaves of the tree.
 
 Sections 9.1 to 9.3: eleven targets (`GaussianPeaks` and `RotatedRosenbrock`
 in six dimensions, `Eggholder` in three, `Chirp` in four, a four-dimensional
