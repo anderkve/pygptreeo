@@ -35,7 +35,8 @@ in its history up to commit `25a4673`. Section 10 was measured with scripts
 that are not in the repository; its curve families are in
 `examples/target_functions_curves.py`, and
 `examples/multioutput_physics_curves.py` runs the comparison of section 10.1
-on one of them.
+on one of them. Section 11 was measured with scripts that are not in the
+repository.
 
 ## 1. Split-dimension criterion
 
@@ -2789,3 +2790,60 @@ axis. The network took 45 to 134 s to train for the curves, where the whole
 `'aligned'` tree takes 13 to 23 s, and 22 minutes for the surfaces. It has no
 test that declines it: where nothing moves the error is up to 33 times that
 of `'shared'`.
+
+## 11. Saving and loading
+
+Streams of uniform points in the unit cube, plain tree with
+`retrain_every_n_points=25`, and the kernel hyperparameters fixed
+(`Default_GPR(optimizer=None)`), which leaves the size of the tree as it is
+and lets a million points be streamed in 11 minutes. "joblib" is the tree
+written with `joblib.dump` as it is in memory and read with `joblib.load`.
+"`save`" is `save` and `GPTree.load`. The times are with the file in the page
+cache; read from the disk of the container, a load took up to 2 s longer with
+joblib and up to 0.3 s longer with `save`. The last column is the size of the
+loaded tree by its own estimate (`memory_mb`).
+
+| points | d | `Nbar` | | leaves | | file MB | save s | load s | loaded tree MB |
+|---|---|---|---|---|---|---|---|---|---|
+| 300 000 | 8 | 100 | | 4340 | joblib | 560 | 9.1 | 6.1 | 586 |
+| | | | | | `save` | 103 | 0.92 | 0.43 | 156 |
+| 1 000 000 | 8 | 100 | | 14 613 | joblib | 1878 | 35.3 | 23.9 | 1967 |
+| | | | | | `save` | 346 | 3.6 | 2.0 | 525 |
+| 300 000 | 12 | 50 | | 8753 | joblib | 492 | 18.3 | 13.6 | 532 |
+| | | | | | `save` | 168 | 1.8 | 1.0 | 278 |
+| 300 000 | 8 | 200 | | 2098 | joblib | 851 | 4.3 | 2.9 | 863 |
+| | | | | | `save` | 87 | 0.47 | 0.24 | 107 |
+| 300 000 | 8 | 100 | `max_memory_mb=200` | 2990 | joblib | 182 | 6.4 | 4.0 | 200 |
+| | | | | | `save` | 71 | 0.57 | 0.42 | 107 |
+| 300 000 | 8 | 100 | `predict_from='neighbours'` | 4340 | joblib | 170 | 25.9 | 18.1 | 157 |
+| | | | | | `save` | 110 | 1.4 | 0.63 | 156 |
+
+The first save of a tree, which puts its leaves to sleep, took as long as the
+later ones. A loaded tree made its first 1000 predictions, at points close to
+1000 of the stream's, in 0.35, 0.5 and 1.0 s at `Nbar=50`, 100 and 200, and
+the same predictions again in 0.16 s: the first ones woke 800 to 950 leaves.
+They differed from those of the tree before it was saved by at most 1.3e-16
+of the target's range in the mean, and by a factor within 2.4e-15 of one in
+the sigma.
+
+What each part of `save` gives, for the tree of the first row. The last two
+rows are prototypes of the file alone, in which the state of each leaf is a
+pickle of its own that a loaded tree would unpickle when it first uses the
+leaf. Their time to save is without the 0.8 s of pickling the leaves, as for
+a tree that keeps the pickles of the leaves it has not changed.
+
+| | file MB | save s | load s |
+|---|---|---|---|
+| joblib, leaves awake | 560 | 9.1 | 5.8 |
+| joblib, leaves asleep | 130 | 8.5 | 5.3 |
+| pickle, leaves awake | 548 | 2.2 | 1.8 |
+| pickle, leaves asleep | 118 | 1.7 | 1.6 |
+| and one random state for all GPs, where 2850 of the 4340 leaves had a copy | 103 | 1.3 | 1.2 |
+| and without the garbage collector (`save`) | 103 | 0.88 | 0.34 |
+| each leaf a pickle of its own (not in the code) | 134 | 0.41 | 0.21 |
+| and the file mapped into memory (not in the code) | 134 | 0.46 | 0.14 |
+
+With predictions from neighbours a node also keeps the errors of its last 50
+points (`_scores`). On a stream of 60 000 points (885 leaves), saved as the
+two arrays per point that they are: 25.2 MB, 0.49 s to save and 0.29 s to
+load. Saved as one array per node: 22.4 MB, 0.25 s and 0.10 s.

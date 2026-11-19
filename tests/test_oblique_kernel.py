@@ -8,7 +8,6 @@ import tempfile
 import unittest
 import warnings
 
-import joblib
 import numpy as np
 from sklearn.base import clone
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern
@@ -187,9 +186,9 @@ class TestObliqueTree(unittest.TestCase):
             gpt.update_tree(X[i:i + 1], Y[i:i + 1], np.full((1, 8), 1e-4))
         self.assertTrue(any(node.split_direction is not None for node in self._nodes(gpt)))
         with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, "tree.joblib")
+            path = os.path.join(folder, "tree.pkl")
             gpt.save(path)
-            loaded = joblib.load(path)
+            loaded = GPTree.load(path)
         np.testing.assert_allclose(loaded.predict(X_test)[0], gpt.predict(X_test)[0])
 
     def test_predictions_from_neighbours(self):
