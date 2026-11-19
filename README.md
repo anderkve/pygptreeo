@@ -185,6 +185,30 @@ The tree then keeps its own estimate of its size, available as `gpt.memory_mb`, 
 
 With `predict_from='neighbours'` most leaves are asleep already (see above). The limit is then reached later, and leaves are only removed once the tree with its leaves asleep exceeds the limit. In our tests the tree kept about 50% more data points at the same limit than with all leaves awake.
 
+## Choosing the training points (optional)
+
+The sections above are for a stream of points that something else controls. If the target function can be evaluated at any point, e.g. to train an emulator, a `Trainer` can choose the points:
+
+```python
+from pygptreeo import GPTree, Trainer
+
+gpt = GPTree(Nbar=100)
+trainer = Trainer(gpt, bounds=(lower, upper), rtol=0.01)
+
+while gpt.n_points_seen < 5000:
+    X = trainer.suggest(50)          # the points to evaluate next, of shape (50, d)
+    y, sigma = evaluate(X)           # your target function
+    trainer.add(X, y, sigma)         # adds them to the tree with batch_update_tree
+```
+
+The accuracy wanted is given as a tolerance on the predicted uncertainty, `atol + rtol * |prediction|`. `suggest` draws its points where the uncertainty is large against this tolerance, from uniform candidates within `bounds`, or from `candidates=...`, a function that returns candidate points, e.g. draws from a prior.
+
+With `target_range=(lowest, highest)` the tree is trained only where the target lies in that range, e.g. where a log-likelihood is within some distance of its maximum. A point then counts by the probability that the target is in the range there. Outside the range such a tree is less accurate than one trained on random points, and its uncertainties are too small.
+
+One suggested point in ten is a random check, drawn without regard to the uncertainty and predicted before it is added. `trainer.report()` gives the errors of the latest of these, e.g. the share of them within the tolerance, and the share of the candidates whose uncertainty is still above the tolerance.
+
+The tree can have any of the settings above. `predict_from='neighbours'` is a good choice when the target is expensive to evaluate. See `examples/trainer.py` for an example and [`docs/design.md`](docs/design.md) for the details.
+
 ## Saving and loading
 
 A tree is saved to a file with `save` and read back with `GPTree.load`:

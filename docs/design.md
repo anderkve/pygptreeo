@@ -4,8 +4,8 @@ Why the tree has a global model, how the mechanism works, how the tree stays
 within a fixed size, how a point reaches a leaf's GP between two fits, how a
 prediction can use the points of other leaves, how the leaf of a point is
 found, how a leaf's fit can run in another process, how a batch of points is
-added, how a leaf models a curve, what was tried and dropped, and what is
-still open. The measurements are in [`benchmarks.md`](benchmarks.md).
+added, how the points of a training can be chosen, how a leaf models a curve,
+what was tried and dropped, and what is still open. The measurements are in [`benchmarks.md`](benchmarks.md).
 
 ## What is global and what is local
 
@@ -531,6 +531,83 @@ its result to the tree. The tree has no part in sending them.
 * **`fit` is for a tree without points.** It sets the root up anew, so it
   raises an error for a tree that holds points.
 
+## Choosing the training points
+
+`Trainer` (`pygptreeo/trainer.py`) chooses the points at which a target is
+evaluated, for a tree that is trained as an emulator in place of one that
+follows a stream. The measurements are in `docs/benchmarks.md`, section 12.
+
+* **The tree is as it was.** A `Trainer` predicts with a tree and adds points
+  to it with `batch_update_tree`, and needs nothing else of it. It suggests
+  the points, and evaluating the target at them is left to the user, as
+  sending the fit tasks is: the evaluations are the expensive part, and they
+  run where the user has the means for them.
+* **A goal in place of a number of points.** The user gives a tolerance on
+  the predicted sigma, `atol + rtol |mu|`. The need at a point is
+  `(sigma / tolerance)^2`, the largest over the outputs: the expected squared
+  error in units of the tolerance, above 1 where the tree is not yet accurate
+  enough.
+* **The sigma is in part a measured error.** A leaf scales its sigma to the
+  errors of the last 25 points it received, so the need of a leaf follows the
+  errors that were found in it, and its GP says where within the leaf the
+  need is.
+* **The gain is as large as the sigma ranks the errors.** Against as many
+  uniform points, the RMSE over the box is 0.73 times as large in the mean of
+  eleven targets, from 0.34 to 1.04. On `relic_density` (0.54) the points
+  with the highest sigma were predicted 7 times worse than random ones. On
+  `Michalewicz` (1.04), whose narrow valleys no leaf expects, they were
+  predicted 1.15 times worse.
+* **A range of target values.** With `target_range` the need is multiplied by
+  the probability that the target lies in the range,
+  `Phi((b - mu) / sigma) - Phi((a - mu) / sigma)` (Picheny et al. 2010). A
+  region that the tree knows little about keeps part of its need wherever
+  its prediction lies, and a region is given up once its sigma is small
+  against its distance from the range. For ranges of 0.6 to 10% of the box
+  in four to ten dimensions, the RMSE within the range is 0.35 to 0.58 times
+  that with uniform points, and the error that 95% of the predictions stay
+  below 0.18 to 0.40 times. The sigma without the probability gives no gain
+  there (0.79 to 1.38 in a prototype), since most of its points go to the
+  edges of the box.
+* **Points are drawn, not ranked.** `suggest` draws its points from 2000
+  candidates, or 20 for each point if that is more, with a probability
+  proportional to their need. The points with the highest need lie together:
+  about half of a batch of 45 in one leaf. Drawing spreads a batch with
+  nothing known about its other points, or about points that were suggested
+  and are still being evaluated, so `suggest` can be called again before the
+  results of the last call are added.
+* **Candidates, not a search for the largest need.** In several dimensions
+  the largest sigma lies in the corners of the box. The candidates are also
+  what the shares of the report refer to: uniform points in a box, or the
+  draws of a function of the user, e.g. from a prior.
+* **Random checks** (`random_share`, 0.1). One suggested point in ten is
+  drawn without regard to the need. A point drawn by its need is predicted
+  worse than others, so the tree is measured by the checks. They also reach
+  the leaves that the need has left, whose calibration would stay as it is,
+  and the regions that the tree has wrongly given up.
+* **Half of the checks are drawn by the probability of the range**
+  (`CHECKS_BY_RANGE`). Of 200 uniform checks, 2 lie in a range that is 1% of
+  the box. A check drawn with the chance `c` among `M` candidates has the
+  weight `1 / (M c)`, with which the report is that of uniform checks. There
+  are then about 100 checks in the range in place of 2 to 20, and the tree
+  is as accurate.
+* **The report describes the tree as it was.** A check is predicted before
+  it is added, and the latest 200 are kept (`N_CHECKS`), which are those of
+  the last 2000 points. Without a range the share of them within the
+  tolerance was between 9 points of a hundred below that of the finished
+  tree and 2 above. With a range it was between 20 below and 5 above, and 36
+  below in one run of fifteen.
+* **The first points are random candidates** (`n_initial`, `2 Nbar`). The
+  sigma of a tree says nothing before its first fit, and the calibration
+  needs 25 points more.
+* **Predictions from neighbours add to the gain.** A `Trainer` uses whatever
+  the tree predicts. With `predict_from='neighbours'` the error within two
+  ranges is 0.20 and 0.30 times that with uniform points, and 0.10 and 0.16
+  times that of a tree that predicts from its leaves and is given uniform
+  points (`docs/benchmarks.md`, section 12.6).
+* **Cost.** `suggest` predicts every candidate: 25 ms for 2000 candidates
+  with predictions from the leaves, which are made leaf by leaf, and 1.4 s
+  with predictions from neighbours. `report` predicts as many again.
+
 ## Curves as outputs
 
 A multi-output target is often a function `f(x; theta)` of a physics quantity
@@ -918,6 +995,23 @@ curves, and `benchmarks.md`, section 10, what was measured on them.
   and half of it on `zprime_spectrum`, at 100 times the time
   (`docs/benchmarks.md`, section 10.7).
 
+* **Other ways to draw the training points** (`docs/benchmarks.md`, section
+  12.5):
+  * The points with the highest need, or those with the variance of a leaf's
+    other candidates reduced for each point picked in it, as the leaf's GP
+    gives it without the target value. The same error in the mean of eleven
+    targets (0.72 and 0.73 against 0.74 for the draw in a prototype), and at
+    worst 22% and 13% above the error with uniform points, against 6% for
+    the draw.
+  * A probability proportional to the square of the need: 0.69 in place of
+    0.73 over the box and 0.39 in place of 0.42 within a range, which is
+    within the spread of the seeds, with single targets up to 40% better and
+    19% worse.
+  * Twice the sigma in the probability of the range, since the sigma is too
+    small outside the range: the same error within the range.
+  * Ten times as many candidates, for a range of 0.6% of the box in ten
+    dimensions: the same error.
+
 ## Known limitations
 
 * **Sigma far from the data.** The calibration is fitted on the stream. In
@@ -975,6 +1069,32 @@ curves, and `benchmarks.md`, section 10, what was measured on them.
   GP: it refits before its next prediction.
 * **Calibration after a new network version.** Coverage can dip for a batch
   until the per-leaf calibration catches up with the shifted residual.
+
+* **A `Trainer` gains where the sigma ranks the errors.** On four of eleven
+  targets the error is within 8% of that with uniform points: `Michalewicz`
+  and `StepRidge`, whose errors come from features that the leaves do not
+  expect, `Himmelblau`, and `GaussianPeaks` in six dimensions, where nearly
+  half of the points with the highest sigma lie at the edges of the box.
+* **Outside the range the sigma is too small.** A tree trained for a range
+  has 1.3 to 3.6 times the error of one with uniform points over the whole
+  box, and its sigma covers 0.41 to 0.70 of the errors there. The
+  calibration follows the points of the training, few of which lie outside
+  the range.
+* **A part of the range can be given up wrongly.** In three of fifteen runs
+  the RMSE within the range was 0.8 of that with uniform points, where the
+  other seeds had 0.23 to 0.57, with a 95% error in line with theirs. In the
+  two runs that were looked at, 1 to 2% of the test points in the range
+  carried more than 80% of the squared error: the tree predicted them
+  outside the range, with errors of 8 to 10 sigma. Only the uniform half of
+  the random checks reaches such a region.
+* **A tolerance below the noise is not reached.** The calibrated sigma of
+  noisy observations is that of an observation (below), so the need stays
+  above 1. Noisy targets were not measured with a `Trainer`.
+* **A random check is found by its inputs**, which have to come back to
+  `add` as `suggest` returned them. A point that does not is added like any
+  other and is no check.
+* **Not measured with a `Trainer`:** several outputs, a global model, and
+  batches of other sizes than 50.
 
 * **`'aligned'` is for one curve on one ordered grid, or one surface on a
   grid of two dimensions.** It
@@ -1066,6 +1186,19 @@ curves, and `benchmarks.md`, section 10, what was measured on them.
   supply the locality that keeps the context small.
 * **Linearised-network kernels.** A leaf GP whose kernel is built from the
   network's parameter gradients (Immer et al. 2021).
+* **A tolerance that depends on the target value**, e.g. one that grows with
+  the distance from the best fit. The need is then
+  `sigma^2 E[1 / tolerance(f)^2]` over the predicted distribution of `f`,
+  of which the range is the case of a tolerance that is infinite outside it.
+* **A `Trainer` that tests its sigma.** If the points drawn by their need
+  are predicted no worse than the random checks, the sigma does not rank
+  the errors, and the share of random points could grow.
+* **Candidates from the cells of the leaves**, for a range that is a far
+  smaller part of the box than 1%: a leaf chosen by the need of its last
+  candidates, and a point uniform in its cell.
+* **The need as the gate of a stream.** On a stream that something else
+  controls, the target is evaluated where `need(x) > 1` and the prediction
+  is used elsewhere, with a share of random checks as in `suggest`.
 
 ## References
 
@@ -1089,6 +1222,9 @@ curves, and `benchmarks.md`, section 10, what was measured on them.
 * Müller, Feurer, Hollmann, Hutter 2023, PFNs4BO: in-context learning for
   Bayesian optimization, ICML, arXiv:2305.17535.
 * Osband et al. 2023, Epistemic neural networks, NeurIPS, arXiv:2107.08924.
+* Picheny, Ginsbourger, Roustant, Haftka, Kim 2010, Adaptive designs of
+  experiments for accurate approximation of a target region, J. Mech. Des.
+  (the variance weighted by the probability of a target region).
 * Riquelme, Tucker, Snoek 2018, Deep Bayesian bandits showdown (the
   neural-linear model), arXiv:1802.09127.
 * Vijayakumar, D'Souza, Schaal 2005, Incremental online learning in high

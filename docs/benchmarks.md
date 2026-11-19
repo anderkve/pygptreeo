@@ -35,8 +35,9 @@ in its history up to commit `25a4673`. Section 10 was measured with scripts
 that are not in the repository; its curve families are in
 `examples/target_functions_curves.py`, and
 `examples/multioutput_physics_curves.py` runs the comparison of section 10.1
-on one of them. Section 11 was measured with scripts that are not in the
-repository.
+on one of them. Sections 11 and 12 were measured with scripts that are not in
+the repository; `examples/trainer.py` runs the comparison of section 12.2 on
+one target.
 
 ## 1. Split-dimension criterion
 
@@ -2847,3 +2848,192 @@ With predictions from neighbours a node also keeps the errors of its last 50
 points (`_scores`). On a stream of 60 000 points (885 leaves), saved as the
 two arrays per point that they are: 25.2 MB, 0.49 s to save and 0.29 s to
 load. Saved as one array per node: 22.4 MB, 0.25 s and 0.10 s.
+
+## 12. Choosing the training points (`Trainer`)
+
+A `Trainer` with its defaults (2000 candidates, one random check in ten
+points, the first 200 points random) on `GPTree(Nbar=100)` with its defaults,
+which suggests the points in batches of 50, uniform in the unit cube. It is
+compared with a tree of the same settings that is given as many uniform random
+points, in the same batches. 4000 evaluations (2000 in two dimensions, 6000
+for `global_fit_loglike`), exact observations with a declared noise of
+`1e-3 |y|`, and a tolerance `atol` of 2% of the standard deviation of the
+target over the cube. The errors are those of the finished trees at 5000
+uniform test points, or at 2000 test points in the range. Three seeds; a ratio
+is the geometric mean of the ratios of the seeds, with the same test points
+for both trees of a seed.
+
+### 12.1 A tree that is to be accurate over the whole box
+
+| target | d | RMSE, uniform points | RMSE, `Trainer` | ratio | over the seeds | ratio of the 95% error | coverage, uniform points | coverage, `Trainer` |
+|---|---|---|---|---|---|---|---|---|
+| `Chirp` | 3 | 0.502 | 0.436 | 0.87 | 0.82 to 0.94 | 0.84 | 0.69 | 0.71 |
+| `eft_signal_strength` | 6 | 0.00877 | 0.00732 | 0.83 | 0.78 to 0.89 | 0.80 | 0.65 | 0.67 |
+| `GaussianPeaks` | 2 | 0.00555 | 0.00189 | 0.34 | 0.23 to 0.65 | 0.41 | 0.65 | 0.72 |
+| `GaussianPeaks` | 4 | 0.19 | 0.14 | 0.74 | 0.66 to 0.78 | 0.74 | 0.67 | 0.69 |
+| `GaussianPeaks` | 6 | 0.511 | 0.482 | 0.94 | 0.91 to 0.98 | 0.90 | 0.69 | 0.67 |
+| `Himmelblau` | 4 | 0.0623 | 0.0596 | 0.96 | 0.92 to 0.98 | 0.96 | 0.65 | 0.64 |
+| `Michalewicz` | 4 | 0.266 | 0.277 | 1.04 | 0.95 to 1.10 | 1.05 | 0.68 | 0.65 |
+| `relic_density` | 4 | 0.177 | 0.0945 | 0.54 | 0.51 to 0.59 | 0.48 | 0.65 | 0.64 |
+| `resonance_xsec` | 4 | 0.248 | 0.166 | 0.67 | 0.58 to 0.81 | 0.52 | 0.67 | 0.66 |
+| `RotatedRosenbrock` | 4 | 1.21e+04 | 7.07e+03 | 0.59 | 0.50 to 0.67 | 0.74 | 0.67 | 0.67 |
+| `StepRidge` | 4 | 0.25 | 0.231 | 0.92 | 0.88 to 0.99 | 0.88 | 0.67 | 0.65 |
+| geometric mean | | | | 0.73 | | 0.73 | | |
+
+The 95% error is the error that 95% of the predictions stay below.
+
+### 12.2 A tree that is to be accurate where the target lies in a range
+
+The errors and the shares within the tolerance are those at test points in the
+range. "Points to the final RMSE" is the first of the checks, made every 500
+points, at which the tree of the `Trainer` has the RMSE that the tree with
+uniform points has at the end. The last two columns are over the whole box,
+with the coverage of the tree with uniform points in brackets.
+
+| target | d | range | share of the box | RMSE, uniform points | ratio | over the seeds | ratio of the 95% error | within the tolerance, uniform points | within the tolerance, `Trainer` | points to the final RMSE of uniform points | RMSE over the box, ratio | coverage over the box |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `GaussianPeaks` | 4 | below 3 | 10.3% | 0.114 | 0.35 | 0.25 to 0.51 | 0.18 | 0.87 | 0.99 | 1000 of 4000 | 3.61 | 0.41 (0.67) |
+| `GaussianPeaks` | 6 | below 2.02 | 1.0% | 0.297 | 0.36 | 0.23 to 0.81 | 0.24 | 0.56 | 0.94 | 1000 of 4000 | 2.06 | 0.43 (0.67) |
+| `GaussianPeaks` | 6 | below 3.53 | 5.0% | 0.299 | 0.51 | 0.37 to 0.78 | 0.32 | 0.54 | 0.87 | 1500 of 4000 | 2.26 | 0.46 (0.68) |
+| `global_fit_loglike` | 10 | above -5 | 0.6% | 1.61 | 0.36 | 0.26 to 0.47 | 0.25 | 0.35 | 0.60 | 4000 of 6000 | 1.29 | 0.70 (0.70) |
+| `global_fit_loglike` | 10 | above -8 | 4.0% | 1.47 | 0.58 | 0.43 to 0.81 | 0.40 | 0.34 | 0.50 | 3000 of 6000 | 1.33 | 0.55 (0.69) |
+| geometric mean | | | | | 0.42 | | 0.27 | | | | | |
+
+In three of the fifteen runs the ratio of the RMSE is about 0.8 (0.78 to
+0.81), where the other seeds have 0.23 to 0.57. Their 95% errors are in line
+with the other seeds (0.28 to 0.34). In the two of them that were looked at
+(`GaussianPeaks` in six dimensions, the third seed of both ranges), 41 and 23
+of the 2000 test points have an error above five times the tolerance and
+carry 87% and 83% of the squared error. The tree predicts them outside the
+range, with a probability of the range below 0.1 for 88% and 57% of them, and
+with a median error of 9.8 and 8.4 sigma. No such point is found in the first
+seed.
+
+### 12.3 The report against the finished tree
+
+`Trainer.report()` at the end of the runs of sections 12.1 and 12.2, against
+the same quantities of the finished tree at the test points in the range. The
+report has 172 to 200 checks without a range and 76 to 110 checks in the
+range with one. The true share of a range is that of two million uniform
+points.
+
+| | without a range (33 runs) | with a range (15 runs) |
+|---|---|---|
+| `share_in_range`, over the true share | | 0.76 to 1.21, median 1.06 |
+| `share_above_tolerance`, less the share of the test points with a sigma above the tolerance | -0.01 to 0.01 | -0.06 to 0.04, and -0.25 in one run |
+| `share_within_tolerance`, less that of the test points | -0.09 to 0.02, median -0.02 | -0.20 to 0.05, and -0.36 in one run; median -0.02 |
+| `coverage`, less that of the test points | -0.09 to 0.09 | -0.10 to 0.12, and -0.31 in one run |
+| `rms_error`, over that of the test points | 0.57 to 11, median 1.15 | 0.26 to 2.0, median 0.89 |
+
+The checks are those of the last 2000 points, so the report lags behind a
+tree whose error still falls: the factor 11 is `GaussianPeaks` in two
+dimensions.
+
+### 12.4 Settings of the `Trainer`
+
+Four of the ranges of section 12.2 (not `global_fit_loglike` above -5), four
+seeds. The RMSE and the 95% error within the range, relative to all checks
+uniform, as the geometric mean over the four ranges; the share of the test
+points within the tolerance, as their mean; and the checks in the range that
+the report has at the end.
+
+| | RMSE | 95% error | within the tolerance | checks in the range |
+|---|---|---|---|---|
+| all random checks uniform | 1.00 | 1.00 | 0.82 | 2 to 21 |
+| half of them by the probability of the range (`CHECKS_BY_RANGE`) | 1.05 | 0.94 | 0.83 | 88 to 107 |
+| all uniform, twice the sigma in the probability of the range (not in the code) | 1.01 | 1.04 | 0.81 | 2 to 21 |
+| half by the range, twice the sigma (not in the code) | 1.13 | 1.02 | 0.82 | 83 to 106 |
+
+A probability proportional to the square of the need (not in the code), three
+seeds: a ratio to uniform points of 0.69 in place of 0.73 over the eleven
+targets of section 12.1, and of 0.39 in place of 0.42 over the five ranges of
+section 12.2. Per target the square has 0.60 to 1.19 times the error of the
+need itself.
+
+### 12.5 Other ways to draw the points: the prototype (not in the code)
+
+A prototype outside the package, before the `Trainer`: 200 points of a Sobol
+sequence first, then batches of 50 of which 5 are uniform random points and
+45 are chosen from 2000 uniform candidates. Two seeds, the targets and the
+numbers of points of sections 12.1 and 12.2, and the ratio of the RMSE to
+that with uniform random points.
+
+Over the whole box, by the sigma alone:
+
+| the 45 points | geometric mean of eleven targets | lowest | highest |
+|---|---|---|---|
+| a Sobol sequence, for all 50 | 0.85 | 0.43 | 1.14 |
+| the highest sigma | 0.72 | 0.19 | 1.22 |
+| the highest sigma, with the variance of the other candidates of a leaf reduced for each point picked in it | 0.73 | 0.26 | 1.13 |
+| drawn with a probability proportional to the variance | 0.74 | 0.41 | 1.06 |
+| drawn with a probability proportional to its square | 0.68 | 0.25 | 1.07 |
+
+The reduction of the variance is that of the leaf's GP with the point added,
+which does not depend on the target value there. Sobol points and uniform
+points differ by up to 14% on targets where neither should gain, which is the
+spread of two seeds.
+
+Within a range, by the variance times the probability of the range, and by
+the variance alone:
+
+| target | range | highest | highest, variance reduced | drawn | highest variance alone |
+|---|---|---|---|---|---|
+| `GaussianPeaks`, 4 | below 3 | 0.27 | 0.23 | 0.29 | 0.93 |
+| `GaussianPeaks`, 6 | below 2.02 | 0.25 | 0.26 | 0.28 | 1.38 |
+| `GaussianPeaks`, 6 | below 3.53 | 0.33 | 0.31 | 0.38 | 1.24 |
+| `global_fit_loglike` | above -5 | 0.39 | 0.41 | 0.39 | 0.89 |
+| `global_fit_loglike` | above -8 | 0.48 | 0.47 | 0.47 | 0.79 |
+
+With 20 000 candidates in place of 2000, the highest need on
+`global_fit_loglike` above -5 gave an RMSE in the range of 0.63 and 0.49 on
+the two seeds, against 0.42 and 0.73.
+
+Where the points with the highest sigma go, in one run of 3000 points each:
+
+| target | d | largest number of the 45 points in one leaf, median over the batches | at the edge of the box | RMS error of the picked points over that of the random points |
+|---|---|---|---|---|
+| `relic_density` | 4 | 23 | 0.21 (0.15) | 7.1 |
+| `resonance_xsec` | 4 | 19 | 0.27 (0.15) | 2.0 |
+| `GaussianPeaks` | 6 | 18 | 0.47 (0.22) | 1.7 |
+| `Michalewicz` | 4 | 26 | 0.24 (0.15) | 1.15 |
+
+"At the edge" is the share of the picked points with an input within 2% of
+its bounds, with that of uniform points in brackets. The errors are those of
+the predictions made before the points were added, over the second half of
+the run. The sigma covered 0.69 to 0.73 of the errors of the picked points
+and 0.55 to 0.66 of those of the random points.
+
+### 12.6 With predictions from neighbours
+
+The runs of sections 12.1 and 12.2 on three targets and two ranges, with
+`predict_from='neighbours'` and with predictions from the leaves, two seeds.
+The RMSE over the box or within the range; the last column is the tree that
+predicts from neighbours with a `Trainer` against the tree that predicts from
+its leaves with uniform points.
+
+| target | d | range | leaves, uniform points | leaves, `Trainer` | neighbours, uniform points | neighbours, `Trainer` | ratio with neighbours | last over first |
+|---|---|---|---|---|---|---|---|---|
+| `GaussianPeaks` | 4 | | 0.197 | 0.141 | 0.133 | 0.083 | 0.62 | 0.42 |
+| `GaussianPeaks` | 6 | | 0.512 | 0.473 | 0.352 | 0.317 | 0.90 | 0.62 |
+| `relic_density` | 4 | | 0.187 | 0.103 | 0.164 | 0.0675 | 0.41 | 0.36 |
+| `GaussianPeaks` | 4 | below 3 | 0.113 | 0.048 | 0.0558 | 0.0113 | 0.20 | 0.10 |
+| `GaussianPeaks` | 6 | below 3.53 | 0.311 | 0.128 | 0.169 | 0.0511 | 0.30 | 0.16 |
+
+With predictions from neighbours the sigma covers 0.66 to 0.75 of the errors
+of the tree of the `Trainer`, over the box or within the range.
+
+### 12.7 Cost
+
+One process, `GaussianPeaks` in four and six dimensions, between 2000 and
+4000 points (about 60 leaves), batches of 50.
+
+| | predictions from the leaves | from neighbours |
+|---|---|---|
+| `suggest(50)`, 2000 candidates | 25 ms | 1.4 s |
+| `suggest(500)`, 10 000 candidates | 0.14 s | 7.2 s |
+| `report()`, 2000 candidates | 35 to 48 ms | 1.3 to 1.5 s |
+| `add` of 50 points | 69 to 79 ms | 147 to 161 ms |
+
+With predictions from the leaves the candidates are predicted leaf by leaf
+(`predict(mode='loop')`), and with predictions from neighbours one by one, at
+0.7 ms each.
