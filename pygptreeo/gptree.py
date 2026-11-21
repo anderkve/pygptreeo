@@ -117,6 +117,8 @@ class GPTree:
             Saves the tree to a file.
         load(path):
             Loads a tree from a file that `save` wrote.
+        release():
+            Lets the memory of a tree that is no longer needed be freed at once.
     """
 
     def __init__(self,
@@ -1147,6 +1149,28 @@ class GPTree:
         """Load a tree from a file that `save` wrote. Its leaves are asleep."""
         with _gc_paused(), open(path, 'rb') as file:
             return pickle.load(file)
+
+
+    def release(self):
+        """Break the links between the tree's nodes, so that its memory is freed
+        as soon as the tree is dropped. The tree cannot be used afterwards.
+
+        The nodes of a tree refer to each other in loops, so without this a
+        dropped tree keeps its memory until Python's garbage collector finds
+        it. For a process that replaces its tree by a newer one many times,
+        as with `load`.
+        """
+        nodes = [self.root]
+        for node in nodes:              # the list grows while it is read
+            if not node.is_leaf:
+                nodes += node.children
+            node.parent = node.left = node.right = node.children = None
+        if self.leaf_index is not None:
+            self.leaf_index.release()
+        if self.neighbours is not None:
+            self.neighbours.tree = None
+            self.neighbours.in_use.clear()
+        self.root = self.leaf_index = None
 
 
 @contextmanager

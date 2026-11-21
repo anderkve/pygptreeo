@@ -237,6 +237,22 @@ leaves (`docs/benchmarks.md`, section 11).
 * **A save writes the whole tree**, also when one leaf has changed. Writing
   takes 0.2 to 0.3 ms per leaf and reading 0.1 to 0.15 ms, at 20 to 40 kB
   per leaf.
+* **A tree that is replaced is released.** The nodes of a tree refer to each
+  other in loops: a node and its children, a group of the leaf index and its
+  parent, the tree and its neighbour search. Python frees objects in a loop
+  only when its garbage collector finds them, not when the tree is dropped.
+  A load leaves the objects of the new tree with the collector as new ones,
+  so a collection follows each load. It goes through the new tree alone,
+  except about every twelfth (with CPython's default thresholds), which
+  also goes through the trees loaded since the last such collection and
+  frees those that were dropped: ten trees in one pause, of about ten times
+  the duration of a load. Until then the process holds all of them
+  (`docs/benchmarks.md`, section 11). `release` breaks the loops, so that
+  the tree is freed when it is dropped, and the collections after a load
+  find no tree to free. The process that replaces a tree calls it; a tree
+  does not release itself when it is dropped, since something else may
+  still hold its nodes. The same links are cut for a leaf that a memory
+  limit removes.
 
 ## Points between two fits of a leaf
 
