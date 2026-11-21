@@ -204,7 +204,7 @@ gpt = GPTree.load('tree.pkl')
 old.release()
 ```
 
-The memory of the old tree is then freed at once. Without `release` it is freed only when Python's garbage collector next finds it, which can stall the process for many times the duration of a load. A released tree cannot be used any more.
+The memory of the old tree is then freed at once. (Without `release` it is freed only when Python's garbage collector next finds it.) A released tree cannot be used any more.
 
 ## Fitting the leaves in other processes (optional)
 
