@@ -160,6 +160,15 @@ class LeafIndex:
             parent.drop(parent.children.index(group))
             group = parent
 
+    def release(self):
+        """Break the links from the groups to their parents, so that an index
+        that is dropped is freed without the garbage collector."""
+        groups = [self.root]
+        for group in groups:            # the list grows while it is read
+            if not group.bottom:
+                groups += group.children
+            group.parent = None
+
     def extend(self, leaf, removed, j, lower):
         """Extend a leaf along input ``j`` over a leaf beside it that is about
         to be removed, on its ``lower`` side or the other: its cell and its
