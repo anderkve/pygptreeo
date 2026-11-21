@@ -196,6 +196,15 @@ gpt = GPTree.load('tree.pkl')
 
 `save` first puts every leaf to sleep (see the previous section), so the file is several times smaller than a tree with its leaves awake. A leaf of the saved or the loaded tree wakes when it is next used. The file is written under a temporary name and then renamed, so another process can load it while the tree is being saved again. The file is a pickle, so only load files from a source you trust.
 
+A process that loads a newer tree again and again should call `release` on the tree it replaces:
+
+```python
+old, gpt = gpt, GPTree.load('tree.pkl')
+old.release()
+```
+
+The memory of the old tree is then freed at once. Without `release` it is freed only when Python's garbage collector next finds it, which can stall the process for many times the duration of a load. A released tree cannot be used any more.
+
 ## Fitting the leaves in other processes (optional)
 
 Most of the time of an update is spent on optimising the kernel hyperparameters of a leaf. This step can be carried out in other processes, for instance by MPI workers, while one process holds the tree:

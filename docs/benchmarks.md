@@ -2847,3 +2847,30 @@ With predictions from neighbours a node also keeps the errors of its last 50
 points (`_scores`). On a stream of 60 000 points (885 leaves), saved as the
 two arrays per point that they are: 25.2 MB, 0.49 s to save and 0.29 s to
 load. Saved as one array per node: 22.4 MB, 0.25 s and 0.10 s.
+
+A process that replaces its tree by a newly loaded one again and again: the
+tree of the first row, loaded 42 times with 200 predictions between two loads
+(Python 3.13, on a container where a load alone took 0.6 to 0.8 s). A reload
+is the time from the start of the load until the new tree is in place and the
+previous one dropped or released.
+
+| the previous tree is | median reload s | longest s | memory of the process MB |
+|---|---|---|---|
+| dropped | 0.84 | 8.8 | 950 to 4160, rising |
+| released after the load (`release`) | 1.24 | 1.8 | 700 |
+| released before the load (`release`) | 0.67 | 0.95 | 450 |
+| dropped, and `gc.collect()` after the load | 2.1 | 2.9 | 700 |
+
+With the tree only dropped, every 12th or 13th reload took 7.4 to 8.8 s.
+The garbage collection after each of these loads went through 13 trees and
+freed ten of them (1.75 million objects). After the other loads it went
+through the new tree alone, in 0.13 to 0.3 s, which is part of the time of
+every reload in the table. Two of every 13 dropped trees were left for a
+later, rarer collection, so the memory kept rising. `release` and the freeing
+of the tree that follows took 0.22 s (0.12 s before the load). With `release`
+after the load the longest reloads were those whose collection went through
+both the new tree and the one still in use (0.7 to 0.9 s). Released before
+the load, the process holds one tree while it loads instead of two, and the
+load and its collection were faster as well. A tree of 609 leaves gave the
+same pattern with Python 3.12 and 3.14: a reload of 1.0 to 1.3 s about every
+twelfth time against a median of 0.1 s, and none above 0.35 s with `release`.
