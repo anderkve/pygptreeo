@@ -678,9 +678,23 @@ class TestBlend(unittest.TestCase):
                 self.assertLessEqual(sum(gpt._leaf_size(leaf)[0] for leaf in gpt.root.leaves), 1.2e6)
         self.assertTrue(any(leaf.asleep for leaf in gpt.root.leaves))
 
-    def test_a_batch_fit_predicts_nothing_before_the_leaves_are_fitted(self):
+    def test_no_more_leaves_than_allowed(self):
         np.random.seed(18)
         rng = np.random.RandomState(18)
+        gpt = GPTree(Nbar=40, retrain_every_n_points=10, predict_from='neighbours', max_n_pred_leaves=1)
+        _stream(gpt, rng.rand(400, 2))
+        in_zone = 0
+        for x in rng.rand(120, 2):
+            x = x[None, :]
+            several = len(gpt._leaves_of(x)[0]) > 1
+            self.assertEqual(len(gpt._prediction_leaves(x)[0]), 1)
+            before = gpt.predict(x)[0][0, 0]
+            owner = gpt.leaf_index.locate(x[0])
+            gpt.update_tree(x, np.array([[_target(x)[0]]]), 1e-3)
+            if owner is not None and owner.is_leaf and gpt._prediction_leaves(x)[0][0] is owner:
+                in_zone += several
+        self.assertGreater(in_zone, 10)
+        # a batch fit registers nothing before the leaves are fitted, and predicts nothing for it
         fresh = GPTree(Nbar=40, predict_from='neighbours')
         with mock.patch.object(fresh, '_predict_blended', wraps=fresh._predict_blended) as blended:
             X = rng.rand(300, 2)

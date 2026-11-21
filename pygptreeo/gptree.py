@@ -128,6 +128,7 @@ class GPTree:
                  use_calibrated_sigma: Optional[bool] = True,
                  split_dimension_criteria: Optional[str] = 'min_lengthscale',
                  splitting_strategy: Optional[str] = 'gradual',
+                 max_n_pred_leaves: Optional[int] = None,
                  n_outputs: Optional[int] = 1,
                  output_model: Optional[str] = 'independent',
                  output_shape: Optional[tuple] = None,
@@ -167,6 +168,8 @@ class GPTree:
                 or 'gradual' (each child also receives a copy of its sibling's
                 points, dropped as its own arrive, so it starts with a full-size
                 fit and stays continuous across the split). Defaults to 'gradual'.
+            max_n_pred_leaves (Optional[int]): Maximum number of leaves to use
+                for prediction. Defaults to None (use all).
             n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
             output_model (Optional[str]): How the outputs of a multi-output problem are
                 modelled inside each leaf (ignored when n_outputs=1):
@@ -345,6 +348,8 @@ class GPTree:
         self.n_features = 0
 
         self.use_calibrated_sigma = use_calibrated_sigma
+
+        self.max_n_pred_leaves = max_n_pred_leaves
 
         if max_memory_mb is not None and max_memory_mb <= 0:
             raise ValueError("max_memory_mb must be positive")
@@ -641,6 +646,17 @@ class GPTree:
         while not node.is_leaf:
             node = node.children[int(np.random.binomial(1, node.prob_func(x)[0][0]))]
         return node
+
+
+    def _prediction_leaves(self, x: np.ndarray):
+        """The leaves of ``_leaves_of`` and their weights, of which no more than
+        ``max_n_pred_leaves`` are kept, those with the largest weights."""
+        leaves, weights = self._leaves_of(x)
+        if self.max_n_pred_leaves:
+            ordering = np.argsort(weights)[::-1][:self.max_n_pred_leaves]
+            kept = np.array(weights)[ordering]
+            leaves, weights = [leaves[idx] for idx in ordering], list(kept / kept.sum())
+        return leaves, weights
 
 
     def _blends(self) -> bool:
@@ -940,7 +956,7 @@ class GPTree:
         prediction = None
         if self._blends() and not self.first_point and (allow_training or node._is_fitted()):
             # within the zones of several leaves the prediction to calibrate is theirs together
-            leaves, weights = self._leaves_of(x)
+            leaves, weights = self._prediction_leaves(x)
             if len(leaves) > 1:
                 mu, sigma = self._predict_blended(x, leaves, weights, calibrated=False)
                 prediction = mu[None, :], sigma[None, :]
@@ -1036,7 +1052,7 @@ class GPTree:
             x = x.reshape((1, x.shape[0]))
             self._let_leaves_sleep()
 
-            leaves, pred_leaf_probs = self._leaves_of(x)
+            leaves, pred_leaf_probs = self._prediction_leaves(x)
 
             if len(leaves) > 1 and self._blends():
                 mu, sigma = self._predict_blended(x, leaves, pred_leaf_probs)
