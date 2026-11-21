@@ -88,53 +88,27 @@ class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin,
 
     def _compute_kernel_gradient(self, X, Y, length_scale):
         """The kernel matrix K(X, Y) and its gradient with respect to the log of the
-        hyperparameters: alpha, then the length scales."""
+        hyperparameters that are not fixed: alpha, then the length scales, which
+        is the order of scikit-learn (by name)."""
         dists = self._compute_squared_distances(X, Y, length_scale)
         base = 1.0 + dists / (2.0 * self.alpha)
         K = base ** (-self.alpha)
 
-        if self.anisotropic:
-            n_length_scale_params = length_scale.shape[0]
-        else:
-            n_length_scale_params = 1
+        gradients = []
+        if not self.hyperparameter_alpha.fixed:
+            # dK/d(log alpha) = K * (d² / (2 base) - alpha log(base)), with base = 1 + d² / (2 alpha)
+            gradients.append(K * (dists / (2.0 * base) - self.alpha * np.log(base)))
+        if not self.hyperparameter_length_scale.fixed:
+            # dK/d(log l_i) = K * ((x_i - x'_i) / l_i)² / base
+            if self.anisotropic:
+                for i in range(length_scale.shape[0]):
+                    diff_i = (X[:, i][:, np.newaxis] - Y[:, i][np.newaxis, :]) / length_scale[i]
+                    gradients.append(K * diff_i ** 2 / base)
+            else:
+                # one length scale for all inputs: the sum over them, which is d²
+                gradients.append(K * dists / base)
 
-        # Gradient has shape (n_samples_X, n_samples_Y, n_hyperparams)
-        # IMPORTANT: sklearn orders hyperparameters alphabetically by property name
-        # So the order is: [alpha, length_scale_0, length_scale_1, ..., length_scale_d]
-        K_gradient = np.zeros(K.shape + (n_length_scale_params + 1,))
-
-        # Gradient with respect to alpha (index 0 in theta)
-        # d/d(log(alpha)) K = d/dalpha K * alpha
-        # d/dalpha K = K * [-log(1 + d²/(2*alpha)) + alpha * d²/(2*alpha) / (1 + d²/(2*alpha))]
-        #            = K * [alpha * d²/(2*alpha) / (1 + d²/(2*alpha)) - log(1 + d²/(2*alpha))]
-        #            = K * [d²/(2*(1 + d²/(2*alpha))) - log(1 + d²/(2*alpha))]
-        log_base = np.log(base)
-        K_gradient[:, :, 0] = K * (dists / (2.0 * base) - log_base) * self.alpha
-
-        # Gradient with respect to length_scale(s) (indices 1 to n_length_scale_params in theta)
-        # d/d(log(l_i)) K = d/dl_i K * l_i  (chain rule for log)
-        # d/dl_i K = K * alpha / (1 + d²/(2*alpha)) * d²/l_i / (2*alpha)
-        #          = K * alpha * d²/l_i / (2*alpha * (1 + d²/(2*alpha)))
-        #          = K * d²/l_i / (2 * (1 + d²/(2*alpha)))
-
-        if self.anisotropic:
-            # For anisotropic case, compute gradient for each length scale
-            # d²_i/l_i = 2 * sum_j (X[j,i] - Y[k,i])² / l_i³
-            for i in range(length_scale.shape[0]):
-                # Squared differences in dimension i, scaled by length_scale
-                diff_i = (X[:, i][:, np.newaxis] - Y[:, i][np.newaxis, :])
-                squared_diff_i = diff_i ** 2 / (length_scale[i] ** 3)
-
-                # Gradient: K * d²_i/l_i / (1 + d²/(2*alpha))
-                # Note: we multiply by length_scale[i] for derivative w.r.t. log(length_scale[i])
-                # Store at index i+1 because index 0 is alpha
-                K_gradient[:, :, i+1] = K * squared_diff_i / base * length_scale[i]
-        else:
-            # For isotropic case
-            # d²/l = 2 * d² / l  (since d² is proportional to 1/l²)
-            # Store at index 1 because index 0 is alpha
-            K_gradient[:, :, 1] = K * dists / base * length_scale
-
+        K_gradient = np.stack(gradients, axis=2) if gradients else np.empty(K.shape + (0,))
         return K, K_gradient
 
     def _compute_squared_distances(self, X, Y, length_scale):
@@ -279,7 +253,10 @@ class AdditiveKernel(Kernel):
 
     def _compute_kernel_gradient(self, X, Y, length_scale):
         """The kernel matrix K(X, Y) and its gradient with respect to
-        log(length_scale)."""
+        log(length_scale), which has no entries if the length scales are fixed."""
+        if self.hyperparameter_length_scale.fixed:
+            return self._compute_kernel(X, Y, length_scale), np.empty((X.shape[0], Y.shape[0], 0))
+
         K = np.zeros((X.shape[0], Y.shape[0]))
         K_gradient = np.zeros((X.shape[0], Y.shape[0], self.input_dim))
 
@@ -335,28 +312,16 @@ class AdditiveKernel(Kernel):
         dists_sq = np.sum((X[:, np.newaxis, :] - Y[np.newaxis, :, :]) ** 2, axis=2) / (length_scale ** 2)
 
         if self.base_kernel == 'rbf':
-            # RBF: k = exp(-0.5 * r²)
-            # d/d(log l) k = d/dl k * l = (r²) * k * l
+            # k = exp(-r² / 2), dk/d(log l) = r² k
             K = np.exp(-0.5 * dists_sq)
-            grad = dists_sq * K * length_scale
+            grad = dists_sq * K
 
         elif self.base_kernel == 'matern':
-            # Matérn 1.5: k = (1 + sqrt(3)*r) * exp(-sqrt(3)*r)
-            # d/d(log l) k = d/dl k * l
-            r = np.sqrt(dists_sq)
-            sqrt3_r = np.sqrt(3) * r
-            K = (1.0 + sqrt3_r) * np.exp(-sqrt3_r)
-
-            # Derivative w.r.t. l (then multiply by l for log derivative)
-            # dk/dl = dk/dr * dr/dl
-            # dr/dl = -r/l
-            # dk/dr = sqrt(3) * exp(-sqrt(3)*r) * (1 - (1 + sqrt(3)*r))
-            #       = -3 * r * exp(-sqrt(3)*r)
-            dk_dr = -3 * r * np.exp(-sqrt3_r)
-            dr_dl = -r / length_scale
-            grad = dk_dr * dr_dl * length_scale  # multiply by l for log derivative
-            # Simplify: grad = 3 * r² * exp(-sqrt(3)*r)
-            grad = 3 * dists_sq * np.exp(-sqrt3_r)
+            # k = (1 + sqrt(3) r) exp(-sqrt(3) r), dk/d(log l) = 3 r² exp(-sqrt(3) r)
+            sqrt3_r = np.sqrt(3) * np.sqrt(dists_sq)
+            decay = np.exp(-sqrt3_r)
+            K = (1.0 + sqrt3_r) * decay
+            grad = 3 * dists_sq * decay
 
         else:
             raise ValueError(f"Unknown base_kernel: {self.base_kernel}")
