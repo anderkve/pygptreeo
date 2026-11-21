@@ -15,63 +15,21 @@ from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel
 
 
 class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin, Kernel):
-    """Anisotropic Rational Quadratic kernel.
+    """Rational quadratic kernel with one length scale per input.
 
-    The anisotropic RationalQuadratic kernel is a generalization of the standard
-    (isotropic) RationalQuadratic kernel that allows for different length scales
-    in each dimension. This is particularly useful for problems where different
-    input dimensions have different characteristic scales of variation.
+        k(x, x') = (1 + d^2 / (2 alpha))^(-alpha),   d^2 = sum_i ((x_i - x'_i) / length_scale_i)^2
 
-    The kernel is defined as:
-        k(x, x') = (1 + d²(x, x') / (2 * alpha))^(-alpha)
-
-    where the anisotropic squared distance is:
-        d²(x, x') = sum_i ((x_i - x'_i) / length_scale_i)²
-
-    The RationalQuadratic kernel can be seen as a scale mixture (infinite sum)
-    of RBF kernels with different characteristic length scales. The parameter
-    alpha determines the weighting of the different scales:
-    - Small alpha: similar to a single RBF with fixed length scale
-    - Large alpha: mixture includes wider range of length scales
+    A mixture of RBF kernels of different length scales. The smaller ``alpha``,
+    the wider their range; for a large ``alpha`` it is the RBF kernel.
 
     Parameters
     ----------
     length_scale : float or ndarray of shape (n_features,), default=1.0
-        The length scale(s) of the kernel. If a float, an isotropic kernel is
-        used. If an array, an anisotropic kernel is used where each dimension
-        has its own length scale.
-
+        One length scale for all inputs, or one per input.
     alpha : float, default=1.0
-        Scale mixture parameter that controls the relative weighting of
-        different length scales. Must be positive.
-
-    length_scale_bounds : pair of floats >= 0 or "fixed", default=(1e-5, 1e5)
-        The lower and upper bound on length_scale. If set to "fixed",
-        length_scale cannot be changed during hyperparameter tuning.
-
-    alpha_bounds : pair of floats >= 0 or "fixed", default=(1e-5, 1e5)
-        The lower and upper bound on alpha. If set to "fixed",
-        alpha cannot be changed during hyperparameter tuning.
-
-    Attributes
-    ----------
-    anisotropic : bool
-        Returns True if the kernel is configured with anisotropic length scales
-        (different length scale per dimension), False otherwise.
-
-    Examples
-    --------
-    >>> from pygptreeo.kernels import AnisotropicRationalQuadratic
-    >>> from sklearn.gaussian_process import GaussianProcessRegressor
-    >>> import numpy as np
-    >>>
-    >>> # 3D example with different length scales per dimension
-    >>> kernel = AnisotropicRationalQuadratic(
-    ...     length_scale=[1.0, 0.5, 2.0],
-    ...     alpha=1.0,
-    ...     length_scale_bounds=(1e-3, 1e3)
-    ... )
-    >>> gpr = GaussianProcessRegressor(kernel=kernel)
+        Positive.
+    length_scale_bounds, alpha_bounds : pair of floats >= 0 or "fixed", default=(1e-5, 1e5)
+        Bounds of the hyperparameters.
     """
 
     def __init__(self, length_scale=1.0, alpha=1.0,
@@ -103,30 +61,8 @@ class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin,
         return Hyperparameter("alpha", "numeric", self.alpha_bounds)
 
     def __call__(self, X, Y=None, eval_gradient=False):
-        """Return the kernel k(X, Y) and optionally its gradient.
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples_X, n_features)
-            Left argument of the returned kernel k(X, Y)
-
-        Y : ndarray of shape (n_samples_Y, n_features), default=None
-            Right argument of the returned kernel k(X, Y). If None, k(X, X)
-            is evaluated instead.
-
-        eval_gradient : bool, default=False
-            Determines whether the gradient with respect to the log of the
-            kernel hyperparameters is computed.
-
-        Returns
-        -------
-        K : ndarray of shape (n_samples_X, n_samples_Y)
-            Kernel k(X, Y)
-
-        K_gradient : ndarray of shape (n_samples_X, n_samples_Y, n_dims), optional
-            The gradient of the kernel k(X, Y) with respect to the log of the
-            hyperparameters of the kernel. Only returned when eval_gradient is True.
-        """
+        """Return the kernel k(X, Y) and, with ``eval_gradient``, its gradient with
+        respect to the log of the hyperparameters."""
         X = np.atleast_2d(X)
         length_scale = _check_length_scale(X, self.length_scale)
 
@@ -136,66 +72,27 @@ class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin,
             Y = np.atleast_2d(Y)
 
         if eval_gradient:
-            # Compute kernel and gradient
             K, K_gradient = self._compute_kernel_gradient(X, Y, length_scale)
             return K, K_gradient
         else:
-            # Compute kernel only
             K = self._compute_kernel(X, Y, length_scale)
             return K
 
     def _compute_kernel(self, X, Y, length_scale):
-        """Compute the kernel matrix K(X, Y).
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples_X, n_features)
-            Left argument
-        Y : ndarray of shape (n_samples_Y, n_features)
-            Right argument
-        length_scale : float or ndarray of shape (n_features,)
-            Length scale(s)
-
-        Returns
-        -------
-        K : ndarray of shape (n_samples_X, n_samples_Y)
-            Kernel matrix
-        """
-        # Compute anisotropic squared distances
-        # dists[i, j] = sum_k ((X[i, k] - Y[j, k]) / length_scale[k])^2
+        """The kernel matrix K(X, Y)."""
         dists = self._compute_squared_distances(X, Y, length_scale)
 
-        # Rational quadratic kernel formula
-        # k(d²) = (1 + d² / (2 * alpha))^(-alpha)
         K = (1.0 + dists / (2.0 * self.alpha)) ** (-self.alpha)
 
         return K
 
     def _compute_kernel_gradient(self, X, Y, length_scale):
-        """Compute kernel matrix and gradient with respect to hyperparameters.
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples_X, n_features)
-            Left argument
-        Y : ndarray of shape (n_samples_Y, n_features)
-            Right argument
-        length_scale : float or ndarray of shape (n_features,)
-            Length scale(s)
-
-        Returns
-        -------
-        K : ndarray of shape (n_samples_X, n_samples_Y)
-            Kernel matrix
-        K_gradient : ndarray of shape (n_samples_X, n_samples_Y, n_hyperparams)
-            Gradient with respect to log of hyperparameters
-        """
-        # Compute squared distances and kernel
+        """The kernel matrix K(X, Y) and its gradient with respect to the log of the
+        hyperparameters: alpha, then the length scales."""
         dists = self._compute_squared_distances(X, Y, length_scale)
         base = 1.0 + dists / (2.0 * self.alpha)
         K = base ** (-self.alpha)
 
-        # Number of hyperparameters
         if self.anisotropic:
             n_length_scale_params = length_scale.shape[0]
         else:
@@ -241,28 +138,11 @@ class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin,
         return K, K_gradient
 
     def _compute_squared_distances(self, X, Y, length_scale):
-        """Compute anisotropic squared distances between X and Y.
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples_X, n_features)
-            Left argument
-        Y : ndarray of shape (n_samples_Y, n_features)
-            Right argument
-        length_scale : float or ndarray of shape (n_features,)
-            Length scale(s)
-
-        Returns
-        -------
-        dists : ndarray of shape (n_samples_X, n_samples_Y)
-            Squared distances: dists[i,j] = sum_k ((X[i,k] - Y[j,k]) / length_scale[k])^2
-        """
-        # Scale X and Y by length_scale
+        """Squared distances between the rows of X and of Y, with each input divided
+        by its length scale."""
         X_scaled = X / length_scale
         Y_scaled = Y / length_scale
 
-        # Compute squared Euclidean distances in scaled space
-        # ||X_scaled - Y_scaled||² = sum_k ((X[i,k] - Y[j,k]) / length_scale[k])^2
         dists = np.sum(X_scaled ** 2, axis=1)[:, np.newaxis] + \
                 np.sum(Y_scaled ** 2, axis=1)[np.newaxis, :] - \
                 2.0 * np.dot(X_scaled, Y_scaled.T)
@@ -273,20 +153,7 @@ class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin,
         return dists
 
     def diag(self, X):
-        """Returns the diagonal of the kernel k(X, X).
-
-        The diagonal of any stationary kernel is constant (all ones for normalized kernels).
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples, n_features)
-            Argument to the kernel
-
-        Returns
-        -------
-        K_diag : ndarray of shape (n_samples,)
-            Diagonal of K(X, X)
-        """
+        """The diagonal of k(X, X): ones."""
         return np.ones(X.shape[0])
 
     def is_stationary(self):
@@ -303,63 +170,28 @@ class AnisotropicRationalQuadratic(StationaryKernelMixin, NormalizedKernelMixin,
 
 
 class AdditiveKernel(Kernel):
-    """Additive kernel with configurable interaction depth.
+    """Additive kernel: a sum of products of one-dimensional kernels.
 
-    This kernel is designed for learning functions with low-dimensional structure
-    by decomposing the kernel into a sum of terms with different interaction orders.
-    For example, with interaction_depth=2 in 3D:
+    With ``interaction_depth=2`` in three dimensions:
 
-        k(x, x') = k₁(x₁, x'₁) + k₂(x₂, x'₂) + k₃(x₃, x'₃)           [order 1]
-                 + k₁(x₁, x'₁) × k₂(x₂, x'₂)                          [order 2]
-                 + k₁(x₁, x'₁) × k₃(x₃, x'₃)                          [order 2]
-                 + k₂(x₂, x'₂) × k₃(x₃, x'₃)                          [order 2]
+        k(x, x') = k1 + k2 + k3 + k1 k2 + k1 k3 + k2 k3,   ki = ki(x_i, x'_i)
 
-    This is particularly effective for:
-    - Functions that are truly additive or have low-order interactions
-    - High-dimensional problems with sparse data
-    - Avoiding the curse of dimensionality in standard kernels
-    - Interpretable models (see which dimensions/interactions matter)
+    Every term is evaluated, so the cost grows with their number.
+    ``NewtonGirardAdditiveKernel`` has the same terms, with a variance per
+    order, at a cost linear in the number of inputs.
 
     Parameters
     ----------
     input_dim : int
-        Number of input dimensions
-
+        Number of inputs.
     interaction_depth : int, default=1
-        Maximum order of interactions to include:
-        - 1: Only main effects (purely additive)
-        - 2: Main effects + pairwise interactions
-        - 3: Up to 3-way interactions
-        - etc.
-
-    base_kernel : str, default='rbf'
-        Type of 1D kernel to use for each dimension:
-        - 'rbf': RBF kernel (smooth, infinitely differentiable)
-        - 'matern': Matérn kernel with nu=1.5 (once differentiable)
-
-    length_scale : float or array-like of shape (n_dims,), default=1.0
-        Length scale for each dimension. If float, same length scale
-        for all dimensions.
-
+        Largest number of inputs in a term: 1 for main effects, 2 adds pairs.
+    base_kernel : {'rbf', 'matern'}, default='rbf'
+        The one-dimensional kernel: RBF, or Matern with nu=1.5.
+    length_scale : float or array-like of shape (input_dim,), default=1.0
+        One length scale per input. A float is used for all of them.
     length_scale_bounds : pair of floats >= 0 or "fixed", default=(1e-3, 1e3)
-        The lower and upper bound on length_scale parameters.
-
-    Examples
-    --------
-    >>> from pygptreeo.kernels import AdditiveKernel
-    >>> from sklearn.gaussian_process import GaussianProcessRegressor
-    >>> import numpy as np
-    >>>
-    >>> # 5D problem with main effects + pairwise interactions
-    >>> kernel = AdditiveKernel(
-    ...     input_dim=5,
-    ...     interaction_depth=2,
-    ...     base_kernel='rbf',
-    ...     length_scale=1.0
-    ... )
-    >>> # This creates 5 + C(5,2) = 5 + 10 = 15 kernel terms
-    >>>
-    >>> gpr = GaussianProcessRegressor(kernel=kernel)
+        Bounds of the length scales.
     """
 
     def __init__(self, input_dim, interaction_depth=1, base_kernel='rbf',
@@ -405,40 +237,16 @@ class AdditiveKernel(Kernel):
     @property
     def hyperparameter_length_scale(self):
         """Returns the hyperparameter specification for length_scale."""
-        # Always return input_dim hyperparameters (one per dimension)
         return Hyperparameter(
             "length_scale", "numeric", self.length_scale_bounds,
             self.input_dim
         )
 
     def __call__(self, X, Y=None, eval_gradient=False):
-        """Return the kernel k(X, Y) and optionally its gradient.
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples_X, n_features)
-            Left argument of the returned kernel k(X, Y)
-
-        Y : ndarray of shape (n_samples_Y, n_features), default=None
-            Right argument of the returned kernel k(X, Y). If None, k(X, X)
-            is evaluated instead.
-
-        eval_gradient : bool, default=False
-            Determines whether the gradient with respect to the log of the
-            kernel hyperparameters is computed.
-
-        Returns
-        -------
-        K : ndarray of shape (n_samples_X, n_samples_Y)
-            Kernel k(X, Y)
-
-        K_gradient : ndarray of shape (n_samples_X, n_samples_Y, n_dims), optional
-            The gradient of the kernel k(X, Y) with respect to the log of the
-            hyperparameters. Only returned when eval_gradient is True.
-        """
+        """Return the kernel k(X, Y) and, with ``eval_gradient``, its gradient with
+        respect to the log of the hyperparameters."""
         X = np.atleast_2d(X)
 
-        # length_scale is already an array (initialized in __init__)
         length_scale = self.length_scale
 
         if Y is None:
@@ -454,30 +262,12 @@ class AdditiveKernel(Kernel):
             return K
 
     def _compute_kernel(self, X, Y, length_scale):
-        """Compute the additive kernel matrix.
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples_X, n_features)
-            Left argument
-        Y : ndarray of shape (n_samples_Y, n_features)
-            Right argument
-        length_scale : ndarray of shape (n_dims,)
-            Length scales for each dimension
-
-        Returns
-        -------
-        K : ndarray of shape (n_samples_X, n_samples_Y)
-            Kernel matrix
-        """
+        """The kernel matrix K(X, Y)."""
         K = np.zeros((X.shape[0], Y.shape[0]))
 
-        # Sum over all interaction terms
         for term_dims in self.interaction_terms:
-            # Compute product of 1D kernels for this term
             K_term = np.ones((X.shape[0], Y.shape[0]))
             for dim in term_dims:
-                # Extract dimension and compute 1D kernel
                 X_dim = X[:, dim:dim+1]
                 Y_dim = Y[:, dim:dim+1]
                 K_dim = self._compute_1d_kernel(X_dim, Y_dim, length_scale[dim])
@@ -488,35 +278,16 @@ class AdditiveKernel(Kernel):
         return K
 
     def _compute_kernel_gradient(self, X, Y, length_scale):
-        """Compute kernel and gradient with respect to log(length_scale).
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples_X, n_features)
-            Left argument
-        Y : ndarray of shape (n_samples_Y, n_features)
-            Right argument
-        length_scale : ndarray of shape (n_dims,)
-            Length scales
-
-        Returns
-        -------
-        K : ndarray of shape (n_samples_X, n_samples_Y)
-            Kernel matrix
-        K_gradient : ndarray of shape (n_samples_X, n_samples_Y, n_dims)
-            Gradient w.r.t. log(length_scale)
-        """
+        """The kernel matrix K(X, Y) and its gradient with respect to
+        log(length_scale)."""
         K = np.zeros((X.shape[0], Y.shape[0]))
         K_gradient = np.zeros((X.shape[0], Y.shape[0], self.input_dim))
 
-        # For each interaction term
         for term_dims in self.interaction_terms:
-            # Compute the kernel for this term and its gradient
             K_term = np.ones((X.shape[0], Y.shape[0]))
             K_1d_list = []  # Store individual 1D kernels
             grad_1d_list = []  # Store individual 1D gradients
 
-            # Compute all 1D kernels in this product
             for dim in term_dims:
                 X_dim = X[:, dim:dim+1]
                 Y_dim = Y[:, dim:dim+1]
@@ -527,10 +298,8 @@ class AdditiveKernel(Kernel):
                 grad_1d_list.append(grad_1d)
                 K_term *= K_1d
 
-            # Add this term to total kernel
             K += K_term
 
-            # Compute gradient for each dimension in this term
             for i, dim in enumerate(term_dims):
                 # Gradient via product rule:
                 # d/d(log l_i) [k₁ × k₂ × ... × kₙ] = k₁ × ... × (dk_i/d(log l_i)) × ... × kₙ
@@ -544,23 +313,7 @@ class AdditiveKernel(Kernel):
         return K, K_gradient
 
     def _compute_1d_kernel(self, X, Y, length_scale):
-        """Compute 1D kernel for a single dimension.
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples_X, 1)
-            Left argument (single dimension)
-        Y : ndarray of shape (n_samples_Y, 1)
-            Right argument (single dimension)
-        length_scale : float
-            Length scale for this dimension
-
-        Returns
-        -------
-        K : ndarray of shape (n_samples_X, n_samples_Y)
-            1D kernel matrix
-        """
-        # Compute squared distances
+        """The kernel of one input, for X and Y of shape (n, 1)."""
         dists_sq = np.sum((X[:, np.newaxis, :] - Y[np.newaxis, :, :]) ** 2, axis=2) / (length_scale ** 2)
 
         if self.base_kernel == 'rbf':
@@ -577,25 +330,8 @@ class AdditiveKernel(Kernel):
         return K
 
     def _compute_1d_kernel_gradient(self, X, Y, length_scale):
-        """Compute 1D kernel and gradient w.r.t. log(length_scale).
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples_X, 1)
-            Left argument
-        Y : ndarray of shape (n_samples_Y, 1)
-            Right argument
-        length_scale : float
-            Length scale
-
-        Returns
-        -------
-        K : ndarray of shape (n_samples_X, n_samples_Y)
-            1D kernel matrix
-        grad : ndarray of shape (n_samples_X, n_samples_Y)
-            Gradient w.r.t. log(length_scale)
-        """
-        # Compute squared distances
+        """The kernel of one input, for X and Y of shape (n, 1), and its gradient
+        with respect to log(length_scale)."""
         dists_sq = np.sum((X[:, np.newaxis, :] - Y[np.newaxis, :, :]) ** 2, axis=2) / (length_scale ** 2)
 
         if self.base_kernel == 'rbf':
@@ -628,23 +364,8 @@ class AdditiveKernel(Kernel):
         return K, grad
 
     def diag(self, X):
-        """Returns the diagonal of the kernel k(X, X).
-
-        For additive kernels, the diagonal equals the number of terms,
-        assuming each 1D kernel has diag = 1.
-
-        Parameters
-        ----------
-        X : ndarray of shape (n_samples, n_features)
-            Argument to the kernel
-
-        Returns
-        -------
-        K_diag : ndarray of shape (n_samples,)
-            Diagonal of K(X, X)
-        """
-        # Each 1D kernel contributes 1 on the diagonal
-        # Total diagonal = number of terms
+        """The diagonal of k(X, X): the number of terms, as each one-dimensional
+        kernel is 1 there."""
         return np.full(X.shape[0], self.n_terms)
 
     def is_stationary(self):
@@ -652,7 +373,6 @@ class AdditiveKernel(Kernel):
         return True
 
     def __repr__(self):
-        # Check if all length scales are the same
         if len(np.unique(self.length_scale)) == 1:
             ls_repr = f"{self.length_scale[0]:.3g}"
         else:
@@ -665,53 +385,26 @@ class AdditiveKernel(Kernel):
 
 
 class NewtonGirardAdditiveKernel(Kernel):
-    """Additive RBF kernel with per-order variances, via Newton-Girard recursion.
+    """Additive kernel with a variance per interaction order.
 
-    Models the target as a sum of interaction terms grouped by *order*::
+        k(x, x') = sum_{q=1}^{Q} order_std_q^2 * e_q(z_1, ..., z_d)
 
-        k(x, x') = sum_{q=1}^{Q} sigma_q^2 * e_q(z_1, ..., z_d)
-
-    where ``z_i = exp(-(x_i - x'_i)^2 / (2 l_i^2))`` is a per-dimension RBF and ``e_q``
-    is the elementary symmetric polynomial of order q in ``(z_1, ..., z_d)``. The
-    ``e_q`` are computed from power sums via the Newton-Girard identities in
-    ``O(d * Q)`` -- never by enumerating the ``C(d, q)`` interaction terms -- so the
-    kernel has only ``d`` length scales + ``Q`` order-variances (``O(d)``
-    hyperparameters) and costs ``O(d * Q * n^2)`` to evaluate.
-
-    This is the data-efficient way to exploit low interaction order: an additive
-    (order-1) or low-order model needs far fewer samples than the fully-interacting
-    product kernel (the standard ARD RBF), which this strictly generalises -- the
-    order-``d`` term *is* the product kernel. Truncating to small ``Q`` (e.g. 1 or 2),
-    optionally plus a Matern/RBF catch-all for higher orders, keeps it cheap while
-    letting marginal-likelihood optimisation choose how much of each order to use.
-
-    Unlike :class:`AdditiveKernel` (which enumerates ``combinations`` and so scales
-    as ``C(d, q)``), this kernel stays linear in ``d``.
+    ``z_i`` is a one-dimensional kernel of input ``i`` and ``e_q`` the
+    elementary symmetric polynomial of order ``q``: the sum of the products of
+    every ``q`` of the ``z_i``. The ``e_q`` are computed from power sums
+    (Newton-Girard identities), at a cost linear in the number of inputs. See
+    ``docs/design.md``.
 
     Parameters
     ----------
     length_scale : array-like of shape (n_features,)
-        Per-dimension length scales of the base kernel.
+        Length scale of each input.
     order_std : array-like of shape (max_order,)
-        Standard deviation (sqrt variance) for each interaction order ``1..Q``;
-        ``len(order_std)`` sets the maximum interaction order ``Q``.
+        Standard deviation of each interaction order ``1..Q``. Its length sets ``Q``.
     length_scale_bounds, order_std_bounds : pair of floats or "fixed"
-        Bounds for the respective hyperparameters.
+        Bounds of the hyperparameters.
     base : {"rbf", "matern"}, default="rbf"
-        Per-dimension base kernel. ``"rbf"`` (squared-exponential) is infinitely
-        smooth and is the best choice when the low-order structure is smooth;
-        ``"matern"`` (Matern-3/2, once differentiable) fits *rough* low-order
-        structure (kinks, sharp peaks) better. Both have a constant unit diagonal,
-        so only the smoothness of the modelled interactions changes.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> from pygptreeo.kernels import NewtonGirardAdditiveKernel
-    >>> from sklearn.gaussian_process.kernels import ConstantKernel, Matern
-    >>> # order-2 additive component + a Matern catch-all, in 5-D
-    >>> k = (NewtonGirardAdditiveKernel(length_scale=[1.0] * 5, order_std=[1.0, 1.0])
-    ...      + ConstantKernel(1.0) * Matern(length_scale=[1.0] * 5, nu=1.5))
+        The one-dimensional kernel: RBF, or Matern with nu=1.5 for a rougher target.
     """
 
     def __init__(self, length_scale, order_std,
@@ -734,13 +427,8 @@ class NewtonGirardAdditiveKernel(Kernel):
                               len(np.atleast_1d(self.order_std)))
 
     def _components(self, X, Y):
-        """Per-dimension base kernels Z_i and their log-length-scale derivatives G_i.
-
-        The per-dimension base is selected by ``self.base``:
-        ``"rbf"`` uses ``Z_i = exp(-D_i / 2 l_i^2)`` (infinitely smooth), ``"matern"``
-        uses a Matern-3/2 ``Z_i = (1 + sqrt3 r_i) exp(-sqrt3 r_i)`` with
-        ``r_i = sqrt(D_i)/l_i`` (once differentiable). ``G_i = dZ_i / dlog l_i``.
-        """
+        """The one-dimensional kernels Z_i of the inputs, their derivatives G_i with
+        respect to log(length_scale_i), and the length scales."""
         ls = np.atleast_1d(self.length_scale)
         Zs, Gs = [], []
         for i in range(X.shape[1]):
@@ -822,70 +510,22 @@ class NewtonGirardAdditiveKernel(Kernel):
 
 
 class AdditivePeriodicKernel(Kernel):
-    """Order-1 additive periodic kernel: a sum of per-dimension periodic kernels.
+    """Sum of one periodic kernel per input.
 
-    Models the target as a sum of independent per-dimension periodic terms::
+        k(x, x') = sum_{i=1}^{d} exp(-2 sin^2(pi (x_i - x'_i) / period_i) / length_scale_i^2)
 
-        k(x, x') = sum_{i=1}^{d}  exp(-2 sin^2(pi (x_i - x'_i) / p_i) / l_i^2)
-
-    i.e. an ``ExpSineSquared`` (periodic) kernel applied *separately* to each input
-    coordinate, with its own period ``p_i`` and length scale ``l_i``. This is the
-    periodic analogue of an order-1 additive (main-effects) kernel: it captures
-    per-dimension periodicity with only ``2 d`` hyperparameters and a constant unit
-    -per-dimension diagonal (``diag = d``).
-
-    Why *per dimension*: scikit-learn's :class:`~sklearn.gaussian_process.kernels.ExpSineSquared`
-    applies the periodic correlation to the **Euclidean** distance, which is only
-    positive-definite in one dimension; on multidimensional inputs it is not a valid
-    (PSD) kernel. Building the periodic kernel as a sum of one-dimensional terms, as
-    here, keeps it positive-definite for any ``d`` and additionally lets each
-    dimension have a different period.
-
-    As ``p_i`` grows past the data span the term degrades gracefully toward an RBF
-    (``sin(pi r / p) ~ pi r / p`` for small argument), so the kernel "switches off"
-    periodicity in dimensions that show less than one cycle. To get a useful
-    *general-purpose* leaf kernel, pair it with a non-periodic catch-all (Matern or
-    RBF) that absorbs trend / coupling / residual; see
-    :func:`AdditivePeriodicMaternKernel`.
-
-    This kernel pays off only when the target has *additive* periodic structure whose
-    period is short enough to be visible inside a single GP-tree leaf. Long-period
-    (low-frequency) oscillations look like a smooth trend at leaf scale and are
-    already handled by the standard additive / stationary kernels; coupled or
-    amplitude-modulated periodicity is not additive and is better left to a
-    stationary catch-all.
+    Each input has its own period and length scale. See ``docs/design.md``.
 
     Parameters
     ----------
     length_scale : array-like of shape (n_features,)
-        Per-dimension length scale ``l_i`` controlling the "wiggliness" within one
-        period (small ``l_i`` -> sharp periodic peaks; large ``l_i`` -> nearly
-        sinusoidal).
+        Length scale of each input within one period: small for sharp peaks,
+        large for a nearly sinusoidal term.
     period : array-like of shape (n_features,)
-        Per-dimension period ``p_i`` of the oscillation in each input coordinate.
-    length_scale_bounds : pair of floats >= 0 or "fixed", default=(1e-1, 1e1)
-        Bounds on the length scales. With per-leaf standardisation these live in
-        (roughly) unit-variance input space.
-    period_bounds : pair of floats >= 0 or "fixed", default=(1e-1, 1e1)
-        Bounds on the periods, in the same (standardised) input space. The upper
-        bound should comfortably exceed a leaf's input span so the kernel can reach
-        the RBF-like (effectively non-periodic) regime when a dimension shows less
-        than one cycle.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> from pygptreeo.kernels import AdditivePeriodicKernel
-    >>> from sklearn.gaussian_process.kernels import ConstantKernel, Matern
-    >>> d = 4
-    >>> # additive periodic main effects + a Matern catch-all, in 4-D
-    >>> k = (ConstantKernel() * AdditivePeriodicKernel(length_scale=[1.0] * d,
-    ...                                                 period=[1.0] * d)
-    ...      + ConstantKernel() * Matern(length_scale=[1.0] * d, nu=1.5))
-
-    See Also
-    --------
-    AdditivePeriodicMaternKernel : shorthand pairing this with a Matern catch-all.
+        Period of each input.
+    length_scale_bounds, period_bounds : pair of floats >= 0 or "fixed", default=(1e-1, 1e1)
+        Bounds of the hyperparameters, in the units of the inputs that the GP
+        is fitted to (standardised ones in a leaf).
     """
 
     def __init__(self, length_scale, period,
@@ -994,88 +634,44 @@ def AdditiveMaternKernel(
     constant_value_bounds=(1e-5, 1e5),
     matern_length_scale_bounds=(1e-5, 1e5),
 ):
-    """Shorthand for the sample-efficient additive + Matern catch-all kernel.
+    """An additive kernel plus a Matern kernel:
 
-    This is a convenience constructor for the leaf kernel recommended in the
-    README: a low-order :class:`NewtonGirardAdditiveKernel` (main effects +
-    low-order interactions, with only ``O(d)`` hyperparameters) summed with a
-    *separate* anisotropic Matern "catch-all" that has its own length scales and
-    absorbs any higher-order or rougher residual::
+        NewtonGirardAdditiveKernel(order) + ConstantKernel() * Matern(nu)
 
-        k(x, x') = NewtonGirardAdditiveKernel(order=Q)
-                   + ConstantKernel() * Matern(nu)
-
-    The additive component makes the kernel sample-efficient on functions that
-    decompose into low-dimensional terms, while the Matern component keeps it a
-    safe general-purpose choice: when there is no low-order structure to exploit,
-    marginal-likelihood optimisation simply down-weights the additive amplitudes
-    and the kernel degrades gracefully to the plain Matern. All hyperparameters
-    (the additive length scales and per-order variances, the Matern length
-    scales, and the catch-all amplitude) are tuned together when the host
-    :class:`~sklearn.gaussian_process.GaussianProcessRegressor` is fitted.
-
-    The returned object is an ordinary scikit-learn composite kernel (a
-    :class:`~sklearn.gaussian_process.kernels.Sum`), so it plugs directly into
-    :func:`~pygptreeo.Default_GPR`, :class:`~pygptreeo.GPTree`, and any
-    ``GaussianProcessRegressor``, and supports cloning, hyperparameter
-    optimisation, and per-dimension length-scale extraction unchanged.
+    The additive part models main effects and interactions of up to ``order``
+    inputs. The Matern part has its own length scales and models the rest.
+    See ``docs/design.md``.
 
     Parameters
     ----------
     d : int
-        Input dimensionality (number of features). Must be a positive integer.
+        Number of inputs.
     order : int, default=2
-        Maximum interaction order ``Q`` of the additive component. ``1`` gives a
-        purely additive (main-effects) model, ``2`` adds pairwise interactions,
-        and so on. Must satisfy ``1 <= order <= d`` (``order=d`` makes the top
-        additive term equivalent to the full ARD product kernel).
+        Largest interaction order of the additive part, from 1 to ``d``.
     nu : float, default=1.5
-        Smoothness parameter of the Matern catch-all (e.g. ``0.5``, ``1.5``,
-        ``2.5``, or ``np.inf`` for the RBF limit). Held fixed during fitting, as
-        usual for scikit-learn's ``Matern``.
+        Smoothness of the Matern part.
     base : {"rbf", "matern"}, default="rbf"
-        Per-dimension base kernel of the additive component. Use ``"rbf"`` when the
-        target's low-order (additive / pairwise) structure is expected to be smooth,
-        and ``"matern"`` (Matern-3/2) when it is expected to be rough (kinks, sharp
-        peaks). Only the additive component's smoothness changes; the Matern
-        catch-all is unaffected.
+        One-dimensional kernel of the additive part (see ``NewtonGirardAdditiveKernel``).
     length_scale : float or array-like of shape (d,), default=1.0
-        Initial per-dimension length scales of the additive component. A scalar
-        is broadcast to all ``d`` dimensions.
+        Initial length scales of the additive part.
     order_std : float or array-like of shape (order,), default=1.0
-        Initial standard deviation (sqrt-variance) for each interaction order
-        ``1..order`` of the additive component. A scalar is broadcast to all
-        ``order`` entries.
+        Initial standard deviation of each order of the additive part.
     constant_value : float, default=1.0
-        Initial amplitude (variance) of the ``ConstantKernel`` multiplying the
-        Matern catch-all.
+        Initial variance of the Matern part.
     matern_length_scale : float or array-like of shape (d,), default=1.0
-        Initial per-dimension length scales of the Matern catch-all. These are
-        independent of ``length_scale``. A scalar is broadcast to all ``d``
-        dimensions.
-    length_scale_bounds, order_std_bounds : pair of floats or "fixed"
-        Bounds for the additive component's length scales and per-order standard
-        deviations. Defaults match :class:`NewtonGirardAdditiveKernel`.
-    constant_value_bounds : pair of floats or "fixed", default=(1e-5, 1e5)
-        Bounds for the catch-all amplitude.
-    matern_length_scale_bounds : pair of floats or "fixed", default=(1e-5, 1e5)
-        Bounds for the Matern catch-all's length scales.
+        Initial length scales of the Matern part.
+    length_scale_bounds, order_std_bounds, constant_value_bounds, matern_length_scale_bounds : pair of floats or "fixed"
+        Bounds of the hyperparameters.
 
     Returns
     -------
     sklearn.gaussian_process.kernels.Sum
-        The composite kernel ``additive + constant * matern``.
 
     Examples
     --------
     >>> from pygptreeo import GPTree, Default_GPR, AdditiveMaternKernel
-    >>>
-    >>> # Order-2 additive (main effects + pairwise) + Matern catch-all, in 4-D
     >>> kernel = AdditiveMaternKernel(d=4, order=2)
     >>> gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
-    >>>
-    >>> # Purely additive (main effects only), custom initial length scales
-    >>> kernel = AdditiveMaternKernel(d=5, order=1, length_scale=0.5)
     """
     # ---- Validate the structural parameters --------------------------------
     if int(d) != d or d < 1:
@@ -1127,82 +723,34 @@ def AdditivePeriodicMaternKernel(
     constant_value_bounds=(1e-5, 1e5),
     catch_all_length_scale_bounds=(1e-5, 1e5),
 ):
-    """Shorthand for an additive-periodic leaf kernel + a non-periodic catch-all.
+    """A periodic kernel per input plus a kernel that is not periodic:
 
-    A convenience constructor for the periodic leaf kernel: an amplitude-scaled
-    order-1 :class:`AdditivePeriodicKernel` (per-dimension periodic main effects)
-    summed with a *separate* non-periodic "catch-all" (an anisotropic Matern, or an
-    RBF) that absorbs any non-periodic trend, coupling, or residual::
+        ConstantKernel() * AdditivePeriodicKernel() + ConstantKernel() * Matern(nu)
 
-        k(x, x') = ConstantKernel() * AdditivePeriodicKernel(period per dim)
-                   + ConstantKernel() * catch_all(nu)
-
-    Use this when the target is expected to have **additive periodic structure**
-    (each input coordinate oscillates) whose period is short enough to be visible
-    inside a single GP-tree leaf -- i.e. high-frequency oscillation relative to how
-    densely the leaf covers the input space. For such targets the periodic term is
-    far more sample-efficient than a generic stationary kernel. It is *not* a better
-    default: long-period (low-frequency) oscillation looks like a smooth trend at
-    leaf scale -- the standard :func:`AdditiveMaternKernel` already handles that --
-    and coupled / amplitude-modulated periodicity is not additive, so a stationary
-    Matern+RBF kernel is preferable there. When the periodicity is not exploitable
-    the periods simply optimise toward the RBF-like regime and the periodic
-    amplitude is down-weighted, so the kernel degrades gracefully.
-
-    The catch-all smoothness should follow the *non-oscillatory* residual: keep the
-    default Matern (``catch_all="matern"``) for a rough residual, or use
-    ``catch_all="rbf"`` when the residual / trend is smooth.
-
-    The returned object is an ordinary scikit-learn composite kernel, so it plugs
-    directly into :func:`~pygptreeo.Default_GPR`, :class:`~pygptreeo.GPTree`, and any
-    ``GaussianProcessRegressor``.
+    For a target that is periodic in each input, with periods short enough to
+    show within a leaf. The second part models the rest. See ``docs/design.md``.
 
     Parameters
     ----------
     d : int
-        Input dimensionality (number of features). Must be a positive integer.
+        Number of inputs.
     nu : float, default=1.5
-        Smoothness of the Matern catch-all (ignored when ``catch_all="rbf"``).
+        Smoothness of the Matern part (not used with ``catch_all="rbf"``).
     catch_all : {"matern", "rbf"}, default="matern"
-        Non-periodic catch-all component. ``"matern"`` (nu as given) for a rough
-        residual; ``"rbf"`` for a smooth residual / trend.
-    length_scale : float or array-like of shape (d,), default=1.0
-        Initial per-dimension length scales of the periodic component.
-    period : float or array-like of shape (d,), default=1.0
-        Initial per-dimension periods of the periodic component.
-    periodic_constant_value : float, default=1.0
-        Initial amplitude (variance) of the ``ConstantKernel`` multiplying the
-        periodic component.
-    constant_value : float, default=1.0
-        Initial amplitude (variance) of the ``ConstantKernel`` multiplying the
-        catch-all.
+        The part that is not periodic: a Matern kernel, or an RBF kernel for a
+        smooth one.
+    length_scale, period : float or array-like of shape (d,), default=1.0
+        Initial length scales and periods of the periodic part.
+    periodic_constant_value, constant_value : float, default=1.0
+        Initial variances of the periodic part and of the other part.
     catch_all_length_scale : float or array-like of shape (d,), default=1.0
-        Initial per-dimension length scales of the catch-all (independent of the
-        periodic component's ``length_scale``).
-    length_scale_bounds, period_bounds : pair of floats or "fixed"
-        Bounds for the periodic component's length scales and periods, in the
-        (standardised) input space (defaults match :class:`AdditivePeriodicKernel`).
-    periodic_constant_value_bounds, constant_value_bounds : pair of floats or "fixed"
-        Bounds for the periodic and catch-all amplitudes.
-    catch_all_length_scale_bounds : pair of floats or "fixed", default=(1e-5, 1e5)
-        Bounds for the catch-all's length scales.
+        Initial length scales of the part that is not periodic.
+    length_scale_bounds, period_bounds, periodic_constant_value_bounds, constant_value_bounds, catch_all_length_scale_bounds : pair of floats or "fixed"
+        Bounds of the hyperparameters.
 
     Returns
     -------
     sklearn.gaussian_process.kernels.Sum
-        The composite kernel ``constant * additive_periodic + constant * catch_all``.
-
-    Examples
-    --------
-    >>> from pygptreeo import GPTree, Default_GPR
-    >>> from pygptreeo.kernels import AdditivePeriodicMaternKernel
-    >>>
-    >>> # additive periodic main effects + a Matern catch-all, in 4-D
-    >>> kernel = AdditivePeriodicMaternKernel(d=4)
-    >>> gpt = GPTree(GPR=Default_GPR(kernel=kernel, alpha=1e-6), Nbar=100)
-    >>>
-    >>> # smooth non-periodic residual -> RBF catch-all
-    >>> kernel = AdditivePeriodicMaternKernel(d=4, catch_all="rbf")
     """
     if int(d) != d or d < 1:
         raise ValueError(f"d must be a positive integer, got {d!r}")

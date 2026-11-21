@@ -30,21 +30,8 @@ class GPRegressorInterface(ABC):
 
     @abstractmethod
     def fit(self, X: np.ndarray, y: np.ndarray) -> 'GPRegressorInterface':
-        """
-        Train the GP on the provided data.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Training input data of shape (n_samples, n_features).
-        y : np.ndarray
-            Training target values of shape (n_samples,) or (n_samples, 1).
-
-        Returns
-        -------
-        self : GPRegressorInterface
-            The fitted GP regressor instance.
-        """
+        """Train the GP on the inputs ``X``, of shape (n_samples, n_features), and
+        the targets ``y``, of shape (n_samples,) or (n_samples, 1). Returns ``self``."""
         pass
 
     @abstractmethod
@@ -53,96 +40,36 @@ class GPRegressorInterface(ABC):
         X: np.ndarray,
         return_std: bool = False
     ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
-        """
-        Make predictions at test points.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Test input data of shape (n_samples, n_features).
-        return_std : bool, default=False
-            If True, return both mean predictions and standard deviations.
-            If False, return only mean predictions.
-
-        Returns
-        -------
-        y_mean : np.ndarray
-            Mean predictions of shape (n_samples,) or (n_samples, 1).
-        y_std : np.ndarray, optional
-            Standard deviations of shape (n_samples,) or (n_samples, 1).
-            Only returned if return_std=True.
-        """
+        """The predicted mean at the points ``X``, of shape (n_samples, n_features),
+        and with ``return_std`` also the standard deviation. Both have shape
+        (n_samples,) or (n_samples, 1)."""
         pass
 
     @abstractmethod
     def is_trained(self) -> bool:
-        """
-        Check whether the GP has been trained on data.
-
-        Returns
-        -------
-        bool
-            True if the GP has been fitted, False otherwise.
-        """
+        """Whether the GP has been fitted."""
         pass
 
     @abstractmethod
     def set_observation_noise(self, alpha: Union[float, np.ndarray]) -> None:
-        """
-        Set the observation noise levels for training data.
-
-        This is used to specify per-observation noise variances or a single
-        global noise level. The noise is applied during the next fit() call.
-
-        Parameters
-        ----------
-        alpha : float or np.ndarray
-            If float: a single noise level applied to all observations.
-            If array: per-observation noise levels of shape (n_samples,).
-        """
+        """Set the noise variances of the training points for the next ``fit``: one
+        number for all points, or an array of shape (n_samples,)."""
         pass
 
     @abstractmethod
     def clone(self) -> 'GPRegressorInterface':
-        """
-        Create a deep copy of this GP regressor.
-
-        This is used when creating child nodes in the tree, which need
-        independent copies of the parent's GP configuration.
-
-        Returns
-        -------
-        GPRegressorInterface
-            A deep copy of this GP regressor instance.
-        """
+        """A deep copy of this GP. The two children of a split node each get one."""
         pass
 
     @abstractmethod
     def get_kernel(self):
-        """
-        Get the kernel object or trained kernel parameters.
-
-        This is used for hyperparameter inheritance when creating child nodes.
-
-        Returns
-        -------
-        kernel
-            The kernel object. The exact type depends on the GP implementation.
-        """
+        """The kernel, fitted if the GP is. Its type depends on the backend. Used for
+        hyperparameter inheritance."""
         pass
 
     @abstractmethod
     def set_kernel(self, kernel) -> None:
-        """
-        Set the kernel object or trained kernel parameters.
-
-        This is used for hyperparameter inheritance when creating child nodes.
-
-        Parameters
-        ----------
-        kernel
-            The kernel object to set. The exact type depends on the GP implementation.
-        """
+        """Set the kernel. Used for hyperparameter inheritance."""
         pass
 
     def supports_multitarget(self) -> bool:

@@ -90,6 +90,38 @@ direction: the leaf resolves more dimensions than the target has.
   targets the error was 7 to 20% higher than with the default leaves, where
   the leave-one-out error of 100 points decides on 6 to 45 entries.
 
+## Additive and periodic leaf kernels
+
+* **An additive kernel needs fewer points where the target has its
+  structure.** `NewtonGirardAdditiveKernel` models the target as a sum of
+  terms that each depend on a few inputs: main effects (order 1), pairs
+  (order 2) and so on, with one variance per order. A model of low order
+  needs far fewer points than the kernel of the product of all inputs, which
+  is its term of order `d`.
+* **Its cost is linear in the number of inputs.** The terms of one order add
+  up to an elementary symmetric polynomial of the one-dimensional kernels of
+  the inputs, and these follow from power sums by the Newton-Girard
+  identities. The kernel has `d` length scales and one variance per order.
+  `AdditiveKernel` evaluates every term, and its cost grows with their
+  number, `C(d, order)`.
+* **A Matern kernel beside it** (`AdditiveMaternKernel`). The Matern part has
+  its own length scales and models what the additive part does not describe:
+  interactions of higher order and rougher structure. Where the target has
+  no additive structure the fit gives the additive part a small variance,
+  and the kernel acts as the Matern kernel, at a longer run time.
+* **A periodic kernel per input** (`AdditivePeriodicKernel`). The periodic
+  kernel of scikit-learn (`ExpSineSquared`) takes the Euclidean distance
+  between two points and is positive definite in one dimension only. A sum
+  of one-dimensional periodic kernels is positive definite in any dimension,
+  and each input has its own period. Where a period grows beyond the range
+  of the points its term tends to an RBF kernel.
+* **Where the periodic kernel pays off** (`AdditivePeriodicMaternKernel`).
+  Where the target is a sum of periodic terms whose periods show within a
+  single leaf. A longer period looks like a trend within a leaf, which the
+  other kernels describe, and an oscillation whose amplitude or phase
+  depends on other inputs is not a sum of such terms. The second part of the
+  kernel, a Matern or an RBF kernel, models the trend and the rest.
+
 ## The global model
 
 `GPTree(global_mean=...)` gives the tree one shared model whose residual the

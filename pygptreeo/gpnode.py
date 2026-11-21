@@ -101,75 +101,50 @@ class GPNode(Node):
         """Initializes a GPNode.
 
         Args:
-            *args: Arguments passed to the `binarytree.Node` parent class constructor.
-                Typically, the first argument is the initial `value` for the node,
-                which corresponds to `n_points`.
-            my_GPR (GPRegressorInterface): The Gaussian Process Regressor instance
-                to be used by this node.
-            Nbar (Optional[int]): The maximum number of training points this node
-                can hold before it considers splitting. Defaults to 100.
-            split_position_method (str): The method used to determine the split
-                position when the node splits. Valid options include 'median',
-                'mean', 'random', 'randomchoice'. Defaults to 'median'.
-            retrain_every_n_points (int): Specifies how many new data points
-                should be accumulated in the buffer before the node's GPR is
-                retrained. Defaults to 1.
-            name (str): A string identifier for the node, often representing its
-                path from the root (e.g., "0", "01"). Defaults to "0".
-            split_dimension_criteria (str): The method used to determine the
-                split dimension. Valid options: 'max_spread' (split on dimension with
-                largest range), 'max_variance' (split on dimension with highest variance),
-                'max_uncertainty' (split on dimension where GP is most uncertain),
-                'min_lengthscale' (split on dimension with the smallest fitted ARD
-                length scale, i.e. where the GP says the function varies fastest;
-                pooled over all of the node's GPs for multi-output; falls back to
-                'max_spread' when no per-dimension length scales are available),
-                'random' (random dimension). Defaults to 'min_lengthscale'.
-            use_standard_scaling (Optional[bool]): If True, standardizes both X and y
-                data before fitting the GP and inverse transforms predictions.
-                Defaults to False. Cannot be used together with use_hyperparameter_inheritance.
-            use_hyperparameter_inheritance (Optional[bool]): If True, child nodes inherit
-                their parent's optimized kernel hyperparameters as starting values.
-                Defaults to True. Cannot be used together with use_standard_scaling.
-            enable_point_merging (Optional[bool]): If True, merges new points with nearby
-                existing points via weighted averaging. Defaults to False.
-            merge_distance_threshold (Optional[float]): Distance threshold below which points
-                are merged. Measured as Euclidean distance in input space. Defaults to 0.01.
-            min_points_before_merging (Optional[int]): Minimum number of points required
-                before merging starts. Defaults to 10.
-            n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
-            output_model (Optional[str]): How several outputs are modelled (ignored for
-                n_outputs=1). 'independent': one GP per output, each with its own kernel
-                hyperparameters and per-output standardisation. 'shared': one GP with a
-                single shared kernel for all outputs (2-D target) and a common output
-                scale; needs a backend with ``supports_multitarget()``. 'pca': the
-                outputs are projected on a tree-global linear basis (``output_basis``)
-                and one GP is trained per basis score; predictions are mapped back to
-                output space with propagated variances. 'aligned': as 'shared', for
-                outputs that are a curve on a grid; the node also learns a warp of
-                the grid that aligns the features of its curves, and keeps it if
-                it lowers their leave-one-out error (see ``output_alignment``).
-                Defaults to 'independent'.
-            output_basis (Optional[OutputBasisLearner]): The tree-global output basis
-                learner, shared by reference between all nodes. Required for 'pca'.
-            global_mean (Optional[GlobalMeanLearner]): The tree-wide global model
-                learner, shared by reference between all nodes, or None (default).
-                When present, the node's GPs model the residual of the learner's
-                current snapshot: the snapshot is subtracted from the raw targets at
-                fit time, added back at predict time, and remembered per node. A
-                node that is asked to predict while a newer snapshot exists refits
-                against it first (see ``predict``).
+            *args: Passed to `binarytree.Node`: the value of the node, which is
+                its number of points.
+            my_GPR (GPRegressorInterface): The GP regressor of the node, or the
+                template of its regressors.
+            Nbar, split_dimension_criteria, splitting_strategy, n_outputs,
+                output_model, output_shape: As for `GPTree`.
+            split_position_method (str): Where a node is split along the chosen
+                input: at the 'median' (default) or the 'mean' of its points, at
+                a 'random' position within their range, or at one of the points
+                chosen at random ('randomchoice').
+            retrain_every_n_points (int): Number of new points after which the
+                node's GPs are fitted again. Defaults to 100.
+            name (str): Identifier of the node: its path from the root ("0",
+                "01", "010"). Defaults to "0".
+            use_standard_scaling (Optional[bool]): If True (default), the inputs
+                and targets are standardised before a fit, and the predictions
+                transformed back. Not together with
+                use_hyperparameter_inheritance.
+            use_hyperparameter_inheritance (Optional[bool]): If True, the fits
+                of the children of a split start from the fitted kernel
+                hyperparameters of their parent. Defaults to False. Not together
+                with use_standard_scaling.
+            enable_point_merging (Optional[bool]): If True, a new point is
+                merged with a stored point close to it, by a weighted average.
+                Defaults to False.
+            merge_distance_threshold (Optional[float]): Euclidean distance in
+                the inputs below which points are merged. Defaults to 0.01.
+            min_points_before_merging (Optional[int]): Number of points that a
+                node holds before any are merged. Defaults to 10.
+            output_basis (Optional[OutputBasisLearner]): The tree's basis of the
+                outputs, shared by all nodes. Required for 'pca'.
+            global_mean (Optional[GlobalMeanLearner]): The tree's global model,
+                shared by all nodes, or None (default). The node's GPs then
+                model the residual of its current snapshot.
             neighbours (Optional[NeighbourSearch]): The tree's search for the
                 stored points nearest to a query, with which the node predicts
                 from those points (see ``predict``), or None (default).
-            my_GPRs (Optional[list]): Explicit list of GP regressors for this node
-                (used when creating children: one clone per parent GP). If None, the
-                list is built from ``my_GPR`` according to ``output_model``.
+            my_GPRs (Optional[list]): The GP regressors of the node. By default
+                they are made from ``my_GPR`` according to ``output_model``. A
+                split gives each child a copy of those of its parent.
         """
 
         super().__init__(*args)
 
-        # Validate that both use_standard_scaling and use_hyperparameter_inheritance are not enabled
         if use_standard_scaling and use_hyperparameter_inheritance:
             raise ValueError(
                 "Cannot use both use_standard_scaling=True and use_hyperparameter_inheritance=True. "
@@ -309,15 +284,8 @@ class GPNode(Node):
     # such that the value of a node is the number of training points
     @n_points.setter
     def n_points(self, value):
-        """Sets the number of training points for this node.
-
-        This also updates the `value` attribute inherited from the
-        `binarytree.Node` parent class, which is used for display
-        purposes in the tree structure.
-
-        Args:
-            value (int): The new number of training points.
-        """
+        """Sets the number of points, which is the value of the node in
+        `binarytree`."""
         self.value = value
 
 
@@ -326,11 +294,11 @@ class GPNode(Node):
         self.n_features = n_features
 
         self.my_X_data = np.array([]).reshape((0, n_features))
-        self.my_y_data = np.array([]).reshape((0, self.n_outputs))  # Multi-output support
+        self.my_y_data = np.array([]).reshape((0, self.n_outputs))
         self.my_sigma_data = np.array([]).reshape((0, self.n_outputs))  # Per-point uncertainties per output
 
         self.shared_X_data = np.array([]).reshape((0, n_features))
-        self.shared_y_data = np.array([]).reshape((0, self.n_outputs))  # Multi-output support
+        self.shared_y_data = np.array([]).reshape((0, self.n_outputs))
         self.shared_sigma_data = np.array([]).reshape((0, self.n_outputs))  # Shared uncertainties per output
 
         self.n_points_since_retrain = 0
@@ -390,28 +358,22 @@ class GPNode(Node):
         self.left.sigma_scalers = self.sigma_scalers.copy()
         self.right.sigma_scalers = self.sigma_scalers.copy()
 
-        # Inherit parent's optimized kernel hyperparameters if enabled
-        # This gives children a warm-start for their GP optimization
+        # With hyperparameter inheritance the fits of the children start from the
+        # parent's fitted kernels
         if self.use_hyperparameter_inheritance:
-            # For each GP (output or score), copy the trained kernel to the children
             for i, gpr in enumerate(self.my_GPRs):
                 if gpr.is_trained():
-                    # Copy the parent's optimized kernel to the children
-                    # This preserves learned length scales, amplitudes, etc.
                     trained_kernel = gpr.get_kernel()
                     self.left.my_GPRs[i].set_kernel(deepcopy(trained_kernel))
                     self.right.my_GPRs[i].set_kernel(deepcopy(trained_kernel))
             logger.debug("Inherited hyperparameters for %d output(s) from node %s to children %s and %s",
                          self.n_outputs, self.name, self.left.name, self.right.name)
 
-        # Copy scalers so children can use parent's GP correctly
-        # The children get a copy of the parent's trained GP, which was trained on
-        # scaled data using the parent's scalers. So children need the same scalers
-        # to properly scale inputs before prediction.
+        # The children predict with copies of the parent's GPs, which were fitted to
+        # scaled data, so they need the parent's scalers
         if self.use_standard_scaling and self.X_scaler is not None:
             self.left.X_scaler = deepcopy(self.X_scaler)
             self.right.X_scaler = deepcopy(self.X_scaler)
-            # Copy y_scalers (list for multi-output)
             self.left.y_scalers = [deepcopy(scaler) if scaler is not None else None for scaler in self.y_scalers]
             self.right.y_scalers = [deepcopy(scaler) if scaler is not None else None for scaler in self.y_scalers]
             self.left.y_common_scaler = deepcopy(self.y_common_scaler)
@@ -442,21 +404,12 @@ class GPNode(Node):
 
     def store_point(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray],
                     increment_buffer=True):
-        """ Add a single data point to the node. A node with shared points from
-        gradual splitting drops the last of them for it.
+        """Add a data point to the node. A node with shared points from gradual
+        splitting drops the last of them for it.
 
-        Parameters
-        ----------
-        x : np.ndarray
-            Input features (shape: 1 x n_features)
-        y : float or np.ndarray
-            Target value(s). For single output: float or shape (1, 1) or (1,)
-            For multi-output: shape (1, n_outputs) or (n_outputs,)
-        sigma : float or np.ndarray
-            Uncertainty (standard deviation) for this point.
-            Can be a scalar (same for all outputs) or array (per-output)
-        increment_buffer : bool
-            Whether to increment the retrain buffer
+        ``x`` has shape (1, n_features). ``y`` and ``sigma`` (a standard
+        deviation) are a float, or an array with a value per output. With
+        ``increment_buffer=False`` the point does not count towards the next fit.
         """
         # Ensure y has the right shape (1, n_outputs)
         if isinstance(y, (int, float, np.floating)):
@@ -468,13 +421,11 @@ class GPNode(Node):
 
         # Ensure sigma has the right shape (1, n_outputs)
         if isinstance(sigma, (int, float, np.floating)):
-            # Scalar sigma - broadcast to all outputs
             sigma = np.full((1, self.n_outputs), sigma)
         else:
             sigma = np.atleast_2d(sigma)
             if sigma.shape[0] != 1:
                 sigma = sigma.reshape(1, -1)
-            # If sigma has only one value but we have multiple outputs, broadcast
             if sigma.shape[1] == 1 and self.n_outputs > 1:
                 sigma = np.tile(sigma, (1, self.n_outputs))
 
@@ -482,7 +433,6 @@ class GPNode(Node):
         self.my_X_data = np.vstack((x, self.my_X_data))
         self.my_y_data = np.vstack((y, self.my_y_data))
         self.my_sigma_data = np.vstack((sigma, self.my_sigma_data))
-        # Track merge count for this new point (starts at 0)
         if self.merge_counts is not None:
             self.merge_counts = np.vstack((np.array([[0]]), self.merge_counts))
         self.n_points += 1
@@ -500,20 +450,15 @@ class GPNode(Node):
         """ Assign the training samples of a node to its child nodes. """
         for x, y, sigma in zip(self.my_X_data, self.my_y_data, self.my_sigma_data):
             x = x.reshape((1, x.shape[0]))
-            y = y.reshape((1, self.n_outputs))  # Multi-output support
-            sigma = sigma.reshape((1, self.n_outputs))  # Multi-output support
+            y = y.reshape((1, self.n_outputs))
+            sigma = sigma.reshape((1, self.n_outputs))
             child = self.children[int(np.random.binomial(1, self.prob_func(x)[0][0]))]
             child.store_point(x, y, sigma, increment_buffer=False)
 
         
     def delete_data(self):
-        """Deletes the node's own and shared points.
-
-        This is typically called on a parent node after its data has been
-        successfully split and passed down to its children. This helps to
-        reduce memory consumption as the tree grows, as only leaf nodes
-        or nodes about to be split actively need to store their full datasets.
-        """
+        """Deletes the node's own and shared points. For a node that has been
+        split: only leaves hold points."""
         del self.my_X_data
         del self.my_y_data
         del self.my_sigma_data
@@ -524,30 +469,18 @@ class GPNode(Node):
 
 
     def delete_my_GPR(self):
-        """Deletes the Gaussian Process Regressor instances (my_GPRs) from the node.
-
-        This method is typically called on a node after it has been split and
-        is no longer a leaf node. Non-leaf nodes usually do not need to
-        maintain their GPR model once their responsibilities have been passed
-        to their children, thus saving memory.
-        """
+        """Deletes the node's GP regressors (my_GPRs). For a node that has been
+        split: only leaves hold GPs."""
         del self.my_GPRs
         self.alignment = None
 
 
     def find_nearest_neighbor(self, x: np.ndarray):
-        """Finds the nearest neighbor to x in the node's training data.
-
-        Args:
-            x (np.ndarray): Input point to find nearest neighbor for (shape: 1 x n_features)
-
-        Returns:
-            tuple: (index, distance) of nearest neighbor, or (None, None) if no data
-        """
+        """The index of the stored point nearest to ``x`` (shape (1, n_features))
+        and its Euclidean distance, or (None, None) for a node without points."""
         if self.n_points == 0:
             return None, None
 
-        # Compute Euclidean distances to all points
         distances = np.linalg.norm(self.my_X_data - x, axis=1)
         nearest_idx = np.argmin(distances)
         nearest_dist = distances[nearest_idx]
@@ -557,22 +490,11 @@ class GPNode(Node):
 
     def merge_with_point(self, x: np.ndarray, y: Union[float, np.ndarray],
                          sigma: Union[float, np.ndarray], nearest_idx: int):
-        """Merges new point (x, y, sigma) with existing point at nearest_idx via inverse-variance weighted averaging.
+        """Merge the point (x, y, sigma) into the stored point ``nearest_idx``.
 
-        Weights are based on per-point uncertainties (standard deviations):
-        - Lower uncertainty = higher weight (more confident measurement)
-        - Weight = 1 / σ²
-
-        For multi-output: merging is done independently for each output dimension.
-
-        Args:
-            x (np.ndarray): Input features of new point
-            y (float or np.ndarray): Target value(s) of new point
-            sigma (float or np.ndarray): Uncertainty (standard deviation) of new point
-            nearest_idx (int): Index of existing point to merge with
-
-        Returns:
-            bool: True if merge was successful
+        The inputs and the targets become averages weighted by the inverse
+        variances ``1 / sigma^2`` (for the inputs, by their mean over the
+        outputs), and the variance that of the weighted average. Returns True.
         """
         # Ensure y and sigma are arrays of shape (n_outputs,)
         if isinstance(y, (int, float, np.floating)):
@@ -587,12 +509,10 @@ class GPNode(Node):
             if sigma.shape[0] == 1 and self.n_outputs > 1:
                 sigma = np.tile(sigma, self.n_outputs)
 
-        # Get existing point
         x_old = self.my_X_data[nearest_idx:nearest_idx+1]
         y_old = self.my_y_data[nearest_idx, :]  # Shape: (n_outputs,)
         sigma_old = self.my_sigma_data[nearest_idx, :]  # Shape: (n_outputs,)
 
-        # Convert standard deviations to variances
         var_old = sigma_old ** 2
         var_new = sigma ** 2
 
@@ -602,26 +522,21 @@ class GPNode(Node):
         w_new = 1.0 / (var_new + epsilon)
         w_total = w_old + w_new
 
-        # Weighted average for x (same for all outputs)
         # Use average weight across outputs for x merging
         w_old_x = np.mean(w_old)
         w_new_x = np.mean(w_new)
         w_total_x = w_old_x + w_new_x
         x_merged = (w_old_x * x_old + w_new_x * x) / w_total_x
 
-        # Weighted average for y (per output)
         y_merged = (w_old * y_old + w_new * y) / w_total
 
-        # Merge variance and convert back to standard deviation (per output)
         var_merged = 1.0 / w_total
         sigma_merged = np.sqrt(var_merged)
 
-        # Update the existing point with merged values
         self.my_X_data[nearest_idx] = x_merged[0]
         self.my_y_data[nearest_idx, :] = y_merged
         self.my_sigma_data[nearest_idx, :] = sigma_merged
 
-        # Update merge count for this point
         self.merge_counts[nearest_idx, 0] += 1
 
         if logger.isEnabledFor(logging.DEBUG):
@@ -733,30 +648,13 @@ class GPNode(Node):
 
 
     def fit_my_GPR(self, force_training=False):
-        """Fits the node's Gaussian Process Regressor(s) to its local data.
-
-        Training is triggered if the number of new points in the buffer
-        (`n_points_since_retrain`) reaches `retrain_every_n_points`, if the node
-        is full (`n_points >= Nbar`), or if `force_training` is True.
-
-        For multi-output: trains one independent GP per output dimension.
-
-        If `use_standard_scaling` is enabled, this method first fits StandardScalers
-        on the combined training data, then transforms the data before fitting the GP.
-        The raw (unscaled) data remains stored in the node.
-
-        Args:
-            force_training (bool): If True, the GPR is retrained even if the
-                usual buffer or fullness conditions are not met. Defaults to False.
-
-        Returns:
-            bool: True if the GPR was trained in this call, False otherwise.
+        """Fit the node's GPs to its own and shared points, if a fit is due
+        (``fit_due``) or with ``force_training``. Returns True if they were
+        fitted.
         """
-        # Only train the GP if the buffer is full, the node is full, or if force_training=True
         if not (self.fit_due() or force_training):
             return False
 
-        # Combine own points and shared points
         X_train = np.vstack((self.my_X_data, self.shared_X_data))
         y_train = np.vstack((self.my_y_data, self.shared_y_data))  # Shape: (N, n_outputs)
         sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))  # Shape: (N, n_outputs)
@@ -815,10 +713,8 @@ class GPNode(Node):
             Z = basis.project(y_train)                  # (N, k) basis scores
             noise_z = basis.project_noise(sigma_train)  # (N, k) per-score noise variances
             k = basis.n_components
-            # Standardise every score within the leaf (as the per-output scalers do
-            # for 'independent'): the scores carry the raw output variance and a
-            # leaf-local offset, while the kernel's initial amplitude and zero prior
-            # mean assume centred, unit-variance targets.
+            # Standardise every score within the leaf: the kernel's initial amplitude
+            # and zero prior mean assume centred targets of unit variance
             z_shift = Z.mean(axis=0)
             z_scale = Z.std(axis=0)
             z_scale = np.where(np.isfinite(z_scale) & (z_scale > 0.0), z_scale, 1.0)
@@ -1111,27 +1007,14 @@ class GPNode(Node):
 
 
     def _compute_dimensional_uncertainty(self):
-        """Computes uncertainty scores for each dimension to guide splitting.
-
-        This method assesses which dimension the current GP is most uncertain about
-        by analyzing how uncertainty varies along each dimension. The dimension with
-        the highest uncertainty score is where splitting would be most beneficial.
-
-        Strategy:
-        1. For each dimension, create a grid of test points that vary only in that dimension
-        2. Compute GP predictions and uncertainties at these test points
-        3. Aggregate uncertainty (e.g., mean or max) to get a score per dimension
-
-        Returns:
-            np.ndarray: Uncertainty scores for each dimension (shape: n_features)
+        """A score per input of how uncertain the node's GPs are along it: the mean
+        predicted sigma at up to 20 of the node's points, each moved to five
+        positions along that input within the range of the node's points.
         """
         uncertainty_scores = np.zeros(self.n_features)
 
-        # Use a sample of training points as reference points
-        # For computational efficiency, sample at most 20 points
         n_sample_points = min(20, self.my_X_data.shape[0])
         if n_sample_points < self.my_X_data.shape[0]:
-            # Randomly sample points
             sample_indices = np.random.choice(self.my_X_data.shape[0],
                                              size=n_sample_points,
                                              replace=False)
@@ -1139,22 +1022,16 @@ class GPNode(Node):
         else:
             sample_X = self.my_X_data
 
-        # For each dimension, assess uncertainty
         for dim in range(self.n_features):
-            # Create test points that vary along this dimension
-            # Use the range of data in this dimension
             dim_min = np.min(self.my_X_data[:, dim])
             dim_max = np.max(self.my_X_data[:, dim])
 
             if dim_max - dim_min < 1e-10:
-                # No variation in this dimension
                 uncertainty_scores[dim] = 0.0
                 continue
 
-            # Create a grid of values for this dimension (use 5 points for efficiency)
             dim_values = np.linspace(dim_min, dim_max, 5)
 
-            # For each sampled point, vary only this dimension and measure uncertainty
             uncertainties = []
             for base_point in sample_X:
                 for dim_val in dim_values:
@@ -1162,37 +1039,20 @@ class GPNode(Node):
                     test_point[dim] = dim_val
                     test_point = test_point.reshape(1, -1)
 
-                    # Get prediction uncertainty
                     _, sigma = self.predict(test_point, use_calibrated_sigma=False)
                     uncertainties.append(sigma[0])
 
-            # Aggregate uncertainties for this dimension
-            # Use mean uncertainty as the score
             uncertainty_scores[dim] = np.mean(uncertainties)
 
         return uncertainty_scores
 
 
     def compute_split_position_and_overlap(self, theta: float):
-        """Computes the split dimension, position, and overlap for node splitting.
-
-        This method determines which feature dimension (`self.split_index`) to
-        split on, typically by selecting the dimension with the maximum spread
-        (range of values) in the node's current training data (`self.my_X_data`).
-
-        The actual split position (`self.split_position`) along this dimension is
-        then calculated based on the `self.split_position_method` (e.g., median,
-        mean of the data in `self.my_X_data[:, self.split_index]`).
-
-        The `overlap` region's size (`self.overlap`) is calculated as a product
-        of the `theta` parameter (passed from the `GPTree` during the split
-        operation, representing a fraction of the spread) and the spread (`w`)
-        of the chosen `split_index`.
-
-        Args:
-            theta (float): A parameter provided by the `GPTree` that determines
-                the extent of the overlap. It's a fraction of the data range
-                in the chosen split dimension.
+        """Choose the split of the node: the input (``split_index``, by
+        ``split_dimension_criteria``) or direction (``split_direction``), the
+        position along it (``split_position``, by ``split_position_method``) and
+        the width of the overlap of the two children (``overlap``), which is
+        ``theta`` times the range of the node's points along the split.
         """
 
         # Determine the split index based on the chosen criteria
@@ -1218,11 +1078,7 @@ class GPNode(Node):
                 else:
                     self.split_index = 0 # Default to 0 if no data
         elif self.split_dimension_criteria == 'max_uncertainty':
-            # Split on the dimension where the GP is most uncertain
-            # Strategy: compute marginal predictive uncertainty for each dimension
             if self.my_X_data.shape[0] > 1 and self._is_fitted():
-                # Compute per-dimension uncertainty scores
-                # We'll use the GP's predictions on the training data to assess uncertainty
                 uncertainty_scores = self._compute_dimensional_uncertainty()
                 self.split_index = np.argmax(uncertainty_scores)
             else:
@@ -1277,8 +1133,7 @@ class GPNode(Node):
             if spreads[self.split_index] == 0:
                 self.split_index = int(np.argmax(spreads))
 
-        # Calculate spread along the split, used for overlap calculation
-        # and potentially for split_position if data is scarce for other methods.
+        # The spread of the points along the split, for the overlap
         along_split = self.split_coordinate(self.my_X_data)
         if self.my_X_data.shape[0] > 0:
             current_dim_spread = np.max(along_split) - np.min(along_split)
@@ -1373,14 +1228,9 @@ class GPNode(Node):
 
 
     def predict(self, x: np.ndarray, use_calibrated_sigma=False):
-        """Evaluates the prediction from this node's GPR(s) at input point(s) x.
-
-        The input x is expected to be in the original (unscaled) space. If
-        `use_standard_scaling` is enabled, this method transforms x to the
-        standardized space before calling the GP, then inverse transforms
-        the predictions back to the original space.
-
-        For multi-output: returns predictions for all outputs as (n_samples, n_outputs) arrays.
+        """The node's prediction at the points ``x`` (n_samples, n_features), in the
+        units of the data: the mean and the standard deviation, each of shape
+        (n_samples, n_outputs).
 
         A leaf of a tree with ``predict_from='neighbours'`` conditions its
         kernels on the stored points nearest to each row of ``x`` in place of
@@ -1388,26 +1238,11 @@ class GPNode(Node):
         own GPs predicted the last points it received clearly better
         (``prefers_own``).
 
-        Args:
-            x (np.ndarray): The input point(s) at which to make predictions,
-                in the original (unscaled) space.
-                Shape should be (n_samples, n_features).
-            use_calibrated_sigma (bool): If True, the returned `sigma_pred`
-                (standard deviation) is scaled by the node's `self.sigma_scalers`.
-                These scalers are intended to calibrate the uncertainty
-                estimates. Defaults to False.
-
-        Returns:
-            tuple:
-                - mu_pred (np.ndarray): The mean prediction(s) in original space.
-                  Shape: (n_samples, n_outputs)
-                - sigma_pred (np.ndarray): The standard deviation of the
-                  prediction(s) in original space. Shape: (n_samples, n_outputs)
-                  This is the uncertainty of the estimate of the underlying
-                  function (the GP's latent posterior standard deviation), not
-                  of a noisy observation. With
-                  a global model it also includes the global model's own
-                  estimated (epistemic) error, see ``global_mean``.
+        The standard deviation is the uncertainty of the estimate of the
+        underlying function, not of a noisy observation. With a global model it
+        includes the estimated error of that model. With
+        ``use_calibrated_sigma`` it is multiplied by the node's
+        ``sigma_scalers``.
         """
         self._refresh_global()
         if self._can_condition() and not self.prefers_own:
@@ -1579,29 +1414,22 @@ class GPNode(Node):
         """Per-output GPs (output_model='independent'); see ``predict``."""
         n_samples = x.shape[0]
 
-        # Initialize output arrays
         mu_pred = np.zeros((n_samples, self.n_outputs))
         sigma_pred = np.zeros((n_samples, self.n_outputs))
 
         if self.use_standard_scaling and self.X_scaler is not None:
-            # Transform input to standardized space (same for all outputs)
+            # The GPs predict in scaled units; the mean and sigma are transformed back
             x_scaled = self._scaled_inputs(x)
 
-            # Get predictions for each output independently
             for i in range(self.n_outputs):
-                # Get prediction in scaled space
                 mu_scaled_i, sigma_scaled_i = self.my_GPRs[i].predict(x_scaled, return_std=True)
 
-                # Inverse transform mean: mu_original = mu_scaled * scale_y + mean_y
                 y_scaler = self.y_scalers[i]
                 mu_pred[:, i] = np.asarray(mu_scaled_i, dtype=float).reshape(-1) * y_scaler.scale_[0] + y_scaler.mean_[0]
 
-                # Transform std: sigma_original = sigma_scaled * scale_y
-                # When y is scaled by scale_y, variance scales by scale_y^2, so std scales by scale_y
                 sigma_pred[:, i] = sigma_scaled_i * y_scaler.scale_[0]
 
         else:
-            # No scaling - predict on raw data for each output
             for i in range(self.n_outputs):
                 mu_i, sigma_i = self.my_GPRs[i].predict(x, return_std=True)
                 mu_pred[:, i] = mu_i.flatten()
@@ -1695,7 +1523,6 @@ class GPNode(Node):
 
         keep_n_points = self.n_points_pred_perf - 1
 
-        # Update for each output
         for i in range(self.n_outputs):
             self.residuals_list[i] = self.residuals_list[i][:keep_n_points]
             self.residuals_list[i] = np.insert(self.residuals_list[i], 0, y[i] - mu_pred[0, i])

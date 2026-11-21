@@ -26,53 +26,27 @@ OBLIQUE_MAX_WAIT = 8    # after repeated rejections a free shear is tried at one
 
 
 class SklearnGPAdapter(GPRegressorInterface):
-    """
-    Adapter for scikit-learn's GaussianProcessRegressor.
-
-    This class wraps a scikit-learn GaussianProcessRegressor to provide
-    the interface required by pygptreeo, allowing seamless integration
-    with the existing codebase.
+    """Adapter for scikit-learn's GaussianProcessRegressor.
 
     Parameters
     ----------
     gpr : GaussianProcessRegressor
-        A scikit-learn GaussianProcessRegressor instance to wrap.
-
-    Attributes
-    ----------
-    _gpr : GaussianProcessRegressor
-        The underlying scikit-learn GP regressor.
+        The regressor to wrap.
+    kernel_factory : callable, optional
+        ``kernel_factory(n_features) -> Kernel``. If given, its kernel replaces
+        that of the regressor at the first fit, when the number of inputs is
+        known. It is dropped once used, or when ``set_kernel`` is called.
 
     Examples
     --------
     >>> from sklearn.gaussian_process import GaussianProcessRegressor
     >>> from sklearn.gaussian_process.kernels import RBF, ConstantKernel
-    >>> from pygptreeo.adapters import SklearnGPAdapter
-    >>>
-    >>> kernel = ConstantKernel(1.0) * RBF(1.0)
-    >>> sklearn_gpr = GaussianProcessRegressor(kernel=kernel, alpha=1e-10)
-    >>> adapter = SklearnGPAdapter(sklearn_gpr)
-    >>>
-    >>> # Now use adapter with pygptreeo
-    >>> from pygptreeo import GPTree
-    >>> gpt = GPTree(GPR=adapter)
+    >>> from pygptreeo import GPTree, SklearnGPAdapter
+    >>> gpr = GaussianProcessRegressor(kernel=ConstantKernel(1.0) * RBF(1.0))
+    >>> gpt = GPTree(GPR=SklearnGPAdapter(gpr))
     """
 
     def __init__(self, gpr: GaussianProcessRegressor, kernel_factory=None):
-        """
-        Initialize the adapter with a scikit-learn GaussianProcessRegressor.
-
-        Parameters
-        ----------
-        gpr : GaussianProcessRegressor
-            The scikit-learn GP regressor to wrap.
-        kernel_factory : callable, optional
-            ``kernel_factory(n_features) -> Kernel``. If given, the wrapped GPR's
-            kernel is replaced by ``kernel_factory(X.shape[1])`` at the first
-            ``fit`` call, so that kernels needing
-            the input dimension (e.g. one length scale per dimension) can be
-            built lazily. It is dropped once used, or if ``set_kernel`` is called.
-        """
         if not isinstance(gpr, GaussianProcessRegressor):
             raise TypeError(
                 f"Expected GaussianProcessRegressor, got {type(gpr).__name__}"
@@ -89,21 +63,8 @@ class SklearnGPAdapter(GPRegressorInterface):
             self._kernel_factory = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> 'SklearnGPAdapter':
-        """
-        Train the GP on the provided data.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Training input data of shape (n_samples, n_features).
-        y : np.ndarray
-            Training target values of shape (n_samples,) or (n_samples, 1).
-
-        Returns
-        -------
-        self : SklearnGPAdapter
-            The fitted adapter instance.
-        """
+        """Fit the regressor. A kernel with a free shear (``_fit_oblique``) and a
+        target of several outputs (``_fit_multitarget``) have fits of their own."""
         self._ensure_kernel(np.asarray(X).shape[1])
         y = np.asarray(y)
         if self._gpr.optimizer == "fmin_l_bfgs_b" and not self._gpr.normalize_y:
@@ -204,24 +165,8 @@ class SklearnGPAdapter(GPRegressorInterface):
         X: np.ndarray,
         return_std: bool = False
     ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
-        """
-        Make predictions at test points.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Test input data of shape (n_samples, n_features).
-        return_std : bool, default=False
-            If True, return both mean predictions and standard deviations.
-
-        Returns
-        -------
-        y_mean : np.ndarray
-            Mean predictions of shape (n_samples,) or (n_samples, 1).
-        y_std : np.ndarray, optional
-            Standard deviations of shape (n_samples,) or (n_samples, 1).
-            Only returned if return_std=True.
-        """
+        """The mean at ``X`` and, with ``return_std``, the standard deviation, as
+        ``GaussianProcessRegressor.predict`` gives them."""
         sk = self._gpr
         X = np.asarray(X)
         fitted = all(hasattr(sk, a) for a in ('kernel_', 'L_', 'alpha_', 'X_train_', '_y_train_mean', '_y_train_std'))
@@ -251,45 +196,19 @@ class SklearnGPAdapter(GPRegressorInterface):
         return y_mean, np.sqrt(y_var)
 
     def is_trained(self) -> bool:
-        """
-        Check whether the GP has been trained on data.
-
-        For scikit-learn, we check for the presence of the 'kernel_' attribute,
-        which is set after fitting.
-
-        Returns
-        -------
-        bool
-            True if the GP has been fitted, False otherwise.
-        """
+        """True once the regressor has a fitted kernel (``kernel_``)."""
         return hasattr(self._gpr, 'kernel_')
 
     def set_observation_noise(self, alpha: Union[float, np.ndarray]) -> None:
-        """
-        Set the observation noise levels for training data.
-
-        In scikit-learn, this is done by setting the 'alpha' attribute.
-
-        Parameters
-        ----------
-        alpha : float or np.ndarray
-            If float: a single noise level applied to all observations.
-            If array: per-observation noise levels of shape (n_samples,).
-        """
+        """Set the regressor's ``alpha``, which it adds to the diagonal of the kernel
+        matrix: one number, or one per training point."""
         if isinstance(alpha, np.ndarray):
             self._gpr.alpha = alpha.flatten()
         else:
             self._gpr.alpha = alpha
 
     def clone(self) -> 'SklearnGPAdapter':
-        """
-        Create a deep copy of this GP regressor.
-
-        Returns
-        -------
-        SklearnGPAdapter
-            A deep copy of this adapter instance.
-        """
+        """A deep copy of the adapter."""
         # the random state, which each fit replaces, is shared and not copied
         rng = getattr(self._gpr, '_rng', None)
         copy = SklearnGPAdapter(deepcopy(self._gpr, {id(rng): rng}), kernel_factory=self._kernel_factory)
@@ -297,34 +216,13 @@ class SklearnGPAdapter(GPRegressorInterface):
         return copy
 
     def get_kernel(self):
-        """
-        Get the kernel object.
-
-        For an untrained GP, this returns the initial kernel.
-        For a trained GP, this returns the fitted kernel with optimized hyperparameters.
-
-        Returns
-        -------
-        kernel
-            The kernel object (sklearn.gaussian_process.kernels.Kernel).
-        """
-        # If trained, return the fitted kernel with optimized hyperparameters
+        """The fitted kernel, or the initial one before the first fit."""
         if self.is_trained():
             return self._gpr.kernel_
-        # Otherwise, return the initial kernel
         return self._gpr.kernel
 
     def set_kernel(self, kernel) -> None:
-        """
-        Set the kernel object.
-
-        This is used for hyperparameter inheritance when creating child nodes.
-
-        Parameters
-        ----------
-        kernel
-            The kernel object to set (sklearn.gaussian_process.kernels.Kernel).
-        """
+        """Set the initial kernel. A kernel factory is dropped."""
         self._gpr.kernel = kernel
         self._kernel_factory = None
 
@@ -501,24 +399,12 @@ class SklearnGPAdapter(GPRegressorInterface):
         sk.alpha_ = cho_solve((sk.L_, True), sk.y_train_, check_finite=False)
         return True
 
-    # Provide access to the underlying scikit-learn GPR for advanced users
     @property
     def sklearn_gpr(self) -> GaussianProcessRegressor:
-        """
-        Access the underlying scikit-learn GaussianProcessRegressor.
-
-        This is provided for advanced users who need direct access to
-        scikit-learn specific features.
-
-        Returns
-        -------
-        GaussianProcessRegressor
-            The underlying scikit-learn GP regressor.
-        """
+        """The wrapped scikit-learn GaussianProcessRegressor."""
         return self._gpr
 
     def __repr__(self) -> str:
-        """String representation of the adapter."""
         if self._kernel_factory is not None:
             return f"SklearnGPAdapter({self._gpr}, kernel_factory={self._kernel_factory!r})"
         return f"SklearnGPAdapter({self._gpr})"

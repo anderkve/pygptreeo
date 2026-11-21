@@ -53,71 +53,29 @@ def Default_GPR(
     nu=1.5,
     oblique=False,
 ):
-    """Create a default GaussianProcessRegressor adapter for GPTreeO.
-
-    This function creates and returns a SklearnGPAdapter wrapping a
-    scikit-learn GaussianProcessRegressor with sensible default settings
-    for use within the GPTreeO framework.
+    """A scikit-learn GaussianProcessRegressor in a SklearnGPAdapter, with the
+    default settings of pygptreeo.
 
     Parameters
     ----------
-    kernel : Kernel object, optional
-        The kernel specifying the covariance function of the GP.
-        If None is passed, an anisotropic (ARD) ``ConstantKernel() * Matern(nu)``
-        with one length scale per input dimension is built lazily at the first
-        ``fit`` call, when the input dimensionality becomes known. The
-        per-dimension length scales are what the ``'min_lengthscale'`` split
-        criterion uses. The kernel's hyperparameters are optimized during fitting.
-    alpha : float or ndarray of shape (n_samples,), default=1e-10
-        Value added to the diagonal of the kernel matrix during fitting.
-        This can represent the expected amount of noise in the observations.
-        Larger values correspond to increased noise level. Note that GPTree
-        replaces this with the per-point observation noise ``sigma**2`` passed
-        to ``update_tree`` / ``fit`` whenever a leaf is trained.
-    optimizer : "fmin_l_bfgs_b" or callable, default="fmin_l_bfgs_b"
-        Can either be one of the internally supported optimizers for optimizing
-        the kernel's parameters, specified by a string, or an externally
-        defined optimizer passed as a callable.
-    n_restarts_optimizer : int, default=0
-        The number of restarts of the optimizer for finding the kernel's
-        parameters which maximize the log-marginal likelihood. The first run
-        of the optimizer is performed from the kernel's initial parameters,
-        the remaining ones (if any) from thetas sampled log-uniform randomly
-        from the space of allowed theta-values.
-    normalize_y : bool, default=False
-        Whether or not to normalize the target values y by removing the mean
-        and scaling to unit-variance.
-    copy_X_train : bool, default=True
-        If True, a persistent copy of the training data is stored in the
-        object. Otherwise, just a reference to the training data is stored,
-        which might cause predictions to change if the data is modified
-        externally.
-    n_targets : int, optional
-        The number of dimensions of the target values. If None, then it is
-        inferred from y during fit.
-    random_state : int, RandomState instance or None, default=None
-        Determines random number generation used to initialize the centers.
+    kernel : Kernel, optional
+        The kernel of the GP. By default ``ConstantKernel() * Matern(nu)`` with
+        one length scale per input, built at the first fit, when the number of
+        inputs is known. The ``'min_lengthscale'`` split criterion uses these
+        length scales.
+    alpha, optimizer, n_restarts_optimizer, normalize_y, copy_X_train, n_targets, random_state
+        Passed to ``GaussianProcessRegressor``. GPTree replaces ``alpha`` by the
+        noise variances ``sigma**2`` of a leaf's points at each fit.
     nu : float, default=1.5
         Smoothness of the default Matern kernel (only used when ``kernel`` is None).
     oblique : bool, default=False
-        Let the default kernel's length scales lie along combinations of the
-        inputs (:class:`~pygptreeo.kernels.ObliqueMatern`; only used when
-        ``kernel`` is None). Each fit keeps such a kernel only if it lowers the
-        leave-one-out error over the kernel with a length scale per input.
-
-    Returns
-    -------
-    SklearnGPAdapter
-        An adapter wrapping a configured scikit-learn GaussianProcessRegressor.
+        Let the length scales of the default kernel lie along combinations of
+        the inputs (``ObliqueMatern``; only used when ``kernel`` is None). A fit
+        keeps such a kernel only if it lowers the leave-one-out error.
 
     Examples
     --------
     >>> from pygptreeo import GPTree, Default_GPR
-    >>>
-    >>> # Use default configuration
-    >>> gpt = GPTree(GPR=Default_GPR())
-    >>>
-    >>> # Use custom kernel
     >>> from sklearn.gaussian_process.kernels import RBF
     >>> gpt = GPTree(GPR=Default_GPR(kernel=RBF()))
     """
@@ -128,7 +86,6 @@ def Default_GPR(
         kernel_factory = DefaultKernelFactory(nu=nu, oblique=oblique)
         kernel = ConstantKernel() * Matern(nu=nu)
 
-    # Create the underlying sklearn GPR
     sklearn_gpr = GaussianProcessRegressor(
         kernel=kernel,
         alpha=alpha,
@@ -140,5 +97,4 @@ def Default_GPR(
         random_state=random_state
     )
 
-    # Wrap in adapter and return
     return SklearnGPAdapter(sklearn_gpr, kernel_factory=kernel_factory)
