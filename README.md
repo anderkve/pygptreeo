@@ -199,7 +199,8 @@ gpt = GPTree.load('tree.pkl')
 A process that loads a newer tree again and again should call `release` on the tree it replaces:
 
 ```python
-old, gpt = gpt, GPTree.load('tree.pkl')
+old = gpt
+gpt = GPTree.load('tree.pkl')
 old.release()
 ```
 
