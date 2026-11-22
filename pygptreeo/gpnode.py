@@ -16,7 +16,7 @@ Key responsibilities:
 import logging
 from collections import deque
 from copy import deepcopy
-from typing import Optional, Union
+from typing import Optional
 
 # Third-party imports
 import numpy as np
@@ -402,33 +402,14 @@ class GPNode(Node):
                 child._used()       # its GPs are copies of the parent's, fit and all
 
 
-    def store_point(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray],
-                    increment_buffer=True):
+    def store_point(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray, increment_buffer=True):
         """Add a data point to the node. A node with shared points from gradual
         splitting drops the last of them for it.
 
-        ``x`` has shape (1, n_features). ``y`` and ``sigma`` (a standard
-        deviation) are a float, or an array with a value per output. With
-        ``increment_buffer=False`` the point does not count towards the next fit.
+        ``x`` has shape (1, n_features), and ``y`` and ``sigma`` (a standard
+        deviation) shape (1, n_outputs). With ``increment_buffer=False`` the
+        point does not count towards the next fit.
         """
-        # Ensure y has the right shape (1, n_outputs)
-        if isinstance(y, (int, float, np.floating)):
-            y = np.array([[y]])  # Single output case
-        else:
-            y = np.atleast_2d(y)
-            if y.shape[0] != 1:
-                y = y.reshape(1, -1)
-
-        # Ensure sigma has the right shape (1, n_outputs)
-        if isinstance(sigma, (int, float, np.floating)):
-            sigma = np.full((1, self.n_outputs), sigma)
-        else:
-            sigma = np.atleast_2d(sigma)
-            if sigma.shape[0] != 1:
-                sigma = sigma.reshape(1, -1)
-            if sigma.shape[1] == 1 and self.n_outputs > 1:
-                sigma = np.tile(sigma, (1, self.n_outputs))
-
         # Note: Points are added to the beginning of the arrays (using np.vstack)
         self.my_X_data = np.vstack((x, self.my_X_data))
         self.my_y_data = np.vstack((y, self.my_y_data))
@@ -447,13 +428,40 @@ class GPNode(Node):
 
 
     def split_training_data(self):
-        """ Assign the training samples of a node to its child nodes. """
-        for x, y, sigma in zip(self.my_X_data, self.my_y_data, self.my_sigma_data):
-            x = x.reshape((1, x.shape[0]))
-            y = y.reshape((1, self.n_outputs))
-            sigma = sigma.reshape((1, self.n_outputs))
-            child = self.children[int(np.random.binomial(1, self.prob_func(x)[0][0]))]
-            child.store_point(x, y, sigma, increment_buffer=False)
+        """Hand the node's points to its children. A point within the overlap of
+        the two goes to either, with the probability of ``prob_func``."""
+        to_right = np.random.binomial(1, self.prob_func(self.my_X_data)[:, 0]).astype(bool)
+        for child, mine in ((self.left, ~to_right), (self.right, to_right)):
+            rows = np.flatnonzero(mine)[::-1]       # the last point first, as ``store_point`` keeps them
+            child.my_X_data = self.my_X_data[rows]
+            child.my_y_data = self.my_y_data[rows]
+            child.my_sigma_data = self.my_sigma_data[rows]
+            child.merge_counts = np.zeros((rows.size, 1))
+            child.n_points = rows.size
+
+
+    def split(self, theta: float):
+        """Split the node in two: create the children, choose the cut, hand the
+        points to the children and delete the node's own points and GPs.
+        ``theta`` sets the overlap of the children (see
+        ``compute_split_position_and_overlap``)."""
+        self.generate_children(self.n_features)
+        self.compute_split_position_and_overlap(theta)
+        self.split_training_data()
+
+        if self.splitting_strategy == 'gradual':
+            # Each child also gets a copy of its sibling's points, the one furthest
+            # from the cut last: it is the first to be dropped
+            for child, sibling, step in ((self.left, self.right, 1), (self.right, self.left, -1)):
+                order = self.split_coordinate(sibling.my_X_data).argsort()[::step]
+                child.shared_X_data = sibling.my_X_data[order]
+                child.shared_y_data = sibling.my_y_data[order]
+                child.shared_sigma_data = sibling.my_sigma_data[order]
+                child.n_shared_points = order.size
+
+        # Only leaves hold points and GPs
+        self.delete_data()
+        self.delete_my_GPR()
 
         
     def delete_data(self):
@@ -488,26 +496,16 @@ class GPNode(Node):
         return nearest_idx, nearest_dist
 
 
-    def merge_with_point(self, x: np.ndarray, y: Union[float, np.ndarray],
-                         sigma: Union[float, np.ndarray], nearest_idx: int):
+    def merge_with_point(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray, nearest_idx: int):
         """Merge the point (x, y, sigma) into the stored point ``nearest_idx``.
+        ``x`` has shape (1, n_features), and ``y`` and ``sigma`` shape
+        (1, n_outputs).
 
         The inputs and the targets become averages weighted by the inverse
         variances ``1 / sigma^2`` (for the inputs, by their mean over the
         outputs), and the variance that of the weighted average. Returns True.
         """
-        # Ensure y and sigma are arrays of shape (n_outputs,)
-        if isinstance(y, (int, float, np.floating)):
-            y = np.array([y])
-        else:
-            y = np.atleast_1d(y).flatten()
-
-        if isinstance(sigma, (int, float, np.floating)):
-            sigma = np.full(self.n_outputs, sigma)
-        else:
-            sigma = np.atleast_1d(sigma).flatten()
-            if sigma.shape[0] == 1 and self.n_outputs > 1:
-                sigma = np.tile(sigma, self.n_outputs)
+        y, sigma = y[0], sigma[0]
 
         x_old = self.my_X_data[nearest_idx:nearest_idx+1]
         y_old = self.my_y_data[nearest_idx, :]  # Shape: (n_outputs,)
@@ -919,9 +917,10 @@ class GPNode(Node):
         return np.abs((x - self.fit_mean) / self.fit_std).max(axis=1)
 
 
-    def append_point(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray]):
+    def append_point(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray):
         """Condition the fitted GPs on one more point, at a cost quadratic in their
-        number of points.
+        number of points. ``x`` has shape (1, n_features), and ``y`` and
+        ``sigma`` shape (1, n_outputs).
 
         The hyperparameters, the scaling and the global-model snapshot of the
         last fit are kept. The next fit starts from the node's points as usual.
@@ -929,9 +928,6 @@ class GPNode(Node):
         """
         if self.asleep or not self._is_fitted():
             return False
-        x = np.asarray(x, dtype=float).reshape(1, -1)
-        y = np.asarray(y, dtype=float).reshape(1, self.n_outputs)
-        sigma = np.broadcast_to(np.asarray(sigma, dtype=float).reshape(1, -1), (1, self.n_outputs))
         if self._fitted_global is not None:
             y = y - self._fitted_global.predict(x)
         scaled = self.use_standard_scaling and self.X_scaler is not None
@@ -1054,124 +1050,62 @@ class GPNode(Node):
         the width of the overlap of the two children (``overlap``), which is
         ``theta`` times the range of the node's points along the split.
         """
+        X = self.my_X_data
+        spreads = np.ptp(X, axis=0)
 
-        # Determine the split index based on the chosen criteria
         self.split_direction = None
         if self.split_dimension_criteria == 'max_spread':
-            if self.my_X_data.shape[0] > 0:
-                w = np.empty(self.n_features)
-                for i in range(self.n_features):
-                    w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
-                self.split_index = np.argmax(w)
-            else:
-                self.split_index = 0 # Default to 0 if no data
+            self.split_index = int(np.argmax(spreads))
         elif self.split_dimension_criteria == 'max_variance':
-            if self.my_X_data.shape[0] > 1:
-                variances = np.var(self.my_X_data, axis=0)
-                self.split_index = np.argmax(variances)
-            else: # Fallback for single data point or no variance
-                if self.my_X_data.shape[0] > 0:
-                    w = np.empty(self.n_features)
-                    for i in range(self.n_features):
-                        w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
-                    self.split_index = np.argmax(w)
-                else:
-                    self.split_index = 0 # Default to 0 if no data
+            self.split_index = int(np.argmax(np.var(X, axis=0)))
         elif self.split_dimension_criteria == 'max_uncertainty':
-            if self.my_X_data.shape[0] > 1 and self._is_fitted():
-                uncertainty_scores = self._compute_dimensional_uncertainty()
-                self.split_index = np.argmax(uncertainty_scores)
+            # As 'max_variance' for a node without fitted GPs
+            if X.shape[0] > 1 and self._is_fitted():
+                self.split_index = int(np.argmax(self._compute_dimensional_uncertainty()))
             else:
-                # Fallback to max_variance if GP not trained yet
-                if self.my_X_data.shape[0] > 1:
-                    variances = np.var(self.my_X_data, axis=0)
-                    self.split_index = np.argmax(variances)
-                elif self.my_X_data.shape[0] > 0:
-                    w = np.empty(self.n_features)
-                    for i in range(self.n_features):
-                        w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
-                    self.split_index = np.argmax(w)
-                else:
-                    self.split_index = 0 # Default to 0 if no data
+                self.split_index = int(np.argmax(np.var(X, axis=0)))
         elif self.split_dimension_criteria == 'min_lengthscale':
-            # Split where the GP's smallest fitted ARD length scale is, i.e. where
-            # the function varies fastest relative to its spread. For several GPs
-            # (multi-output / basis scores) the per-dimension minimum over all of
-            # them is used. Falls back to max_spread if no per-dimension length
-            # scales are available (GP untrained or kernel isotropic).
+            # The input with the smallest fitted length scale over the node's GPs,
+            # where the function varies fastest. As 'max_spread' if the GPs give no
+            # length scale per input (not fitted, or an isotropic kernel).
             length_scales = None
-            if self.my_X_data.shape[0] > 1:
+            if X.shape[0] > 1:
                 length_scales = self._pooled_length_scales()
                 self.split_direction = self._fastest_direction()
-            if length_scales is not None:
-                # Compare length scales in units of each dimension's std so the
-                # choice is scale-invariant. With standard scaling the GP frame
-                # already has std ~ 1 (no-op); without it, normalise by the raw
-                # per-dimension std so dimensions in different units stay comparable.
-                if not self.use_standard_scaling and self.my_X_data.shape[0] > 1:
-                    stds = np.std(self.my_X_data, axis=0)
-                    length_scales = length_scales / np.where(stds > 0, stds, 1.0)
-                # The length scale of a dimension in which the points coincide is arbitrary
-                length_scales = np.where(np.ptp(self.my_X_data, axis=0) > 0, length_scales, np.inf)
-                self.split_index = int(np.argmin(length_scales))
-            elif self.my_X_data.shape[0] > 0:
-                spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
+            if length_scales is None:
                 self.split_index = int(np.argmax(spreads))
             else:
-                self.split_index = 0
+                # In units of the spread of the points along each input, which
+                # standard scaling has already made 1 for the GPs
+                if not self.use_standard_scaling:
+                    stds = np.std(X, axis=0)
+                    length_scales = length_scales / np.where(stds > 0, stds, 1.0)
+                # The length scale of an input in which the points coincide is arbitrary
+                length_scales = np.where(spreads > 0, length_scales, np.inf)
+                self.split_index = int(np.argmin(length_scales))
         elif self.split_dimension_criteria == 'random':
-            if self.n_features > 0:
-                self.split_index = np.random.randint(0, self.n_features)
-            else:
-                self.split_index = 0 # Default to 0 if no features
+            self.split_index = np.random.randint(0, self.n_features)
         else:
             raise ValueError(f"Unknown split_dimension_criteria: {self.split_dimension_criteria}")
 
-        # A dimension in which all of the node's points coincide cannot separate them
-        if self.my_X_data.shape[0] > 0:
-            spreads = np.ptp(self.my_X_data, axis=0)
-            if spreads[self.split_index] == 0:
-                self.split_index = int(np.argmax(spreads))
+        # An input in which all of the node's points coincide cannot separate them
+        if spreads[self.split_index] == 0:
+            self.split_index = int(np.argmax(spreads))
 
-        # The spread of the points along the split, for the overlap
-        along_split = self.split_coordinate(self.my_X_data)
-        if self.my_X_data.shape[0] > 0:
-            current_dim_spread = np.max(along_split) - np.min(along_split)
-        else:
-            current_dim_spread = 0.0 # Default if no data
-
-        self.split_position = None
-        if self.my_X_data.shape[0] == 0: # No data, place split in the middle (0 if not scaled) or handle as error?
-            self.split_position = 0.0
-        elif self.split_position_method == 'median':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.median(along_split)
-            else: # Should not happen if split_index logic is robust
-                self.split_position = 0.0
+        along_split = self.split_coordinate(X)
+        low, high = np.min(along_split), np.max(along_split)
+        if self.split_position_method == 'median':
+            self.split_position = np.median(along_split)
         elif self.split_position_method == 'mean':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.mean(along_split)
-            else: # Should not happen
-                self.split_position = 0.0
+            self.split_position = np.mean(along_split)
         elif self.split_position_method == 'random':
-            if self.my_X_data.shape[0] > 0:
-                min_val = np.min(along_split)
-                max_val = np.max(along_split)
-                if min_val == max_val: # All points are the same
-                    self.split_position = min_val
-                else:
-                    self.split_position = np.random.uniform(min_val, max_val, 1)[0]
-            else: # Should not happen
-                self.split_position = 0.0
+            self.split_position = np.random.uniform(low, high, 1)[0] if high > low else low
         elif self.split_position_method == 'randomchoice':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.random.choice(along_split)
-            else: # Should not happen
-                self.split_position = 0.0
+            self.split_position = np.random.choice(along_split)
         else:
             raise ValueError(f"Unknown split_position_method argument: '{self.split_position_method}'. The valid options are 'median', 'mean', 'random' and 'randomchoice'")
 
-        self.overlap = theta * current_dim_spread
+        self.overlap = theta * (high - low)
 
 
     def split_coordinate(self, x: np.ndarray):
@@ -1495,9 +1429,10 @@ class GPNode(Node):
         return mu_pred, np.sqrt(var_pred)
 
 
-    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray], only_if_fitted: bool = False,
-                           prediction=None):
-        """ Register the residual between prediction and true value for this data point.
+    def register_pred_perf(self, x: np.ndarray, y: np.ndarray, only_if_fitted: bool = False, prediction=None):
+        """ Register the residual between prediction and true value for this data
+        point, with ``x`` of shape (1, n_features) and ``y`` of shape
+        (1, n_outputs).
 
         For multi-output: tracks performance per output dimension. With
         ``only_if_fitted`` the prior prediction of a node without fitted GPs is
@@ -1510,14 +1445,9 @@ class GPNode(Node):
         if only_if_fitted and not self._is_fitted():
             return None
 
-        # Ensure y is array of shape (n_outputs,)
-        if isinstance(y, (int, float, np.floating)):
-            y = np.array([y])
-        else:
-            y = np.atleast_1d(y).flatten()
-
+        y = y[0]
         if self._can_condition():
-            self._score_predictors(x, y[:self.n_outputs], mu_pred)
+            self._score_predictors(x, y, mu_pred)
         if prediction is not None:
             mu_pred, sigma_pred = prediction
 
@@ -1531,7 +1461,7 @@ class GPNode(Node):
             self.sigma_preds_list[i] = np.insert(self.sigma_preds_list[i], 0, sigma_pred[0, i])
         self._variance_unit = None
 
-        return np.abs(y[:self.n_outputs] - mu_pred[0]) / (sigma_pred[0] * np.asarray(self.sigma_scalers) + 1e-300)
+        return np.abs(y - mu_pred[0]) / (sigma_pred[0] * np.asarray(self.sigma_scalers) + 1e-300)
 
 
     def clear_pred_perf(self):

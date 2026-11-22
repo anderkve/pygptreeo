@@ -313,6 +313,9 @@ class GPTree:
         """
 
         self.n_points_seen += 1
+        x = np.asarray(x, dtype=float).reshape(1, -1)
+        y = np.asarray(y, dtype=float).reshape(1, self.n_outputs)
+        sigma = np.broadcast_to(np.asarray(sigma, dtype=float).reshape(1, -1), (1, self.n_outputs))
 
         # The first input point is used to determine self.n_features
         if self.first_point:
@@ -326,7 +329,7 @@ class GPTree:
 
         # The tree-global output basis ('pca') and the global model see every observation
         if self.output_basis is not None:
-            self.output_basis.observe(np.asarray(y, dtype=float).reshape(-1), sigma)
+            self.output_basis.observe(y, sigma)
         if self.global_mean is not None:
             self.global_mean.observe(x, y, sigma)
 
@@ -342,7 +345,7 @@ class GPTree:
             self._register_prediction(node, x, y, allow_training)
             node.merge_with_point(x, y, sigma, nearest)
             if self.leaf_index is not None:
-                self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
+                self.leaf_index.grow(node, x[0])
             self._after_update(node)
             return
 
@@ -353,7 +356,7 @@ class GPTree:
         self._register_prediction(node, x, y, allow_training)
         node.store_point(x, y, sigma)
         if self.leaf_index is not None:
-            self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
+            self.leaf_index.grow(node, x[0])
 
         # The node fits its GPs if a fit is due
         task = None
@@ -366,47 +369,15 @@ class GPTree:
             if self.append_points_between_fits and not did_retrain:
                 node.append_point(x, y, sigma)
 
-        # If the node is full, generate child nodes
+        # A full node is split in two
         if node.n_points >= node.Nbar:
-            # Create child nodes. Each child node gets a copy of the current parent GP.
-            node.generate_children(self.n_features)
-
-            # Compute parameters for the probability function
-            node.compute_split_position_and_overlap(self.theta)
-
-            if node.splitting_strategy == 'gradual':
-
-                # First distribute data as usual between the two child nodes
-                node.split_training_data()
-
-                # Since we are doing gradual splitting, give
-                # each child a copy of the other child's data
-                order = node.split_coordinate(node.children[1].my_X_data).argsort()
-                node.children[0].shared_X_data = node.children[1].my_X_data[order]
-                node.children[0].shared_y_data = node.children[1].my_y_data[order]
-                node.children[0].shared_sigma_data = node.children[1].my_sigma_data[order]
-                node.children[0].n_shared_points = node.children[0].shared_X_data.shape[0]
-
-                order = node.split_coordinate(node.children[0].my_X_data).argsort()[::-1]
-                node.children[1].shared_X_data = node.children[0].my_X_data[order]
-                node.children[1].shared_y_data = node.children[0].my_y_data[order]
-                node.children[1].shared_sigma_data = node.children[0].my_sigma_data[order]
-                node.children[1].n_shared_points = node.children[1].shared_X_data.shape[0]
-
-            else:
-                # Standard splitting
-                node.split_training_data()
-
+            node.split(self.theta)
             if self.leaf_index is not None:
                 axis = node.cut_axis()
                 if axis is None:
                     self.leaf_index = None      # the cells are no boxes
                 else:
                     self.leaf_index.split(node, node.left, node.right, axis, node.split_position, 0.5 * node.overlap)
-
-            # GP and training data of non-leaf nodes is not needed
-            node.delete_data()
-            node.delete_my_GPR()
 
         self._after_update(node)
         return task
@@ -429,6 +400,18 @@ class GPTree:
         Returns:
             The fit tasks handed out, as a list. It is empty without `defer_fits`.
         """
+        X, y, sigma = self._batch(X, y, sigma)
+        tasks = []
+        for i in tqdm(range(X.shape[0]), disable=not show_progress, desc="Updating the tree"):
+            task = self.update_tree(X[i:i+1], y[i:i+1], sigma[i:i+1], defer_fits=defer_fits)
+            if task is not None:
+                tasks.append(task)
+        return tasks
+
+
+    def _batch(self, X, y, sigma):
+        """The points of a batch, in the forms that `batch_update_tree` takes, as
+        arrays of shape (N, n_features), (N, n_outputs) and (N, n_outputs)."""
         X = np.array(X, dtype=float)
         y = np.array(y, dtype=float)
         sigma = np.array(sigma, dtype=float)
@@ -445,14 +428,7 @@ class GPTree:
             sigma = sigma[:, None]
         if sigma.ndim == 2 and sigma.shape not in ((N, 1), (N, self.n_outputs)) or sigma.ndim > 2:
             raise ValueError(f"sigma must be a number or have shape ({N},) or ({N}, {self.n_outputs}), not {sigma.shape}")
-        sigma = np.array(np.broadcast_to(sigma, (N, self.n_outputs)))
-
-        tasks = []
-        for i in tqdm(range(N), disable=not show_progress, desc="Updating the tree"):
-            task = self.update_tree(X[i:i+1], y[i:i+1], sigma[i:i+1], defer_fits=defer_fits)
-            if task is not None:
-                tasks.append(task)
-        return tasks
+        return X, y, np.array(np.broadcast_to(sigma, (N, self.n_outputs)))
 
 
     def _fit_task(self, node: GPNode):
@@ -531,7 +507,7 @@ class GPTree:
         the overlap of two children the cuts are followed from the root, each
         branch taken with the probability of ``prob_func``."""
         if self.leaf_index is not None:
-            leaf = self.leaf_index.locate(np.asarray(x, dtype=float).reshape(-1))
+            leaf = self.leaf_index.locate(x[0])
             if leaf is not None:
                 return leaf
         node = self.root
@@ -788,31 +764,15 @@ class GPTree:
         if not self.first_point:
             raise ValueError("fit builds a tree from scratch, and this tree holds points already. "
                              "Use batch_update_tree to add points to it, or fit a new GPTree.")
+        X_train, y_train, sigma_train = self._batch(X_train, y_train, sigma_train)
         self.n_features = X_train.shape[1]
-        N = X_train.shape[0]
         self.root.init_data_set(self.n_features)
-
-        # Ensure y_train has shape (N, n_outputs)
-        if y_train.ndim == 1:
-            y_train = y_train.reshape((-1, 1))
-
-        # Ensure sigma_train has shape (N, n_outputs) or is broadcastable
-        if sigma_train.ndim == 1:
-            sigma_train = sigma_train.reshape((-1, 1))
-            if self.n_outputs > 1:
-                sigma_train = np.tile(sigma_train, (1, self.n_outputs))
-        elif sigma_train.shape[1] == 1 and self.n_outputs > 1:
-            sigma_train = np.tile(sigma_train, (1, self.n_outputs))
 
         if shuffle:
             X_train, y_train, sigma_train = resample(X_train, y_train, sigma_train, replace=False)
 
-        for x, y, sigma in tqdm(zip(X_train, y_train, sigma_train), total=N, disable=not show_progress, desc="Building binary tree"):
-            x = x.reshape((1, x.shape[0]))
-            y = y.reshape((1, self.n_outputs))
-            sigma = sigma.reshape((1, self.n_outputs)) if hasattr(sigma, 'reshape') else np.array([sigma]).reshape((1, self.n_outputs))
-
-            self.update_tree(x, y, sigma, allow_training=False)
+        for i in tqdm(range(X_train.shape[0]), disable=not show_progress, desc="Building binary tree"):
+            self.update_tree(X_train[i:i+1], y_train[i:i+1], sigma_train[i:i+1], allow_training=False)
 
         for leaf in tqdm(self.root.leaves, disable=not show_progress, desc="Training"):
             leaf.fit_my_GPR(force_training=True)
