@@ -15,6 +15,7 @@ Key responsibilities:
 # Standard library imports
 import logging
 from collections import deque
+from dataclasses import dataclass
 from copy import deepcopy
 from typing import Optional
 
@@ -44,6 +45,81 @@ N_SCORES = 50  # Recent points over which a leaf compares its own GPs with the n
 MIN_SCORES = 10  # No comparison with fewer points
 OWN_MARGIN = 0.9  # A leaf predicts from its own points while their RMS error is below this times the neighbours'
 NODE_LINKS = ('left', 'right', 'parent', 'children')  # Saved by the tree, not by the node
+# What a child takes from its parent at a split: it predicts with copies of the
+# parent's GPs until its first fit, and continues the parent's schedules
+INHERITED = ('x_shift', 'x_scale', 'y_shift', 'y_scale', '_fitted_basis', '_fitted_global', 'alignment',
+             '_alignment_rejections', '_alignment_wait', 'sigma_profile', 'fit_mean', 'fit_std', 'fit_task_id',
+             'prefers_own')
+
+
+@dataclass(eq=False)
+class NodeSettings:
+    """The settings that all nodes of a tree share. A node reads them as its own
+    attributes (``node.Nbar``).
+
+    Attributes:
+        Nbar, split_dimension_criteria, splitting_strategy, n_outputs,
+            output_model, output_shape: As for `GPTree`.
+        split_position_method (str): Where a node is split along the chosen
+            input: at the 'median' (default) or the 'mean' of its points, at
+            a 'random' position within their range, or at one of the points
+            chosen at random ('randomchoice').
+        retrain_every_n_points (int): Number of new points after which a
+            node's GPs are fitted again. Defaults to 100.
+        use_standard_scaling (bool): If True (default), the inputs and targets
+            are standardised before a fit, and the predictions transformed
+            back. Not together with use_hyperparameter_inheritance.
+        use_hyperparameter_inheritance (bool): If True, the fits of the
+            children of a split start from the fitted kernel hyperparameters
+            of their parent. Defaults to False. Not together with
+            use_standard_scaling.
+        enable_point_merging (bool): If True, a new point is merged with a
+            stored point close to it, by a weighted average. Defaults to False.
+        merge_distance_threshold (float): Euclidean distance in the inputs
+            below which points are merged. Defaults to 0.01.
+        min_points_before_merging (int): Number of points that a node holds
+            before any are merged. Defaults to 10.
+        output_basis (Optional[OutputBasisLearner]): The tree's basis of the
+            outputs. Required for 'pca'.
+        global_mean (Optional[GlobalMeanLearner]): The tree's global model, or
+            None (default). The GPs of a node then model the residual of its
+            current snapshot.
+        neighbours (Optional[NeighbourSearch]): The tree's search for the
+            stored points nearest to a query, with which a node predicts from
+            those points (see ``GPNode.predict``), or None (default).
+    """
+    Nbar: int = 100
+    split_position_method: str = 'median'
+    retrain_every_n_points: int = 100
+    split_dimension_criteria: str = 'min_lengthscale'
+    splitting_strategy: str = 'gradual'
+    use_standard_scaling: bool = True
+    use_hyperparameter_inheritance: bool = False
+    enable_point_merging: bool = False
+    merge_distance_threshold: float = 0.01
+    min_points_before_merging: int = 10
+    n_outputs: int = 1
+    output_model: str = 'independent'
+    output_shape: Optional[tuple] = None
+    output_basis: Optional[OutputBasisLearner] = None
+    global_mean: Optional[GlobalMeanLearner] = None
+    neighbours: Optional[NeighbourSearch] = None
+
+    def __post_init__(self):
+        if self.use_standard_scaling and self.use_hyperparameter_inheritance:
+            raise ValueError(
+                "Cannot use both use_standard_scaling=True and use_hyperparameter_inheritance=True. "
+                "Standard scaling changes the coordinate system between parent and child nodes, "
+                "making hyperparameter inheritance incompatible. Please choose one or the other."
+            )
+        if self.output_model not in ('independent', 'shared', 'pca', 'aligned'):
+            raise ValueError(f"Unknown output_model '{self.output_model}'. Use 'independent', 'shared', 'pca' or 'aligned'.")
+        if self.n_outputs == 1:
+            self.output_model = 'independent'  # the modes only differ for several outputs
+        if self.output_model == 'pca' and self.output_basis is None:
+            raise ValueError("output_model='pca' requires an OutputBasisLearner passed as output_basis")
+        # the grid of the outputs ('aligned')
+        self.output_shape = tuple(self.output_shape) if self.output_shape is not None else (self.n_outputs,)
 
 
 class GPNode(Node):
@@ -56,9 +132,9 @@ class GPNode(Node):
     and makes local predictions within its domain.
 
     Attributes:
+        settings (NodeSettings): The settings of the tree, which are also read
+            as attributes of the node.
         my_GPRs (list[GPRegressorInterface]): The GPR instances of this node.
-        Nbar (int): The maximum number of training points this node can hold
-            before it attempts to split.
         my_X_data (numpy.ndarray): Training data features for this node.
         my_y_data (numpy.ndarray): Training data targets for this node.
         split_index (int): The feature index used for splitting this node.
@@ -71,33 +147,13 @@ class GPNode(Node):
         parent (GPNode): The parent node in the tree. None for the root node.
         value (int): Inherited from binarytree.Node, stores n_points.
         name (str): A string identifier for the node (e.g., "0", "01", "010").
-        split_position_method (str): Method used to determine split point.
-        retrain_every_n_points (int): Frequency of GPR retraining.
         overlap (float): The size of the overlapping region with sibling nodes.
         asleep (bool): True while the node's fitted GPs are partly released to
             save memory (see `sleep`). The next prediction restores them.
     """
 
-    def __init__(self, *args,
-                 my_GPR: GPRegressorInterface,
-                 Nbar: Optional[int] = 100,
-                 split_position_method='median',
-                 retrain_every_n_points=100,
-                 name="0",
-                 split_dimension_criteria='min_lengthscale',
-                 splitting_strategy: Optional[str] = 'gradual',
-                 use_standard_scaling: Optional[bool] = True,
-                 use_hyperparameter_inheritance: Optional[bool] = False,
-                 enable_point_merging: Optional[bool] = False,
-                 merge_distance_threshold: Optional[float] = 0.01,
-                 min_points_before_merging: Optional[int] = 10,
-                 n_outputs: Optional[int] = 1,
-                 output_model: Optional[str] = 'independent',
-                 output_shape: Optional[tuple] = None,
-                 output_basis: Optional[OutputBasisLearner] = None,
-                 global_mean: Optional[GlobalMeanLearner] = None,
-                 neighbours: Optional[NeighbourSearch] = None,
-                 my_GPRs: Optional[list] = None):
+    def __init__(self, *args, my_GPR: GPRegressorInterface, name="0", my_GPRs: Optional[list] = None,
+                 settings: Optional[NodeSettings] = None, **kwargs):
         """Initializes a GPNode.
 
         Args:
@@ -105,82 +161,31 @@ class GPNode(Node):
                 its number of points.
             my_GPR (GPRegressorInterface): The GP regressor of the node, or the
                 template of its regressors.
-            Nbar, split_dimension_criteria, splitting_strategy, n_outputs,
-                output_model, output_shape: As for `GPTree`.
-            split_position_method (str): Where a node is split along the chosen
-                input: at the 'median' (default) or the 'mean' of its points, at
-                a 'random' position within their range, or at one of the points
-                chosen at random ('randomchoice').
-            retrain_every_n_points (int): Number of new points after which the
-                node's GPs are fitted again. Defaults to 100.
             name (str): Identifier of the node: its path from the root ("0",
                 "01", "010"). Defaults to "0".
-            use_standard_scaling (Optional[bool]): If True (default), the inputs
-                and targets are standardised before a fit, and the predictions
-                transformed back. Not together with
-                use_hyperparameter_inheritance.
-            use_hyperparameter_inheritance (Optional[bool]): If True, the fits
-                of the children of a split start from the fitted kernel
-                hyperparameters of their parent. Defaults to False. Not together
-                with use_standard_scaling.
-            enable_point_merging (Optional[bool]): If True, a new point is
-                merged with a stored point close to it, by a weighted average.
-                Defaults to False.
-            merge_distance_threshold (Optional[float]): Euclidean distance in
-                the inputs below which points are merged. Defaults to 0.01.
-            min_points_before_merging (Optional[int]): Number of points that a
-                node holds before any are merged. Defaults to 10.
-            output_basis (Optional[OutputBasisLearner]): The tree's basis of the
-                outputs, shared by all nodes. Required for 'pca'.
-            global_mean (Optional[GlobalMeanLearner]): The tree's global model,
-                shared by all nodes, or None (default). The node's GPs then
-                model the residual of its current snapshot.
-            neighbours (Optional[NeighbourSearch]): The tree's search for the
-                stored points nearest to a query, with which the node predicts
-                from those points (see ``predict``), or None (default).
             my_GPRs (Optional[list]): The GP regressors of the node. By default
                 they are made from ``my_GPR`` according to ``output_model``. A
                 split gives each child a copy of those of its parent.
+            settings (Optional[NodeSettings]): The settings of the tree, which
+                a split hands to the children. By default they are made from
+                ``**kwargs``.
+            **kwargs: The fields of `NodeSettings`.
         """
 
         super().__init__(*args)
+        self.settings = settings if settings is not None else NodeSettings(**kwargs)
+        n_outputs, output_model = self.n_outputs, self.output_model
 
-        if use_standard_scaling and use_hyperparameter_inheritance:
-            raise ValueError(
-                "Cannot use both use_standard_scaling=True and use_hyperparameter_inheritance=True. "
-                "Standard scaling changes the coordinate system between parent and child nodes, "
-                "making hyperparameter inheritance incompatible. Please choose one or the other."
-            )
-
-        self.Nbar = Nbar
-        self.n_outputs = n_outputs
-
-        if output_model not in ('independent', 'shared', 'pca', 'aligned'):
-            raise ValueError(f"Unknown output_model '{output_model}'. Use 'independent', 'shared', 'pca' or 'aligned'.")
-        if n_outputs == 1:
-            output_model = 'independent'  # the modes only differ for several outputs
-        if output_model == 'pca' and output_basis is None:
-            raise ValueError("output_model='pca' requires an OutputBasisLearner passed as output_basis")
-        self.output_model = output_model
-        self.output_shape = tuple(output_shape) if output_shape is not None else (n_outputs,)   # the grid of the outputs ('aligned')
-        self.output_basis = output_basis   # tree-global, shared by reference across all nodes
         self._fitted_basis = None          # the OutputBasis this node's GPs were fitted with ('pca')
-        self.z_scaler = None               # (shift, scale) per basis score, fitted per leaf ('pca')
-        self.y_common_scaler = None        # (mu, scale) of the common output scaling ('shared', 'aligned')
         self.alignment = None              # the AlignedCurves the node's GP was fitted with, if any ('aligned')
         self._alignment_rejections = 0     # alignments rejected in a row, and the fits to pass before the next try
         self._alignment_wait = 0
         self.sigma_profile = None          # factor per output on the sigma of a shared-kernel GP ('shared', 'aligned')
+        self._fitted_global = None         # the snapshot of the global model that the node's GPs were fitted against
 
-        # Tree-wide global model (shared by reference; None when the tree has none) and
-        # the snapshot of it that this node's GPs were fitted against.
-        self.global_mean = global_mean
-        self._fitted_global = None
-
-        # The tree's neighbour search, the squared errors of the neighbours' and of
-        # the node's own prediction at the last points it received, whether its own
-        # GPs predict for now, and the variance of its last predictions
-        self.neighbours = neighbours
+        # The squared errors of the neighbours' and of the node's own prediction at
+        # the last points it received, whether its own GPs predict for now, and the
+        # variance of its last predictions
         self._scores = deque(maxlen=N_SCORES)
         self.prefers_own = False
         self._variance_unit = None
@@ -191,8 +196,7 @@ class GPNode(Node):
 
         # GP regressors: one per output ('independent'), one for all outputs
         # ('shared', 'aligned'), or one per basis score ('pca'; the list is sized
-        # at the first fit, once the basis rank is known). Children receive their
-        # own list via my_GPRs: one clone per parent GP.
+        # at the first fit, once the basis rank is known)
         if my_GPRs is not None:
             self.my_GPRs = list(my_GPRs)
         elif n_outputs == 1 or output_model in ('shared', 'pca', 'aligned'):
@@ -200,27 +204,18 @@ class GPNode(Node):
         else:
             self.my_GPRs = [deepcopy(my_GPR) for _ in range(n_outputs)]
 
+        # What the GPs see of a point (x, y): (x - x_shift) / x_scale and
+        # (y - y_shift) / y_scale, set by each fit. The targets are shifted and
+        # scaled per output ('independent'), per output with one scale for all
+        # ('shared', 'aligned'), or per basis score ('pca')
+        self.x_shift, self.x_scale = 0.0, 1.0
+        self.y_shift, self.y_scale = np.zeros(n_outputs), np.ones(n_outputs)
+
         self.parent = None
         self.children = None
 
-        self.split_position_method = split_position_method
-        self.retrain_every_n_points = retrain_every_n_points
-        self.split_dimension_criteria = split_dimension_criteria
-        self.splitting_strategy = splitting_strategy
-        self.use_standard_scaling = use_standard_scaling
-        self.use_hyperparameter_inheritance = use_hyperparameter_inheritance
-
-        # Point merging parameters
-        self.enable_point_merging = enable_point_merging
-        self.merge_distance_threshold = merge_distance_threshold
-        self.min_points_before_merging = min_points_before_merging
-
         # Number of merges per stored point
         self.merge_counts = None  # Will be initialized with data
-
-        # Standard scalers for X and y (fitted during GP training), one y scaler per output
-        self.X_scaler = None
-        self.y_scalers = [None for _ in range(n_outputs)]
 
         self.is_left = None
         self.is_leaf = True
@@ -253,6 +248,13 @@ class GPNode(Node):
         self.sigma_scalers = [DEFAULT_SIGMA_SCALER for _ in range(n_outputs)]
 
         logger.debug("Created node %s", self.name)
+
+
+    def __getattr__(self, name):
+        """The settings of the tree are read as attributes of each of its nodes."""
+        if name in NodeSettings.__dataclass_fields__:
+            return getattr(self.settings, name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
 
     def __getstate__(self):
@@ -311,52 +313,22 @@ class GPNode(Node):
 
     def generate_children(self, n_features: int):
         """ Grow the GPtree by adding two GPNodes as children of the current GPNode. """
-
-        # Settings that will be passed on to the child nodes
-        node_config_kwargs = {
-            'Nbar': self.Nbar,
-            'split_position_method': self.split_position_method,
-            'retrain_every_n_points': self.retrain_every_n_points,
-            'split_dimension_criteria': self.split_dimension_criteria,
-            'splitting_strategy': self.splitting_strategy,
-            'use_standard_scaling': self.use_standard_scaling,
-            'use_hyperparameter_inheritance': self.use_hyperparameter_inheritance,
-            'enable_point_merging': self.enable_point_merging,
-            'merge_distance_threshold': self.merge_distance_threshold,
-            'min_points_before_merging': self.min_points_before_merging,
-            'n_outputs': self.n_outputs,  # Pass n_outputs to children
-            'output_model': self.output_model,
-            'output_shape': self.output_shape,
-            'output_basis': self.output_basis,
-            'global_mean': self.global_mean,
-            'neighbours': self.neighbours,
-        }
-
-        # Each child gets its own clone of every parent GP (one per output / score)
-        # and predicts with them until its first retrain.
-        left_gprs = [gpr.clone() for gpr in self.my_GPRs]
-        right_gprs = [gpr.clone() for gpr in self.my_GPRs]
-        node_class = type(self)
-        self.left = node_class(0, my_GPR=left_gprs[0], my_GPRs=left_gprs, name=self.name + "0", **node_config_kwargs)
-        self.right = node_class(0, my_GPR=right_gprs[0], my_GPRs=right_gprs, name=self.name + "1", **node_config_kwargs)
-        
-        self.left.is_left = True
-        self.right.is_left = False
-
-        self.children = [self.left, self.right]
-        self.is_leaf = False
-
-        for child in self.children:
+        self.children = []
+        for digit in "01":
+            gprs = [gpr.clone() for gpr in self.my_GPRs]
+            child = type(self)(0, my_GPR=gprs[0], my_GPRs=gprs, name=self.name + digit, settings=self.settings)
+            child.is_left = digit == "0"
             child.parent = self
             child.init_data_set(n_features)
-
-        # Copy the registered prediction performance over to the child nodes
-        self.left.residuals_list = [arr.copy() for arr in self.residuals_list]
-        self.right.residuals_list = [arr.copy() for arr in self.residuals_list]
-        self.left.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
-        self.right.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
-        self.left.sigma_scalers = self.sigma_scalers.copy()
-        self.right.sigma_scalers = self.sigma_scalers.copy()
+            for attribute in INHERITED:
+                setattr(child, attribute, getattr(self, attribute))
+            child.residuals_list = [residuals.copy() for residuals in self.residuals_list]
+            child.sigma_preds_list = [sigmas.copy() for sigmas in self.sigma_preds_list]
+            child.sigma_scalers = self.sigma_scalers.copy()
+            child._scores = deque(self._scores, maxlen=N_SCORES)
+            self.children.append(child)
+        self.left, self.right = self.children
+        self.is_leaf = False
 
         # With hyperparameter inheritance the fits of the children start from the
         # parent's fitted kernels
@@ -369,36 +341,8 @@ class GPNode(Node):
             logger.debug("Inherited hyperparameters for %d output(s) from node %s to children %s and %s",
                          self.n_outputs, self.name, self.left.name, self.right.name)
 
-        # The children predict with copies of the parent's GPs, which were fitted to
-        # scaled data, so they need the parent's scalers
-        if self.use_standard_scaling and self.X_scaler is not None:
-            self.left.X_scaler = deepcopy(self.X_scaler)
-            self.right.X_scaler = deepcopy(self.X_scaler)
-            self.left.y_scalers = [deepcopy(scaler) if scaler is not None else None for scaler in self.y_scalers]
-            self.right.y_scalers = [deepcopy(scaler) if scaler is not None else None for scaler in self.y_scalers]
-            self.left.y_common_scaler = deepcopy(self.y_common_scaler)
-            self.right.y_common_scaler = deepcopy(self.y_common_scaler)
-
-        # Until their first retrain the children predict with the parent's GPs, so
-        # they also need the basis, per-score standardisation and global-model
-        # snapshot those GPs were fitted with.
-        self.left._fitted_basis = self._fitted_basis
-        self.right._fitted_basis = self._fitted_basis
-        self.left.z_scaler = deepcopy(self.z_scaler)
-        self.right.z_scaler = deepcopy(self.z_scaler)
-        self.left._fitted_global = self._fitted_global
-        self.right._fitted_global = self._fitted_global
-        self.left.alignment = self.right.alignment = self.alignment
-        self.left._alignment_rejections = self.right._alignment_rejections = self._alignment_rejections
-        self.left._alignment_wait = self.right._alignment_wait = self._alignment_wait
-        self.left.sigma_profile = self.right.sigma_profile = self.sigma_profile
-        self.left.fit_mean = self.right.fit_mean = self.fit_mean
-        self.left.fit_std = self.right.fit_std = self.fit_std
-        self.left.fit_task_id = self.right.fit_task_id = self.fit_task_id
         if self.neighbours is not None:
             for child in self.children:
-                child._scores = deque(self._scores, maxlen=N_SCORES)
-                child.prefers_own = self.prefers_own
                 child._used()       # its GPs are copies of the parent's, fit and all
 
 
@@ -603,42 +547,41 @@ class GPNode(Node):
             return None
         return np.min(np.vstack(collected), axis=0)
 
-    def _fit_common_y_scaler(self, y: np.ndarray):
-        """Centre each output and divide all of them by one common scale.
+    def _standardisation(self, A: np.ndarray):
+        """The shift and the scale per column of ``A`` that standardise it, or 0
+        and 1 without ``use_standard_scaling``."""
+        if not self.use_standard_scaling:
+            return np.zeros(A.shape[1]), np.ones(A.shape[1])
+        scaler = StandardScaler().fit(A)
+        return scaler.mean_, scaler.scale_
 
-        Used by output_model='shared': with one common scale the per-point
-        observation noise stays identical across outputs in the scaled space,
-        as the backend's single per-point noise level requires.
-        """
-        mu = y.mean(axis=0)
-        scale = float((y - mu).std())
+    def _common_scaling(self, y: np.ndarray):
+        """A shift per output and one scale for all of them, or 0 and 1 without
+        ``use_standard_scaling``. With one scale the noise of a point stays the
+        same for all outputs, as a GP for all of them requires."""
+        if not self.use_standard_scaling:
+            return 0.0, 1.0
+        shift = y.mean(axis=0)
+        scale = float((y - shift).std())
         if not np.isfinite(scale) or scale <= 0.0:
             scale = 1.0
-        self.y_common_scaler = (mu, scale)
-        return mu, scale
+        return shift, scale
 
-    def _independent_fit_inputs(self, X: np.ndarray, y: np.ndarray, sigma: np.ndarray, scalers=None):
+    def _independent_fit_inputs(self, X: np.ndarray, y: np.ndarray, sigma: np.ndarray, scaling=None):
         """What the GPs of output_model='independent' are fitted to, for the points
         ``(X, y, sigma)``: the inputs and, per output, the targets and the noise
-        variances. With ``use_standard_scaling`` they are standardised, with
-        ``scalers`` or with scalers fitted to the points, and the scalers
-        ``(X_scaler, y_scalers)`` are returned last, else None. The node is not
-        changed."""
+        variances. They are in the ``scaling`` given, ``(x_shift, x_scale,
+        y_shift, y_scale)``, or in that of the points, and it is returned
+        last. The node is not changed."""
         outputs = range(self.n_outputs)
-        if not self.use_standard_scaling:
-            return X, [y[:, i:i+1] for i in outputs], [sigma[:, i] ** 2 for i in outputs], None
-        if scalers is None:
-            scalers = StandardScaler().fit(X), [StandardScaler().fit(y[:, i:i+1]) for i in outputs]
-        X_scaler, y_scalers = scalers
-        targets = [y_scalers[i].transform(y[:, i:i+1]) for i in outputs]
-        # Noise std in scaled units is sigma / y_scale; the GP takes variances
-        noise = [(sigma[:, i] / y_scalers[i].scale_[0]) ** 2 for i in outputs]
-        return X_scaler.transform(X), targets, noise, (X_scaler, y_scalers)
-
-    def _set_scalers(self, scalers):
-        """Take the scalers that ``_independent_fit_inputs`` returned."""
-        if scalers is not None:
-            self.X_scaler, self.y_scalers = scalers[0], list(scalers[1])
+        if scaling is None:
+            x_shift, x_scale = self._standardisation(X)
+            y_shift, y_scale = np.hstack([self._standardisation(y[:, i:i+1]) for i in outputs])
+            scaling = x_shift, x_scale, y_shift, y_scale
+        x_shift, x_scale, y_shift, y_scale = scaling
+        targets = [(y[:, i:i+1] - y_shift[i]) / y_scale[i] for i in outputs]
+        noise = [(sigma[:, i] / y_scale[i]) ** 2 for i in outputs]
+        return (X - x_shift) / x_scale, targets, noise, scaling
 
     def fit_due(self) -> bool:
         """True if the retrain buffer or the node is full."""
@@ -681,9 +624,8 @@ class GPNode(Node):
         self._set_fit_statistics(X_train)
 
         if self.output_model == 'independent':
-            # One GP per output, per-output standardisation of y
-            X_fit, targets, noise, scalers = self._independent_fit_inputs(X_train, y_train, sigma_train)
-            self._set_scalers(scalers)
+            X_fit, targets, noise, scaling = self._independent_fit_inputs(X_train, y_train, sigma_train)
+            self.x_shift, self.x_scale, self.y_shift, self.y_scale = scaling
             for i, gpr in enumerate(self.my_GPRs):
                 self._set_noise(gpr, noise[i])
                 gpr.fit(X_fit, targets[i])
@@ -703,20 +645,17 @@ class GPNode(Node):
                 self._fit_shared(X_train, y_train, sigma_train, previous, previous_fit_std, align)
 
         else:  # 'pca'
-            if self.use_standard_scaling:
-                self.X_scaler = StandardScaler().fit(X_train)
-                X_fit = self.X_scaler.transform(X_train)
-            else:
-                X_fit = X_train
+            self.x_shift, self.x_scale = self._standardisation(X_train)
+            X_fit = self._scaled_inputs(X_train)
             Z = basis.project(y_train)                  # (N, k) basis scores
             noise_z = basis.project_noise(sigma_train)  # (N, k) per-score noise variances
             k = basis.n_components
-            # Standardise every score within the leaf: the kernel's initial amplitude
+            # The scores are always standardised: the kernel's initial amplitude
             # and zero prior mean assume centred targets of unit variance
             z_shift = Z.mean(axis=0)
             z_scale = Z.std(axis=0)
             z_scale = np.where(np.isfinite(z_scale) & (z_scale > 0.0), z_scale, 1.0)
-            self.z_scaler = (z_shift, z_scale)
+            self.y_shift, self.y_scale = z_shift, z_scale
             # One GP per score: (re)size the list if the basis rank changed
             template = self.my_GPRs[0]
             while len(self.my_GPRs) < k:
@@ -750,17 +689,11 @@ class GPNode(Node):
         noise variances of the outputs are averaged (exact when sigma is the
         same for all outputs, given the common output scale). With ``align`` an
         alignment of the curves is tried, starting from the ``previous`` one."""
-        if self.use_standard_scaling:
-            self.X_scaler = StandardScaler().fit(X_train)
-            X_fit = self.X_scaler.transform(X_train)
-            mu, scale = self._fit_common_y_scaler(y_train)
-            y_fit = (y_train - mu) / scale
-            alpha = np.mean((sigma_train / scale) ** 2, axis=1)
-        else:
-            X_fit, y_fit = X_train, y_train
-            alpha = np.mean(sigma_train ** 2, axis=1)
-        self._set_noise(self.my_GPRs[0], alpha)
-        self.my_GPRs[0].fit(X_fit, y_fit)
+        self.x_shift, self.x_scale = self._standardisation(X_train)
+        self.y_shift, self.y_scale = mu, scale = self._common_scaling(y_train)
+        X_fit = self._scaled_inputs(X_train)
+        self._set_noise(self.my_GPRs[0], np.mean((sigma_train / scale) ** 2, axis=1))
+        self.my_GPRs[0].fit(X_fit, (y_train - mu) / scale)
 
         # What the GP takes from its leave-one-out predictions of the curves: a
         # sigma per output and, with ``align``, whether an alignment replaces it
@@ -769,15 +702,12 @@ class GPNode(Node):
         if loo is None:
             return
         weights, variance = loo
-        mu, scale = self.y_common_scaler if self.use_standard_scaling else (0.0, 1.0)
         errors = weights @ (y_train - mu) - (y_train - mu)
         variance = variance * scale ** 2
         if align:
             aligned = self._aligned_fit(X_train, X_fit, y_train, sigma_train, previous, previous_fit_std)
             if aligned is not None and np.sqrt(np.mean(aligned[2] ** 2)) * ALIGNMENT_MARGIN < np.sqrt(np.mean(errors ** 2)):
-                self.my_GPRs[0], self.alignment, errors, variance, scaler = aligned
-                if self.use_standard_scaling:
-                    self.y_common_scaler = scaler
+                self.my_GPRs[0], self.alignment, errors, variance, (self.y_shift, self.y_scale) = aligned
                 self._alignment_rejections = 0
             else:
                 self._alignment_rejections += 1
@@ -791,8 +721,8 @@ class GPNode(Node):
     def _aligned_fit(self, X_train, X_fit, y_train, sigma_train, previous, previous_fit_std):
         """A warp of the grid of the curves ``y_train`` and a GP fitted to the
         aligned curves: ``(GP, AlignedCurves, leave-one-out errors and variances
-        of the curves, (mu, scale) of the aligned curves)``, or None if the GP
-        backend cannot."""
+        of the curves, (shift, scale) of the aligned curves)``, or None if the
+        GP backend cannot."""
         gpr = self.my_GPRs[0].unfitted_copy()
         if gpr is None:
             return None
@@ -804,13 +734,8 @@ class GPNode(Node):
         warp.fit(y_train, delta)
         aligned = warp.register(y_train, delta)
         curves = warp.curves(y_train, aligned, delta)
-        mu, scale = 0.0, 1.0
-        if self.use_standard_scaling:
-            mu = aligned.mean(axis=0)
-            scale = float((aligned - mu).std())
-            if not np.isfinite(scale) or scale <= 0.0:
-                scale = 1.0
-        else:
+        mu, scale = self._common_scaling(aligned)
+        if not self.use_standard_scaling:
             curves.centre_weights = np.zeros(X_train.shape[0])
         self._set_noise(gpr, np.mean((sigma_train / scale) ** 2, axis=1))
         gpr.fit(X_fit, (aligned - mu) / scale)
@@ -828,11 +753,11 @@ class GPNode(Node):
         return X, y, np.vstack((self.my_sigma_data, self.shared_sigma_data))
 
 
-    def _refit_on_snapshot(self, snapshot, hyperparameters=None, scalers=None):
+    def _refit_on_snapshot(self, snapshot, hyperparameters=None, scaling=None):
         """Refit the GPs on the residual of ``snapshot`` (the targets, if None)
         without optimising: with ``hyperparameters``, one set per GP, in the
-        scaling of ``scalers``, or with the hyperparameters the GPs have, in
-        the scaling of the node's points.
+        ``scaling`` given, or with the hyperparameters the GPs have, in the
+        scaling of the node's points.
 
         Used by global models with ``cheap_leaf_refresh`` and by
         ``apply_fit``. The retrain buffer is left as is, so the
@@ -846,8 +771,8 @@ class GPNode(Node):
         X_train, y_train, sigma_train = self._points(snapshot)
         if X_train.shape[0] == 0:
             return False
-        X_fit, targets, noise, scalers = self._independent_fit_inputs(X_train, y_train, sigma_train, scalers)
-        self._set_scalers(scalers)
+        X_fit, targets, noise, scaling = self._independent_fit_inputs(X_train, y_train, sigma_train, scaling)
+        self.x_shift, self.x_scale, self.y_shift, self.y_scale = scaling
         for i, gpr in enumerate(self.my_GPRs):
             self._set_noise(gpr, noise[i])
             if hyperparameters is None:
@@ -867,7 +792,7 @@ class GPNode(Node):
         """The fit of the node as a task for another process: unfitted copies of
         its GPs with the inputs and targets they are to be fitted to.
 
-        Returns the task and its frame: the scalers and the global-model
+        Returns the task and its frame: the scaling and the global-model
         snapshot that the inputs and targets were made with. ``solve_fit_task``
         carries the task out, and ``apply_fit`` takes what it finds together
         with the frame. The node's GPs stay as they are, and the retrain buffer
@@ -885,11 +810,11 @@ class GPNode(Node):
         X_train, y_train, sigma_train = self._points(snapshot)
         if X_train.shape[0] == 0:
             return None
-        X_fit, targets, noise, scalers = self._independent_fit_inputs(X_train, y_train, sigma_train)
+        X_fit, targets, noise, scaling = self._independent_fit_inputs(X_train, y_train, sigma_train)
         for gpr, alpha in zip(gprs, noise):
             self._set_noise(gpr, alpha)
         self.n_points_since_retrain = 0
-        return {'X': X_fit, 'y': targets, 'gprs': gprs}, (scalers, snapshot)
+        return {'X': X_fit, 'y': targets, 'gprs': gprs}, (scaling, snapshot)
 
 
     def apply_fit(self, hyperparameters, frame):
@@ -897,8 +822,8 @@ class GPNode(Node):
         that ``solve_fit_task`` found, one set per GP, in the ``frame`` of the
         task: the node is then as fitted in place when the task was made, with
         the points since then appended."""
-        scalers, snapshot = frame
-        if not self._refit_on_snapshot(snapshot, hyperparameters, scalers):
+        scaling, snapshot = frame
+        if not self._refit_on_snapshot(snapshot, hyperparameters, scaling):
             self.fit_my_GPR(force_training=True)
 
 
@@ -930,31 +855,26 @@ class GPNode(Node):
             return False
         if self._fitted_global is not None:
             y = y - self._fitted_global.predict(x)
-        scaled = self.use_standard_scaling and self.X_scaler is not None
         xs = self._scaled_inputs(x)
+        shift, scale = self.y_shift, self.y_scale
 
         if self.output_model == 'independent':
-            done = []
-            for i, gpr in enumerate(self.my_GPRs):
-                shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
-                done.append(gpr.append(xs, (y[0, i] - shift) / scale, (sigma[0, i] / scale) ** 2))
-            return all(done)
+            return all([gpr.append(xs, (y[0, i] - shift[i]) / scale[i], (sigma[0, i] / scale[i]) ** 2)
+                        for i, gpr in enumerate(self.my_GPRs)])
 
         if self.output_model in ('shared', 'aligned'):
-            mu, scale = self.y_common_scaler if scaled and self.y_common_scaler is not None else (0.0, 1.0)
             noise = float(np.mean((sigma / scale) ** 2))
             if self.alignment is None:
-                return self.my_GPRs[0].append(xs, (y - mu) / scale, noise)
+                return self.my_GPRs[0].append(xs, (y - shift) / scale, noise)
             delta = (x - self.fit_mean) / self.fit_std
-            done = self.my_GPRs[0].append(xs, (self.alignment.warp.register(y, delta) - mu) / scale, noise)
+            done = self.my_GPRs[0].append(xs, (self.alignment.warp.register(y, delta) - shift) / scale, noise)
             if done:
                 self.alignment = self.alignment.with_curve(y, delta)
             return done
 
         z = self._fitted_basis.project(y)[0]
         noise_z = self._fitted_basis.project_noise(sigma)[0]
-        z_shift, z_scale = self.z_scaler
-        return all([gpr.append(xs, (z[j] - z_shift[j]) / z_scale[j], noise_z[j] / z_scale[j] ** 2)
+        return all([gpr.append(xs, (z[j] - shift[j]) / scale[j], noise_z[j] / scale[j] ** 2)
                     for j, gpr in enumerate(self.my_GPRs)])
 
 
@@ -1234,13 +1154,12 @@ class GPNode(Node):
         if self.output_model != 'independent':
             return None
         Zs = self._scaled_inputs(Z)
-        scaled = self.use_standard_scaling and self.X_scaler is not None
         covariances, means, scales = [], np.empty(self.n_outputs), np.empty(self.n_outputs)
         for i, gpr in enumerate(self.my_GPRs):
             prior = gpr.covariance(Zs)
             if prior is None:
                 return None
-            shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
+            shift, scale = self.y_shift[i], self.y_scale[i]
             covariances.append((scale ** 2 * prior[1][0]) * prior[0])
             means[i] = shift + scale * prior[2][0]
             scales[i] = prior[1][0]
@@ -1306,11 +1225,10 @@ class GPNode(Node):
                 unit = 0.01 * y.var(axis=0)
             noise_std = np.sqrt(noise_std ** 2 + growth[:, None] * (noise_std ** 2 + unit))
         Xs, qs = self._scaled_inputs(X), self._scaled_inputs(xq)
-        scaled = self.use_standard_scaling and self.X_scaler is not None
 
         if self.output_model == 'independent':
             for i, gpr in enumerate(self.my_GPRs):
-                shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
+                shift, scale = self.y_shift[i], self.y_scale[i]
                 result = gpr.condition(Xs, (y[:, i] - shift) / scale, (noise_std[:, i] / scale) ** 2, qs)
                 if result is not None:
                     share[i] = weight(result[2][0])
@@ -1318,7 +1236,7 @@ class GPNode(Node):
                         mu[i], sigma[i] = result[0][0, 0] * scale + shift, result[1][0, 0] * scale
 
         elif self.output_model in ('shared', 'aligned'):
-            shift, scale = self.y_common_scaler if scaled and self.y_common_scaler is not None else (0.0, 1.0)
+            shift, scale = self.y_shift, self.y_scale
             result = self.my_GPRs[0].condition(Xs, (y - shift) / scale, np.mean((noise_std / scale) ** 2, axis=1), qs)
             if result is not None:
                 share[:] = weight(np.max(result[2]))
@@ -1329,7 +1247,7 @@ class GPNode(Node):
         else:  # 'pca'
             basis = self._fitted_basis
             Z, noise_z = basis.project(y), basis.project_noise(noise_std)
-            z_shift, z_scale = self.z_scaler
+            z_shift, z_scale = self.y_shift, self.y_scale
             z_mean, z_var = np.empty((1, basis.n_components)), np.empty((1, basis.n_components))
             lowest = 1.0
             for j, gpr in enumerate(self.my_GPRs):
@@ -1346,37 +1264,18 @@ class GPNode(Node):
 
     def _predict_independent(self, x: np.ndarray):
         """Per-output GPs (output_model='independent'); see ``predict``."""
-        n_samples = x.shape[0]
-
-        mu_pred = np.zeros((n_samples, self.n_outputs))
-        sigma_pred = np.zeros((n_samples, self.n_outputs))
-
-        if self.use_standard_scaling and self.X_scaler is not None:
-            # The GPs predict in scaled units; the mean and sigma are transformed back
-            x_scaled = self._scaled_inputs(x)
-
-            for i in range(self.n_outputs):
-                mu_scaled_i, sigma_scaled_i = self.my_GPRs[i].predict(x_scaled, return_std=True)
-
-                y_scaler = self.y_scalers[i]
-                mu_pred[:, i] = np.asarray(mu_scaled_i, dtype=float).reshape(-1) * y_scaler.scale_[0] + y_scaler.mean_[0]
-
-                sigma_pred[:, i] = sigma_scaled_i * y_scaler.scale_[0]
-
-        else:
-            for i in range(self.n_outputs):
-                mu_i, sigma_i = self.my_GPRs[i].predict(x, return_std=True)
-                mu_pred[:, i] = mu_i.flatten()
-                sigma_pred[:, i] = sigma_i
-
+        xs = self._scaled_inputs(x)
+        mu_pred = np.zeros((x.shape[0], self.n_outputs))
+        sigma_pred = np.zeros((x.shape[0], self.n_outputs))
+        for i, gpr in enumerate(self.my_GPRs):
+            m, sd = gpr.predict(xs, return_std=True)
+            mu_pred[:, i] = np.asarray(m, dtype=float).reshape(-1) * self.y_scale[i] + self.y_shift[i]
+            sigma_pred[:, i] = sd * self.y_scale[i]
         return mu_pred, sigma_pred
 
     def _scaled_inputs(self, x: np.ndarray) -> np.ndarray:
-        """``X_scaler.transform(x)`` without scikit-learn's input validation, which
-        costs more than the arithmetic for a few points."""
-        if self.use_standard_scaling and self.X_scaler is not None:
-            return (np.asarray(x, dtype=float) - self.X_scaler.mean_) / self.X_scaler.scale_
-        return x
+        """The inputs ``x`` as the node's GPs see them."""
+        return (np.asarray(x, dtype=float) - self.x_shift) / self.x_scale
 
     def _prior_prediction(self, x: np.ndarray):
         """Prediction of a node that has not been fitted yet: the prior of its first
@@ -1401,10 +1300,8 @@ class GPNode(Node):
         if sd.shape[1] != self.n_outputs:
             # one sigma for all targets of the GP, of which an alignment can have more than there are outputs
             sd = np.tile(sd[:, :1], (1, self.n_outputs))
-        if self.use_standard_scaling and self.y_common_scaler is not None:
-            mu, scale = self.y_common_scaler
-            m = m * scale + mu
-            sd = sd * scale
+        m = m * self.y_scale + self.y_shift
+        sd = sd * self.y_scale
         if self.sigma_profile is not None:
             sd = sd * self.sigma_profile
         if self.alignment is not None:
@@ -1418,7 +1315,7 @@ class GPNode(Node):
             return self._prior_prediction(x)
         n, k = x.shape[0], basis.n_components
         xs = self._scaled_inputs(x)
-        z_shift, z_scale = self.z_scaler
+        z_shift, z_scale = self.y_shift, self.y_scale
         z_mean = np.zeros((n, k))
         z_var = np.zeros((n, k))
         for j in range(k):

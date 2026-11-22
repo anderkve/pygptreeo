@@ -173,8 +173,8 @@ fixed size: a fitted leaf takes 40 kB at `Nbar=50` in three dimensions and
 * **Where the memory is.** A fitted leaf at `Nbar=100` in six dimensions takes
   about 113 kB: 80 kB for the Cholesky factor of its GP, 7 kB for the GP's
   copy of the training data and its weights, 6 kB for the leaf's own and shared
-  points, and about 20 kB for Python objects (the node, an inner node, scalers,
-  kernels). The factor follows from the training data and the kernel.
+  points, and about 20 kB for Python objects (the node, an inner node, the
+  scaling, kernels). The factor follows from the training data and the kernel.
 * **A sleeping leaf** has released the factors and weights of its GPs and
   keeps everything else. Restoring them takes one kernel matrix and one
   factorisation, and the GP then predicts as before: exactly, or to the
@@ -418,9 +418,9 @@ section 9.
   scalers averaged with the same weights.
 * **A sum of kernels, not an average of hyperparameters.** Each leaf scales
   its inputs and targets itself, so its hyperparameters mean something only
-  with its scalers, and an average over leaves has no meaning for a kernel
+  with its scaling, and an average over leaves has no meaning for a kernel
   that is not of the default form. A weighted sum of kernels is a kernel
-  whatever the leaves' kernels and scalers are, and it changes continuously
+  whatever the leaves' kernels and scalings are, and it changes continuously
   with the weights.
 * **The width of a zone is a share of the leaf's own width** along the
   input that is cut: the distance between its faces, or to the edge of its
@@ -442,7 +442,7 @@ section 9.
   is stored in, with the mixed prediction. A leaf's choice between its own
   GP and the neighbours still compares the two with its own kernel.
 * **Most leaves sleep** (`NEIGHBOUR_AWAKE`, 8). A prediction from neighbours
-  uses a leaf's kernel, scalers and points and never the factor of its
+  uses a leaf's kernel, scaling and points and never the factor of its
   kernel matrix, which is three quarters of a leaf's memory. The factor is
   needed where a point arrives, for the leaf's own prediction of it and to
   append it, and where the leaf's own GP predicts. So only the leaves whose
@@ -541,9 +541,9 @@ its result to the tree. The tree has no part in sending them.
   at once, the result gives the same leaf as a fit in place.
 * **The result is applied in the frame of its task.** The hyperparameters
   belong to the scaling of the points they were found for, so the tree keeps
-  the scalers of a task until its result arrives and the leaf takes them with
+  the scaling of a task until its result arrives and the leaf takes it with
   the hyperparameters. The leaf is then as fitted in place when the task was
-  made, with the points since then appended. Scalers fitted to the leaf's
+  made, with the points since then appended. A scaling fitted to the leaf's
   points at that moment would differ once it has split: a result applied to
   six leaves two splits below its task gave twice the error. The residual of
   a task is that of one snapshot of the global model, so a result is dropped

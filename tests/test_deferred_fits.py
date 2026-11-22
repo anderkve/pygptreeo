@@ -239,8 +239,8 @@ class TestDeferredFits(unittest.TestCase):
         leaves = gpt.root.leaves
         self.assertGreater(len(leaves), 2)
         for leaf in leaves:
-            np.testing.assert_allclose(leaf.X_scaler.mean_, mean)
-            np.testing.assert_allclose(leaf.X_scaler.scale_, scale)
+            np.testing.assert_allclose(leaf.x_shift, mean)
+            np.testing.assert_allclose(leaf.x_scale, scale)
             own = np.vstack((leaf.my_X_data, leaf.shared_X_data))
             self.assertFalse(np.allclose(own.mean(axis=0), mean, rtol=0.05))
         # The next fit of a leaf is in the scaling of its own points
@@ -249,8 +249,8 @@ class TestDeferredFits(unittest.TestCase):
         for i in range(60):
             tasks.append(_update(gpt, X_more, Y_more, i, defer_fits=True))
         task = next(task for task in tasks if task is not None)
-        node, (scalers, snapshot) = gpt._fit_tasks[task['id']]
-        self.assertFalse(np.allclose(scalers[0].mean_, mean, rtol=0.05))
+        node, (scaling, snapshot) = gpt._fit_tasks[task['id']]
+        self.assertFalse(np.allclose(scaling[0], mean, rtol=0.05))
         self.assertIsNone(snapshot)
 
     def test_a_result_is_dropped_after_a_new_version_of_the_global_model(self):

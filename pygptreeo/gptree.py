@@ -180,7 +180,7 @@ class GPTree:
                 'neighbours': the ``Nbar`` stored points nearest to the query,
                 with the kernel of the query's leaf; needs the scikit-learn
                 adapter. See the README and ``docs/design.md``.
-            **kwargs: Passed to the constructor of the root `GPNode`: for
+            **kwargs: Further settings of the nodes (see `NodeSettings`): for
                 instance `split_position_method`, `retrain_every_n_points` and
                 `use_standard_scaling`.
         """

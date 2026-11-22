@@ -207,7 +207,7 @@ class TestNodeResidual(unittest.TestCase):
         np.testing.assert_allclose(node.my_y_data[:, 0], y[::-1])
         # the GP was trained on the (standardised) residual sin(6x), not on y
         resid = y[::-1] - (5.0 + 2.0 * X[::-1, 0])
-        scaled = node.y_scalers[0].transform(resid[:, None])[:, 0]
+        scaled = (resid - node.y_shift[0]) / node.y_scale[0]
         np.testing.assert_allclose(node.my_GPRs[0].sklearn_gpr.y_train_.ravel(), scaled, atol=1e-10)
         # and the prediction is global + residual, i.e. y
         with contextlib.redirect_stdout(io.StringIO()):
@@ -220,8 +220,8 @@ class TestNodeResidual(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             node.fit_my_GPR(force_training=True)
         self.assertIsNone(node._fitted_global)
-        np.testing.assert_allclose(node.y_scalers[0].inverse_transform(
-            node.my_GPRs[0].sklearn_gpr.y_train_.reshape(-1, 1))[:, 0], y[::-1], atol=1e-10)
+        np.testing.assert_allclose(node.my_GPRs[0].sklearn_gpr.y_train_.ravel() * node.y_scale[0] + node.y_shift[0],
+                                   y[::-1], atol=1e-10)
 
     def test_refresh_rule_refits_on_newer_version(self):
         learner = FakeLearner()

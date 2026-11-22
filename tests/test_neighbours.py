@@ -277,14 +277,14 @@ class TestPredictions(unittest.TestCase):
                     self.assertIsNotNone(leaf._predicted_variance())
                     noise = noise + t ** 2 / (1.0 - t) ** 2 * (noise + leaf._predicted_variance()[0])
                     raised += int(np.sum(t > 0.0))
-                xs, ys = leaf.X_scaler, leaf.y_scalers[0]
+                shift, scale = leaf.y_shift[0], leaf.y_scale[0]
                 reference = GaussianProcessRegressor(kernel=leaf.my_GPRs[0].sklearn_gpr.kernel_, optimizer=None,
-                                                     alpha=noise / ys.scale_[0] ** 2)
-                reference.fit(xs.transform(X[idx]), ys.transform(y[idx]))
-                ref_mean, ref_std = reference.predict(xs.transform(q[None, :]), return_std=True)
+                                                     alpha=noise / scale ** 2)
+                reference.fit(leaf._scaled_inputs(X[idx]), (y[idx] - shift) / scale)
+                ref_mean, ref_std = reference.predict(leaf._scaled_inputs(q[None, :]), return_std=True)
                 mean, std = gpt.predict(q[None, :])
-                np.testing.assert_allclose(mean[0, 0], ref_mean[0] * ys.scale_[0] + ys.mean_[0], rtol=1e-6, atol=1e-8)
-                np.testing.assert_allclose(std[0, 0], ref_std[0] * ys.scale_[0], rtol=1e-4, atol=1e-8)
+                np.testing.assert_allclose(mean[0, 0], ref_mean[0] * scale + shift, rtol=1e-6, atol=1e-8)
+                np.testing.assert_allclose(std[0, 0], ref_std[0] * scale, rtol=1e-4, atol=1e-8)
             self.assertEqual(raised > 0, fade is not None)
 
     def test_fading_neighbours_give_a_prediction_without_steps(self):
@@ -403,9 +403,9 @@ class TestPredictions(unittest.TestCase):
         for q in X_test:
             leaf = _leaf_of(gpt, q[None, :])
             Xn, yn, sn, _ = gpt.neighbours.find(q, leaf.fit_std)
-            ys = leaf.y_scalers[0]
-            consistency = leaf.my_GPRs[0].condition(leaf.X_scaler.transform(Xn), ys.transform(yn)[:, 0],
-                                                    (sn[:, 0] / ys.scale_[0]) ** 2, leaf.X_scaler.transform(q[None, :]))[2][0]
+            shift, scale = leaf.y_shift[0], leaf.y_scale[0]
+            consistency = leaf.my_GPRs[0].condition(leaf._scaled_inputs(Xn), (yn[:, 0] - shift) / scale,
+                                                    (sn[:, 0] / scale) ** 2, leaf._scaled_inputs(q[None, :]))[2][0]
             share = gpt.neighbours.share(consistency, gpt.neighbours.outside(Xn, q, leaf.fit_std))
             if share == 0.0:
                 own += 1
@@ -537,9 +537,8 @@ class TestBlend(unittest.TestCase):
             Z = np.vstack((X[idx], x))
             K, mean0, unit = np.zeros((k + 1, k + 1)), 0.0, 0.0
             for w, leaf in zip(weights, leaves):
-                xs, ys = leaf.X_scaler, leaf.y_scalers[0]
-                K += w * ys.scale_[0] ** 2 * leaf.my_GPRs[0].sklearn_gpr.kernel_(xs.transform(Z))
-                mean0 += w * ys.mean_[0]
+                K += w * leaf.y_scale[0] ** 2 * leaf.my_GPRs[0].sklearn_gpr.kernel_(leaf._scaled_inputs(Z))
+                mean0 += w * leaf.y_shift[0]
                 unit += w * leaf._predicted_variance()[0]
             t = np.clip((distance[idx] / distance[order[k]] - fade) / (1.0 - fade), 0.0, 1.0)
             noise = sigma[idx, 0] ** 2
@@ -840,9 +839,9 @@ class TestGradual(unittest.TestCase):
         finally:
             search.consistency_limit, search.outside_limit = limits
         Xn, yn, sn, growth = search.find(x[0], leaf.fit_std)
-        ys = leaf.y_scalers[0]
-        consistency = leaf.my_GPRs[0].condition(leaf.X_scaler.transform(Xn), ys.transform(yn)[:, 0],
-                                                (sn[:, 0] / ys.scale_[0]) ** 2, leaf.X_scaler.transform(x))[2][0]
+        shift, scale = leaf.y_shift[0], leaf.y_scale[0]
+        consistency = leaf.my_GPRs[0].condition(leaf._scaled_inputs(Xn), (yn[:, 0] - shift) / scale,
+                                                (sn[:, 0] / scale) ** 2, leaf._scaled_inputs(x))[2][0]
         return from_neighbours, leaf._predict_own(x), consistency, search.outside(Xn, x[0], leaf.fit_std, growth)
 
     def test_the_prediction_passes_from_the_neighbours_to_the_leaf(self):
