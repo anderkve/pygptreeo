@@ -9,7 +9,7 @@ setuptools.setup(
     long_description=open("README.md").read(),
     long_description_content_type='text/markdown',
     url='http://github.com/anderkve/pygptreeo',
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages(include=['pygptreeo', 'pygptreeo.*']),
     install_requires=[
         'numpy',
         'scipy',
