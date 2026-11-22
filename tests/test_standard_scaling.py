@@ -21,6 +21,7 @@ from pygptreeo.gpnode import GPNode
 from pygptreeo.default_gpr import Default_GPR
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel
+from sklearn.preprocessing import StandardScaler
 
 
 class TestStandardScaling(unittest.TestCase):
@@ -49,13 +50,13 @@ class TestStandardScaling(unittest.TestCase):
         gpt_false = GPTree(use_standard_scaling=False)
         self.assertFalse(gpt_false.root.use_standard_scaling)
 
-    def test_scalers_fitted_during_training(self):
-        """Test that scalers are fitted when GP is trained."""
+    def test_scaling_set_during_training(self):
+        """Test that the shift and scale are set when the GP is trained."""
         gpt = GPTree(GPR=self.gpr_1d, Nbar=10, use_standard_scaling=True)
 
-        # Initially scalers should be None
-        self.assertIsNone(gpt.root.X_scaler)
-        self.assertIsNone(gpt.root.y_scaler)
+        # Before the first fit nothing is shifted or scaled
+        self.assertEqual((gpt.root.x_shift, gpt.root.x_scale), (0.0, 1.0))
+        self.assertEqual((gpt.root.y_shift[0], gpt.root.y_scale[0]), (0.0, 1.0))
 
         # Add some points
         X_train = np.array([[1.0], [2.0], [3.0], [4.0], [5.0]])
@@ -65,18 +66,15 @@ class TestStandardScaling(unittest.TestCase):
         for x, y, sigma in zip(X_train, y_train, sigma_train):
             gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
-        # Force training to ensure scalers are fitted with all data
+        # Force training so that the scaling is that of all the data
         gpt.root.fit_my_GPR(force_training=True)
 
-        # After training, scalers should be fitted
-        self.assertIsNotNone(gpt.root.X_scaler)
-        self.assertIsNotNone(gpt.root.y_scaler)
-
-        # Check that scalers have correct statistics
-        # X: mean = 3.0, std ~ 1.58
-        # y: mean = 30.0, std ~ 15.8
-        np.testing.assert_almost_equal(gpt.root.X_scaler.mean_[0], 3.0, decimal=5)
-        np.testing.assert_almost_equal(gpt.root.y_scaler.mean_[0], 30.0, decimal=5)
+        # X: mean = 3.0, std ~ 1.41
+        # y: mean = 30.0, std ~ 14.1
+        np.testing.assert_almost_equal(gpt.root.x_shift[0], 3.0, decimal=5)
+        np.testing.assert_almost_equal(gpt.root.x_scale[0], np.sqrt(2.0), decimal=5)
+        np.testing.assert_almost_equal(gpt.root.y_shift[0], 30.0, decimal=5)
+        np.testing.assert_almost_equal(gpt.root.y_scale[0], 10.0 * np.sqrt(2.0), decimal=5)
 
     def test_raw_data_stored_unscaled(self):
         """Test that raw data is stored in original (unscaled) form."""
@@ -201,9 +199,9 @@ class TestStandardScaling(unittest.TestCase):
         for x, y, sigma in zip(X_train, y_train, sigma_train):
             gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
-        # Check that X_scaler has correct shape
-        self.assertEqual(gpt.root.X_scaler.mean_.shape[0], 2)
-        self.assertEqual(gpt.root.X_scaler.scale_.shape[0], 2)
+        # A shift and a scale per input
+        self.assertEqual(gpt.root.x_shift.shape[0], 2)
+        self.assertEqual(gpt.root.x_scale.shape[0], 2)
 
         # Predict at test point
         X_test = np.array([[250.0, 2.5]])
@@ -227,9 +225,8 @@ class TestStandardScaling(unittest.TestCase):
             gpt.update_tree(x.reshape(1, -1), y.reshape(1, -1), sigma)
 
         # Should not raise an error
-        # StandardScaler sets scale=1 for zero-variance dimensions
-        self.assertIsNotNone(gpt.root.X_scaler)
-        self.assertEqual(gpt.root.X_scaler.scale_[0], 1.0)
+        # The scale of a zero-variance dimension is 1
+        self.assertEqual(gpt.root.x_scale[0], 1.0)
 
         # Prediction should work
         X_test = np.array([[5.0]])
@@ -251,9 +248,9 @@ class TestStandardScaling(unittest.TestCase):
 
         gpt.update_tree(X_train, y_train, sigma_train)
 
-        # Scalers should be fitted (mean=value, scale=1)
-        self.assertIsNotNone(gpt.root.X_scaler)
-        self.assertIsNotNone(gpt.root.y_scaler)
+        # The shift is the value of the point, and the scale 1
+        self.assertEqual((gpt.root.x_shift[0], gpt.root.x_scale[0]), (3.0, 1.0))
+        self.assertEqual((gpt.root.y_shift[0], gpt.root.y_scale[0]), (30.0, 1.0))
 
         # Prediction should work (though with high uncertainty)
         X_test = np.array([[3.5]])
@@ -265,18 +262,19 @@ class TestStandardScaling(unittest.TestCase):
 
     def test_prediction_matches_scalers_and_scikit_learn(self):
         """A leaf scales its inputs and computes the GP posterior itself; the numbers
-        are those of the scalers and of scikit-learn's predict."""
+        are those of scikit-learn's scalers and of its predict."""
         rng = np.random.RandomState(0)
         X = rng.rand(40, 3) * [1.0, 50.0, 0.01]; y = np.sin(3 * X[:, 0]) + X[:, 1] * X[:, 2]; Xt = X[:7] + 1e-3
         gpt = GPTree(GPR=Default_GPR(), Nbar=1000, retrain_every_n_points=10, use_standard_scaling=True)
         for i in range(X.shape[0]):
             gpt.update_tree(X[i:i + 1], y[i:i + 1].reshape(1, 1), np.array([[1e-3]]))
         leaf = gpt.root
-        np.testing.assert_array_equal(leaf._scaled_inputs(Xt), leaf.X_scaler.transform(Xt))
+        X_scaler, y_scaler = StandardScaler().fit(leaf.my_X_data), StandardScaler().fit(leaf.my_y_data)
+        np.testing.assert_array_equal(leaf._scaled_inputs(Xt), X_scaler.transform(Xt))
         mu, sd = leaf.predict(Xt)
-        m, s = leaf.my_GPRs[0].sklearn_gpr.predict(leaf.X_scaler.transform(Xt), return_std=True)
-        np.testing.assert_array_equal(mu[:, 0], leaf.y_scalers[0].inverse_transform(m.reshape(-1, 1)).ravel())
-        np.testing.assert_array_equal(sd[:, 0], s * leaf.y_scalers[0].scale_[0])
+        m, s = leaf.my_GPRs[0].sklearn_gpr.predict(X_scaler.transform(Xt), return_std=True)
+        np.testing.assert_array_equal(mu[:, 0], y_scaler.inverse_transform(m.reshape(-1, 1)).ravel())
+        np.testing.assert_array_equal(sd[:, 0], s * y_scaler.scale_[0])
 
     def test_adapter_predict_matches_scikit_learn(self):
         rng = np.random.RandomState(1)

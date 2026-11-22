@@ -1,10 +1,5 @@
 import setuptools
 
-# Using the more comprehensive README content planned in the previous subtask
-# as the one read from file was minimal.
-long_description_content = """
-"""
-
 setuptools.setup(
     name='pygptreeo',
     version='0.1.0',
@@ -14,9 +9,10 @@ setuptools.setup(
     long_description=open("README.md").read(),
     long_description_content_type='text/markdown',
     url='http://github.com/anderkve/pygptreeo',
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages(include=['pygptreeo', 'pygptreeo.*']),
     install_requires=[
         'numpy',
+        'scipy',
         'scikit-learn',
         'binarytree',
         'tqdm',
@@ -30,12 +26,8 @@ setuptools.setup(
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Science/Research',
         'Intended Audience :: Developers',
-        'License :: OSI Approved :: GNU General Public License v3 (GPLv3)', # Updated based on LICENSE file
+        'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
-        'Programming Language :: Python :: 3.9',
-        'Programming Language :: Python :: 3.10',
         'Operating System :: OS Independent',
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
     ]

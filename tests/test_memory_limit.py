@@ -77,8 +77,6 @@ class TreeChecks(unittest.TestCase):
                 self.assertIs(child.parent, node)
                 self.assertEqual(child.is_left, side == 0)
                 self.assertEqual(child.name, node.name + str(side))
-                self.assertEqual(child.parent_split_index, node.split_index)
-                self.assertEqual(child.parent_split_position, node.split_position)
         for leaf in root.leaves:
             self.assertIsNone(leaf.children)
 

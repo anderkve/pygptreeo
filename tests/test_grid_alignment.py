@@ -12,7 +12,8 @@ from scipy.interpolate import RectBivariateSpline
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from pygptreeo import GPTree, Default_GPR, GridWarp, AlignedSurfaces, OutputWarp
+from pygptreeo import GPTree, Default_GPR
+from pygptreeo.output_alignment import GridWarp, AlignedSurfaces, OutputWarp
 from pygptreeo.output_alignment import OVERSAMPLING, _GridSplines, _grid, output_warp
 
 warnings.filterwarnings("ignore")

@@ -14,20 +14,17 @@ Key responsibilities:
 
 # Standard library imports
 import logging
-import warnings
 from collections import deque
+from dataclasses import dataclass
 from copy import deepcopy
-from sys import float_info
-from typing import Callable, Optional, Type, Union
+from typing import Optional
 
 # Third-party imports
 import numpy as np
 from binarytree import Node
-from sklearn.gaussian_process.kernels import ConstantKernel, ExpSineSquared, Matern, WhiteKernel
 from sklearn.preprocessing import StandardScaler
 
 # Local imports
-from pygptreeo.default_gpr import Default_GPR
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.output_alignment import output_warp
 from pygptreeo.output_basis import OutputBasisLearner
@@ -48,22 +45,96 @@ N_SCORES = 50  # Recent points over which a leaf compares its own GPs with the n
 MIN_SCORES = 10  # No comparison with fewer points
 OWN_MARGIN = 0.9  # A leaf predicts from its own points while their RMS error is below this times the neighbours'
 NODE_LINKS = ('left', 'right', 'parent', 'children')  # Saved by the tree, not by the node
+# What a child takes from its parent at a split: it predicts with copies of the
+# parent's GPs until its first fit, and continues the parent's schedules
+INHERITED = ('x_shift', 'x_scale', 'y_shift', 'y_scale', '_fitted_basis', '_fitted_global', 'alignment',
+             '_alignment_rejections', '_alignment_wait', 'sigma_profile', 'fit_mean', 'fit_std', 'fit_task_id',
+             'prefers_own')
 
-np.set_printoptions(suppress=True)
+
+@dataclass(eq=False)
+class NodeSettings:
+    """The settings that all nodes of a tree share. A node reads them as its own
+    attributes (``node.Nbar``).
+
+    Attributes:
+        Nbar, split_dimension_criteria, splitting_strategy, n_outputs,
+            output_model, output_shape: As for `GPTree`.
+        split_position_method (str): Where a node is split along the chosen
+            input: at the 'median' (default) or the 'mean' of its points, at
+            a 'random' position within their range, or at one of the points
+            chosen at random ('randomchoice').
+        retrain_every_n_points (int): Number of new points after which a
+            node's GPs are fitted again. Defaults to 100.
+        use_standard_scaling (bool): If True (default), the inputs and targets
+            are standardised before a fit, and the predictions transformed
+            back. Not together with use_hyperparameter_inheritance.
+        use_hyperparameter_inheritance (bool): If True, the fits of the
+            children of a split start from the fitted kernel hyperparameters
+            of their parent. Defaults to False. Not together with
+            use_standard_scaling.
+        enable_point_merging (bool): If True, a new point is merged with a
+            stored point close to it, by a weighted average. Defaults to False.
+        merge_distance_threshold (float): Euclidean distance in the inputs
+            below which points are merged. Defaults to 0.01.
+        min_points_before_merging (int): Number of points that a node holds
+            before any are merged. Defaults to 10.
+        output_basis (Optional[OutputBasisLearner]): The tree's basis of the
+            outputs. Required for 'pca'.
+        global_mean (Optional[GlobalMeanLearner]): The tree's global model, or
+            None (default). The GPs of a node then model the residual of its
+            current snapshot.
+        neighbours (Optional[NeighbourSearch]): The tree's search for the
+            stored points nearest to a query, with which a node predicts from
+            those points (see ``GPNode.predict``), or None (default).
+    """
+    Nbar: int = 100
+    split_position_method: str = 'median'
+    retrain_every_n_points: int = 100
+    split_dimension_criteria: str = 'min_lengthscale'
+    splitting_strategy: str = 'gradual'
+    use_standard_scaling: bool = True
+    use_hyperparameter_inheritance: bool = False
+    enable_point_merging: bool = False
+    merge_distance_threshold: float = 0.01
+    min_points_before_merging: int = 10
+    n_outputs: int = 1
+    output_model: str = 'independent'
+    output_shape: Optional[tuple] = None
+    output_basis: Optional[OutputBasisLearner] = None
+    global_mean: Optional[GlobalMeanLearner] = None
+    neighbours: Optional[NeighbourSearch] = None
+
+    def __post_init__(self):
+        if self.use_standard_scaling and self.use_hyperparameter_inheritance:
+            raise ValueError(
+                "Cannot use both use_standard_scaling=True and use_hyperparameter_inheritance=True. "
+                "Standard scaling changes the coordinate system between parent and child nodes, "
+                "making hyperparameter inheritance incompatible. Please choose one or the other."
+            )
+        if self.output_model not in ('independent', 'shared', 'pca', 'aligned'):
+            raise ValueError(f"Unknown output_model '{self.output_model}'. Use 'independent', 'shared', 'pca' or 'aligned'.")
+        if self.n_outputs == 1:
+            self.output_model = 'independent'  # the modes only differ for several outputs
+        if self.output_model == 'pca' and self.output_basis is None:
+            raise ValueError("output_model='pca' requires an OutputBasisLearner passed as output_basis")
+        # the grid of the outputs ('aligned')
+        self.output_shape = tuple(self.output_shape) if self.output_shape is not None else (self.n_outputs,)
+
 
 class GPNode(Node):
     """Represents a node within the GPTree structure.
 
     Each GPNode is responsible for a specific region of the input space.
     It holds the training data relevant to this region, manages its own
-    Gaussian Process Regressor (my_GPR) to model the data, handles the
+    Gaussian Process Regressors (my_GPRs) to model the data, handles the
     splitting process into child nodes when it becomes too full or complex,
     and makes local predictions within its domain.
 
     Attributes:
-        my_GPR (GPRegressorInterface): The GPR instance associated with this node.
-        Nbar (int): The maximum number of training points this node can hold
-            before it attempts to split.
+        settings (NodeSettings): The settings of the tree, which are also read
+            as attributes of the node.
+        my_GPRs (list[GPRegressorInterface]): The GPR instances of this node.
         my_X_data (numpy.ndarray): Training data features for this node.
         my_y_data (numpy.ndarray): Training data targets for this node.
         split_index (int): The feature index used for splitting this node.
@@ -76,165 +147,45 @@ class GPNode(Node):
         parent (GPNode): The parent node in the tree. None for the root node.
         value (int): Inherited from binarytree.Node, stores n_points.
         name (str): A string identifier for the node (e.g., "0", "01", "010").
-        split_position_method (str): Method used to determine split point.
-        retrain_every_n_points (int): Frequency of GPR retraining.
         overlap (float): The size of the overlapping region with sibling nodes.
         asleep (bool): True while the node's fitted GPs are partly released to
             save memory (see `sleep`). The next prediction restores them.
     """
-    neighbours = None       # for a node saved by a version without it
 
-    def __init__(self, *args,
-                 my_GPR: GPRegressorInterface,
-                 Nbar: Optional[int] = 100,
-                 split_position_method='median',
-                 retrain_every_n_points=100,
-                 name="0",
-                 split_dimension_criteria='min_lengthscale',
-                 splitting_strategy: Optional[str] = 'gradual',
-                 use_standard_scaling: Optional[bool] = True,
-                 use_hyperparameter_inheritance: Optional[bool] = False,
-                 enable_point_rejection: Optional[bool] = False,
-                 rejection_threshold: Optional[float] = 1e-4,
-                 min_points_before_rejection: Optional[int] = 50,
-                 enable_point_merging: Optional[bool] = False,
-                 merge_distance_threshold: Optional[float] = 0.01,
-                 min_points_before_merging: Optional[int] = 10,
-                 enable_split_evaluation: Optional[bool] = False,
-                 n_split_candidates: Optional[int] = 3,
-                 split_eval_train_fraction: Optional[float] = 0.6,
-                 split_eval_min_points: Optional[int] = 20,
-                 n_outputs: Optional[int] = 1,
-                 output_model: Optional[str] = 'independent',
-                 output_shape: Optional[tuple] = None,
-                 output_basis: Optional[OutputBasisLearner] = None,
-                 global_mean: Optional[GlobalMeanLearner] = None,
-                 neighbours: Optional[NeighbourSearch] = None,
-                 my_GPRs: Optional[list] = None):
+    def __init__(self, *args, my_GPR: GPRegressorInterface, name="0", my_GPRs: Optional[list] = None,
+                 settings: Optional[NodeSettings] = None, **kwargs):
         """Initializes a GPNode.
 
         Args:
-            *args: Arguments passed to the `binarytree.Node` parent class constructor.
-                Typically, the first argument is the initial `value` for the node,
-                which corresponds to `n_points`.
-            my_GPR (GPRegressorInterface): The Gaussian Process Regressor instance
-                to be used by this node.
-            Nbar (Optional[int]): The maximum number of training points this node
-                can hold before it considers splitting. Defaults to 100.
-            split_position_method (str): The method used to determine the split
-                position when the node splits. Valid options include 'median',
-                'mean', 'random', 'randomchoice'. Defaults to 'median'.
-            retrain_every_n_points (int): Specifies how many new data points
-                should be accumulated in the buffer before the node's GPR is
-                retrained. Defaults to 1.
-            name (str): A string identifier for the node, often representing its
-                path from the root (e.g., "0", "01"). Defaults to "0".
-            split_dimension_criteria (str): The method used to determine the
-                split dimension. Valid options: 'max_spread' (split on dimension with
-                largest range), 'max_variance' (split on dimension with highest variance),
-                'max_uncertainty' (split on dimension where GP is most uncertain),
-                'min_lengthscale' (split on dimension with the smallest fitted ARD
-                length scale, i.e. where the GP says the function varies fastest;
-                pooled over all of the node's GPs for multi-output; falls back to
-                'max_spread' when no per-dimension length scales are available),
-                'random' (random dimension). Defaults to 'min_lengthscale'.
-            use_standard_scaling (Optional[bool]): If True, standardizes both X and y
-                data before fitting the GP and inverse transforms predictions.
-                Defaults to False. Cannot be used together with use_hyperparameter_inheritance.
-            use_hyperparameter_inheritance (Optional[bool]): If True, child nodes inherit
-                their parent's optimized kernel hyperparameters as starting values.
-                Defaults to True. Cannot be used together with use_standard_scaling.
-            enable_point_rejection (Optional[bool]): If True, rejects new points that
-                are well-predicted by the current GP. Defaults to False.
-            rejection_threshold (Optional[float]): Relative error threshold below which
-                points are rejected. E.g., 1e-3 means reject if |y - y_pred| / |y| < 0.001.
-                Defaults to 1e-3.
-            min_points_before_rejection (Optional[int]): Minimum number of points required
-                before rejection starts. Ensures we have enough data before being selective.
-                Defaults to 50.
-            enable_point_merging (Optional[bool]): If True, merges new points with nearby
-                existing points via weighted averaging. Defaults to False.
-            merge_distance_threshold (Optional[float]): Distance threshold below which points
-                are merged. Measured as Euclidean distance in input space. Defaults to 0.01.
-            min_points_before_merging (Optional[int]): Minimum number of points required
-                before merging starts. Defaults to 10.
-            enable_split_evaluation (Optional[bool]): If True, evaluates multiple candidate
-                split dimensions before choosing the best one. Defaults to False.
-            n_split_candidates (Optional[int]): Number of candidate split dimensions to
-                evaluate. Defaults to 3.
-            split_eval_train_fraction (Optional[float]): Fraction of points in each region
-                to use for training during split evaluation. Defaults to 0.6.
-            split_eval_min_points (Optional[int]): Minimum points required in a region
-                to evaluate that split. Defaults to 20.
-            n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
-            output_model (Optional[str]): How several outputs are modelled (ignored for
-                n_outputs=1). 'independent': one GP per output, each with its own kernel
-                hyperparameters and per-output standardisation. 'shared': one GP with a
-                single shared kernel for all outputs (2-D target) and a common output
-                scale; needs a backend with ``supports_multitarget()``. 'pca': the
-                outputs are projected on a tree-global linear basis (``output_basis``)
-                and one GP is trained per basis score; predictions are mapped back to
-                output space with propagated variances. 'aligned': as 'shared', for
-                outputs that are a curve on a grid; the node also learns a warp of
-                the grid that aligns the features of its curves, and keeps it if
-                it lowers their leave-one-out error (see ``output_alignment``).
-                Defaults to 'independent'.
-            output_basis (Optional[OutputBasisLearner]): The tree-global output basis
-                learner, shared by reference between all nodes. Required for 'pca'.
-            global_mean (Optional[GlobalMeanLearner]): The tree-wide global model
-                learner, shared by reference between all nodes, or None (default).
-                When present, the node's GPs model the residual of the learner's
-                current snapshot: the snapshot is subtracted from the raw targets at
-                fit time, added back at predict time, and remembered per node. A
-                node that is asked to predict while a newer snapshot exists refits
-                against it first (see ``predict``).
-            neighbours (Optional[NeighbourSearch]): The tree's search for the
-                stored points nearest to a query, with which the node predicts
-                from those points (see ``predict``), or None (default).
-            my_GPRs (Optional[list]): Explicit list of GP regressors for this node
-                (used when creating children: one clone per parent GP). If None, the
-                list is built from ``my_GPR`` according to ``output_model``.
+            *args: Passed to `binarytree.Node`: the value of the node, which is
+                its number of points.
+            my_GPR (GPRegressorInterface): The GP regressor of the node, or the
+                template of its regressors.
+            name (str): Identifier of the node: its path from the root ("0",
+                "01", "010"). Defaults to "0".
+            my_GPRs (Optional[list]): The GP regressors of the node. By default
+                they are made from ``my_GPR`` according to ``output_model``. A
+                split gives each child a copy of those of its parent.
+            settings (Optional[NodeSettings]): The settings of the tree, which
+                a split hands to the children. By default they are made from
+                ``**kwargs``.
+            **kwargs: The fields of `NodeSettings`.
         """
 
         super().__init__(*args)
+        self.settings = settings if settings is not None else NodeSettings(**kwargs)
+        n_outputs, output_model = self.n_outputs, self.output_model
 
-        # Validate that both use_standard_scaling and use_hyperparameter_inheritance are not enabled
-        if use_standard_scaling and use_hyperparameter_inheritance:
-            raise ValueError(
-                "Cannot use both use_standard_scaling=True and use_hyperparameter_inheritance=True. "
-                "Standard scaling changes the coordinate system between parent and child nodes, "
-                "making hyperparameter inheritance incompatible. Please choose one or the other."
-            )
-
-        self.Nbar = Nbar
-        self.n_outputs = n_outputs
-
-        if output_model not in ('independent', 'shared', 'pca', 'aligned'):
-            raise ValueError(f"Unknown output_model '{output_model}'. Use 'independent', 'shared', 'pca' or 'aligned'.")
-        if n_outputs == 1:
-            output_model = 'independent'  # the modes only differ for several outputs
-        if output_model == 'pca' and output_basis is None:
-            raise ValueError("output_model='pca' requires an OutputBasisLearner passed as output_basis")
-        self.output_model = output_model
-        self.output_shape = tuple(output_shape) if output_shape is not None else (n_outputs,)   # the grid of the outputs ('aligned')
-        self.output_basis = output_basis   # tree-global, shared by reference across all nodes
         self._fitted_basis = None          # the OutputBasis this node's GPs were fitted with ('pca')
-        self.z_scaler = None               # (shift, scale) per basis score, fitted per leaf ('pca')
-        self.y_common_scaler = None        # (mu, scale) of the common output scaling ('shared', 'aligned')
         self.alignment = None              # the AlignedCurves the node's GP was fitted with, if any ('aligned')
         self._alignment_rejections = 0     # alignments rejected in a row, and the fits to pass before the next try
         self._alignment_wait = 0
         self.sigma_profile = None          # factor per output on the sigma of a shared-kernel GP ('shared', 'aligned')
+        self._fitted_global = None         # the snapshot of the global model that the node's GPs were fitted against
 
-        # Tree-wide global model (shared by reference; None when the tree has none) and
-        # the snapshot of it that this node's GPs were fitted against.
-        self.global_mean = global_mean
-        self._fitted_global = None
-
-        # The tree's neighbour search, the squared errors of the neighbours' and of
-        # the node's own prediction at the last points it received, whether its own
-        # GPs predict for now, and the variance of its last predictions
-        self.neighbours = neighbours
+        # The squared errors of the neighbours' and of the node's own prediction at
+        # the last points it received, whether its own GPs predict for now, and the
+        # variance of its last predictions
         self._scores = deque(maxlen=N_SCORES)
         self.prefers_own = False
         self._variance_unit = None
@@ -245,59 +196,26 @@ class GPNode(Node):
 
         # GP regressors: one per output ('independent'), one for all outputs
         # ('shared', 'aligned'), or one per basis score ('pca'; the list is sized
-        # at the first fit, once the basis rank is known). Children receive their
-        # own list via my_GPRs: one clone per parent GP.
+        # at the first fit, once the basis rank is known)
         if my_GPRs is not None:
             self.my_GPRs = list(my_GPRs)
         elif n_outputs == 1 or output_model in ('shared', 'pca', 'aligned'):
             self.my_GPRs = [my_GPR]
         else:
             self.my_GPRs = [deepcopy(my_GPR) for _ in range(n_outputs)]
-        # Single-output shorthand, kept for backward compatibility
-        self.my_GPR = self.my_GPRs[0] if n_outputs == 1 else None
+
+        # What the GPs see of a point (x, y): (x - x_shift) / x_scale and
+        # (y - y_shift) / y_scale, set by each fit. The targets are shifted and
+        # scaled per output ('independent'), per output with one scale for all
+        # ('shared', 'aligned'), or per basis score ('pca')
+        self.x_shift, self.x_scale = 0.0, 1.0
+        self.y_shift, self.y_scale = np.zeros(n_outputs), np.ones(n_outputs)
 
         self.parent = None
         self.children = None
 
-        self.split_position_method = split_position_method
-        self.retrain_every_n_points = retrain_every_n_points
-        self.split_dimension_criteria = split_dimension_criteria
-        self.splitting_strategy = splitting_strategy
-        self.use_standard_scaling = use_standard_scaling
-        self.use_hyperparameter_inheritance = use_hyperparameter_inheritance
-
-        # Point rejection parameters
-        self.enable_point_rejection = enable_point_rejection
-        self.rejection_threshold = rejection_threshold
-        self.min_points_before_rejection = min_points_before_rejection
-
-        # Point merging parameters
-        self.enable_point_merging = enable_point_merging
-        self.merge_distance_threshold = merge_distance_threshold
-        self.min_points_before_merging = min_points_before_merging
-
-        # Statistics for monitoring merging behavior
-        self.n_merges = 0
+        # Number of merges per stored point
         self.merge_counts = None  # Will be initialized with data
-
-        # Split evaluation parameters
-        self.enable_split_evaluation = enable_split_evaluation
-        self.n_split_candidates = n_split_candidates
-        self.split_eval_train_fraction = split_eval_train_fraction
-        self.split_eval_min_points = split_eval_min_points
-
-        self.parent_split_index = None
-        self.parent_split_position = None
-
-        # Standard scalers for X and y (fitted during GP training)
-        # For multi-output: y_scalers is a list of scalers (one per output)
-        self.X_scaler = None
-        if n_outputs == 1:
-            self.y_scaler = None
-            self.y_scalers = [None]  # Also store as list for unified handling
-        else:
-            self.y_scaler = None  # Not used for multi-output
-            self.y_scalers = [None for _ in range(n_outputs)]
 
         self.is_left = None
         self.is_leaf = True
@@ -324,29 +242,19 @@ class GPNode(Node):
         self.name = name
 
         self.n_points_pred_perf = DEFAULT_N_POINTS_PRED_PERF
-        # For multi-output: these become lists of arrays (one per output)
-        if n_outputs == 1:
-            self.residuals = np.array([])
-            self.mu_preds = np.array([])
-            self.sigma_preds = np.array([])
-            self.sigma_scaler = DEFAULT_SIGMA_SCALER
-            # Also store as lists for unified handling
-            self.residuals_list = [np.array([])]
-            self.mu_preds_list = [np.array([])]
-            self.sigma_preds_list = [np.array([])]
-            self.sigma_scalers = [DEFAULT_SIGMA_SCALER]
-        else:
-            self.residuals = None  # Not used for multi-output
-            self.mu_preds = None
-            self.sigma_preds = None
-            self.sigma_scaler = None
-            # Use lists instead
-            self.residuals_list = [np.array([]) for _ in range(n_outputs)]
-            self.mu_preds_list = [np.array([]) for _ in range(n_outputs)]
-            self.sigma_preds_list = [np.array([]) for _ in range(n_outputs)]
-            self.sigma_scalers = [DEFAULT_SIGMA_SCALER for _ in range(n_outputs)]
+        # The residuals and sigmas of the last registered predictions, and the sigma scaler, per output
+        self.residuals_list = [np.array([]) for _ in range(n_outputs)]
+        self.sigma_preds_list = [np.array([]) for _ in range(n_outputs)]
+        self.sigma_scalers = [DEFAULT_SIGMA_SCALER for _ in range(n_outputs)]
 
         logger.debug("Created node %s", self.name)
+
+
+    def __getattr__(self, name):
+        """The settings of the tree are read as attributes of each of its nodes."""
+        if name in NodeSettings.__dataclass_fields__:
+            return getattr(self.settings, name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
 
     def __getstate__(self):
@@ -356,23 +264,19 @@ class GPNode(Node):
         state = self.__dict__.copy()
         for link in NODE_LINKS:
             state.pop(link, None)
-        state['_scores'] = np.array(state.get('_scores', ()))
+        state['_scores'] = np.array(state['_scores'])
         return state
 
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self._scores = deque(state.get('_scores', ()), maxlen=N_SCORES)
+        self._scores = deque(state['_scores'], maxlen=N_SCORES)
         # links that the tree has already restored are kept
         for link in NODE_LINKS:
             self.__dict__.setdefault(link, None)
 
 
-    def _print_debug_status(self):
-        print(f"DEBUG: node {self.name}:  retrain_every_n_points: {self.retrain_every_n_points}  n_points_since_retrain: {self.n_points_since_retrain}  n_points: {self.n_points}  my_X_data.shape: {self.my_X_data.shape}  n_points: {self.n_points}  shared_X_data.shape: {self.shared_X_data.shape}  n_shared_points: {self.n_shared_points}", flush=True)
-
-
-    # Override the "value" attribute of Node parent class 
+    # Override the "value" attribute of Node parent class
     @property
     def n_points(self):
         """int: The number of training points currently held by this node."""
@@ -382,15 +286,8 @@ class GPNode(Node):
     # such that the value of a node is the number of training points
     @n_points.setter
     def n_points(self, value):
-        """Sets the number of training points for this node.
-
-        This also updates the `value` attribute inherited from the
-        `binarytree.Node` parent class, which is used for display
-        purposes in the tree structure.
-
-        Args:
-            value (int): The new number of training points.
-        """
+        """Sets the number of points, which is the value of the node in
+        `binarytree`."""
         self.value = value
 
 
@@ -399,11 +296,11 @@ class GPNode(Node):
         self.n_features = n_features
 
         self.my_X_data = np.array([]).reshape((0, n_features))
-        self.my_y_data = np.array([]).reshape((0, self.n_outputs))  # Multi-output support
+        self.my_y_data = np.array([]).reshape((0, self.n_outputs))
         self.my_sigma_data = np.array([]).reshape((0, self.n_outputs))  # Per-point uncertainties per output
 
         self.shared_X_data = np.array([]).reshape((0, n_features))
-        self.shared_y_data = np.array([]).reshape((0, self.n_outputs))  # Multi-output support
+        self.shared_y_data = np.array([]).reshape((0, self.n_outputs))
         self.shared_sigma_data = np.array([]).reshape((0, self.n_outputs))  # Shared uncertainties per output
 
         self.n_points_since_retrain = 0
@@ -414,276 +311,128 @@ class GPNode(Node):
         self.merge_counts = np.array([]).reshape((0, 1))
 
 
-    def generate_children(self, GPR: GPRegressorInterface, n_features: int):
+    def generate_children(self, n_features: int):
         """ Grow the GPtree by adding two GPNodes as children of the current GPNode. """
-
-        # Settings that will be passed on to the child nodes
-        node_config_kwargs = {
-            'Nbar': self.Nbar,
-            'split_position_method': self.split_position_method,
-            'retrain_every_n_points': self.retrain_every_n_points,
-            'split_dimension_criteria': self.split_dimension_criteria,
-            'splitting_strategy': self.splitting_strategy,
-            'use_standard_scaling': self.use_standard_scaling,
-            'use_hyperparameter_inheritance': self.use_hyperparameter_inheritance,
-            'enable_point_rejection': self.enable_point_rejection,
-            'rejection_threshold': self.rejection_threshold,
-            'min_points_before_rejection': self.min_points_before_rejection,
-            'enable_point_merging': self.enable_point_merging,
-            'merge_distance_threshold': self.merge_distance_threshold,
-            'min_points_before_merging': self.min_points_before_merging,
-            'enable_split_evaluation': self.enable_split_evaluation,
-            'n_split_candidates': self.n_split_candidates,
-            'split_eval_train_fraction': self.split_eval_train_fraction,
-            'split_eval_min_points': self.split_eval_min_points,
-            'n_outputs': self.n_outputs,  # Pass n_outputs to children
-            'output_model': self.output_model,
-            'output_shape': self.output_shape,
-            'output_basis': self.output_basis,
-            'global_mean': self.global_mean,
-            'neighbours': self.neighbours,
-        }
-
-        # Each child gets its own clone of every parent GP (one per output / score)
-        # and predicts with them until its first retrain.
-        left_gprs = [gpr.clone() for gpr in self.my_GPRs]
-        right_gprs = [gpr.clone() for gpr in self.my_GPRs]
-        node_class = type(self)
-        self.left = node_class(0, my_GPR=left_gprs[0], my_GPRs=left_gprs, name=self.name + "0", **node_config_kwargs)
-        self.right = node_class(0, my_GPR=right_gprs[0], my_GPRs=right_gprs, name=self.name + "1", **node_config_kwargs)
-        
-        self.left.is_left = True
-        self.right.is_left = False
-
-        self.children = [self.left, self.right]
-        self.is_leaf = False
-
-        for child in self.children:
+        self.children = []
+        for digit in "01":
+            gprs = [gpr.clone() for gpr in self.my_GPRs]
+            child = type(self)(0, my_GPR=gprs[0], my_GPRs=gprs, name=self.name + digit, settings=self.settings)
+            child.is_left = digit == "0"
             child.parent = self
             child.init_data_set(n_features)
+            for attribute in INHERITED:
+                setattr(child, attribute, getattr(self, attribute))
+            child.residuals_list = [residuals.copy() for residuals in self.residuals_list]
+            child.sigma_preds_list = [sigmas.copy() for sigmas in self.sigma_preds_list]
+            child.sigma_scalers = self.sigma_scalers.copy()
+            child._scores = deque(self._scores, maxlen=N_SCORES)
+            self.children.append(child)
+        self.left, self.right = self.children
+        self.is_leaf = False
 
-        # Copy important numbers over to the child nodes
-        # Handle both single-output and multi-output cases
-        if self.n_outputs == 1:
-            self.left.residuals = self.residuals.copy()
-            self.right.residuals = self.residuals.copy()
-            self.left.mu_preds = self.mu_preds.copy()
-            self.right.mu_preds = self.mu_preds.copy()
-            self.left.sigma_preds = self.sigma_preds.copy()
-            self.right.sigma_preds = self.sigma_preds.copy()
-            self.left.sigma_scaler = self.sigma_scaler
-            self.right.sigma_scaler = self.sigma_scaler
-
-        # Copy lists for multi-output (or single-output stored as lists)
-        self.left.residuals_list = [arr.copy() for arr in self.residuals_list]
-        self.right.residuals_list = [arr.copy() for arr in self.residuals_list]
-        self.left.mu_preds_list = [arr.copy() for arr in self.mu_preds_list]
-        self.right.mu_preds_list = [arr.copy() for arr in self.mu_preds_list]
-        self.left.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
-        self.right.sigma_preds_list = [arr.copy() for arr in self.sigma_preds_list]
-        self.left.sigma_scalers = self.sigma_scalers.copy()
-        self.right.sigma_scalers = self.sigma_scalers.copy()
-
-        # Inherit parent's optimized kernel hyperparameters if enabled
-        # This gives children a warm-start for their GP optimization
+        # With hyperparameter inheritance the fits of the children start from the
+        # parent's fitted kernels
         if self.use_hyperparameter_inheritance:
-            # For each GP (output or score), copy the trained kernel to the children
             for i, gpr in enumerate(self.my_GPRs):
                 if gpr.is_trained():
-                    # Copy the parent's optimized kernel to the children
-                    # This preserves learned length scales, amplitudes, etc.
                     trained_kernel = gpr.get_kernel()
                     self.left.my_GPRs[i].set_kernel(deepcopy(trained_kernel))
                     self.right.my_GPRs[i].set_kernel(deepcopy(trained_kernel))
             logger.debug("Inherited hyperparameters for %d output(s) from node %s to children %s and %s",
                          self.n_outputs, self.name, self.left.name, self.right.name)
 
-        # Copy scalers so children can use parent's GP correctly
-        # The children get a copy of the parent's trained GP, which was trained on
-        # scaled data using the parent's scalers. So children need the same scalers
-        # to properly scale inputs before prediction.
-        if self.use_standard_scaling and self.X_scaler is not None:
-            self.left.X_scaler = deepcopy(self.X_scaler)
-            self.right.X_scaler = deepcopy(self.X_scaler)
-            # Copy y_scalers (list for multi-output)
-            self.left.y_scalers = [deepcopy(scaler) if scaler is not None else None for scaler in self.y_scalers]
-            self.right.y_scalers = [deepcopy(scaler) if scaler is not None else None for scaler in self.y_scalers]
-            # Also update single y_scaler for backward compatibility
-            if self.n_outputs == 1:
-                self.left.y_scaler = self.left.y_scalers[0]
-                self.right.y_scaler = self.right.y_scalers[0]
-            self.left.y_common_scaler = deepcopy(self.y_common_scaler)
-            self.right.y_common_scaler = deepcopy(self.y_common_scaler)
-
-        # Until their first retrain the children predict with the parent's GPs, so
-        # they also need the basis, per-score standardisation and global-model
-        # snapshot those GPs were fitted with.
-        self.left._fitted_basis = self._fitted_basis
-        self.right._fitted_basis = self._fitted_basis
-        self.left.z_scaler = deepcopy(self.z_scaler)
-        self.right.z_scaler = deepcopy(self.z_scaler)
-        self.left._fitted_global = self._fitted_global
-        self.right._fitted_global = self._fitted_global
-        self.left.alignment = self.right.alignment = self.alignment
-        self.left._alignment_rejections = self.right._alignment_rejections = self._alignment_rejections
-        self.left._alignment_wait = self.right._alignment_wait = self._alignment_wait
-        self.left.sigma_profile = self.right.sigma_profile = self.sigma_profile
-        self.left.fit_mean = self.right.fit_mean = self.fit_mean
-        self.left.fit_std = self.right.fit_std = self.fit_std
-        self.left.fit_task_id = self.right.fit_task_id = self.fit_task_id
         if self.neighbours is not None:
             for child in self.children:
-                child._scores = deque(self._scores, maxlen=N_SCORES)
-                child.prefers_own = self.prefers_own
                 child._used()       # its GPs are copies of the parent's, fit and all
 
 
-    def delete_point(self, index=-1, shared_point=True):
-        """ Remove a single data point from the node. """
-        if shared_point and self.n_shared_points > 0:
-            self.shared_X_data = np.delete(self.shared_X_data, index, axis=0)
-            self.shared_y_data = np.delete(self.shared_y_data, index, axis=0)
-            self.shared_sigma_data = np.delete(self.shared_sigma_data, index, axis=0)
-            self.n_shared_points -= 1
-        elif (not shared_point) and self.n_points > 0:
-            self.my_X_data = np.delete(self.my_X_data, index, axis=0)
-            self.my_y_data = np.delete(self.my_y_data, index, axis=0)
-            self.my_sigma_data = np.delete(self.my_sigma_data, index, axis=0)
-            if self.merge_counts is not None:
-                self.merge_counts = np.delete(self.merge_counts, index, axis=0)
-            self.n_points -= 1
-        else:
-            warnings.warn(f"Node {self.name}: No point left to delete.", RuntimeWarning)
+    def store_point(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray, increment_buffer=True):
+        """Add a data point to the node. A node with shared points from gradual
+        splitting drops the last of them for it.
 
-        # if remove_shared and self.n_shared_points > 0:
-        #     distances = np.abs(self.shared_X_data[:, self.parent_split_index] - self.parent_split_position)
-        #     index_to_discard = np.argmax(distances)
-        #     self.shared_X_data = np.delete(self.shared_X_data, index_to_discard, axis=0)
-        #     self.shared_y_data = np.delete(self.shared_y_data, index_to_discard, axis=0)
-        #     self.n_shared_points -= 1
-
-
-
-    def store_point(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray],
-                    increment_buffer=True, shared_point=False, remove_shared=True):
-        """ Add a single data point to the node.
-
-        Parameters
-        ----------
-        x : np.ndarray
-            Input features (shape: 1 x n_features)
-        y : float or np.ndarray
-            Target value(s). For single output: float or shape (1, 1) or (1,)
-            For multi-output: shape (1, n_outputs) or (n_outputs,)
-        sigma : float or np.ndarray
-            Uncertainty (standard deviation) for this point.
-            Can be a scalar (same for all outputs) or array (per-output)
-        increment_buffer : bool
-            Whether to increment the retrain buffer
-        shared_point : bool
-            Whether this is a shared point from gradual splitting
-        remove_shared : bool
-            Whether to remove one shared point when adding
+        ``x`` has shape (1, n_features), and ``y`` and ``sigma`` (a standard
+        deviation) shape (1, n_outputs). With ``increment_buffer=False`` the
+        point does not count towards the next fit.
         """
-        # Ensure y has the right shape (1, n_outputs)
-        if isinstance(y, (int, float, np.floating)):
-            y = np.array([[y]])  # Single output case
-        else:
-            y = np.atleast_2d(y)
-            if y.shape[0] != 1:
-                y = y.reshape(1, -1)
-
-        # Ensure sigma has the right shape (1, n_outputs)
-        if isinstance(sigma, (int, float, np.floating)):
-            # Scalar sigma - broadcast to all outputs
-            sigma = np.full((1, self.n_outputs), sigma)
-        else:
-            sigma = np.atleast_2d(sigma)
-            if sigma.shape[0] != 1:
-                sigma = sigma.reshape(1, -1)
-            # If sigma has only one value but we have multiple outputs, broadcast
-            if sigma.shape[1] == 1 and self.n_outputs > 1:
-                sigma = np.tile(sigma, (1, self.n_outputs))
-
         # Note: Points are added to the beginning of the arrays (using np.vstack)
-        if shared_point:
-            self.shared_X_data = np.vstack((x, self.shared_X_data))
-            self.shared_y_data = np.vstack((y, self.shared_y_data))
-            self.shared_sigma_data = np.vstack((sigma, self.shared_sigma_data))
-            self.n_shared_points += 1
-        else:
-            self.my_X_data = np.vstack((x, self.my_X_data))
-            self.my_y_data = np.vstack((y, self.my_y_data))
-            self.my_sigma_data = np.vstack((sigma, self.my_sigma_data))
-            # Track merge count for this new point (starts at 0)
-            if self.merge_counts is not None:
-                self.merge_counts = np.vstack((np.array([[0]]), self.merge_counts))
-            self.n_points += 1
-            if increment_buffer:
-                self.n_points_since_retrain += 1
+        self.my_X_data = np.vstack((x, self.my_X_data))
+        self.my_y_data = np.vstack((y, self.my_y_data))
+        self.my_sigma_data = np.vstack((sigma, self.my_sigma_data))
+        if self.merge_counts is not None:
+            self.merge_counts = np.vstack((np.array([[0]]), self.merge_counts))
+        self.n_points += 1
+        if increment_buffer:
+            self.n_points_since_retrain += 1
 
-        if remove_shared and self.n_shared_points > 0:
-            self.delete_point(shared_point=True)
+        if self.n_shared_points > 0:
+            self.shared_X_data = np.delete(self.shared_X_data, -1, axis=0)
+            self.shared_y_data = np.delete(self.shared_y_data, -1, axis=0)
+            self.shared_sigma_data = np.delete(self.shared_sigma_data, -1, axis=0)
+            self.n_shared_points -= 1
 
-    
+
     def split_training_data(self):
-        """ Assign the training samples of a node to its child nodes. """
-        for x, y, sigma in zip(self.my_X_data, self.my_y_data, self.my_sigma_data):
-            x = x.reshape((1, x.shape[0]))
-            y = y.reshape((1, self.n_outputs))  # Multi-output support
-            sigma = sigma.reshape((1, self.n_outputs))  # Multi-output support
-            child = self.children[int(np.random.binomial(1, self.prob_func(x)[0][0]))]
-            child.store_point(x, y, sigma, increment_buffer=False)
+        """Hand the node's points to its children. A point within the overlap of
+        the two goes to either, with the probability of ``prob_func``."""
+        to_right = np.random.binomial(1, self.prob_func(self.my_X_data)[:, 0]).astype(bool)
+        for child, mine in ((self.left, ~to_right), (self.right, to_right)):
+            rows = np.flatnonzero(mine)[::-1]       # the last point first, as ``store_point`` keeps them
+            child.my_X_data = self.my_X_data[rows]
+            child.my_y_data = self.my_y_data[rows]
+            child.my_sigma_data = self.my_sigma_data[rows]
+            child.merge_counts = np.zeros((rows.size, 1))
+            child.n_points = rows.size
+
+
+    def split(self, theta: float):
+        """Split the node in two: create the children, choose the cut, hand the
+        points to the children and delete the node's own points and GPs.
+        ``theta`` sets the overlap of the children (see
+        ``compute_split_position_and_overlap``)."""
+        self.generate_children(self.n_features)
+        self.compute_split_position_and_overlap(theta)
+        self.split_training_data()
+
+        if self.splitting_strategy == 'gradual':
+            # Each child also gets a copy of its sibling's points, the one furthest
+            # from the cut last: it is the first to be dropped
+            for child, sibling, step in ((self.left, self.right, 1), (self.right, self.left, -1)):
+                order = self.split_coordinate(sibling.my_X_data).argsort()[::step]
+                child.shared_X_data = sibling.my_X_data[order]
+                child.shared_y_data = sibling.my_y_data[order]
+                child.shared_sigma_data = sibling.my_sigma_data[order]
+                child.n_shared_points = order.size
+
+        # Only leaves hold points and GPs
+        self.delete_data()
+        self.delete_my_GPR()
 
         
-    def delete_data(self, delete_own_data=True, delete_shared_data=True):
-        """Deletes the data (my_X_data, my_y_data, my_sigma_data, and possibly shared_X_data, shared_y_data, shared_sigma_data) from the node.
+    def delete_data(self):
+        """Deletes the node's own and shared points. For a node that has been
+        split: only leaves hold points."""
+        del self.my_X_data
+        del self.my_y_data
+        del self.my_sigma_data
 
-        This is typically called on a parent node after its data has been
-        successfully split and passed down to its children. This helps to
-        reduce memory consumption as the tree grows, as only leaf nodes
-        or nodes about to be split actively need to store their full datasets.
-        """
-        if delete_own_data:
-            del self.my_X_data
-            del self.my_y_data
-            del self.my_sigma_data
-
-        if delete_shared_data:
-            del self.shared_X_data
-            del self.shared_y_data
-            del self.shared_sigma_data
+        del self.shared_X_data
+        del self.shared_y_data
+        del self.shared_sigma_data
 
 
     def delete_my_GPR(self):
-        """Deletes the Gaussian Process Regressor (my_GPR/my_GPRs) instances from the node.
-
-        This method is typically called on a node after it has been split and
-        is no longer a leaf node. Non-leaf nodes usually do not need to
-        maintain their GPR model once their responsibilities have been passed
-        to their children, thus saving memory.
-        """
-        if self.my_GPR is not None:
-            del self.my_GPR
-        for gpr in self.my_GPRs:
-            del gpr
+        """Deletes the node's GP regressors (my_GPRs). For a node that has been
+        split: only leaves hold GPs."""
         del self.my_GPRs
         self.alignment = None
 
 
     def find_nearest_neighbor(self, x: np.ndarray):
-        """Finds the nearest neighbor to x in the node's training data.
-
-        Args:
-            x (np.ndarray): Input point to find nearest neighbor for (shape: 1 x n_features)
-
-        Returns:
-            tuple: (index, distance) of nearest neighbor, or (None, None) if no data
-        """
+        """The index of the stored point nearest to ``x`` (shape (1, n_features))
+        and its Euclidean distance, or (None, None) for a node without points."""
         if self.n_points == 0:
             return None, None
 
-        # Compute Euclidean distances to all points
         distances = np.linalg.norm(self.my_X_data - x, axis=1)
         nearest_idx = np.argmin(distances)
         nearest_dist = distances[nearest_idx]
@@ -691,44 +440,21 @@ class GPNode(Node):
         return nearest_idx, nearest_dist
 
 
-    def merge_with_point(self, x: np.ndarray, y: Union[float, np.ndarray],
-                         sigma: Union[float, np.ndarray], nearest_idx: int):
-        """Merges new point (x, y, sigma) with existing point at nearest_idx via inverse-variance weighted averaging.
+    def merge_with_point(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray, nearest_idx: int):
+        """Merge the point (x, y, sigma) into the stored point ``nearest_idx``.
+        ``x`` has shape (1, n_features), and ``y`` and ``sigma`` shape
+        (1, n_outputs).
 
-        Weights are based on per-point uncertainties (standard deviations):
-        - Lower uncertainty = higher weight (more confident measurement)
-        - Weight = 1 / σ²
-
-        For multi-output: merging is done independently for each output dimension.
-
-        Args:
-            x (np.ndarray): Input features of new point
-            y (float or np.ndarray): Target value(s) of new point
-            sigma (float or np.ndarray): Uncertainty (standard deviation) of new point
-            nearest_idx (int): Index of existing point to merge with
-
-        Returns:
-            bool: True if merge was successful
+        The inputs and the targets become averages weighted by the inverse
+        variances ``1 / sigma^2`` (for the inputs, by their mean over the
+        outputs), and the variance that of the weighted average. Returns True.
         """
-        # Ensure y and sigma are arrays of shape (n_outputs,)
-        if isinstance(y, (int, float, np.floating)):
-            y = np.array([y])
-        else:
-            y = np.atleast_1d(y).flatten()
+        y, sigma = y[0], sigma[0]
 
-        if isinstance(sigma, (int, float, np.floating)):
-            sigma = np.full(self.n_outputs, sigma)
-        else:
-            sigma = np.atleast_1d(sigma).flatten()
-            if sigma.shape[0] == 1 and self.n_outputs > 1:
-                sigma = np.tile(sigma, self.n_outputs)
-
-        # Get existing point
         x_old = self.my_X_data[nearest_idx:nearest_idx+1]
         y_old = self.my_y_data[nearest_idx, :]  # Shape: (n_outputs,)
         sigma_old = self.my_sigma_data[nearest_idx, :]  # Shape: (n_outputs,)
 
-        # Convert standard deviations to variances
         var_old = sigma_old ** 2
         var_new = sigma ** 2
 
@@ -738,28 +464,22 @@ class GPNode(Node):
         w_new = 1.0 / (var_new + epsilon)
         w_total = w_old + w_new
 
-        # Weighted average for x (same for all outputs)
         # Use average weight across outputs for x merging
         w_old_x = np.mean(w_old)
         w_new_x = np.mean(w_new)
         w_total_x = w_old_x + w_new_x
         x_merged = (w_old_x * x_old + w_new_x * x) / w_total_x
 
-        # Weighted average for y (per output)
         y_merged = (w_old * y_old + w_new * y) / w_total
 
-        # Merge variance and convert back to standard deviation (per output)
         var_merged = 1.0 / w_total
         sigma_merged = np.sqrt(var_merged)
 
-        # Update the existing point with merged values
         self.my_X_data[nearest_idx] = x_merged[0]
         self.my_y_data[nearest_idx, :] = y_merged
         self.my_sigma_data[nearest_idx, :] = sigma_merged
 
-        # Update merge count for this point
         self.merge_counts[nearest_idx, 0] += 1
-        self.n_merges += 1
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Node %s: Merged points (dist=%.2e, sigma_old_mean=%.2e, sigma_new_mean=%.2e, "
@@ -782,88 +502,6 @@ class GPNode(Node):
         return nearest_idx
 
 
-    def should_merge_point(self, x: np.ndarray, y: Union[float, np.ndarray],
-                           sigma: Union[float, np.ndarray]):
-        """Determines if a new point should be merged with an existing nearby point.
-
-        A point is merged if:
-        1. Point merging is enabled
-        2. Node has enough points (>= min_points_before_merging)
-        3. GP has been trained
-        4. Nearest neighbor is within merge_distance_threshold
-
-        If merging occurs, the existing point is updated in-place.
-
-        Args:
-            x (np.ndarray): Input features of new point
-            y (float or np.ndarray): Target value(s) of new point
-            sigma (float or np.ndarray): Uncertainty (standard deviation) of new point
-
-        Returns:
-            bool: True if point was merged (don't add it), False otherwise (add as new point)
-        """
-        nearest_idx = self.merge_candidate(x)
-        if nearest_idx is None:
-            return False
-        return self.merge_with_point(x, y, sigma, nearest_idx)
-
-
-    def should_reject_point(self, x: np.ndarray, y: Union[float, np.ndarray]):
-        """Determines if a new training point should be rejected.
-
-        A point is rejected if:
-        1. Point rejection is enabled
-        2. Node has enough points (>= min_points_before_rejection)
-        3. GP has been trained (has kernel_)
-        4. The point is well-predicted (average relative error < rejection_threshold)
-
-        For multi-output: uses average relative error across all outputs.
-
-        Args:
-            x (np.ndarray): Input features of the new point
-            y (float or np.ndarray): Target value(s) of the new point
-
-        Returns:
-            bool: True if point should be rejected, False if it should be stored
-        """
-        # Point rejection disabled or not enough points yet
-        if not self.enable_point_rejection:
-            return False
-
-        if self.n_points < self.min_points_before_rejection:
-            return False
-
-        # GP not trained yet
-        if not self._is_fitted():
-            return False
-
-        # Ensure y is array
-        if isinstance(y, (int, float, np.floating)):
-            y = np.array([y])
-        else:
-            y = np.atleast_1d(y).flatten()
-
-        # Get prediction for this point
-        try:
-            y_pred, _ = self.predict(x, return_std=True, use_calibrated_sigma=False)
-        except Exception:
-            # If prediction fails, don't reject (be conservative)
-            return False
-
-        # Compute relative error per output, then average
-        abs_errors = np.abs(y - y_pred.flatten())
-        relative_errors = abs_errors / np.maximum(np.abs(y), 1e-10)
-        avg_relative_error = np.mean(relative_errors)
-
-        # Reject if average error is below threshold
-        is_rejected = bool(avg_relative_error < self.rejection_threshold)
-
-        if is_rejected:
-            logger.debug("Node %s: Rejected point (avg_rel_err=%.2e < %.2e)",
-                         self.name, float(avg_relative_error), self.rejection_threshold)
-
-        return is_rejected
-
     def _is_fitted(self) -> bool:
         """True once this node can predict from data (its GPs have been fitted, or it
         inherited fitted GPs from its parent)."""
@@ -874,11 +512,7 @@ class GPNode(Node):
     @staticmethod
     def _set_noise(gpr, alpha):
         """Hand per-point observation-noise *variances* ``alpha`` (shape (N,)) to a GP."""
-        alpha = np.asarray(alpha, dtype=float).ravel()
-        if hasattr(gpr, 'set_observation_noise'):
-            gpr.set_observation_noise(alpha)
-        else:  # a bare scikit-learn GaussianProcessRegressor
-            gpr.alpha = alpha
+        gpr.set_observation_noise(np.asarray(alpha, dtype=float).ravel())
 
     def _fastest_direction(self):
         """For GPs whose kernels are not along the inputs: the direction of their
@@ -904,7 +538,7 @@ class GPNode(Node):
         resolution needed along that dimension), or None if none are available."""
         collected = []
         for gpr in self.my_GPRs:
-            if not gpr.is_trained() or not hasattr(gpr, 'get_length_scales'):
+            if not gpr.is_trained():
                 continue
             ls = gpr.get_length_scales(self.n_features)
             if ls is not None:
@@ -913,44 +547,41 @@ class GPNode(Node):
             return None
         return np.min(np.vstack(collected), axis=0)
 
-    def _fit_common_y_scaler(self, y: np.ndarray):
-        """Centre each output and divide all of them by one common scale.
+    def _standardisation(self, A: np.ndarray):
+        """The shift and the scale per column of ``A`` that standardise it, or 0
+        and 1 without ``use_standard_scaling``."""
+        if not self.use_standard_scaling:
+            return np.zeros(A.shape[1]), np.ones(A.shape[1])
+        scaler = StandardScaler().fit(A)
+        return scaler.mean_, scaler.scale_
 
-        Used by output_model='shared': with one common scale the per-point
-        observation noise stays identical across outputs in the scaled space,
-        as the backend's single per-point noise level requires.
-        """
-        mu = y.mean(axis=0)
-        scale = float((y - mu).std())
+    def _common_scaling(self, y: np.ndarray):
+        """A shift per output and one scale for all of them, or 0 and 1 without
+        ``use_standard_scaling``. With one scale the noise of a point stays the
+        same for all outputs, as a GP for all of them requires."""
+        if not self.use_standard_scaling:
+            return 0.0, 1.0
+        shift = y.mean(axis=0)
+        scale = float((y - shift).std())
         if not np.isfinite(scale) or scale <= 0.0:
             scale = 1.0
-        self.y_common_scaler = (mu, scale)
-        return mu, scale
+        return shift, scale
 
-    def _independent_fit_inputs(self, X: np.ndarray, y: np.ndarray, sigma: np.ndarray, scalers=None):
+    def _independent_fit_inputs(self, X: np.ndarray, y: np.ndarray, sigma: np.ndarray, scaling=None):
         """What the GPs of output_model='independent' are fitted to, for the points
         ``(X, y, sigma)``: the inputs and, per output, the targets and the noise
-        variances. With ``use_standard_scaling`` they are standardised, with
-        ``scalers`` or with scalers fitted to the points, and the scalers
-        ``(X_scaler, y_scalers)`` are returned last, else None. The node is not
-        changed."""
+        variances. They are in the ``scaling`` given, ``(x_shift, x_scale,
+        y_shift, y_scale)``, or in that of the points, and it is returned
+        last. The node is not changed."""
         outputs = range(self.n_outputs)
-        if not self.use_standard_scaling:
-            return X, [y[:, i:i+1] for i in outputs], [sigma[:, i] ** 2 for i in outputs], None
-        if scalers is None:
-            scalers = StandardScaler().fit(X), [StandardScaler().fit(y[:, i:i+1]) for i in outputs]
-        X_scaler, y_scalers = scalers
-        targets = [y_scalers[i].transform(y[:, i:i+1]) for i in outputs]
-        # Noise std in scaled units is sigma / y_scale; the GP takes variances
-        noise = [(sigma[:, i] / y_scalers[i].scale_[0]) ** 2 for i in outputs]
-        return X_scaler.transform(X), targets, noise, (X_scaler, y_scalers)
-
-    def _set_scalers(self, scalers):
-        """Take the scalers that ``_independent_fit_inputs`` returned."""
-        if scalers is not None:
-            self.X_scaler, self.y_scalers = scalers[0], list(scalers[1])
-            if self.n_outputs == 1:
-                self.y_scaler = self.y_scalers[0]
+        if scaling is None:
+            x_shift, x_scale = self._standardisation(X)
+            y_shift, y_scale = np.hstack([self._standardisation(y[:, i:i+1]) for i in outputs])
+            scaling = x_shift, x_scale, y_shift, y_scale
+        x_shift, x_scale, y_shift, y_scale = scaling
+        targets = [(y[:, i:i+1] - y_shift[i]) / y_scale[i] for i in outputs]
+        noise = [(sigma[:, i] / y_scale[i]) ** 2 for i in outputs]
+        return (X - x_shift) / x_scale, targets, noise, scaling
 
     def fit_due(self) -> bool:
         """True if the retrain buffer or the node is full."""
@@ -958,30 +589,13 @@ class GPNode(Node):
 
 
     def fit_my_GPR(self, force_training=False):
-        """Fits the node's Gaussian Process Regressor(s) to its local data.
-
-        Training is triggered if the number of new points in the buffer
-        (`n_points_since_retrain`) reaches `retrain_every_n_points`, if the node
-        is full (`n_points >= Nbar`), or if `force_training` is True.
-
-        For multi-output: trains one independent GP per output dimension.
-
-        If `use_standard_scaling` is enabled, this method first fits StandardScalers
-        on the combined training data, then transforms the data before fitting the GP.
-        The raw (unscaled) data remains stored in the node.
-
-        Args:
-            force_training (bool): If True, the GPR is retrained even if the
-                usual buffer or fullness conditions are not met. Defaults to False.
-
-        Returns:
-            bool: True if the GPR was trained in this call, False otherwise.
+        """Fit the node's GPs to its own and shared points, if a fit is due
+        (``fit_due``) or with ``force_training``. Returns True if they were
+        fitted.
         """
-        # Only train the GP if the buffer is full, the node is full, or if force_training=True
         if not (self.fit_due() or force_training):
             return False
 
-        # Combine own points and shared points
         X_train = np.vstack((self.my_X_data, self.shared_X_data))
         y_train = np.vstack((self.my_y_data, self.shared_y_data))  # Shape: (N, n_outputs)
         sigma_train = np.vstack((self.my_sigma_data, self.shared_sigma_data))  # Shape: (N, n_outputs)
@@ -1010,9 +624,8 @@ class GPNode(Node):
         self._set_fit_statistics(X_train)
 
         if self.output_model == 'independent':
-            # One GP per output, per-output standardisation of y
-            X_fit, targets, noise, scalers = self._independent_fit_inputs(X_train, y_train, sigma_train)
-            self._set_scalers(scalers)
+            X_fit, targets, noise, scaling = self._independent_fit_inputs(X_train, y_train, sigma_train)
+            self.x_shift, self.x_scale, self.y_shift, self.y_scale = scaling
             for i, gpr in enumerate(self.my_GPRs):
                 self._set_noise(gpr, noise[i])
                 gpr.fit(X_fit, targets[i])
@@ -1032,22 +645,17 @@ class GPNode(Node):
                 self._fit_shared(X_train, y_train, sigma_train, previous, previous_fit_std, align)
 
         else:  # 'pca'
-            if self.use_standard_scaling:
-                self.X_scaler = StandardScaler().fit(X_train)
-                X_fit = self.X_scaler.transform(X_train)
-            else:
-                X_fit = X_train
+            self.x_shift, self.x_scale = self._standardisation(X_train)
+            X_fit = self._scaled_inputs(X_train)
             Z = basis.project(y_train)                  # (N, k) basis scores
             noise_z = basis.project_noise(sigma_train)  # (N, k) per-score noise variances
             k = basis.n_components
-            # Standardise every score within the leaf (as the per-output scalers do
-            # for 'independent'): the scores carry the raw output variance and a
-            # leaf-local offset, while the kernel's initial amplitude and zero prior
-            # mean assume centred, unit-variance targets.
+            # The scores are always standardised: the kernel's initial amplitude
+            # and zero prior mean assume centred targets of unit variance
             z_shift = Z.mean(axis=0)
             z_scale = Z.std(axis=0)
             z_scale = np.where(np.isfinite(z_scale) & (z_scale > 0.0), z_scale, 1.0)
-            self.z_scaler = (z_shift, z_scale)
+            self.y_shift, self.y_scale = z_shift, z_scale
             # One GP per score: (re)size the list if the basis rank changed
             template = self.my_GPRs[0]
             while len(self.my_GPRs) < k:
@@ -1061,8 +669,6 @@ class GPNode(Node):
         self._fitted_global = snapshot
         self.asleep = False
         self._used()
-        if self.n_outputs == 1:
-            self.my_GPR = self.my_GPRs[0]
         return True
 
 
@@ -1083,17 +689,11 @@ class GPNode(Node):
         noise variances of the outputs are averaged (exact when sigma is the
         same for all outputs, given the common output scale). With ``align`` an
         alignment of the curves is tried, starting from the ``previous`` one."""
-        if self.use_standard_scaling:
-            self.X_scaler = StandardScaler().fit(X_train)
-            X_fit = self.X_scaler.transform(X_train)
-            mu, scale = self._fit_common_y_scaler(y_train)
-            y_fit = (y_train - mu) / scale
-            alpha = np.mean((sigma_train / scale) ** 2, axis=1)
-        else:
-            X_fit, y_fit = X_train, y_train
-            alpha = np.mean(sigma_train ** 2, axis=1)
-        self._set_noise(self.my_GPRs[0], alpha)
-        self.my_GPRs[0].fit(X_fit, y_fit)
+        self.x_shift, self.x_scale = self._standardisation(X_train)
+        self.y_shift, self.y_scale = mu, scale = self._common_scaling(y_train)
+        X_fit = self._scaled_inputs(X_train)
+        self._set_noise(self.my_GPRs[0], np.mean((sigma_train / scale) ** 2, axis=1))
+        self.my_GPRs[0].fit(X_fit, (y_train - mu) / scale)
 
         # What the GP takes from its leave-one-out predictions of the curves: a
         # sigma per output and, with ``align``, whether an alignment replaces it
@@ -1102,15 +702,12 @@ class GPNode(Node):
         if loo is None:
             return
         weights, variance = loo
-        mu, scale = self.y_common_scaler if self.use_standard_scaling else (0.0, 1.0)
         errors = weights @ (y_train - mu) - (y_train - mu)
         variance = variance * scale ** 2
         if align:
             aligned = self._aligned_fit(X_train, X_fit, y_train, sigma_train, previous, previous_fit_std)
             if aligned is not None and np.sqrt(np.mean(aligned[2] ** 2)) * ALIGNMENT_MARGIN < np.sqrt(np.mean(errors ** 2)):
-                self.my_GPRs[0], self.alignment, errors, variance, scaler = aligned
-                if self.use_standard_scaling:
-                    self.y_common_scaler = scaler
+                self.my_GPRs[0], self.alignment, errors, variance, (self.y_shift, self.y_scale) = aligned
                 self._alignment_rejections = 0
             else:
                 self._alignment_rejections += 1
@@ -1124,8 +721,8 @@ class GPNode(Node):
     def _aligned_fit(self, X_train, X_fit, y_train, sigma_train, previous, previous_fit_std):
         """A warp of the grid of the curves ``y_train`` and a GP fitted to the
         aligned curves: ``(GP, AlignedCurves, leave-one-out errors and variances
-        of the curves, (mu, scale) of the aligned curves)``, or None if the GP
-        backend cannot."""
+        of the curves, (shift, scale) of the aligned curves)``, or None if the
+        GP backend cannot."""
         gpr = self.my_GPRs[0].unfitted_copy()
         if gpr is None:
             return None
@@ -1137,13 +734,8 @@ class GPNode(Node):
         warp.fit(y_train, delta)
         aligned = warp.register(y_train, delta)
         curves = warp.curves(y_train, aligned, delta)
-        mu, scale = 0.0, 1.0
-        if self.use_standard_scaling:
-            mu = aligned.mean(axis=0)
-            scale = float((aligned - mu).std())
-            if not np.isfinite(scale) or scale <= 0.0:
-                scale = 1.0
-        else:
+        mu, scale = self._common_scaling(aligned)
+        if not self.use_standard_scaling:
             curves.centre_weights = np.zeros(X_train.shape[0])
         self._set_noise(gpr, np.mean((sigma_train / scale) ** 2, axis=1))
         gpr.fit(X_fit, (aligned - mu) / scale)
@@ -1161,11 +753,11 @@ class GPNode(Node):
         return X, y, np.vstack((self.my_sigma_data, self.shared_sigma_data))
 
 
-    def _refit_on_snapshot(self, snapshot, hyperparameters=None, scalers=None):
+    def _refit_on_snapshot(self, snapshot, hyperparameters=None, scaling=None):
         """Refit the GPs on the residual of ``snapshot`` (the targets, if None)
         without optimising: with ``hyperparameters``, one set per GP, in the
-        scaling of ``scalers``, or with the hyperparameters the GPs have, in
-        the scaling of the node's points.
+        ``scaling`` given, or with the hyperparameters the GPs have, in the
+        scaling of the node's points.
 
         Used by global models with ``cheap_leaf_refresh`` and by
         ``apply_fit``. The retrain buffer is left as is, so the
@@ -1179,8 +771,8 @@ class GPNode(Node):
         X_train, y_train, sigma_train = self._points(snapshot)
         if X_train.shape[0] == 0:
             return False
-        X_fit, targets, noise, scalers = self._independent_fit_inputs(X_train, y_train, sigma_train, scalers)
-        self._set_scalers(scalers)
+        X_fit, targets, noise, scaling = self._independent_fit_inputs(X_train, y_train, sigma_train, scaling)
+        self.x_shift, self.x_scale, self.y_shift, self.y_scale = scaling
         for i, gpr in enumerate(self.my_GPRs):
             self._set_noise(gpr, noise[i])
             if hyperparameters is None:
@@ -1200,7 +792,7 @@ class GPNode(Node):
         """The fit of the node as a task for another process: unfitted copies of
         its GPs with the inputs and targets they are to be fitted to.
 
-        Returns the task and its frame: the scalers and the global-model
+        Returns the task and its frame: the scaling and the global-model
         snapshot that the inputs and targets were made with. ``solve_fit_task``
         carries the task out, and ``apply_fit`` takes what it finds together
         with the frame. The node's GPs stay as they are, and the retrain buffer
@@ -1218,11 +810,11 @@ class GPNode(Node):
         X_train, y_train, sigma_train = self._points(snapshot)
         if X_train.shape[0] == 0:
             return None
-        X_fit, targets, noise, scalers = self._independent_fit_inputs(X_train, y_train, sigma_train)
+        X_fit, targets, noise, scaling = self._independent_fit_inputs(X_train, y_train, sigma_train)
         for gpr, alpha in zip(gprs, noise):
             self._set_noise(gpr, alpha)
         self.n_points_since_retrain = 0
-        return {'X': X_fit, 'y': targets, 'gprs': gprs}, (scalers, snapshot)
+        return {'X': X_fit, 'y': targets, 'gprs': gprs}, (scaling, snapshot)
 
 
     def apply_fit(self, hyperparameters, frame):
@@ -1230,8 +822,8 @@ class GPNode(Node):
         that ``solve_fit_task`` found, one set per GP, in the ``frame`` of the
         task: the node is then as fitted in place when the task was made, with
         the points since then appended."""
-        scalers, snapshot = frame
-        if not self._refit_on_snapshot(snapshot, hyperparameters, scalers):
+        scaling, snapshot = frame
+        if not self._refit_on_snapshot(snapshot, hyperparameters, scaling):
             self.fit_my_GPR(force_training=True)
 
 
@@ -1250,9 +842,10 @@ class GPNode(Node):
         return np.abs((x - self.fit_mean) / self.fit_std).max(axis=1)
 
 
-    def append_point(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray]):
+    def append_point(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray):
         """Condition the fitted GPs on one more point, at a cost quadratic in their
-        number of points.
+        number of points. ``x`` has shape (1, n_features), and ``y`` and
+        ``sigma`` shape (1, n_outputs).
 
         The hyperparameters, the scaling and the global-model snapshot of the
         last fit are kept. The next fit starts from the node's points as usual.
@@ -1260,36 +853,28 @@ class GPNode(Node):
         """
         if self.asleep or not self._is_fitted():
             return False
-        x = np.asarray(x, dtype=float).reshape(1, -1)
-        y = np.asarray(y, dtype=float).reshape(1, self.n_outputs)
-        sigma = np.broadcast_to(np.asarray(sigma, dtype=float).reshape(1, -1), (1, self.n_outputs))
         if self._fitted_global is not None:
             y = y - self._fitted_global.predict(x)
-        scaled = self.use_standard_scaling and self.X_scaler is not None
         xs = self._scaled_inputs(x)
+        shift, scale = self.y_shift, self.y_scale
 
         if self.output_model == 'independent':
-            done = []
-            for i, gpr in enumerate(self.my_GPRs):
-                shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
-                done.append(gpr.append(xs, (y[0, i] - shift) / scale, (sigma[0, i] / scale) ** 2))
-            return all(done)
+            return all([gpr.append(xs, (y[0, i] - shift[i]) / scale[i], (sigma[0, i] / scale[i]) ** 2)
+                        for i, gpr in enumerate(self.my_GPRs)])
 
         if self.output_model in ('shared', 'aligned'):
-            mu, scale = self.y_common_scaler if scaled and self.y_common_scaler is not None else (0.0, 1.0)
             noise = float(np.mean((sigma / scale) ** 2))
             if self.alignment is None:
-                return self.my_GPRs[0].append(xs, (y - mu) / scale, noise)
+                return self.my_GPRs[0].append(xs, (y - shift) / scale, noise)
             delta = (x - self.fit_mean) / self.fit_std
-            done = self.my_GPRs[0].append(xs, (self.alignment.warp.register(y, delta) - mu) / scale, noise)
+            done = self.my_GPRs[0].append(xs, (self.alignment.warp.register(y, delta) - shift) / scale, noise)
             if done:
                 self.alignment = self.alignment.with_curve(y, delta)
             return done
 
         z = self._fitted_basis.project(y)[0]
         noise_z = self._fitted_basis.project_noise(sigma)[0]
-        z_shift, z_scale = self.z_scaler
-        return all([gpr.append(xs, (z[j] - z_shift[j]) / z_scale[j], noise_z[j] / z_scale[j] ** 2)
+        return all([gpr.append(xs, (z[j] - shift[j]) / scale[j], noise_z[j] / scale[j] ** 2)
                     for j, gpr in enumerate(self.my_GPRs)])
 
 
@@ -1338,27 +923,14 @@ class GPNode(Node):
 
 
     def _compute_dimensional_uncertainty(self):
-        """Computes uncertainty scores for each dimension to guide splitting.
-
-        This method assesses which dimension the current GP is most uncertain about
-        by analyzing how uncertainty varies along each dimension. The dimension with
-        the highest uncertainty score is where splitting would be most beneficial.
-
-        Strategy:
-        1. For each dimension, create a grid of test points that vary only in that dimension
-        2. Compute GP predictions and uncertainties at these test points
-        3. Aggregate uncertainty (e.g., mean or max) to get a score per dimension
-
-        Returns:
-            np.ndarray: Uncertainty scores for each dimension (shape: n_features)
+        """A score per input of how uncertain the node's GPs are along it: the mean
+        predicted sigma at up to 20 of the node's points, each moved to five
+        positions along that input within the range of the node's points.
         """
         uncertainty_scores = np.zeros(self.n_features)
 
-        # Use a sample of training points as reference points
-        # For computational efficiency, sample at most 20 points
         n_sample_points = min(20, self.my_X_data.shape[0])
         if n_sample_points < self.my_X_data.shape[0]:
-            # Randomly sample points
             sample_indices = np.random.choice(self.my_X_data.shape[0],
                                              size=n_sample_points,
                                              replace=False)
@@ -1366,22 +938,16 @@ class GPNode(Node):
         else:
             sample_X = self.my_X_data
 
-        # For each dimension, assess uncertainty
         for dim in range(self.n_features):
-            # Create test points that vary along this dimension
-            # Use the range of data in this dimension
             dim_min = np.min(self.my_X_data[:, dim])
             dim_max = np.max(self.my_X_data[:, dim])
 
             if dim_max - dim_min < 1e-10:
-                # No variation in this dimension
                 uncertainty_scores[dim] = 0.0
                 continue
 
-            # Create a grid of values for this dimension (use 5 points for efficiency)
             dim_values = np.linspace(dim_min, dim_max, 5)
 
-            # For each sampled point, vary only this dimension and measure uncertainty
             uncertainties = []
             for base_point in sample_X:
                 for dim_val in dim_values:
@@ -1389,368 +955,77 @@ class GPNode(Node):
                     test_point[dim] = dim_val
                     test_point = test_point.reshape(1, -1)
 
-                    # Get prediction uncertainty
-                    _, sigma = self.predict(test_point, return_std=True, use_calibrated_sigma=False)
+                    _, sigma = self.predict(test_point, use_calibrated_sigma=False)
                     uncertainties.append(sigma[0])
 
-            # Aggregate uncertainties for this dimension
-            # Use mean uncertainty as the score
             uncertainty_scores[dim] = np.mean(uncertainties)
 
         return uncertainty_scores
 
 
-    def evaluate_candidate_split(self, split_index: int, split_position: float, overlap: float):
-        """Evaluates prediction performance of a candidate split.
-
-        For a given split (dimension and position), this method:
-        1. Partitions data into left/right regions using prob_func
-        2. For each region:
-           - Splits into train/test subsets
-           - Trains a small GP on train subset
-           - Evaluates RMSE on test subset
-        3. Returns combined error score (lower is better)
-
-        Args:
-            split_index (int): Dimension to split on
-            split_position (float): Position along dimension to split at
-            overlap (float): Overlap parameter for prob_func
-
-        Returns:
-            float: Combined RMSE score (weighted average of left and right errors)
-                   Returns np.inf if evaluation fails or insufficient data
-        """
-        if self.my_X_data.shape[0] < 2 * self.split_eval_min_points:
-            # Not enough data to evaluate split
-            return np.inf
-
-        # Temporarily set split parameters for prob_func
-        old_split_index = self.split_index
-        old_split_position = self.split_position
-        old_overlap = self.overlap
-
-        self.split_index = split_index
-        self.split_position = split_position
-        self.overlap = overlap
-
-        try:
-            # Partition data into left/right using prob_func
-            left_indices = []
-            right_indices = []
-
-            for i in range(self.my_X_data.shape[0]):
-                x = self.my_X_data[i:i+1]
-                prob_right = self.prob_func(x)[0][0]
-                # Deterministically assign based on probability
-                if prob_right < 0.5:
-                    left_indices.append(i)
-                else:
-                    right_indices.append(i)
-
-            left_indices = np.array(left_indices)
-            right_indices = np.array(right_indices)
-
-            # Check if we have enough points in each region
-            if len(left_indices) < self.split_eval_min_points or len(right_indices) < self.split_eval_min_points:
-                return np.inf
-
-            rmse_left, n_test_left = self._region_holdout_rmse(left_indices)
-            rmse_right, n_test_right = self._region_holdout_rmse(right_indices)
-            if not (np.isfinite(rmse_left) and np.isfinite(rmse_right)):
-                return np.inf
-
-            # Combined score: weighted average by number of test points
-            combined_rmse = (n_test_left * rmse_left + n_test_right * rmse_right) / (n_test_left + n_test_right)
-
-            return combined_rmse
-
-        except Exception as e:
-            # If evaluation fails, return infinity (worst score)
-            warnings.warn(f"Node {self.name}: Split evaluation failed: {e}", RuntimeWarning)
-            return np.inf
-
-        finally:
-            # Restore original split parameters
-            self.split_index = old_split_index
-            self.split_position = old_split_position
-            self.overlap = old_overlap
-
-
-    def _region_holdout_rmse(self, indices: np.ndarray):
-        """Train a fresh GP on a random subset of the node's points at ``indices``
-        and return ``(RMSE on the held-out rest, number of held-out points)``.
-        A multi-output region is fitted as one shared-kernel GP, a cheap proxy
-        for the leaf's own model."""
-        X_r = self.my_X_data[indices]
-        y_r = self.my_y_data[indices]
-        s_r = self.my_sigma_data[indices]
-        if self.global_mean is not None and self.global_mean.current is not None:
-            y_r = y_r - self.global_mean.current.predict(X_r)   # score splits on what the leaves model
-        n_train = max(int(len(indices) * self.split_eval_train_fraction), 10)
-        n_train = min(n_train, len(indices) - 5)  # leave at least 5 for testing
-        if n_train < 1 or n_train >= len(indices):
-            return np.inf, 0
-        perm = np.random.permutation(len(indices))
-        tr, te = perm[:n_train], perm[n_train:]
-        gp = self.my_GPRs[0].clone()
-        X_tr, y_tr, s_tr = X_r[tr], y_r[tr], s_r[tr]
-        if self.use_standard_scaling:
-            sx = StandardScaler().fit(X_tr)
-            sy = StandardScaler().fit(y_tr)
-            self._set_noise(gp, np.mean((s_tr / sy.scale_) ** 2, axis=1))
-            gp.fit(sx.transform(X_tr), sy.transform(y_tr))
-            pred = np.asarray(gp.predict(sx.transform(X_r[te]), return_std=False)).reshape(len(te), -1)
-            pred = sy.inverse_transform(pred)
-        else:
-            self._set_noise(gp, np.mean(s_tr ** 2, axis=1))
-            gp.fit(X_tr, y_tr)
-            pred = np.asarray(gp.predict(X_r[te], return_std=False)).reshape(len(te), -1)
-        rmse = float(np.sqrt(np.mean((y_r[te] - pred) ** 2)))
-        return rmse, len(te)
-
-
-    def find_best_split_dimension(self, theta: float):
-        """Finds the best split dimension by evaluating multiple candidates.
-
-        Tests several candidate dimensions and selects the one with lowest
-        prediction error. Candidates are chosen using different criteria
-        (max_variance, max_spread, max_uncertainty).
-
-        Args:
-            theta (float): Theta parameter for computing overlap
-
-        Returns:
-            tuple: (best_split_index, best_split_position) or (None, None) if evaluation fails
-        """
-        if self.my_X_data.shape[0] < 2 * self.split_eval_min_points:
-            # Not enough data for evaluation
-            return None, None
-
-        # Generate candidate dimensions to test
-        candidates = []
-
-        # Candidate 1: Max variance
-        if self.my_X_data.shape[0] > 1:
-            variances = np.var(self.my_X_data, axis=0)
-            dim_max_var = np.argmax(variances)
-            candidates.append(('max_variance', dim_max_var))
-
-        # Candidate 2: Max spread
-        if self.my_X_data.shape[0] > 0:
-            spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
-            dim_max_spread = np.argmax(spreads)
-            candidates.append(('max_spread', dim_max_spread))
-
-        # Candidate 3: Max uncertainty (if GP is trained)
-        if self._is_fitted() and self.my_X_data.shape[0] > 1:
-            uncertainty_scores = self._compute_dimensional_uncertainty()
-            dim_max_unc = np.argmax(uncertainty_scores)
-            candidates.append(('max_uncertainty', dim_max_unc))
-
-        # Remove duplicates (keep unique dimensions)
-        unique_candidates = []
-        seen_dims = set()
-        for name, dim in candidates:
-            if dim not in seen_dims:
-                unique_candidates.append((name, dim))
-                seen_dims.add(dim)
-
-        # Limit to n_split_candidates
-        unique_candidates = unique_candidates[:self.n_split_candidates]
-
-        if len(unique_candidates) == 0:
-            return None, None
-
-        logger.debug("Node %s: Evaluating %d candidate splits...", self.name, len(unique_candidates))
-
-        # Evaluate each candidate
-        best_score = np.inf
-        best_index = None
-        best_position = None
-
-        for name, split_index in unique_candidates:
-            # Compute split position (use median)
-            split_position = np.median(self.my_X_data[:, split_index])
-
-            # Compute overlap
-            spread = np.max(self.my_X_data[:, split_index]) - np.min(self.my_X_data[:, split_index])
-            overlap = theta * spread
-
-            # Evaluate this candidate
-            score = self.evaluate_candidate_split(split_index, split_position, overlap)
-
-            logger.debug("  Candidate: %s (dim %d), score: %.4e", name, split_index, score)
-
-            if score < best_score:
-                best_score = score
-                best_index = split_index
-                best_position = split_position
-
-        if best_index is not None:
-            logger.debug("  Best: dim %d with score %.4e", best_index, best_score)
-
-        return best_index, best_position
-
-
     def compute_split_position_and_overlap(self, theta: float):
-        """Computes the split dimension, position, and overlap for node splitting.
-
-        This method determines which feature dimension (`self.split_index`) to
-        split on, typically by selecting the dimension with the maximum spread
-        (range of values) in the node's current training data (`self.my_X_data`).
-
-        If `enable_split_evaluation` is True, it evaluates multiple candidate
-        splits and selects the best one based on prediction performance.
-
-        The actual split position (`self.split_position`) along this dimension is
-        then calculated based on the `self.split_position_method` (e.g., median,
-        mean of the data in `self.my_X_data[:, self.split_index]`).
-
-        The `overlap` region's size (`self.overlap`) is calculated as a product
-        of the `theta` parameter (passed from the `GPTree` during the split
-        operation, representing a fraction of the spread) and the spread (`w`)
-        of the chosen `split_index`.
-
-        Args:
-            theta (float): A parameter provided by the `GPTree` that determines
-                the extent of the overlap. It's a fraction of the data range
-                in the chosen split dimension.
+        """Choose the split of the node: the input (``split_index``, by
+        ``split_dimension_criteria``) or direction (``split_direction``), the
+        position along it (``split_position``, by ``split_position_method``) and
+        the width of the overlap of the two children (``overlap``), which is
+        ``theta`` times the range of the node's points along the split.
         """
+        X = self.my_X_data
+        spreads = np.ptp(X, axis=0)
 
-        # If split evaluation is enabled, find best split by testing candidates
-        if self.enable_split_evaluation:
-            best_index, best_position = self.find_best_split_dimension(theta)
-            if best_index is not None:
-                self.split_index = best_index
-                self.split_position = best_position
-                # Compute overlap for the chosen dimension
-                current_dim_spread = np.max(self.my_X_data[:, self.split_index]) - np.min(self.my_X_data[:, self.split_index])
-                self.overlap = theta * current_dim_spread
-                return  # Done - we have split_index, split_position, and overlap
-            # If evaluation failed, fall through to use default criteria
-
-        # Determine the split index based on the chosen criteria
         self.split_direction = None
         if self.split_dimension_criteria == 'max_spread':
-            if self.my_X_data.shape[0] > 0:
-                w = np.empty(self.n_features)
-                for i in range(self.n_features):
-                    w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
-                self.split_index = np.argmax(w)
-            else:
-                self.split_index = 0 # Default to 0 if no data
+            self.split_index = int(np.argmax(spreads))
         elif self.split_dimension_criteria == 'max_variance':
-            if self.my_X_data.shape[0] > 1:
-                variances = np.var(self.my_X_data, axis=0)
-                self.split_index = np.argmax(variances)
-            else: # Fallback for single data point or no variance
-                if self.my_X_data.shape[0] > 0:
-                    w = np.empty(self.n_features)
-                    for i in range(self.n_features):
-                        w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
-                    self.split_index = np.argmax(w)
-                else:
-                    self.split_index = 0 # Default to 0 if no data
+            self.split_index = int(np.argmax(np.var(X, axis=0)))
         elif self.split_dimension_criteria == 'max_uncertainty':
-            # Split on the dimension where the GP is most uncertain
-            # Strategy: compute marginal predictive uncertainty for each dimension
-            if self.my_X_data.shape[0] > 1 and self._is_fitted():
-                # Compute per-dimension uncertainty scores
-                # We'll use the GP's predictions on the training data to assess uncertainty
-                uncertainty_scores = self._compute_dimensional_uncertainty()
-                self.split_index = np.argmax(uncertainty_scores)
+            # As 'max_variance' for a node without fitted GPs
+            if X.shape[0] > 1 and self._is_fitted():
+                self.split_index = int(np.argmax(self._compute_dimensional_uncertainty()))
             else:
-                # Fallback to max_variance if GP not trained yet
-                if self.my_X_data.shape[0] > 1:
-                    variances = np.var(self.my_X_data, axis=0)
-                    self.split_index = np.argmax(variances)
-                elif self.my_X_data.shape[0] > 0:
-                    w = np.empty(self.n_features)
-                    for i in range(self.n_features):
-                        w[i] = np.max(self.my_X_data[:, i]) - np.min(self.my_X_data[:, i])
-                    self.split_index = np.argmax(w)
-                else:
-                    self.split_index = 0 # Default to 0 if no data
+                self.split_index = int(np.argmax(np.var(X, axis=0)))
         elif self.split_dimension_criteria == 'min_lengthscale':
-            # Split where the GP's smallest fitted ARD length scale is, i.e. where
-            # the function varies fastest relative to its spread. For several GPs
-            # (multi-output / basis scores) the per-dimension minimum over all of
-            # them is used. Falls back to max_spread if no per-dimension length
-            # scales are available (GP untrained or kernel isotropic).
+            # The input with the smallest fitted length scale over the node's GPs,
+            # where the function varies fastest. As 'max_spread' if the GPs give no
+            # length scale per input (not fitted, or an isotropic kernel).
             length_scales = None
-            if self.my_X_data.shape[0] > 1:
+            if X.shape[0] > 1:
                 length_scales = self._pooled_length_scales()
                 self.split_direction = self._fastest_direction()
-            if length_scales is not None:
-                # Compare length scales in units of each dimension's std so the
-                # choice is scale-invariant. With standard scaling the GP frame
-                # already has std ~ 1 (no-op); without it, normalise by the raw
-                # per-dimension std so dimensions in different units stay comparable.
-                if not self.use_standard_scaling and self.my_X_data.shape[0] > 1:
-                    stds = np.std(self.my_X_data, axis=0)
-                    length_scales = length_scales / np.where(stds > 0, stds, 1.0)
-                # The length scale of a dimension in which the points coincide is arbitrary
-                length_scales = np.where(np.ptp(self.my_X_data, axis=0) > 0, length_scales, np.inf)
-                self.split_index = int(np.argmin(length_scales))
-            elif self.my_X_data.shape[0] > 0:
-                spreads = np.max(self.my_X_data, axis=0) - np.min(self.my_X_data, axis=0)
+            if length_scales is None:
                 self.split_index = int(np.argmax(spreads))
             else:
-                self.split_index = 0
+                # In units of the spread of the points along each input, which
+                # standard scaling has already made 1 for the GPs
+                if not self.use_standard_scaling:
+                    stds = np.std(X, axis=0)
+                    length_scales = length_scales / np.where(stds > 0, stds, 1.0)
+                # The length scale of an input in which the points coincide is arbitrary
+                length_scales = np.where(spreads > 0, length_scales, np.inf)
+                self.split_index = int(np.argmin(length_scales))
         elif self.split_dimension_criteria == 'random':
-            if self.n_features > 0:
-                self.split_index = np.random.randint(0, self.n_features)
-            else:
-                self.split_index = 0 # Default to 0 if no features
+            self.split_index = np.random.randint(0, self.n_features)
         else:
             raise ValueError(f"Unknown split_dimension_criteria: {self.split_dimension_criteria}")
 
-        # A dimension in which all of the node's points coincide cannot separate them
-        if self.my_X_data.shape[0] > 0:
-            spreads = np.ptp(self.my_X_data, axis=0)
-            if spreads[self.split_index] == 0:
-                self.split_index = int(np.argmax(spreads))
+        # An input in which all of the node's points coincide cannot separate them
+        if spreads[self.split_index] == 0:
+            self.split_index = int(np.argmax(spreads))
 
-        # Calculate spread along the split, used for overlap calculation
-        # and potentially for split_position if data is scarce for other methods.
-        along_split = self.split_coordinate(self.my_X_data)
-        if self.my_X_data.shape[0] > 0:
-            current_dim_spread = np.max(along_split) - np.min(along_split)
-        else:
-            current_dim_spread = 0.0 # Default if no data
-
-        self.split_position = None
-        if self.my_X_data.shape[0] == 0: # No data, place split in the middle (0 if not scaled) or handle as error?
-            self.split_position = 0.0
-        elif self.split_position_method == 'median':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.median(along_split)
-            else: # Should not happen if split_index logic is robust
-                self.split_position = 0.0
+        along_split = self.split_coordinate(X)
+        low, high = np.min(along_split), np.max(along_split)
+        if self.split_position_method == 'median':
+            self.split_position = np.median(along_split)
         elif self.split_position_method == 'mean':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.mean(along_split)
-            else: # Should not happen
-                self.split_position = 0.0
+            self.split_position = np.mean(along_split)
         elif self.split_position_method == 'random':
-            if self.my_X_data.shape[0] > 0:
-                min_val = np.min(along_split)
-                max_val = np.max(along_split)
-                if min_val == max_val: # All points are the same
-                    self.split_position = min_val
-                else:
-                    self.split_position = np.random.uniform(min_val, max_val, 1)[0]
-            else: # Should not happen
-                self.split_position = 0.0
+            self.split_position = np.random.uniform(low, high, 1)[0] if high > low else low
         elif self.split_position_method == 'randomchoice':
-            if self.my_X_data.shape[0] > 0:
-                self.split_position = np.random.choice(along_split)
-            else: # Should not happen
-                self.split_position = 0.0
+            self.split_position = np.random.choice(along_split)
         else:
             raise ValueError(f"Unknown split_position_method argument: '{self.split_position_method}'. The valid options are 'median', 'mean', 'random' and 'randomchoice'")
 
-        self.overlap = theta * current_dim_spread
+        self.overlap = theta * (high - low)
 
 
     def split_coordinate(self, x: np.ndarray):
@@ -1802,20 +1077,14 @@ class GPNode(Node):
             # a leaf with an alignment models the curves themselves, without the global model
             if current is not None and self.alignment is None and (self._fitted_global is None
                                                                     or self._fitted_global.version < current.version):
-                if not (getattr(self.global_mean, 'cheap_leaf_refresh', False)
-                        and self._refit_on_snapshot(current)):
+                if not (self.global_mean.cheap_leaf_refresh and self._refit_on_snapshot(current)):
                     self.fit_my_GPR(force_training=True)
 
 
-    def predict(self, x: np.ndarray, return_std=True, use_calibrated_sigma=False):
-        """Evaluates the prediction from this node's GPR(s) at input point(s) x.
-
-        The input x is expected to be in the original (unscaled) space. If
-        `use_standard_scaling` is enabled, this method transforms x to the
-        standardized space before calling the GP, then inverse transforms
-        the predictions back to the original space.
-
-        For multi-output: returns predictions for all outputs as (n_samples, n_outputs) arrays.
+    def predict(self, x: np.ndarray, use_calibrated_sigma=False):
+        """The node's prediction at the points ``x`` (n_samples, n_features), in the
+        units of the data: the mean and the standard deviation, each of shape
+        (n_samples, n_outputs).
 
         A leaf of a tree with ``predict_from='neighbours'`` conditions its
         kernels on the stored points nearest to each row of ``x`` in place of
@@ -1823,51 +1092,29 @@ class GPNode(Node):
         own GPs predicted the last points it received clearly better
         (``prefers_own``).
 
-        Args:
-            x (np.ndarray): The input point(s) at which to make predictions,
-                in the original (unscaled) space.
-                Shape should be (n_samples, n_features).
-            return_std (bool): Whether to return the standard deviation of the
-                prediction. Defaults to True.
-            use_calibrated_sigma (bool): If True, the returned `sigma_pred`
-                (standard deviation) is scaled by the node's `self.sigma_scaler(s)`
-                attribute(s). This scaler is intended to calibrate the uncertainty
-                estimates. Defaults to False.
-
-        Returns:
-            tuple:
-                - mu_pred (np.ndarray): The mean prediction(s) in original space.
-                  Shape: (n_samples, n_outputs)
-                - sigma_pred (np.ndarray): The standard deviation of the
-                  prediction(s) in original space. Shape: (n_samples, n_outputs)
-                  Only returned if `return_std` is True. This is the uncertainty
-                  of the estimate of the underlying function (the GP's latent
-                  posterior standard deviation), not of a noisy observation. With
-                  a global model it also includes the global model's own
-                  estimated (epistemic) error, see ``global_mean``.
+        The standard deviation is the uncertainty of the estimate of the
+        underlying function, not of a noisy observation. With a global model it
+        includes the estimated error of that model. With
+        ``use_calibrated_sigma`` it is multiplied by the node's
+        ``sigma_scalers``.
         """
         self._refresh_global()
         if self._can_condition() and not self.prefers_own:
             mu_pred, sigma_pred = self._predict_from_neighbours(x)
         else:
-            mu_pred, sigma_pred = self._predict_own(x, return_std)
+            mu_pred, sigma_pred = self._predict_own(x)
 
         # Add back the snapshot the GPs were fitted against, and its estimated error:
         # the residual GP cannot know how wrong the global model is at x.
         if self._fitted_global is not None:
             mu_pred = mu_pred + self._fitted_global.predict(x)
-            err_scale = getattr(self.global_mean, 'error_scale', None)
+            err_scale = self.global_mean.error_scale
             if err_scale is not None:
                 sigma_pred = np.sqrt(sigma_pred ** 2 + np.asarray(err_scale, dtype=float).reshape(1, -1) ** 2)
 
-        # Apply calibration if requested
+        # Apply calibration if requested: each output has its own factor
         if use_calibrated_sigma:
-            if self.n_outputs == 1:
-                sigma_pred = sigma_pred * self.sigma_scaler
-            else:
-                # Multiply each output by its calibration factor
-                for i in range(self.n_outputs):
-                    sigma_pred[:, i] = sigma_pred[:, i] * self.sigma_scalers[i]
+            sigma_pred = sigma_pred * np.asarray(self.sigma_scalers)
 
         return mu_pred, sigma_pred
 
@@ -1907,13 +1154,12 @@ class GPNode(Node):
         if self.output_model != 'independent':
             return None
         Zs = self._scaled_inputs(Z)
-        scaled = self.use_standard_scaling and self.X_scaler is not None
         covariances, means, scales = [], np.empty(self.n_outputs), np.empty(self.n_outputs)
         for i, gpr in enumerate(self.my_GPRs):
             prior = gpr.covariance(Zs)
             if prior is None:
                 return None
-            shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
+            shift, scale = self.y_shift[i], self.y_scale[i]
             covariances.append((scale ** 2 * prior[1][0]) * prior[0])
             means[i] = shift + scale * prior[2][0]
             scales[i] = prior[1][0]
@@ -1929,12 +1175,12 @@ class GPNode(Node):
         return self._variance_unit
 
 
-    def _predict_own(self, x: np.ndarray, return_std: bool = True):
+    def _predict_own(self, x: np.ndarray):
         """The prediction of the node's GPs from the points of their fit, before
         the global model is added back."""
         self.wake()
         if self.output_model == 'independent':
-            return self._predict_independent(x, return_std)
+            return self._predict_independent(x)
         if self.output_model in ('shared', 'aligned'):
             return self._predict_shared(x)
         return self._predict_pca(x)
@@ -1949,7 +1195,7 @@ class GPNode(Node):
         n = x.shape[0]
         mu, sigma, share = (np.zeros((n, self.n_outputs)) for _ in range(3))
         for r in range(n):
-            found = self.neighbours.find(x[r], self.fit_std, leaf=self)
+            found = self.neighbours.find(x[r], self.fit_std)
             share[r] = self._condition_on(found, x[r:r + 1], mu[r], sigma[r])
         rows = (share < 1.0).any(axis=1)
         if rows.any():
@@ -1979,11 +1225,10 @@ class GPNode(Node):
                 unit = 0.01 * y.var(axis=0)
             noise_std = np.sqrt(noise_std ** 2 + growth[:, None] * (noise_std ** 2 + unit))
         Xs, qs = self._scaled_inputs(X), self._scaled_inputs(xq)
-        scaled = self.use_standard_scaling and self.X_scaler is not None
 
         if self.output_model == 'independent':
             for i, gpr in enumerate(self.my_GPRs):
-                shift, scale = (self.y_scalers[i].mean_[0], self.y_scalers[i].scale_[0]) if scaled else (0.0, 1.0)
+                shift, scale = self.y_shift[i], self.y_scale[i]
                 result = gpr.condition(Xs, (y[:, i] - shift) / scale, (noise_std[:, i] / scale) ** 2, qs)
                 if result is not None:
                     share[i] = weight(result[2][0])
@@ -1991,7 +1236,7 @@ class GPNode(Node):
                         mu[i], sigma[i] = result[0][0, 0] * scale + shift, result[1][0, 0] * scale
 
         elif self.output_model in ('shared', 'aligned'):
-            shift, scale = self.y_common_scaler if scaled and self.y_common_scaler is not None else (0.0, 1.0)
+            shift, scale = self.y_shift, self.y_scale
             result = self.my_GPRs[0].condition(Xs, (y - shift) / scale, np.mean((noise_std / scale) ** 2, axis=1), qs)
             if result is not None:
                 share[:] = weight(np.max(result[2]))
@@ -2002,7 +1247,7 @@ class GPNode(Node):
         else:  # 'pca'
             basis = self._fitted_basis
             Z, noise_z = basis.project(y), basis.project_noise(noise_std)
-            z_shift, z_scale = self.z_scaler
+            z_shift, z_scale = self.y_shift, self.y_scale
             z_mean, z_var = np.empty((1, basis.n_components)), np.empty((1, basis.n_components))
             lowest = 1.0
             for j, gpr in enumerate(self.my_GPRs):
@@ -2017,46 +1262,20 @@ class GPNode(Node):
         return share
 
 
-    def _predict_independent(self, x: np.ndarray, return_std: bool = True):
+    def _predict_independent(self, x: np.ndarray):
         """Per-output GPs (output_model='independent'); see ``predict``."""
-        n_samples = x.shape[0]
-
-        # Initialize output arrays
-        mu_pred = np.zeros((n_samples, self.n_outputs))
-        sigma_pred = np.zeros((n_samples, self.n_outputs))
-
-        if self.use_standard_scaling and self.X_scaler is not None:
-            # Transform input to standardized space (same for all outputs)
-            x_scaled = self._scaled_inputs(x)
-
-            # Get predictions for each output independently
-            for i in range(self.n_outputs):
-                # Get prediction in scaled space
-                mu_scaled_i, sigma_scaled_i = self.my_GPRs[i].predict(x_scaled, return_std=return_std)
-
-                # Inverse transform mean: mu_original = mu_scaled * scale_y + mean_y
-                y_scaler = self.y_scalers[i]
-                mu_pred[:, i] = np.asarray(mu_scaled_i, dtype=float).reshape(-1) * y_scaler.scale_[0] + y_scaler.mean_[0]
-
-                # Transform std: sigma_original = sigma_scaled * scale_y
-                # When y is scaled by scale_y, variance scales by scale_y^2, so std scales by scale_y
-                sigma_pred[:, i] = sigma_scaled_i * y_scaler.scale_[0]
-
-        else:
-            # No scaling - predict on raw data for each output
-            for i in range(self.n_outputs):
-                mu_i, sigma_i = self.my_GPRs[i].predict(x, return_std=return_std)
-                mu_pred[:, i] = mu_i.flatten()
-                sigma_pred[:, i] = sigma_i
-
+        xs = self._scaled_inputs(x)
+        mu_pred = np.zeros((x.shape[0], self.n_outputs))
+        sigma_pred = np.zeros((x.shape[0], self.n_outputs))
+        for i, gpr in enumerate(self.my_GPRs):
+            m, sd = gpr.predict(xs, return_std=True)
+            mu_pred[:, i] = np.asarray(m, dtype=float).reshape(-1) * self.y_scale[i] + self.y_shift[i]
+            sigma_pred[:, i] = sd * self.y_scale[i]
         return mu_pred, sigma_pred
 
     def _scaled_inputs(self, x: np.ndarray) -> np.ndarray:
-        """``X_scaler.transform(x)`` without scikit-learn's input validation, which
-        costs more than the arithmetic for a few points."""
-        if self.use_standard_scaling and self.X_scaler is not None:
-            return (np.asarray(x, dtype=float) - self.X_scaler.mean_) / self.X_scaler.scale_
-        return x
+        """The inputs ``x`` as the node's GPs see them."""
+        return (np.asarray(x, dtype=float) - self.x_shift) / self.x_scale
 
     def _prior_prediction(self, x: np.ndarray):
         """Prediction of a node that has not been fitted yet: the prior of its first
@@ -2081,10 +1300,8 @@ class GPNode(Node):
         if sd.shape[1] != self.n_outputs:
             # one sigma for all targets of the GP, of which an alignment can have more than there are outputs
             sd = np.tile(sd[:, :1], (1, self.n_outputs))
-        if self.use_standard_scaling and self.y_common_scaler is not None:
-            mu, scale = self.y_common_scaler
-            m = m * scale + mu
-            sd = sd * scale
+        m = m * self.y_scale + self.y_shift
+        sd = sd * self.y_scale
         if self.sigma_profile is not None:
             sd = sd * self.sigma_profile
         if self.alignment is not None:
@@ -2098,7 +1315,7 @@ class GPNode(Node):
             return self._prior_prediction(x)
         n, k = x.shape[0], basis.n_components
         xs = self._scaled_inputs(x)
-        z_shift, z_scale = self.z_scaler
+        z_shift, z_scale = self.y_shift, self.y_scale
         z_mean = np.zeros((n, k))
         z_var = np.zeros((n, k))
         for j in range(k):
@@ -2109,9 +1326,10 @@ class GPNode(Node):
         return mu_pred, np.sqrt(var_pred)
 
 
-    def register_pred_perf(self, x: np.ndarray, y: Union[float, np.ndarray], only_if_fitted: bool = False,
-                           prediction=None):
-        """ Register the residual between prediction and true value for this data point.
+    def register_pred_perf(self, x: np.ndarray, y: np.ndarray, only_if_fitted: bool = False, prediction=None):
+        """ Register the residual between prediction and true value for this data
+        point, with ``x`` of shape (1, n_features) and ``y`` of shape
+        (1, n_outputs).
 
         For multi-output: tracks performance per output dimension. With
         ``only_if_fitted`` the prior prediction of a node without fitted GPs is
@@ -2120,57 +1338,36 @@ class GPNode(Node):
         that is not the node's own prediction. Returns the errors in units of
         the calibrated sigma, per output, or None if nothing was registered.
         """
-        mu_pred, sigma_pred = self.predict(x, return_std=True, use_calibrated_sigma=False)
+        mu_pred, sigma_pred = self.predict(x, use_calibrated_sigma=False)
         if only_if_fitted and not self._is_fitted():
             return None
 
-        # Ensure y is array of shape (n_outputs,)
-        if isinstance(y, (int, float, np.floating)):
-            y = np.array([y])
-        else:
-            y = np.atleast_1d(y).flatten()
-
+        y = y[0]
         if self._can_condition():
-            self._score_predictors(x, y[:self.n_outputs], mu_pred)
+            self._score_predictors(x, y, mu_pred)
         if prediction is not None:
             mu_pred, sigma_pred = prediction
 
         keep_n_points = self.n_points_pred_perf - 1
 
-        # Update for each output
         for i in range(self.n_outputs):
             self.residuals_list[i] = self.residuals_list[i][:keep_n_points]
             self.residuals_list[i] = np.insert(self.residuals_list[i], 0, y[i] - mu_pred[0, i])
-
-            self.mu_preds_list[i] = self.mu_preds_list[i][:keep_n_points]
-            self.mu_preds_list[i] = np.insert(self.mu_preds_list[i], 0, mu_pred[0, i])
 
             self.sigma_preds_list[i] = self.sigma_preds_list[i][:keep_n_points]
             self.sigma_preds_list[i] = np.insert(self.sigma_preds_list[i], 0, sigma_pred[0, i])
         self._variance_unit = None
 
-        # Also update single arrays for backward compatibility (single output case)
-        if self.n_outputs == 1:
-            self.residuals = self.residuals_list[0]
-            self.mu_preds = self.mu_preds_list[0]
-            self.sigma_preds = self.sigma_preds_list[0]
-
-        return np.abs(y[:self.n_outputs] - mu_pred[0]) / (sigma_pred[0] * np.asarray(self.sigma_scalers) + 1e-300)
+        return np.abs(y - mu_pred[0]) / (sigma_pred[0] * np.asarray(self.sigma_scalers) + 1e-300)
 
 
     def clear_pred_perf(self):
         """Forget the registered prediction performance; sigma is then the GP's own
         until new performance is registered."""
         self.residuals_list = [np.array([]) for _ in range(self.n_outputs)]
-        self.mu_preds_list = [np.array([]) for _ in range(self.n_outputs)]
         self.sigma_preds_list = [np.array([]) for _ in range(self.n_outputs)]
         self._variance_unit = None
         self.sigma_scalers = [1.0 for _ in range(self.n_outputs)]
-        if self.n_outputs == 1:
-            self.residuals = self.residuals_list[0]
-            self.mu_preds = self.mu_preds_list[0]
-            self.sigma_preds = self.sigma_preds_list[0]
-            self.sigma_scaler = 1.0
 
 
     def update_sigma_scaler(self):
@@ -2198,7 +1395,3 @@ class GPNode(Node):
 
             ratios = np.abs(residuals_i) / (sigma_preds_i + 1e-10)
             self.sigma_scalers[i] = max(float(np.quantile(ratios, target_coverage)), 1e-9)
-
-        # Also update single sigma_scaler for backward compatibility (single output case)
-        if self.n_outputs == 1:
-            self.sigma_scaler = self.sigma_scalers[0]

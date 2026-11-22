@@ -79,10 +79,10 @@ class TestBatchUpdateTree(unittest.TestCase):
         tasks = gpt.batch_update_tree(X, Y, 1e-3, defer_fits=True)
         self.assertGreater(len(tasks), 0)
         self.assertEqual([task['id'] for task in tasks], sorted(gpt._fit_tasks))
-        self.assertFalse(gpt.root.leaves[0].my_GPR.is_trained())
+        self.assertFalse(gpt.root.leaves[0].my_GPRs[0].is_trained())
         for task in tasks:
             self.assertTrue(gpt.apply_fit_result(solve_fit_task(task)))
-        self.assertTrue(all(leaf.my_GPR.is_trained() for leaf in gpt.root.leaves))
+        self.assertTrue(all(leaf.my_GPRs[0].is_trained() for leaf in gpt.root.leaves))
 
     def test_the_arrays_stay_with_the_caller(self):
         X, Y = _data(150)
@@ -146,7 +146,7 @@ class TestFitOnATreeWithPoints(unittest.TestCase):
         gpt = _tree()
         gpt.fit(X, Y, np.full(120, 1e-3))
         self.assertEqual(sum(leaf.n_points for leaf in gpt.root.leaves), 120)
-        self.assertTrue(all(leaf.my_GPR.is_trained() for leaf in gpt.root.leaves))
+        self.assertTrue(all(leaf.my_GPRs[0].is_trained() for leaf in gpt.root.leaves))
 
 
 if __name__ == '__main__':

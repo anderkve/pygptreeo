@@ -73,7 +73,7 @@ class TestNoiseReachesBackend(unittest.TestCase):
         alpha = node.my_GPRs[0].sklearn_gpr.alpha
         self.assertEqual(np.shape(alpha), (20,))
         # scaled variance: (sigma / y_scale)^2, in the node's storage order (newest first)
-        expected = (node.my_sigma_data[:, 0] / node.y_scalers[0].scale_[0]) ** 2
+        expected = (node.my_sigma_data[:, 0] / node.y_scale[0]) ** 2
         np.testing.assert_allclose(alpha, expected)
 
 
@@ -218,7 +218,7 @@ class TestOutputModels(unittest.TestCase):
             gpt.fit(X, Y, S)
         for leaf in gpt.root.leaves:
             self.assertEqual(len(leaf.my_GPRs), 1)
-            self.assertIsNotNone(leaf.y_common_scaler)
+            self.assertEqual(np.ndim(leaf.y_scale), 0)      # one scale for all outputs
         with contextlib.redirect_stdout(io.StringIO()):
             mu, sd = gpt.predict(X[:20])
         self.assertEqual(mu.shape, (20, Y.shape[1]))

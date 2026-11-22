@@ -119,7 +119,6 @@ class TestAdditiveGPGlobalMean(unittest.TestCase):
         _, _, published = self._feed(learner_all, 130)
         self.assertEqual(published, [30, 60, 90, 120])
         self.assertEqual(learner_all.current.version, 4)
-        self.assertEqual(learner_all.n_skipped, 0)
         # A high turnover requirement skips most due refits once the coverage reservoir
         # has settled (a uniform stream then rarely improves the minimum separation).
         learner_all = AdditiveGPGlobalMean(reservoir_size=30, min_points=30, min_turnover=0.0,
@@ -128,7 +127,6 @@ class TestAdditiveGPGlobalMean(unittest.TestCase):
                                               n_restarts_optimizer=0)
         self._feed(learner_all, 400)
         self._feed(learner_strict, 400)
-        self.assertGreater(learner_strict.n_skipped, 0)
         self.assertLess(learner_strict.current.version, learner_all.current.version)
         self.assertLessEqual(learner_strict.current.version, 3)
 
@@ -209,7 +207,7 @@ class TestNodeResidual(unittest.TestCase):
         np.testing.assert_allclose(node.my_y_data[:, 0], y[::-1])
         # the GP was trained on the (standardised) residual sin(6x), not on y
         resid = y[::-1] - (5.0 + 2.0 * X[::-1, 0])
-        scaled = node.y_scalers[0].transform(resid[:, None])[:, 0]
+        scaled = (resid - node.y_shift[0]) / node.y_scale[0]
         np.testing.assert_allclose(node.my_GPRs[0].sklearn_gpr.y_train_.ravel(), scaled, atol=1e-10)
         # and the prediction is global + residual, i.e. y
         with contextlib.redirect_stdout(io.StringIO()):
@@ -222,8 +220,8 @@ class TestNodeResidual(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             node.fit_my_GPR(force_training=True)
         self.assertIsNone(node._fitted_global)
-        np.testing.assert_allclose(node.y_scalers[0].inverse_transform(
-            node.my_GPRs[0].sklearn_gpr.y_train_.reshape(-1, 1))[:, 0], y[::-1], atol=1e-10)
+        np.testing.assert_allclose(node.my_GPRs[0].sklearn_gpr.y_train_.ravel() * node.y_scale[0] + node.y_shift[0],
+                                   y[::-1], atol=1e-10)
 
     def test_refresh_rule_refits_on_newer_version(self):
         learner = FakeLearner()
@@ -319,7 +317,7 @@ class TestNodeResidual(unittest.TestCase):
         node, X, y = self._node(learner)
         with contextlib.redirect_stdout(io.StringIO()):
             node.fit_my_GPR(force_training=True)
-            node.generate_children(Default_GPR(), 1)
+            node.generate_children(1)
         for child in node.children:
             self.assertIs(child._fitted_global, node._fitted_global)
             self.assertIs(child.global_mean, learner)

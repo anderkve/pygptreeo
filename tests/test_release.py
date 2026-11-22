@@ -60,7 +60,7 @@ class TestRelease(unittest.TestCase):
                         dict(splitting_strategy='standard')):
             with self.subTest(**options):
                 gpt = _tree(**options)
-                self.assertGreater(gpt.leaf_index.depth(), 1)       # the index has groups with parents
+                self.assertFalse(gpt.leaf_index.root.bottom)        # the index has groups with parents
                 refs = _watch(gpt)
                 gpt.release()
                 del gpt

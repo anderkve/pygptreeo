@@ -104,18 +104,6 @@ class LeafIndex:
                       everything + self.data_box(leaf) + everything + (np.zeros(d),) + everything)
         self._group[leaf] = self.root
 
-    def cell(self, leaf):
-        """The cell of a leaf: ``(lo, hi)``."""
-        group = self._group[leaf]
-        i = group.children.index(leaf)
-        return group.cell_lo[i].copy(), group.cell_hi[i].copy()
-
-    def faces(self, leaf):
-        """The faces of a leaf and the half widths of its zones: ``(lo, hi, half)``."""
-        group = self._group[leaf]
-        i = group.children.index(leaf)
-        return group.face_lo[i].copy(), group.face_hi[i].copy(), group.half[i].copy()
-
     def split(self, leaf, left, right, j, position, margin=0.0):
         """Replace a leaf by its two children, cut along input ``j`` at
         ``position``. Their cells stop ``margin`` short of the cut, and a
@@ -293,25 +281,6 @@ class LeafIndex:
         total = sum(weights)
         return leaves, [weight / total for weight in weights]
 
-    def within(self, q, w, radius):
-        """The leaves that can hold a point within ``radius`` (a squared distance)
-        of ``q``, with every input divided by ``w``: ``(leaves, bounds)``, where a
-        bound is the squared distance from ``q`` to the box of a leaf's points."""
-        leaves, bounds = [], []
-        stack = [self.root]
-        while stack:
-            group = stack.pop()
-            n = len(group.children)
-            gap = np.maximum(group.data_lo[:n] - q, 0.0) + np.maximum(q - group.data_hi[:n], 0.0)
-            bound = ((gap / w) ** 2).sum(axis=1)
-            near = np.flatnonzero(bound <= radius)
-            if group.bottom:
-                leaves.extend([group.children[i] for i in near])
-                bounds.append(bound[near])
-            else:
-                stack.extend([group.children[i] for i in near])
-        return leaves, (np.concatenate(bounds) if bounds else np.empty(0))
-
     def nearest(self, q, w, m):
         """The ``m`` leaves whose points' boxes are nearest to ``q``, with every
         input divided by ``w``, nearest first. Leaves without points are left out."""
@@ -337,18 +306,3 @@ class LeafIndex:
                 limit = np.partition(bounds, m - 1)[m - 1]
         order = np.argsort(bounds, kind='stable')[:m]
         return [leaves[i] for i in order]
-
-    def siblings(self, leaf, q, w):
-        """The leaves in the group of ``leaf``, nearest to ``q`` first."""
-        group = self._group[leaf]
-        n = len(group.children)
-        gap = np.maximum(group.data_lo[:n] - q, 0.0) + np.maximum(q - group.data_hi[:n], 0.0)
-        return [group.children[i] for i in np.argsort(((gap / w) ** 2).sum(axis=1), kind='stable')]
-
-    def depth(self):
-        """Number of levels of groups above the leaves."""
-        levels, group = 1, self.root
-        while not group.bottom:
-            group = group.children[0]
-            levels += 1
-        return levels

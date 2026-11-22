@@ -90,6 +90,38 @@ direction: the leaf resolves more dimensions than the target has.
   targets the error was 7 to 20% higher than with the default leaves, where
   the leave-one-out error of 100 points decides on 6 to 45 entries.
 
+## Additive and periodic leaf kernels
+
+* **An additive kernel needs fewer points where the target has its
+  structure.** `NewtonGirardAdditiveKernel` models the target as a sum of
+  terms that each depend on a few inputs: main effects (order 1), pairs
+  (order 2) and so on, with one variance per order. A model of low order
+  needs far fewer points than the kernel of the product of all inputs, which
+  is its term of order `d`.
+* **Its cost is linear in the number of inputs.** The terms of one order add
+  up to an elementary symmetric polynomial of the one-dimensional kernels of
+  the inputs, and these follow from power sums by the Newton-Girard
+  identities. The kernel has `d` length scales and one variance per order.
+  `AdditiveKernel` evaluates every term, and its cost grows with their
+  number, `C(d, order)`.
+* **A Matern kernel beside it** (`AdditiveMaternKernel`). The Matern part has
+  its own length scales and models what the additive part does not describe:
+  interactions of higher order and rougher structure. Where the target has
+  no additive structure the fit gives the additive part a small variance,
+  and the kernel acts as the Matern kernel, at a longer run time.
+* **A periodic kernel per input** (`AdditivePeriodicKernel`). The periodic
+  kernel of scikit-learn (`ExpSineSquared`) takes the Euclidean distance
+  between two points and is positive definite in one dimension only. A sum
+  of one-dimensional periodic kernels is positive definite in any dimension,
+  and each input has its own period. Where a period grows beyond the range
+  of the points its term tends to an RBF kernel.
+* **Where the periodic kernel pays off** (`AdditivePeriodicMaternKernel`).
+  Where the target is a sum of periodic terms whose periods show within a
+  single leaf. A longer period looks like a trend within a leaf, which the
+  other kernels describe, and an oscillation whose amplitude or phase
+  depends on other inputs is not a sum of such terms. The second part of the
+  kernel, a Matern or an RBF kernel, models the trend and the rest.
+
 ## The global model
 
 `GPTree(global_mean=...)` gives the tree one shared model whose residual the
@@ -123,7 +155,7 @@ Two global models ship:
   plus Matérn kernel on a 500-point reservoir. Strong on targets with low-order
   additive structure. Its fit is cubic in the reservoir size and its kernel has
   `d (d - 1) / 2` pair terms, so it becomes slow beyond about six dimensions.
-* **`'net'`** (`FeatureNetLearner`, `NetGlobalMean`): an MLP trained at a fixed
+* **`'net'`** (`FeatureNetLearner`): an MLP trained at a fixed
   cost per refit, not limited to additive structure. Each refit runs L-BFGS on
   the reservoir and then Adam steps over the stored points (every point of the
   stream up to `store_size`, a uniform sample of it after that), and publishes
@@ -141,8 +173,8 @@ fixed size: a fitted leaf takes 40 kB at `Nbar=50` in three dimensions and
 * **Where the memory is.** A fitted leaf at `Nbar=100` in six dimensions takes
   about 113 kB: 80 kB for the Cholesky factor of its GP, 7 kB for the GP's
   copy of the training data and its weights, 6 kB for the leaf's own and shared
-  points, and about 20 kB for Python objects (the node, an inner node, scalers,
-  kernels). The factor follows from the training data and the kernel.
+  points, and about 20 kB for Python objects (the node, an inner node, the
+  scaling, kernels). The factor follows from the training data and the kernel.
 * **A sleeping leaf** has released the factors and weights of its GPs and
   keeps everything else. Restoring them takes one kernel matrix and one
   factorisation, and the GP then predicts as before: exactly, or to the
@@ -386,9 +418,9 @@ section 9.
   scalers averaged with the same weights.
 * **A sum of kernels, not an average of hyperparameters.** Each leaf scales
   its inputs and targets itself, so its hyperparameters mean something only
-  with its scalers, and an average over leaves has no meaning for a kernel
+  with its scaling, and an average over leaves has no meaning for a kernel
   that is not of the default form. A weighted sum of kernels is a kernel
-  whatever the leaves' kernels and scalers are, and it changes continuously
+  whatever the leaves' kernels and scalings are, and it changes continuously
   with the weights.
 * **The width of a zone is a share of the leaf's own width** along the
   input that is cut: the distance between its faces, or to the edge of its
@@ -410,7 +442,7 @@ section 9.
   is stored in, with the mixed prediction. A leaf's choice between its own
   GP and the neighbours still compares the two with its own kernel.
 * **Most leaves sleep** (`NEIGHBOUR_AWAKE`, 8). A prediction from neighbours
-  uses a leaf's kernel, scalers and points and never the factor of its
+  uses a leaf's kernel, scaling and points and never the factor of its
   kernel matrix, which is three quarters of a leaf's memory. The factor is
   needed where a point arrives, for the leaf's own prediction of it and to
   append it, and where the leaf's own GP predicts. So only the leaves whose
@@ -430,11 +462,11 @@ section 9.
   calibration is made before the point is stored.
 * **The search.** The 16 leaves whose points' boxes are nearest to the query
   are taken from the index of the leaves (`NEIGHBOUR_LEAVES`), and the
-  neighbours are the nearest points among theirs. With `None` the search is
-  exact: the query's leaf bounds the distance of the neighbours, and every
-  leaf whose points can lie within it is looked at, 7 to 46 leaves in three
-  to five dimensions and 35 to 79 in six to ten at 20 000 points. Sixteen
-  leaves give the error of the exact search, eight 0.6% more, four 5%.
+  neighbours are the nearest points among theirs. An exact search has to
+  look at every leaf whose points can lie within the distance of the
+  neighbours, 7 to 46 leaves in three to five dimensions and 35 to 79 in six
+  to ten at 20 000 points. Sixteen leaves give the error of the exact
+  search, eight 0.6% more, four 5%.
 * **Cost.** A prediction factorises the kernel matrix of its neighbours, at a
   cost cubic in their number, where a leaf's own GP needs one triangular
   solve, and within a zone it evaluates the kernel of each leaf that takes
@@ -509,9 +541,9 @@ its result to the tree. The tree has no part in sending them.
   at once, the result gives the same leaf as a fit in place.
 * **The result is applied in the frame of its task.** The hyperparameters
   belong to the scaling of the points they were found for, so the tree keeps
-  the scalers of a task until its result arrives and the leaf takes them with
+  the scaling of a task until its result arrives and the leaf takes it with
   the hyperparameters. The leaf is then as fitted in place when the task was
-  made, with the points since then appended. Scalers fitted to the leaf's
+  made, with the points since then appended. A scaling fitted to the leaf's
   points at that moment would differ once it has split: a result applied to
   six leaves two splits below its task gave twice the error. The residual of
   a task is that of one snapshot of the global model, so a result is dropped
@@ -1026,8 +1058,7 @@ curves, and `benchmarks.md`, section 10, what was measured on them.
   the change of the GP's gradient with decorrelated leaf inputs halve the
   error on such targets and raise it on smooth ones (`docs/benchmarks.md`,
   section 9.1). A leaf could try both kinds of cut on its own points when it
-  splits and keep the better, as `enable_split_evaluation` does for the
-  input of an axis-aligned cut. With `Default_GPR(oblique=True)` a leaf
+  splits and keep the better. With `Default_GPR(oblique=True)` a leaf
   decides by its kernel instead: it is cut across the direction of its
   shortest length scale if it kept an oblique kernel.
 * **A kernel for the neighbours.** The leaf's kernel was fitted at the scale
