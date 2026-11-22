@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from pygptreeo import feature_net
 from pygptreeo.gptree import GPTree
-from pygptreeo.feature_net import TORCH_AVAILABLE, FeatureNetLearner, NetGlobalMean
+from pygptreeo.feature_net import TORCH_AVAILABLE, FeatureNetLearner
 
 warnings.filterwarnings("ignore")
 
@@ -296,10 +296,10 @@ class TestFeatureNet(unittest.TestCase):
         rng = np.random.RandomState(10)
         N = 500
         X = rng.rand(N, 3); Y = _target(X)[:, None]; S = np.full((N, 1), 1e-3)
-        gm = NetGlobalMean(steps=100, polish_steps=0, min_points=60, steps_per_update=1, random_state=0)
+        gm = FeatureNetLearner(steps=100, polish_steps=0, min_points=60, steps_per_update=1, random_state=0)
         gpt = GPTree(GPR=Default_GPR(), Nbar=60, retrain_every_n_points=20, global_mean=gm)
         _stream(gpt, X, Y, S)
-        self.assertGreaterEqual(gm.learner.version, 2)
+        self.assertGreaterEqual(gm.version, 2)
         Xt = rng.rand(200, 3); yt = _target(Xt)
         P, _ = gpt.predict(Xt)
         self.assertLess(np.sqrt(np.mean((P[:, 0] - yt) ** 2)) / (yt.max() - yt.min()), 0.05)
@@ -311,12 +311,12 @@ class TestFeatureNet(unittest.TestCase):
         X = rng.rand(N, 3); Y = _target(X)[:, None]; S = np.full((N, 1), 1e-3)
         gpt = GPTree(GPR=Default_GPR(), Nbar=60, retrain_every_n_points=20, use_calibrated_sigma=True,
                      global_mean='net', global_mean_kwargs=dict(steps=300, min_points=60, random_state=0))
-        self.assertIsInstance(gpt.global_mean, NetGlobalMean)
+        self.assertIsInstance(gpt.global_mean, FeatureNetLearner)
         self.assertTrue(gpt.root.use_standard_scaling)        # the leaves are ordinary GPs
         _stream(gpt, X, Y, S)
         gm = gpt.global_mean
-        self.assertGreaterEqual(gm.learner.version, 2)
-        self.assertEqual(gm.current.version, gm.learner.version)
+        self.assertGreaterEqual(gm.version, 2)
+        self.assertEqual(gm.current.version, gm.version)
         self.assertIsNotNone(gm.error_scale)
         Xt = rng.rand(200, 3); yt = _target(Xt)
         P, Sd = gpt.predict(Xt)
@@ -337,7 +337,7 @@ class TestFeatureNet(unittest.TestCase):
         gpt = GPTree(GPR=Default_GPR(), Nbar=40, retrain_every_n_points=20, max_memory_mb=fixed_mb + 0.25,
                      global_mean='net', global_mean_kwargs=kwargs)
         _stream(gpt, X, Y, S)
-        learner = gpt.global_mean.learner
+        learner = gpt.global_mean
         self.assertAlmostEqual(gpt._fixed_bytes / 1e6, fixed_mb)
         self.assertLessEqual(gpt.memory_mb, fixed_mb + 0.25)
         self.assertLess(sum(leaf.n_points for leaf in gpt.root.leaves), N)       # leaves were removed
@@ -358,9 +358,9 @@ class TestFeatureNet(unittest.TestCase):
     def test_hybrid_defaults(self):
         gm = GPTree(global_mean='net').global_mean
         self.assertTrue(gm.cheap_leaf_refresh)
-        self.assertEqual(gm.learner.holdout, 0.2)
-        self.assertEqual(gm.learner.store_size, 100000)
-        self.assertEqual(GPTree(global_mean='net', global_mean_kwargs=dict(holdout=0.0)).global_mean.learner.holdout, 0.0)
+        self.assertEqual(gm.holdout, 0.2)
+        self.assertEqual(gm.store_size, 100000)
+        self.assertEqual(GPTree(global_mean='net', global_mean_kwargs=dict(holdout=0.0)).global_mean.holdout, 0.0)
 
     def test_leaves_take_up_a_new_version_with_their_hyperparameters_kept(self):
         from pygptreeo.default_gpr import Default_GPR
@@ -369,7 +369,7 @@ class TestFeatureNet(unittest.TestCase):
         X = rng.rand(N, 3); Y = _target(X)[:, None]; S = np.full((N, 1), 1e-3)
         counts = {}
         for cheap in (True, False):
-            gm = NetGlobalMean(steps=100, polish_steps=0, min_points=60, random_state=0)
+            gm = FeatureNetLearner(steps=100, polish_steps=0, min_points=60, random_state=0)
             gm.cheap_leaf_refresh = cheap
             gpt = GPTree(GPR=Default_GPR(), Nbar=1000, retrain_every_n_points=1000, global_mean=gm)
             _stream(gpt, X[:230], Y[:230], S[:230])

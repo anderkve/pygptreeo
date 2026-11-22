@@ -155,7 +155,7 @@ Two global models ship:
   plus Matérn kernel on a 500-point reservoir. Strong on targets with low-order
   additive structure. Its fit is cubic in the reservoir size and its kernel has
   `d (d - 1) / 2` pair terms, so it becomes slow beyond about six dimensions.
-* **`'net'`** (`FeatureNetLearner`, `NetGlobalMean`): an MLP trained at a fixed
+* **`'net'`** (`FeatureNetLearner`): an MLP trained at a fixed
   cost per refit, not limited to additive structure. Each refit runs L-BFGS on
   the reservoir and then Adam steps over the stored points (every point of the
   stream up to `store_size`, a uniform sample of it after that), and publishes

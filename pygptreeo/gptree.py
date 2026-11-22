@@ -154,7 +154,7 @@ class GPTree:
             global_mean (None, str or GlobalMeanLearner): A model of the whole
                 input space whose residual the leaf GPs model. None (default):
                 no such model. 'additive_gp': an ``AdditiveGPGlobalMean``.
-                'net': a ``NetGlobalMean`` (needs PyTorch). Or a
+                'net': a ``FeatureNetLearner`` (needs PyTorch). Or a
                 ``GlobalMeanLearner`` instance. See the README and
                 ``docs/design.md``.
             global_mean_kwargs (Optional[dict]): Keyword arguments for the

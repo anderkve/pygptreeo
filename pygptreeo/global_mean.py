@@ -30,6 +30,8 @@ from sklearn.preprocessing import StandardScaler
 
 from pygptreeo.adapters.sklearn_adapter import SklearnGPAdapter
 
+ERROR_WINDOW = 200   # observations that the running estimate of a global model's error remembers
+
 
 class GlobalMeanSnapshot:
     """An immutable fitted global model.
@@ -145,6 +147,7 @@ class GlobalMeanLearner:
     predictive variance, since the residual GP cannot know how wrong the global
     model is at a new point. The reported sigma thus remains an uncertainty
     about the underlying function, not about noisy observations.
+    :meth:`_score` updates it with one observation.
     """
 
     current: Optional[GlobalMeanSnapshot] = None
@@ -152,10 +155,32 @@ class GlobalMeanLearner:
     # True: a leaf takes up a new snapshot by refitting its GP with the hyperparameters
     # kept (where the GP backend can) instead of optimising them again.
     cheap_leaf_refresh: bool = False
+    # Running means of the squared error of the snapshots at new points and of the
+    # noise variance of those points, and the number of points in them
+    error_var: Optional[np.ndarray] = None
+    noise_var: Optional[np.ndarray] = None
+    n_scored: int = 0
 
     def observe(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray) -> bool:
         """Register one observation; return True if a new snapshot was published."""
         raise NotImplementedError
+
+    def _score(self, x: np.ndarray, y: np.ndarray, sigma: np.ndarray):
+        """Update ``error_scale`` with the error of the current snapshot at one
+        new point: ``x`` of shape (1, n_features), ``y`` and ``sigma`` of shape
+        (1, n_outputs). The expectation of the squared error is
+        (mean - f)^2 + noise^2, so the noise variance is tracked alongside and
+        subtracted."""
+        err2 = (self.current.predict(x)[0] - y[0]) ** 2
+        nz2 = sigma[0] ** 2
+        self.n_scored += 1
+        if self.n_scored == 1:
+            self.error_var, self.noise_var = err2, nz2
+        else:
+            w = 1.0 / min(ERROR_WINDOW, self.n_scored + 1)
+            self.error_var = (1.0 - w) * self.error_var + w * err2
+            self.noise_var = (1.0 - w) * self.noise_var + w * nz2
+        self.error_scale = np.sqrt(np.maximum(self.error_var - self.noise_var, 0.0))
 
     def max_nbytes(self, n_features: int, n_outputs: int) -> int:
         """Bytes the learner's data take once its samples are full. Counted by
@@ -217,14 +242,9 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
 
         self.reservoir: Optional[CoverageReservoir] = None
         self.current: Optional[GlobalMeanSnapshot] = None
-        self.error_var: Optional[np.ndarray] = None    # running mean of the snapshot's squared prequential error
-        self.noise_var: Optional[np.ndarray] = None    # running mean of the observation-noise variance
-        self.error_scale: Optional[np.ndarray] = None  # sqrt(max(error_var - noise_var, 0))
-        self.error_window = 200                        # memory of the running means, in observations
         self.n_seen = 0
         self.n_seen_at_fit = 0
         self.turnover_at_fit = 0
-        self.n_seen_at_first_fit = 0
 
     # -- stream ------------------------------------------------------------------------
     def observe(self, x, y, sigma) -> bool:
@@ -240,18 +260,7 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
                 self.kernel = AdditiveMaternKernel(d=x.shape[1], order=min(2, x.shape[1]), nu=self.nu)
         self.n_seen += 1
         if self.current is not None:
-            # Prequential error of the current snapshot at this point. Its expectation
-            # is (mean - f)^2 + noise^2, so the noise variance is tracked alongside
-            # and subtracted in error_scale.
-            err2 = (self.current.predict(x)[0] - y[0]) ** 2
-            nz2 = sigma[0] ** 2
-            if self.error_var is None:
-                self.error_var, self.noise_var = err2, nz2
-            else:
-                w = 1.0 / min(self.error_window, self.n_seen - self.n_seen_at_first_fit + 1)
-                self.error_var = (1.0 - w) * self.error_var + w * err2
-                self.noise_var = (1.0 - w) * self.noise_var + w * nz2
-            self.error_scale = np.sqrt(np.maximum(self.error_var - self.noise_var, 0.0))
+            self._score(x, y, sigma)
         self.reservoir.add(x, y, sigma)
         return self._maybe_fit()
 
@@ -293,8 +302,6 @@ class AdditiveGPGlobalMean(GlobalMeanLearner):
         # through the adapter, whose fit of several outputs does not grow with their number
         SklearnGPAdapter(gp).fit(x_scaler.transform(res.X), Y if Y.shape[1] > 1 else Y[:, 0])
         version = 1 if self.current is None else self.current.version + 1
-        if self.current is None:
-            self.n_seen_at_first_fit = self.n_seen
         self.current = GlobalMeanSnapshot(version, x_scaler, y_mean, y_scale, gp, res.n)
         self.n_seen_at_fit = self.n_seen
         self.turnover_at_fit = res.turnover
@@ -325,7 +332,7 @@ def make_global_mean(spec: Union[None, str, GlobalMeanLearner], **kwargs) -> Opt
         if spec == 'additive_gp':
             return AdditiveGPGlobalMean(**kwargs)
         if spec == 'net':
-            from pygptreeo.feature_net import NetGlobalMean
-            return NetGlobalMean(**kwargs)
+            from pygptreeo.feature_net import FeatureNetLearner
+            return FeatureNetLearner(**kwargs)
         raise ValueError(f"Unknown global_mean '{spec}'. Use None, 'additive_gp', 'net' or a GlobalMeanLearner instance.")
     raise TypeError("global_mean must be None, a string or a GlobalMeanLearner instance")

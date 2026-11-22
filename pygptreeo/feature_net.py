@@ -1,8 +1,8 @@
 """A tree-wide feature network as GPTree's global model (``GPTree(global_mean='net')``).
 
-``FeatureNetLearner`` trains an MLP on the stream at a fixed cost per refit;
-``NetGlobalMean`` publishes each refit as a global-model snapshot whose residual
-the GP leaves model. Requires PyTorch.
+``FeatureNetLearner`` trains an MLP on the stream at a fixed cost per refit and
+publishes each refit as a snapshot of the global model, whose residual the GP
+leaves model. Requires PyTorch.
 """
 
 import copy
@@ -82,12 +82,11 @@ class _HeldOutBest:
 
 BATCH_SIZE = 128              # Adam minibatch size
 HOLDOUT_CHECK_EVERY = 25      # L-BFGS iterations between two checks of the held-out loss (ten times as many Adam steps)
-ERROR_WINDOW = 200            # observations the running estimate of the head's error remembers
 LBFGS_MAX_EVAL = 25           # loss evaluations allowed per L-BFGS iteration (line search)
 POLISH_STEPS_PER_UPDATE = 8   # Adam steps per L-BFGS iteration in an amortised refit's polish phase (about equal cost)
 
 
-class FeatureNetLearner:
+class FeatureNetLearner(GlobalMeanLearner):
     """Tree-wide feature network, trained on the stream at a fixed cost per refit.
 
     An MLP of ``depth`` hidden layers of ``hidden`` SiLU units with a linear
@@ -98,7 +97,8 @@ class FeatureNetLearner:
     with the observation noise subtracted (``error_scale``). A refit is due when
     the observation count has doubled since the last one. A fraction ``holdout``
     of the points is never trained on, and a refit publishes the weights that had
-    the lowest loss on them.
+    the lowest loss on them. A leaf takes up a refit on first use, by refitting
+    its GP on the new residual with the kernel hyperparameters kept.
 
     Parameters
     ----------
@@ -130,6 +130,8 @@ class FeatureNetLearner:
         point of the stream until it is longer than this, then a uniform random
         sample of it.
     """
+
+    cheap_leaf_refresh = True
 
     def __init__(self, hidden: int = 128, depth: int = 3, steps: int = 300, polish_steps: int = 3000,
                  lr: float = 1e-3, min_points: int = 200, reservoir_size: int = 5000,
@@ -167,14 +169,8 @@ class FeatureNetLearner:
         self.x_mu = None; self.x_sd = None; self.y_mu = None; self.y_sd = None
         self.version = 0
         self.n_seen = 0; self.n_seen_at_fit = 0
-        self.n_seen_at_first_fit = 0
-        self.error_var = None; self.noise_var = None; self.error_scale = None
 
     # -- stream -------------------------------------------------------------------------
-    @property
-    def fitted(self) -> bool:
-        return self.net is not None
-
     def observe(self, x, y, sigma) -> bool:
         """Register one observation; return True if the network was (re)fitted."""
         x = np.asarray(x, float).reshape(1, -1); y = np.asarray(y, float).reshape(1, -1)
@@ -187,16 +183,8 @@ class FeatureNetLearner:
             if self.polish_steps > 0:
                 self.store = _PointStore(self.n_features, self.n_outputs, self.store_size, self.rng)
         self.n_seen += 1
-        if self.net is not None:
-            # Prequential error of the head; its expectation is (h - f)^2 + noise^2.
-            err2 = (self.head(x)[0] - y[0]) ** 2; nz2 = sigma[0] ** 2
-            if self.error_var is None:
-                self.error_var, self.noise_var = err2, nz2
-            else:
-                w = 1.0 / min(ERROR_WINDOW, self.n_seen - self.n_seen_at_first_fit + 1)
-                self.error_var = (1.0 - w) * self.error_var + w * err2
-                self.noise_var = (1.0 - w) * self.noise_var + w * nz2
-            self.error_scale = np.sqrt(np.maximum(self.error_var - self.noise_var, 0.0))
+        if self.current is not None:
+            self._score(x, y, sigma)
         self.sample.add(x, y, sigma)
         if self.store is not None:
             self.store.add(x, y, sigma)
@@ -335,10 +323,9 @@ class FeatureNetLearner:
     def _publish(self, net, scal):
         self.net = net
         self.x_mu, self.x_sd, self.y_mu, self.y_sd = scal
-        if self.version == 0:
-            self.n_seen_at_first_fit = self.n_seen
         self.version += 1
         self.n_seen_at_fit = self.n_seen
+        self.current = _NetSnapshot(self, self.version)
 
     def fit(self):
         """(Re)fit the network in one go, discarding any amortised refit in progress."""
@@ -411,51 +398,18 @@ class FeatureNetLearner:
 
 
 class _NetSnapshot(GlobalMeanSnapshot):
-    """An immutable view of one published version of a feature network's head."""
+    """A published version of a feature network. It predicts with the head of
+    the learner, which is that version while the snapshot is the current one."""
 
     def __init__(self, learner: FeatureNetLearner, version: int):
-        self.learner = learner; self.version = int(version); self.n_fit = learner.n_seen_at_fit
-        self.n_out = learner.n_outputs
+        self.learner, self.version = learner, version
 
     @property
     def n_outputs(self) -> int:
-        return self.n_out
+        return self.learner.n_outputs
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         return self.learner.head(X)
 
     def __repr__(self) -> str:
-        return f"_NetSnapshot(version={self.version}, n_fit={self.n_fit})"
-
-
-class NetGlobalMean(GlobalMeanLearner):
-    """A feature network as the tree's global model: GP leaves on the residual of its head.
-
-    Wraps a :class:`FeatureNetLearner` (built from the keyword arguments) as a
-    :class:`GlobalMeanLearner`. Each published network version is a new snapshot.
-    A leaf takes it up on first use by refitting its GP on the new residual with
-    the kernel hyperparameters kept (``cheap_leaf_refresh``); ``error_scale`` is
-    the learner's.
-    """
-
-    cheap_leaf_refresh = True
-
-    def __init__(self, **learner_kwargs):
-        _require_torch()
-        self.learner = FeatureNetLearner(**learner_kwargs)
-        self.current = None
-        self.error_scale = None
-
-    def max_nbytes(self, n_features: int, n_outputs: int) -> int:
-        return self.learner.max_nbytes(n_features, n_outputs)
-
-    def observe(self, x, y, sigma) -> bool:
-        self.learner.observe(x, y, sigma)
-        self.error_scale = self.learner.error_scale
-        if self.learner.fitted and (self.current is None or self.current.version != self.learner.version):
-            self.current = _NetSnapshot(self.learner, self.learner.version)
-            return True
-        return False
-
-    def __repr__(self) -> str:
-        return f"NetGlobalMean({self.learner!r})"
+        return f"_NetSnapshot(version={self.version})"
