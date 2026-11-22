@@ -22,8 +22,7 @@ import os
 import pickle
 from collections import OrderedDict, deque
 from contextlib import contextmanager
-from copy import deepcopy
-from typing import Callable, Optional, Type, Union
+from typing import Optional, Union
 
 # Third-party imports
 import numpy as np
@@ -54,76 +53,26 @@ SIGMA_DISTANCE_MIN = 20       # and there is none before this many
 
 
 class GPTree:
-    """Implements the GPTree for dynamic learning and regression.
+    """A dynamically growing binary tree of local Gaussian process regressors,
+    which learns a function from a stream of data points.
 
-    The GPTree class provides the core logic for a dynamically growing tree
-    structure where each node (a GPNode instance) contains a Gaussian Process
-    Regressor (GPR). Its primary purpose is to learn a function on the fly from
-    a stream of data points (x, y) by adaptively partitioning the input space.
-    As data points are added, the tree grows by splitting nodes that become
-    too full, and the GPRs within the nodes are updated to model the local
-    data distribution.
+    Each leaf (a GPNode) holds the points of a region of the input space and
+    the GPs fitted to them. A leaf that holds ``Nbar`` points is split in two.
+    The options are described in ``__init__``.
 
     Attributes:
-        root (GPNode): The root node of the GPTree.
-        GPR (GPRegressorInterface): The base GPR configuration used as a
-            template for the GPR in each new GPNode.
-        Nbar (int): The maximum number of training points a GPNode can hold
-            before it attempts to split.
-        theta (float): A parameter that influences the size of the overlapping
-            region between sibling GPNodes after a split. The overlap is
-            calculated as theta * range_of_split_dimension.
-        use_calibrated_sigma (bool): If True, the sigma (standard deviation)
-            from GPNode predictions will be scaled using the node's calibrated
-            sigma_scaler. This is intended to provide better uncertainty estimates.
-        n_features (int): The number of features in the input data X.
-            Automatically determined from the first data point.
-        first_point (bool): A flag indicating if the next point to be processed
-            is the first one. Used for initial setup like determining n_features.
-        append_points_between_fits (bool): Whether a point a leaf receives
-            between two of its fits is added to its fitted GPs at once.
-        widen_sigma_with_distance (bool): Whether sigma grows with the distance
-            of a query from the fitted points of its leaf.
-        predict_from (str): 'leaf' if a prediction is conditioned on the points
-            of the query's leaf, 'neighbours' if on the stored points nearest
-            to the query.
-        max_memory_mb (Optional[float]): The memory the tree stays within, in MB,
-            or None for no limit.
+        root (GPNode): The root node of the tree.
+        n_features (int): Number of inputs, taken from the first data point.
+        first_point (bool): True until the first data point has arrived.
         memory_mb (float): The tree's estimate of its own size, in MB.
         n_leaves (int): Number of leaves of the tree.
         n_points_seen (int): Number of points passed to `update_tree` so far.
-            The tree can hold fewer: a point may be merged or rejected, and
-            leaves are removed under a memory limit.
+            The tree can hold fewer: a point may be merged, and leaves are
+            removed under a memory limit.
         leaf_index (Optional[LeafIndex]): A balanced index over the leaves,
             through which the leaf of a point is found whatever the depth of
             the tree of cuts.
-
-    Methods:
-        fit(X_train, y_train, show_progress=False, shuffle=True, forward_GPR_to_next_leaf=False):
-            Constructs the tree from a batch of training data. Only for a tree
-            without points.
-        batch_update_tree(X, y, sigma):
-            Adds a batch of data points to the tree, one after the other as
-            `update_tree` does.
-        update_tree(x, y, allow_training=True):
-            Adds a single data point to the tree, potentially causing node
-            splits and GPR retraining.
-        apply_fit_result(result):
-            Gives the result of a fit that `update_tree(defer_fits=True)`
-            handed out, and `solve_fit_task` carried out, to its leaf.
-        predict(X_test, mode='recursive', show_progress=False):
-            Predicts target values for X_test using the ensemble of GPRs in
-            the leaf nodes.
-        save(path):
-            Saves the tree to a file.
-        load(path):
-            Loads a tree from a file that `save` wrote.
     """
-    # for a tree saved by a version without them
-    predict_from = 'leaf'
-    neighbours = None
-    leaf_index = None
-    n_points_seen = 0
 
     def __init__(self,
                  GPR: Optional[GPRegressorInterface] = None,
@@ -133,7 +82,6 @@ class GPTree:
                  split_dimension_criteria: Optional[str] = 'min_lengthscale',
                  splitting_strategy: Optional[str] = 'gradual',
                  max_n_pred_leaves: Optional[int] = None,
-                 aggregation: Optional[str] = "default",
                  n_outputs: Optional[int] = 1,
                  output_model: Optional[str] = 'independent',
                  output_shape: Optional[tuple] = None,
@@ -152,143 +100,91 @@ class GPTree:
         """Initializes the GPTree.
 
         Args:
-            GPR (Optional[GPRegressorInterface]): The Gaussian Process
-                Regressor instance to be used as a template for nodes.
-                Defaults to `Default_GPR()` (scikit-learn adapter).
-            Nbar (Optional[int]): Maximum number of training points a node
-                can hold before splitting. Defaults to 100.
-            theta (Optional[float]): Parameter influencing the overlap region
-                between sibling nodes. The overlap is calculated as
-                theta * range_of_split_dimension. Defaults to 0.0001.
-            use_calibrated_sigma (Optional[bool]): If True, enables sigma
-                calibration in GPNode predictions. Defaults to True.
-            split_dimension_criteria (Optional[str]): Method to select split
-                dimension. Options: 'min_lengthscale' (the dimension with the
-                smallest fitted ARD length scale, pooled over all of a leaf's GPs;
-                falls back to 'max_spread' when the kernel has no per-dimension
-                length scales), 'max_spread', 'max_variance', 'max_uncertainty',
-                'random'. Defaults to 'min_lengthscale'.
-            splitting_strategy (Optional[str]): Strategy for splitting nodes.
-                'standard' (each child keeps its own half of the parent's points)
-                or 'gradual' (each child also receives a copy of its sibling's
-                points, dropped as its own arrive, so it starts with a full-size
-                fit and stays continuous across the split). Defaults to 'gradual'.
-            max_n_pred_leaves (Optional[int]): Maximum number of leaves to use
-                for prediction. Defaults to None (use all).
-            aggregation (Optional[str]): Method for aggregating predictions.
-                'default'/'moe' or 'poe'. Defaults to 'default'.
-            n_outputs (Optional[int]): Number of output dimensions. Defaults to 1 (single output).
-            output_model (Optional[str]): How the outputs of a multi-output problem are
-                modelled inside each leaf (ignored when n_outputs=1):
-                'independent' (default): one GP per output with its own kernel
-                hyperparameters. 'shared': one GP with a single shared kernel for all
-                outputs (one kernel matrix per leaf instead of n_outputs); needs a
-                backend whose ``supports_multitarget()`` is True (the scikit-learn
-                adapter). 'pca': a tree-global linear basis of the output space is
-                learned from a reservoir sample of the stream and each leaf models
-                the ``k`` basis scores with ``k`` GPs; predictions are mapped back to
-                output space with propagated uncertainties. Suited to strongly
-                correlated outputs such as a function f(t; x) sampled on a t-grid.
-                'aligned': as 'shared', for outputs that are a curve on a grid,
-                given in the order of the grid. Each leaf also learns a warp of
-                the grid that depends on the inputs and brings the features of
-                its curves (a peak, an edge, the phase of an oscillation) to
-                common positions, fits its GP to the aligned curves, and keeps
-                the alignment if it lowers the leave-one-out error of its
-                curves. Suited to curves with features whose position depends
-                on the inputs; needs the scikit-learn adapter.
+            GPR (Optional[GPRegressorInterface]): The GP regressor used as a
+                template for the GPs of the nodes. Defaults to `Default_GPR()`
+                (the scikit-learn adapter).
+            Nbar (Optional[int]): Number of points at which a leaf is split.
+                Defaults to 100.
+            theta (Optional[float]): Width of the overlap between the two
+                children of a split, as a fraction of the range of the parent's
+                points along the split. Defaults to 0.0001.
+            use_calibrated_sigma (Optional[bool]): If True (default), the
+                predicted sigma of a leaf is scaled by a factor learned from the
+                leaf's latest prediction errors.
+            split_dimension_criteria (Optional[str]): How the input along which
+                a leaf is split is chosen. 'min_lengthscale' (default): the input
+                with the smallest fitted length scale over the leaf's GPs, or as
+                'max_spread' for a kernel without a length scale per input. Also
+                'max_spread', 'max_variance', 'max_uncertainty' and 'random'.
+            splitting_strategy (Optional[str]): 'standard': each child keeps its
+                own half of the parent's points. 'gradual' (default): each child
+                also receives a copy of its sibling's points, which it drops as
+                its own arrive.
+            max_n_pred_leaves (Optional[int]): Maximum number of leaves used for
+                a prediction. Defaults to None (all).
+            n_outputs (Optional[int]): Number of outputs. Defaults to 1.
+            output_model (Optional[str]): How a leaf models several outputs.
+                'independent' (default): one GP per output. 'shared': one GP
+                with one kernel for all outputs. 'pca': one GP per component of
+                a basis of the outputs that the tree learns by PCA. 'aligned':
+                as 'shared', for outputs that are a curve on a grid, given in
+                the order of the grid; a leaf aligns the features of its curves
+                along the grid if that lowers its leave-one-out error. 'shared'
+                and 'aligned' need the scikit-learn adapter. See the README and
+                ``docs/design.md``.
             output_shape (Optional[tuple]): For 'aligned': the shape ``(p1, p2)``
-                of the grid, for outputs that are a function on a grid of two
-                dimensions (a surface), flattened row by row
-                (``values.ravel()``). The leaves then warp both axes of the
-                grid. Defaults to a curve, ``(n_outputs,)``.
-            output_basis_components ('noise', int or float): For 'pca': how many
-                basis components to keep. 'noise' (default) keeps every component
-                whose variance lies above what the per-point observation noise
-                ``sigma`` alone would produce (the Marchenko-Pastur edge), so noisy
-                data get few components and clean data get more. An int fixes the
-                number; a float in (0, 1) keeps the smallest number of components
-                explaining that fraction of the output variance (the dropped
-                components then set an accuracy floor of about ``sqrt(1 - fraction)``
-                times the output scale).
-            output_basis_max_components (Optional[int]): For 'pca': hard cap on the
-                number of components (and hence GPs per leaf). Defaults to None.
-            output_basis_min_points (int): For 'pca': number of observed points
-                before the first basis is fitted (leaves cannot train before that).
+                of the grid of outputs that are a function on a grid of two
+                dimensions, flattened row by row (``values.ravel()``). Defaults
+                to a curve, ``(n_outputs,)``.
+            output_basis_components ('noise', int or float): For 'pca': the
+                number of components kept. 'noise' (default): those above the
+                level of the observation noise. An int: that many. A float in
+                (0, 1): those that explain that fraction of the variance of the
+                outputs. See ``OutputBasisLearner``.
+            output_basis_max_components (Optional[int]): For 'pca': the largest
+                number of components. Defaults to None (no limit).
+            output_basis_min_points (int): For 'pca': number of points before
+                the first basis is fitted. No leaf is fitted before that.
                 Defaults to 50.
-            output_basis_refit_every (Optional[int]): For 'pca': refit the basis every
-                this many observed points; None (default) uses a doubling schedule.
-                Leaves pick up a refitted basis at their next retrain.
-            output_basis_reservoir_size (int): For 'pca': size of the reservoir
-                sample of outputs the basis is fitted on. Defaults to 2000.
-            global_mean (None, str or GlobalMeanLearner): Optional tree-wide global
-                model whose *residual* the leaf GPs model. None (default): no
-                global model. 'additive_gp': an ``AdditiveGPGlobalMean`` (a GP with
-                a low-order additive + Matern kernel, fitted on a coverage reservoir
-                of the stream and refit when the reservoir turns over). 'net': a
-                ``NetGlobalMean`` (a feature network trained on the stream; needs
-                PyTorch). Or any
-                ``GlobalMeanLearner`` instance. The global model captures smooth,
-                large-scale structure from all the data the tree has seen; the
-                leaves capture the rest and, at their edges, revert to it rather
-                than to a leaf constant. Each leaf remembers the snapshot it was
-                fitted against and refits before predicting if a newer one exists
-                (for 'net' with its kernel hyperparameters kept).
-                The predicted sigma combines the residual GP's uncertainty with the
-                learner's estimate of the global model's own error
-                (``error_scale``) and remains the uncertainty of the estimate of
-                the underlying function. See ``pygptreeo.global_mean``.
-            global_mean_kwargs (Optional[dict]): Keyword arguments for the built-in
-                learner when ``global_mean`` is given as a string (e.g.
+            output_basis_refit_every (Optional[int]): For 'pca': number of points
+                between two fits of the basis. Defaults to None: a fit each time
+                the number of points has doubled.
+            output_basis_reservoir_size (int): For 'pca': size of the sample of
+                outputs that the basis is fitted on. Defaults to 2000.
+            global_mean (None, str or GlobalMeanLearner): A model of the whole
+                input space whose residual the leaf GPs model. None (default):
+                no such model. 'additive_gp': an ``AdditiveGPGlobalMean``.
+                'net': a ``FeatureNetLearner`` (needs PyTorch). Or a
+                ``GlobalMeanLearner`` instance. See the README and
+                ``docs/design.md``.
+            global_mean_kwargs (Optional[dict]): Keyword arguments for the
+                learner when ``global_mean`` is a string (e.g.
                 ``dict(reservoir_size=300, n_restarts_optimizer=1)``).
             max_memory_mb (Optional[float]): The memory the tree stays within,
-                in MB (10^6 bytes), by its own estimate (``memory_mb``): the
-                points and fitted GPs of its leaves, a fixed amount per leaf,
-                and the global model and output basis at their full size. At
-                the limit the tree first puts leaves to sleep, the one whose
-                GPs were unused for the longest time first: the GPs release
-                their Cholesky factors and compute them again when the leaf
-                is next used, so no prediction changes. Once the GPs that are
-                awake take less than half of the memory left for the leaves,
-                the tree instead removes the leaf that has gone longest
-                without a point, with its points and GPs, and the leaf's
-                sibling takes over the parent's region. A prediction never
-                removes a leaf. Leaves only sleep with a GP backend that can
-                release and restore a fit (the scikit-learn adapter); with
-                another one they are only removed. Defaults to None (no limit).
-            append_points_between_fits (bool): If True (default), a point a
-                leaf receives between two of its fits is added to its fitted
-                GPs at once, with the hyperparameters and the scaling of the
-                last fit kept (``GPNode.append_point``). If False, a point
-                enters the GPs with the leaf's next fit. This is also the case
-                with a GP backend that cannot append a point (only the
-                scikit-learn adapter can).
-            widen_sigma_with_distance (bool): If True (default), the
-                calibrated sigma of a query that lies more than 2 standard
-                deviations from the mean of its leaf's fitted points, along
-                some input, is multiplied by 1 + slope * (distance - 2). The
-                slope is one number for the tree, set so that sigma covers
-                the errors of its latest predictions at such distances. This
-                is for a leaf that predicts beyond its own points. The
-                predictions themselves do not change. Without
+                in MB (10^6 bytes), by its own estimate (``memory_mb``). At the
+                limit the tree puts leaves to sleep, and then removes leaves.
+                See the README and ``docs/design.md``. Defaults to None (no
+                limit).
+            append_points_between_fits (bool): If True (default), a point that a
+                leaf receives between two of its fits is added to its fitted GPs
+                at once, with the hyperparameters of the last fit. If False, or
+                with a GP backend that cannot append a point, it enters the GPs
+                with the leaf's next fit.
+            widen_sigma_with_distance (bool): If True (default), the calibrated
+                sigma grows with the distance of a query from the points of its
+                leaf's last fit, beyond 2 of their standard deviations (see
+                ``docs/design.md``). The predictions do not change. Without
                 `use_calibrated_sigma` it has no effect.
             predict_from (str): The points a prediction is conditioned on.
-                'leaf' (default): the points of the leaf that the query falls
-                in, through the leaf's fitted GP. 'neighbours': the ``Nbar``
-                stored points nearest to the query, from whichever leaves
-                hold them, with the kernel of the query's leaf; where they
-                fit that kernel badly the prediction passes to that of the
-                leaf's own GP, and all but a few leaves sleep. The settings
-                are the ``NEIGHBOUR_`` constants of
-                ``pygptreeo/neighbours.py``. Needs a GP backend with
-                ``supports_conditioning()`` (the scikit-learn adapter).
-            **kwargs: Additional keyword arguments passed to the constructor
-                of the root `GPNode`. These can include parameters like
-                `split_position_method`, `retrain_every_n_points`, and
-                `use_standard_scaling` (bool, defaults to True).
+                'leaf' (default): those of the leaf that the query falls in.
+                'neighbours': the ``Nbar`` stored points nearest to the query,
+                with the kernel of the query's leaf; needs the scikit-learn
+                adapter. See the README and ``docs/design.md``.
+            **kwargs: Further settings of the nodes (see `NodeSettings`): for
+                instance `split_position_method`, `retrain_every_n_points` and
+                `use_standard_scaling`.
         """
 
-        # Use Default_GPR if no GPR is provided
         if GPR is None:
             GPR = Default_GPR()
 
@@ -301,8 +197,7 @@ class GPTree:
         if n_outputs == 1:
             output_model = 'independent'
         if output_model in ('shared', 'aligned'):
-            supports = getattr(GPR, 'supports_multitarget', None)
-            if supports is None or not supports():
+            if not GPR.supports_multitarget():
                 raise ValueError(f"output_model='{output_model}' needs a GP backend with supports_multitarget() == True "
                                  "(e.g. the scikit-learn adapter returned by Default_GPR)")
         if output_model == 'aligned' and n_outputs < MIN_OUTPUTS:
@@ -371,8 +266,6 @@ class GPTree:
         self._fitted_bytes = 0
         self._fixed_bytes = None    # global model and output basis; known at the first point
 
-        self.aggregation = aggregation
-
         # Balanced index over the leaves, built with the first point. None for
         # a tree whose cuts are not along the inputs.
         self.leaf_index = None
@@ -387,34 +280,24 @@ class GPTree:
 
     def update_tree(self, x: np.ndarray, y: Union[float, np.ndarray], sigma: Union[float, np.ndarray],
                     allow_training=True, defer_fits=False):
-        """Updates the tree structure and node GPRs with a new data point (x, y, sigma).
+        """Adds a data point (x, y, sigma) to the tree.
 
-        This method implements a process similar to Algorithm 1 in the DLGP
-        (Deep Locally-Weighted Gaussian Processes) article, with some modifications.
-        It navigates from the root to find an appropriate leaf node for the new
-        data point `x` based on the probabilistic splitting functions of intermediate
-        nodes. The point is added to the chosen leaf's training data.
-
-        If `allow_training` is True, the leaf node's GPR may be retrained based
-        on its buffer conditions (e.g., `retrain_every_n_points`) or if it becomes
-        full. If the node's capacity `Nbar` is reached, it splits into two
-        child nodes, its data is partitioned, and its own GPR and data are
-        typically deleted to save memory. With `max_memory_mb` set, the tree
-        is brought back within the limit at the end.
+        Follows Algorithm 1 of the DLGP article (Dividing Local Gaussian
+        Processes, Lederer et al.), with some modifications. The point is stored
+        in its leaf, the leaf's GPs are fitted again if a fit is due, and a leaf
+        that then holds `Nbar` points is split in two. With `max_memory_mb` set,
+        the tree is brought back within the limit at the end.
 
         Args:
-            x (np.ndarray): The new input data point (features), expected as a
-                1D array or a 2D array with one row.
-            y (float or np.ndarray): The corresponding target value(s) for the data point.
-                For single output: float. For multi-output: array of shape (n_outputs,).
-            sigma (float or np.ndarray): The uncertainty (standard deviation) for this point. Required.
-                Can be scalar (same for all outputs) or array (per-output).
-            allow_training (bool): If True (default), the GPR model in the
-                selected leaf node can be retrained if its conditions
-                (e.g., buffer full, node full) are met. If False, GPR retraining
-                is suppressed during this update. This is useful, for example,
-                during the initial `fit` method where tree construction is the
-                priority before a final training pass on all leaves.
+            x (np.ndarray): The inputs of the point: a 1D array, or a 2D array
+                with one row.
+            y (float or np.ndarray): The target: a float, or an array of shape
+                (n_outputs,) for several outputs.
+            sigma (float or np.ndarray): The uncertainty (standard deviation) of
+                the target: one number for all outputs, or one per output.
+            allow_training (bool): If False, the leaf's GPs are not fitted here,
+                as when `fit` builds the tree before it fits the leaves.
+                Defaults to True.
             defer_fits (bool): If True, a leaf that is due a fit is not fitted
                 here. The fit is returned as a task for `solve_fit_task`,
                 which can run in another process, and `apply_fit_result`
@@ -430,6 +313,9 @@ class GPTree:
         """
 
         self.n_points_seen += 1
+        x = np.asarray(x, dtype=float).reshape(1, -1)
+        y = np.asarray(y, dtype=float).reshape(1, self.n_outputs)
+        sigma = np.broadcast_to(np.asarray(sigma, dtype=float).reshape(1, -1), (1, self.n_outputs))
 
         # The first input point is used to determine self.n_features
         if self.first_point:
@@ -443,11 +329,10 @@ class GPTree:
 
         # The tree-global output basis ('pca') and the global model see every observation
         if self.output_basis is not None:
-            self.output_basis.observe(np.asarray(y, dtype=float).reshape(-1), sigma)
+            self.output_basis.observe(y, sigma)
         if self.global_mean is not None:
             self.global_mean.observe(x, y, sigma)
 
-        # Find a leaf node for the new (x,y,sigma) point
         node = self._leaf_of(x)
         # A sleeping leaf is woken before the point is stored, so that the
         # prediction registered below is one made without the point
@@ -460,13 +345,7 @@ class GPTree:
             self._register_prediction(node, x, y, allow_training)
             node.merge_with_point(x, y, sigma, nearest)
             if self.leaf_index is not None:
-                self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
-            self._after_update(node)
-            return
-
-        # Check if this point should be rejected (if well-predicted by current GP)
-        if node.should_reject_point(x, y):
-            # Point is well-predicted, don't store it
+                self.leaf_index.grow(node, x[0])
             self._after_update(node)
             return
 
@@ -475,11 +354,11 @@ class GPTree:
         # Without training, a node that has no fitted GP stays at its prior, which
         # says nothing about the fitted GP.
         self._register_prediction(node, x, y, allow_training)
-        node.store_point(x, y, sigma, remove_shared=True)
+        node.store_point(x, y, sigma)
         if self.leaf_index is not None:
-            self.leaf_index.grow(node, np.asarray(x, dtype=float).reshape(-1))
+            self.leaf_index.grow(node, x[0])
 
-        # Retrain GP? The node will decide based Nbar and/or its buffer of training points
+        # The node fits its GPs if a fit is due
         task = None
         if allow_training:
             if defer_fits:
@@ -490,57 +369,15 @@ class GPTree:
             if self.append_points_between_fits and not did_retrain:
                 node.append_point(x, y, sigma)
 
-        # If the node is full, generate child nodes
+        # A full node is split in two
         if node.n_points >= node.Nbar:
-            # Create child nodes. Each child node gets a copy of the current parent GP.
-            node.generate_children(self.GPR, self.n_features)
-            
-            # Compute parameters for the probability function 
-            node.compute_split_position_and_overlap(self.theta)
-
-            # Now pass parent's split info to children
-            node.children[0].parent_split_index = node.split_index
-            node.children[0].parent_split_position = node.split_position
-            node.children[1].parent_split_index = node.split_index
-            node.children[1].parent_split_position = node.split_position
-
-            if node.splitting_strategy == 'gradual':
-
-                # First distribute data as usual between the two child nodes
-                node.split_training_data()
-
-                # Since we are doing gradual splitting, give
-                # each child a copy of the other child's data
-                order = node.split_coordinate(node.children[1].my_X_data).argsort()
-                node.children[0].shared_X_data = node.children[1].my_X_data[order]
-                node.children[0].shared_y_data = node.children[1].my_y_data[order]
-                node.children[0].shared_sigma_data = node.children[1].my_sigma_data[order]
-                node.children[0].n_shared_points = node.children[0].shared_X_data.shape[0]
-
-                order = node.split_coordinate(node.children[0].my_X_data).argsort()[::-1]
-                node.children[1].shared_X_data = node.children[0].my_X_data[order]
-                node.children[1].shared_y_data = node.children[0].my_y_data[order]
-                node.children[1].shared_sigma_data = node.children[0].my_sigma_data[order]
-                node.children[1].n_shared_points = node.children[1].shared_X_data.shape[0]
-
-            else:
-                # Standard splitting
-                node.split_training_data()
-
-            # Retrain the child-node GPs?
-            # for child in node.children:
-            #     child.fit_my_GPR()
-
+            node.split(self.theta)
             if self.leaf_index is not None:
                 axis = node.cut_axis()
                 if axis is None:
                     self.leaf_index = None      # the cells are no boxes
                 else:
                     self.leaf_index.split(node, node.left, node.right, axis, node.split_position, 0.5 * node.overlap)
-
-            # GP and training data of non-leaf nodes is not needed
-            node.delete_data(delete_own_data=True, delete_shared_data=True)
-            node.delete_my_GPR()
 
         self._after_update(node)
         return task
@@ -563,6 +400,18 @@ class GPTree:
         Returns:
             The fit tasks handed out, as a list. It is empty without `defer_fits`.
         """
+        X, y, sigma = self._batch(X, y, sigma)
+        tasks = []
+        for i in tqdm(range(X.shape[0]), disable=not show_progress, desc="Updating the tree"):
+            task = self.update_tree(X[i:i+1], y[i:i+1], sigma[i:i+1], defer_fits=defer_fits)
+            if task is not None:
+                tasks.append(task)
+        return tasks
+
+
+    def _batch(self, X, y, sigma):
+        """The points of a batch, in the forms that `batch_update_tree` takes, as
+        arrays of shape (N, n_features), (N, n_outputs) and (N, n_outputs)."""
         X = np.array(X, dtype=float)
         y = np.array(y, dtype=float)
         sigma = np.array(sigma, dtype=float)
@@ -579,14 +428,7 @@ class GPTree:
             sigma = sigma[:, None]
         if sigma.ndim == 2 and sigma.shape not in ((N, 1), (N, self.n_outputs)) or sigma.ndim > 2:
             raise ValueError(f"sigma must be a number or have shape ({N},) or ({N}, {self.n_outputs}), not {sigma.shape}")
-        sigma = np.array(np.broadcast_to(sigma, (N, self.n_outputs)))
-
-        tasks = []
-        for i in tqdm(range(N), disable=not show_progress, desc="Updating the tree"):
-            task = self.update_tree(X[i:i+1], y[i:i+1], sigma[i:i+1], defer_fits=defer_fits)
-            if task is not None:
-                tasks.append(task)
-        return tasks
+        return X, y, np.array(np.broadcast_to(sigma, (N, self.n_outputs)))
 
 
     def _fit_task(self, node: GPNode):
@@ -650,7 +492,7 @@ class GPTree:
 
 
     def __setstate__(self, state):
-        nodes, links = state.pop('_saved_nodes', ()), state.pop('_saved_links', ())
+        nodes, links = state.pop('_saved_nodes'), state.pop('_saved_links')
         self.__dict__.update(state)
         for node, first in zip(nodes, links):
             if first is not None:
@@ -665,7 +507,7 @@ class GPTree:
         the overlap of two children the cuts are followed from the root, each
         branch taken with the probability of ``prob_func``."""
         if self.leaf_index is not None:
-            leaf = self.leaf_index.locate(np.asarray(x, dtype=float).reshape(-1))
+            leaf = self.leaf_index.locate(x[0])
             if leaf is not None:
                 return leaf
         node = self.root
@@ -766,9 +608,6 @@ class GPTree:
 
     def _start_accounting(self):
         self._fixed_bytes = self._fixed_size()
-        if self._fixed_bytes == float('inf'):
-            raise ValueError("max_memory_mb needs a global model of a fixed size, and this one keeps every "
-                             "point of the stream: give it a reservoir_size and a store_size")
         if self._fixed_bytes >= 1e6 * self.max_memory_mb:
             raise ValueError(f"max_memory_mb={self.max_memory_mb} is less than the {self._fixed_bytes / 1e6:.3g} MB of the "
                              "global model and output basis alone: raise it, or reduce their reservoir_size")
@@ -878,8 +717,6 @@ class GPTree:
 
         sibling.parent = grandparent
         sibling.is_left = parent.is_left
-        sibling.parent_split_index = parent.parent_split_index
-        sibling.parent_split_position = parent.parent_split_position
         if grandparent is None:
             self.root = sibling
         elif parent.is_left:
@@ -901,36 +738,22 @@ class GPTree:
 
 
     def fit(self, X_train: np.ndarray, y_train: np.ndarray, sigma_train: np.ndarray,
-            show_progress: Optional[bool]=False, shuffle: Optional[bool]=True,
-            forward_GPR_to_next_leaf: Optional[bool]=False):
-        """
-        Construct the binary tree by assigning a set of training samples to nodes and train the leaf-node GPs.
+            show_progress: Optional[bool]=False, shuffle: Optional[bool]=True):
+        """Build the tree from a set of data points and then fit each leaf once.
 
         Only for a tree without points; a tree that holds points takes more with
         `batch_update_tree` or `update_tree`.
 
-        Arguments
-        ----------
-        X_train: np.ndarray
-            The training data in feature space. Has shape=(N_train, n_features).
-
-        y_train: np.ndarray
-            The training data in target space. Has shape=(N_train, n_outputs) for multi-output,
-            or (N_train, 1) for single output.
-
-        sigma_train: np.ndarray
-            Per-point uncertainties (standard deviations). Has shape=(N_train, n_outputs) for per-output
-            uncertainties, or (N_train,) or (N_train, 1) for shared uncertainty. Required.
-
-        show_progress: Optional[bool]=False
-            Display a progress bar in the terminal using tqdm.
-
-        shuffle: Optional[bool]=True
-            Shuffle the training set to avoid an unbalanced tree.
-
-        forward_GPR_to_next_leaf: Optional[bool]=False
-            When training the leaf-node GPs, let the next leaf start from a copy of the trained GP
-            from the previous leaf. Note: For multi-output, only the first GP is forwarded.
+        Args:
+            X_train (np.ndarray): The inputs, of shape (N, n_features).
+            y_train (np.ndarray): The targets, of shape (N, n_outputs), or (N,)
+                for a single output.
+            sigma_train (np.ndarray): The uncertainties (standard deviations) of
+                the targets, of shape (N, n_outputs), or (N,) or (N, 1) for the
+                same one for all outputs.
+            show_progress (bool): Display a progress bar. Defaults to False.
+            shuffle (bool): Shuffle the points first, to avoid an unbalanced
+                tree. Defaults to True.
 
         The sigma calibration uses predictions of points made before they are added.
         Without a global model the leaf GPs are fitted only at the end, so there are
@@ -941,37 +764,17 @@ class GPTree:
         if not self.first_point:
             raise ValueError("fit builds a tree from scratch, and this tree holds points already. "
                              "Use batch_update_tree to add points to it, or fit a new GPTree.")
+        X_train, y_train, sigma_train = self._batch(X_train, y_train, sigma_train)
         self.n_features = X_train.shape[1]
-        N = X_train.shape[0]
         self.root.init_data_set(self.n_features)
-
-        # Ensure y_train has shape (N, n_outputs)
-        if y_train.ndim == 1:
-            y_train = y_train.reshape((-1, 1))
-
-        # Ensure sigma_train has shape (N, n_outputs) or is broadcastable
-        if sigma_train.ndim == 1:
-            # Broadcast to all outputs
-            sigma_train = sigma_train.reshape((-1, 1))
-            if self.n_outputs > 1:
-                sigma_train = np.tile(sigma_train, (1, self.n_outputs))
-        elif sigma_train.shape[1] == 1 and self.n_outputs > 1:
-            # Broadcast single column to all outputs
-            sigma_train = np.tile(sigma_train, (1, self.n_outputs))
 
         if shuffle:
             X_train, y_train, sigma_train = resample(X_train, y_train, sigma_train, replace=False)
 
-        # Construct the tree
-        for x, y, sigma in tqdm(zip(X_train, y_train, sigma_train), total=N, disable=not show_progress, desc="Building binary tree"):
-            x = x.reshape((1, x.shape[0]))
-            y = y.reshape((1, self.n_outputs))  # Multi-output support
-            sigma = sigma.reshape((1, self.n_outputs)) if hasattr(sigma, 'reshape') else np.array([sigma]).reshape((1, self.n_outputs))
+        for i in tqdm(range(X_train.shape[0]), disable=not show_progress, desc="Building binary tree"):
+            self.update_tree(X_train[i:i+1], y_train[i:i+1], sigma_train[i:i+1], allow_training=False)
 
-            self.update_tree(x, y, sigma, allow_training=False)
-
-        # Train all the leaves
-        for i, leaf in tqdm(enumerate(self.root.leaves), total=len(self.root.leaves), disable=not show_progress, desc="Training"):
+        for leaf in tqdm(self.root.leaves, disable=not show_progress, desc="Training"):
             leaf.fit_my_GPR(force_training=True)
             if self.max_memory_mb is not None:
                 self._account(leaf)
@@ -981,11 +784,6 @@ class GPTree:
             # No prediction of a fitted GP was registered: sigma is the GP's own
             if leaf.residuals_list[0].shape[0] == 0:
                 leaf.clear_pred_perf()
-            if forward_GPR_to_next_leaf and i != len(self.root.leaves) - 1:
-                # For multi-output, forward only the first GP
-                self.root.leaves[i+1].my_GPRs[0] = deepcopy(leaf.my_GPRs[0])
-                if self.n_outputs == 1:
-                    self.root.leaves[i+1].my_GPR = self.root.leaves[i+1].my_GPRs[0]
         if self.max_memory_mb is not None:
             self._enforce_memory_limit(remove=True)   # sleeping leaves keep the training data of their GPs
                 
@@ -1052,7 +850,7 @@ class GPTree:
         the leaf's fitted points. Under a memory limit this counts as a use of the
         leaf's GPs, and if the leaf had to be woken another one is put to sleep.
         Without ``calibrated`` sigma is that of the GPs."""
-        mu, sigma = leaf.predict(x, return_std=True, use_calibrated_sigma=calibrated and self.use_calibrated_sigma)
+        mu, sigma = leaf.predict(x, use_calibrated_sigma=calibrated and self.use_calibrated_sigma)
         if calibrated and self._sigma_slope > 0.0:
             beyond = np.maximum(leaf.distance_from_fit(x) - SIGMA_DISTANCE_START, 0.0)
             sigma = sigma * (1.0 + self._sigma_slope * beyond)[:, None]
@@ -1062,34 +860,17 @@ class GPTree:
         return mu, sigma
 
 
-    def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False, return_leaf_names: Optional[bool]=False):
-        """ 
-        A predict function that, for each point, visits only the leaves it can belong to.
-        Should be the fastest alternative when N_train >> Nbar. 
-        
-        Arguments
-        ---------
+    def predict_recursive(self, X_test: np.ndarray, show_progress: Optional[bool]=False):
+        """Predict at the points ``X_test`` one at a time, each from the leaves it
+        can belong to. The cost of a point does not grow with the number of leaves.
 
-        X_test: np.ndarray
-            The points in feature space where we'd like to predict the target function. Has shape=(N_test, n_features).
+        Args:
+            X_test (np.ndarray): The points, of shape (N_test, n_features).
+            show_progress (bool): Display a progress bar. Defaults to False.
 
-        show_progress: Optional[bool]=False
-            Display a progress bar in the terminal using tqdm.
-
-        return_leaf_names: Optional[bool]=False
-            Also return a list with the names of the leaves contributing to the prediction. 
-
-        Returns
-        -------
-
-        mean_DLGP: np.ndarray
-            The posterior mean used to predict the target function. Has shape=(N_test, 1).
-        
-        std_DLGP: np.ndarray
-            The posterior standard deviation used to quantify the uncertainty in the prediction. Has shape=(N_test, 1).
-        
-        leaf_names: Optional[list]
-            A list with the names of the leaves contributing to the prediction. Only returned if return_leaf_names=True.
+        Returns:
+            The predicted mean and standard deviation, each of shape
+            (N_test, n_outputs).
         """
         
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
@@ -1106,82 +887,32 @@ class GPTree:
                 mean_DLGP[i, :], var_DLGP[i, :] = mu, sigma ** 2
                 continue
 
-            # Compute joint prediciton
-            # The default: mixture of experts, following the DLGP paper
-            if self.aggregation == "default" or self.aggregation == "moe":
-
-                # mu_leaf and sigma_leaf have shape (1, n_outputs)
-                parts = [(ptilde,) + self._predict_leaf(leaf, x) for leaf, ptilde in zip(leaves, pred_leaf_probs)]
-                for ptilde, mu_leaf, _ in parts:
-                    mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
-                # The variance of the mixture: that of each leaf, and the spread of
-                # their means about the mixture's. In this form a small sigma
-                # survives a large mean.
-                for ptilde, mu_leaf, sigma_leaf in parts:
-                    var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + (mu_leaf[0, :] - mean_DLGP[i, :])**2)
-
-            # Generalized product of experts
-            elif self.aggregation == "poe":
-
-                # Collect individual predictions
-                mus = []
-                vars_ = []
-                betas = pred_leaf_probs
-                for leaf, ptilde in zip(leaves, pred_leaf_probs):
-                    mu_leaf, sigma_leaf = self._predict_leaf(leaf, x)
-                    # mu_leaf and sigma_leaf have shape (1, n_outputs)
-                    mus.append(mu_leaf[0, :])
-                    vars_.append(sigma_leaf[0, :]**2)
-                mus = np.array(mus)  # Shape: (n_leaves, n_outputs)
-                vars_ = np.array(vars_)  # Shape: (n_leaves, n_outputs)
-
-                # Compute weighted precisions
-                betas = np.array(betas)[:, None]  # shape (M, 1)
-                precisions = betas / vars_        # shape (M, n_outputs)
-
-                # Combined precision and variance
-                total_precision = np.sum(precisions, axis=0)  # shape (n_outputs,)
-                var_poe = 1.0 / total_precision                # shape (n_outputs,)
-
-                # Combined mean
-                weighted_means = np.sum(precisions * mus, axis=0)  # shape (n_outputs,)
-                mu_poe = var_poe * weighted_means                  # shape (n_outputs,)
-
-                # Store in result arrays
-                mean_DLGP[i, :] = mu_poe
-                var_DLGP[i, :] = var_poe
-
-            # print(f"DEBUG: mean_DLGP: {mean_DLGP}  var_DLGP: {var_DLGP}")
+            # Mixture of experts, following the DLGP paper.
+            # mu_leaf and sigma_leaf have shape (1, n_outputs)
+            parts = [(ptilde,) + self._predict_leaf(leaf, x) for leaf, ptilde in zip(leaves, pred_leaf_probs)]
+            for ptilde, mu_leaf, _ in parts:
+                mean_DLGP[i, :] += ptilde * mu_leaf[0, :]
+            # The variance of the mixture: that of each leaf, and the spread of
+            # their means about the mixture's. In this form a small sigma
+            # survives a large mean.
+            for ptilde, mu_leaf, sigma_leaf in parts:
+                var_DLGP[i, :] += ptilde * (sigma_leaf[0, :]**2 + (mu_leaf[0, :] - mean_DLGP[i, :])**2)
 
         self._let_leaves_sleep()
-        if return_leaf_names:
-            leaf_names = [leaf.name for leaf in leaves]
-            return mean_DLGP, np.sqrt(var_DLGP), leaf_names
-
         return mean_DLGP, np.sqrt(var_DLGP)
 
 
     def predict_loop(self, X_test: np.ndarray, show_progress: Optional[bool]=False):
-        """ 
-        A predict function that simply loops over all leaves.
-        
-        Arguments
-        ---------
+        """Predict at the points ``X_test`` leaf by leaf: each leaf predicts at once
+        for all the points it can own. The cost grows with the number of leaves.
 
-        X_test: np.ndarray
-            The points in feature space where we'd like to predict the target function. Has shape=(N_test, n_features).
+        Args:
+            X_test (np.ndarray): The points, of shape (N_test, n_features).
+            show_progress (bool): Display a progress bar. Defaults to False.
 
-        show_progress: Optional[bool]=False
-            Display a progress bar in the terminal using tqdm.
-
-        Returns
-        -------
-
-        mean_DLGP: np.ndarray
-            The posterior mean used to predict the target function. Has shape=(N_test, 1).
-        
-        std_DLGP: np.ndarray
-            The posterior standard deviation used to quantify the uncertainty in the prediction. Has shape=(N_test, 1).
+        Returns:
+            The predicted mean and standard deviation, each of shape
+            (N_test, n_outputs).
         """
         mean_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
         var_DLGP = np.zeros((X_test.shape[0], self.n_outputs))
@@ -1200,7 +931,6 @@ class GPTree:
             mu_leaf, sigma_leaf = self._predict_leaf(leaf, X_test[mask])
             # mu_leaf and sigma_leaf have shape (n_masked, n_outputs)
 
-            # Broadcast ptilde to match shape (n_masked, n_outputs)
             mean_DLGP[mask] += ptilde[mask] * mu_leaf
             parts.append((mask, ptilde[mask], mu_leaf, sigma_leaf))
 
@@ -1211,22 +941,12 @@ class GPTree:
         return mean_DLGP, np.sqrt(var_DLGP)
 
 
-    def predict_each(self, X_test):
-        """ Get the prediction of each leaf node individually.  """
-        res = []
-        for leaf in self.root.leaves:
-            ptilde = leaf.marg_prob(X_test)
-            ptilde = ptilde.reshape(mean_DLGP.shape)
-
-            mu_leaf, sigma_leaf = self._predict_leaf(leaf, X_test)
-            res.append((mu_leaf, sigma_leaf, ptilde))
-        return res
-    
-
-    def predict(self, X_test: np.ndarray, mode: Optional[str]='recursive', show_progress: Optional[bool]=False, return_leaf_names: Optional[bool]=False):
-        """ Main predict function that calls a specific predict function according to the 'mode' argument.  """
+    def predict(self, X_test: np.ndarray, mode: Optional[str]='recursive', show_progress: Optional[bool]=False):
+        """Predict the mean and standard deviation at the points ``X_test``, of shape
+        (N_test, n_features): with `predict_recursive` (``mode='recursive'``, the
+        default) or `predict_loop` (``mode='loop'``)."""
         if mode == 'recursive':
-            return self.predict_recursive(X_test, show_progress=show_progress, return_leaf_names=return_leaf_names)
+            return self.predict_recursive(X_test, show_progress=show_progress)
         elif mode == 'loop':
             if self._blends():
                 # the zones at the cuts are those of the leaf index, which 'recursive' follows
@@ -1234,10 +954,8 @@ class GPTree:
             result = self.predict_loop(X_test, show_progress=show_progress)
             self._let_leaves_sleep()
             return result
-        elif mode == 'each':
-            return self.predict_each(X_test, show_progress=show_progress)
         else:
-            raise ValueError(f"Unknown mode argument: '{mode}'. The valid options are 'recursive', 'loop' or 'each'")
+            raise ValueError(f"Unknown mode argument: '{mode}'. The valid options are 'recursive' or 'loop'")
 
 
     def save(self, path: str):
@@ -1266,6 +984,28 @@ class GPTree:
         """Load a tree from a file that `save` wrote. Its leaves are asleep."""
         with _gc_paused(), open(path, 'rb') as file:
             return pickle.load(file)
+
+
+    def release(self):
+        """Break the links between the tree's nodes, so that its memory is freed
+        as soon as the tree is dropped. The tree cannot be used afterwards.
+
+        The nodes of a tree refer to each other in loops, so without this a
+        dropped tree keeps its memory until Python's garbage collector finds
+        it. For a process that replaces its tree by a newer one many times,
+        as with `load`.
+        """
+        nodes = [self.root]
+        for node in nodes:              # the list grows while it is read
+            if not node.is_leaf:
+                nodes += node.children
+            node.parent = node.left = node.right = node.children = None
+        if self.leaf_index is not None:
+            self.leaf_index.release()
+        if self.neighbours is not None:
+            self.neighbours.tree = None
+            self.neighbours.in_use.clear()
+        self.root = self.leaf_index = None
 
 
 @contextmanager

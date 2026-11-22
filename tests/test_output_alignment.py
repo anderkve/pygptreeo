@@ -205,7 +205,7 @@ class TestAlignedTree(unittest.TestCase):
         x = np.array([[0.31, 0.62]])
         y = moving_peak(x)
         before = leaf.predict(x)[0]
-        self.assertTrue(leaf.append_point(x, y, 1e-4))
+        self.assertTrue(leaf.append_point(x, y, np.full(y.shape, 1e-4)))
         self.assertEqual(leaf.alignment.F.shape[0], n + 1)
         after = leaf.predict(x)[0]
         self.assertLess(np.abs(after - y).max(), 0.2 * np.abs(before - y).max() + 1e-3)

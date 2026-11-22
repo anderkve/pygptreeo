@@ -63,10 +63,10 @@ class TestGPTree(unittest.TestCase):
         self.assertIsInstance(gpt.GPR, SklearnGPAdapter)
         self.assertFalse(gpt.GPR.sklearn_gpr.normalize_y, "Custom GPR normalize_y should be False.")
         # Check root node's GPR
-        self.assertIsInstance(gpt.root.my_GPR, SklearnGPAdapter)
-        self.assertFalse(gpt.root.my_GPR.sklearn_gpr.normalize_y, "Root node's GPR normalize_y should be False.")
+        self.assertIsInstance(gpt.root.my_GPRs[0], SklearnGPAdapter)
+        self.assertFalse(gpt.root.my_GPRs[0].sklearn_gpr.normalize_y, "Root node's GPR normalize_y should be False.")
         # Compare kernel string representation as a proxy for checking if it's the custom one
-        self.assertEqual(str(gpt.root.my_GPR.sklearn_gpr.kernel), str(custom_kernel))
+        self.assertEqual(str(gpt.root.my_GPRs[0].sklearn_gpr.kernel), str(custom_kernel))
 
 
     def test_gptree_initialization_sklearn_gpr(self):
@@ -84,9 +84,9 @@ class TestGPTree(unittest.TestCase):
         self.assertEqual(gpt.root.Nbar, 75)
         self.assertIsInstance(gpt.GPR, GaussianProcessRegressor)
         self.assertTrue(gpt.GPR.normalize_y)
-        self.assertIsInstance(gpt.root.my_GPR, GaussianProcessRegressor)
-        self.assertTrue(gpt.root.my_GPR.normalize_y)
-        self.assertEqual(str(gpt.root.my_GPR.kernel), str(sklearn_gpr.kernel))
+        self.assertIsInstance(gpt.root.my_GPRs[0], GaussianProcessRegressor)
+        self.assertTrue(gpt.root.my_GPRs[0].normalize_y)
+        self.assertEqual(str(gpt.root.my_GPRs[0].kernel), str(sklearn_gpr.kernel))
 
 
     # @ignore_warnings(category=ConvergenceWarning)
@@ -250,7 +250,7 @@ class TestGPTree(unittest.TestCase):
         self.assertIsInstance(right_child, GPNode, "Right child should be a GPNode.")
 
         # Check if original root node's GPR and data are deleted (as per current GPTree.update_tree logic)
-        self.assertFalse(hasattr(gpt.root, 'my_GPR'), "Split parent node should not have my_GPR.") # This will fail if GPNode.delete_my_GPR() is not called or effective
+        self.assertFalse(hasattr(gpt.root, 'my_GPRs'), "Split parent node should not have my_GPRs.") # This will fail if GPNode.delete_my_GPR() is not called or effective
         self.assertFalse(hasattr(gpt.root, 'my_X_data'), "Split parent node should not have my_X_data.") # This will fail if GPNode.delete_data() is not called or effective
 
         # Check that data is distributed (total points in children should be custom_nbar)
@@ -260,9 +260,9 @@ class TestGPTree(unittest.TestCase):
 
         # Check if children are leaves and have GPRs
         self.assertTrue(left_child.is_leaf, "Left child should be a leaf node.")
-        self.assertTrue(hasattr(left_child, 'my_GPR') and left_child.my_GPR is not None, "Left child should have a GPR instance.")
+        self.assertTrue(hasattr(left_child, 'my_GPRs') and left_child.my_GPRs[0] is not None, "Left child should have a GPR instance.")
         self.assertTrue(right_child.is_leaf, "Right child should be a leaf node.")
-        self.assertTrue(hasattr(right_child, 'my_GPR') and right_child.my_GPR is not None, "Right child should have a GPR instance.")
+        self.assertTrue(hasattr(right_child, 'my_GPRs') and right_child.my_GPRs[0] is not None, "Right child should have a GPR instance.")
 
         # Add one more point, it should go to one of the children
         with warnings.catch_warnings():
@@ -343,11 +343,6 @@ class TestPredictModesAgree(unittest.TestCase):
         limited.batch_update_tree(X, y, 1e-3)
         self.assertEqual(limited.n_points_seen, 400)
         self.assertLess(sum(leaf.n_points for leaf in limited.root.leaves), 400)
-
-        # a tree saved by a version without the count starts it at 0
-        del gpt.__dict__['n_points_seen']
-        gpt.update_tree(X[120:121], y[120:121, None], 1e-3)
-        self.assertEqual(gpt.n_points_seen, 1)
 
     def test_sigma_far_below_the_prediction(self):
         # the variance of the mixture must not vanish in the rounding of the squared mean

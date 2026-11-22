@@ -83,7 +83,7 @@ class TestAppend(unittest.TestCase):
             mu, _ = leaf.predict(x)
             y = mu + 0.5                                              # not what the leaf expects there
             n_points = leaf.n_points
-            self.assertTrue(leaf.append_point(x, y, 1e-3))
+            self.assertTrue(leaf.append_point(x, y, np.full(y.shape, 1e-3)))
             self.assertLess(np.abs(leaf.predict(x)[0] - y).max(), 0.25)         # most of the way to the new point
             self.assertEqual((leaf.n_points, leaf.my_X_data.shape[0]), (n_points, n_points))    # the node's points are the tree's to store
             self.assertTrue(leaf.fit_my_GPR(force_training=True))
@@ -113,10 +113,10 @@ class TestAppend(unittest.TestCase):
         gpt = _tree()
         _stream(gpt, 4.0 * np.random.RandomState(2).rand(5, 2))
         x = np.array([[1.0, 1.0]])
-        self.assertFalse(gpt.root.append_point(x, 1.0, 1e-3))
+        self.assertFalse(gpt.root.append_point(x, np.array([[1.0]]), np.array([[1e-3]])))
         gpt = _grown_tree(n=40, Nbar=60, retrain_every_n_points=10)
         self.assertTrue(gpt.root.sleep())
-        self.assertFalse(gpt.root.append_point(x, 1.0, 1e-3))
+        self.assertFalse(gpt.root.append_point(x, np.array([[1.0]]), np.array([[1e-3]])))
 
     def _appended(self, **kw):
         """The points appended along a stream, and the error of the tree at each point right after it was given."""

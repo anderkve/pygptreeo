@@ -5,27 +5,6 @@ a dynamically growing binary tree of local Gaussian Process regressors. It is
 designed for online learning scenarios where data arrives sequentially and fast
 predictions with reliable uncertainty estimates are required.
 
-Main components:
-    - GPTree: The core tree structure with local GP models at leaf nodes
-    - GPNode: Individual nodes managing local data and GP models
-    - solve_fit_task: A leaf fit handed out by GPTree.update_tree(defer_fits=True), for another process
-    - Trainer: Chooses the points at which to evaluate a target, to train a GPTree
-    - Default_GPR: Pre-configured Gaussian Process Regressor
-    - GPRegressorInterface: Abstract interface for GP implementations
-    - SklearnGPAdapter: Adapter for scikit-learn GP regressors
-    - GPyTorchAdapter: Adapter for GPyTorch models (if GPyTorch is installed)
-    - AnisotropicRationalQuadratic: Custom kernel for multi-scale learning
-    - NewtonGirardAdditiveKernel: Sample-efficient low-order additive kernel
-    - AdditiveMaternKernel: Shorthand for the additive + Matern catch-all leaf kernel
-    - AdditivePeriodicKernel: Per-dimension additive periodic kernel
-    - AdditivePeriodicMaternKernel: Shorthand for additive-periodic + catch-all leaf kernel
-    - ObliqueMatern: Matern kernel whose length scales need not lie along the inputs (Default_GPR(oblique=True))
-    - OutputBasis / OutputBasisLearner: Global PCA output basis for multi-output trees
-    - OutputWarp / AlignedCurves: Alignment of curve-valued outputs within a leaf (output_model='aligned')
-    - GridWarp / AlignedSurfaces: The same for outputs that are a function on a grid of two dimensions (output_shape=(p1, p2))
-    - AdditiveGPGlobalMean / GlobalMeanLearner: Tree-wide global model whose residual the leaves model
-    - FeatureNetLearner / NetGlobalMean: Feature network as the tree-wide global model (needs PyTorch)
-
 Typical usage:
     from pygptreeo import GPTree
 
@@ -35,8 +14,8 @@ Typical usage:
         y_pred, y_std = gpt.predict(x)
         gpt.update_tree(x, y, sigma)  # sigma: observation-noise std for this point
 
-New nodes, sleeping and removed leaves, merged and rejected points and split
-evaluations are reported at DEBUG level on the ``pygptreeo`` logger.
+New nodes, sleeping and removed leaves and merged points are reported at DEBUG
+level on the ``pygptreeo`` logger.
 """
 
 from pygptreeo.default_gpr import Default_GPR
@@ -54,21 +33,10 @@ from pygptreeo.kernels import (
 )
 from pygptreeo.gp_interface import GPRegressorInterface
 from pygptreeo.adapters import SklearnGPAdapter
-from pygptreeo.output_alignment import AlignedCurves, AlignedSurfaces, GridWarp, OutputWarp
-from pygptreeo.output_basis import OutputBasis, OutputBasisLearner
-from pygptreeo.global_mean import (
-    GlobalMeanLearner,
-    GlobalMeanSnapshot,
-    AdditiveGPGlobalMean,
-    CoverageReservoir,
-)
+from pygptreeo.global_mean import GlobalMeanLearner, AdditiveGPGlobalMean
+from pygptreeo.feature_net import FeatureNetLearner    # its use needs PyTorch
 
-# Conditionally import GPyTorch adapter if available
 try:
-    from pygptreeo.adapters import GPyTorchAdapter
-    _GPYTORCH_AVAILABLE = True
+    from pygptreeo.adapters import GPyTorchAdapter     # if GPyTorch is installed
 except ImportError:
-    _GPYTORCH_AVAILABLE = False
-
-# The feature network global model ('net'); the module imports without torch, the classes need it.
-from pygptreeo.feature_net import FeatureNetLearner, NetGlobalMean, TORCH_AVAILABLE as _TORCH_AVAILABLE
+    pass

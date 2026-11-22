@@ -34,7 +34,7 @@ class TestGPNode(unittest.TestCase):
             self.assertEqual(node.Nbar, 50, "Nbar should be set to 50")
             self.assertTrue(node.is_leaf, "A new node should be a leaf")
             self.assertIsNone(node.children, "A new node should not have children")
-            self.assertIsInstance(node.my_GPR, SklearnGPAdapter, "my_GPR should be an instance of SklearnGPAdapter")
+            self.assertIsInstance(node.my_GPRs[0], SklearnGPAdapter, "my_GPR should be an instance of SklearnGPAdapter")
         except Exception as e:
             self.fail(f"GPNode creation raised an exception: {e}")
 
@@ -48,7 +48,7 @@ class TestGPNode(unittest.TestCase):
             self.assertEqual(node.Nbar, 100)
             self.assertEqual(node.split_position_method, 'mean')
             self.assertEqual(node.name, "custom_node_1")
-            self.assertFalse(node.my_GPR.sklearn_gpr.normalize_y, "GPR normalize_y should be False")
+            self.assertFalse(node.my_GPRs[0].sklearn_gpr.normalize_y, "GPR normalize_y should be False")
         except Exception as e:
             self.fail(f"GPNode creation with custom params raised an exception: {e}")
 
@@ -119,7 +119,7 @@ class TestGPNode(unittest.TestCase):
             warnings.filterwarnings("ignore", category=RuntimeWarning)
             did_train = node.fit_my_GPR() # Should train as n_points_since_retrain (1) == retrain_every_n_points (1)
         self.assertTrue(did_train, "GPR should have been trained")
-        self.assertTrue(node.my_GPR.is_trained(), "GPR should be trained after fitting")
+        self.assertTrue(node.my_GPRs[0].is_trained(), "GPR should be trained after fitting")
         self.assertEqual(node.n_points_since_retrain, 0, "Buffer should be reset after training")
 
         # Add another point

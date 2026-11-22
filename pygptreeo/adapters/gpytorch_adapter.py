@@ -6,56 +6,27 @@ to pygptreeo's GPRegressorInterface. GPyTorch uses PyTorch tensors and
 has a different API structure, so this adapter handles the conversions.
 """
 
-from typing import Union, Tuple, Optional
-import numpy as np
 from copy import deepcopy
+from typing import Union, Tuple, Optional
 
-try:
-    import torch
-    import gpytorch
-    from gpytorch.models import ExactGP
-    from gpytorch.means import Mean
-    from gpytorch.kernels import Kernel
-    from gpytorch.likelihoods import GaussianLikelihood
-    from gpytorch.mlls import ExactMarginalLogLikelihood
-    GPYTORCH_AVAILABLE = True
-except ImportError:
-    GPYTORCH_AVAILABLE = False
-    # Define dummy classes for type hints when GPyTorch is not available
-    ExactGP = object
-    Mean = object
-    Kernel = object
-    GaussianLikelihood = object
+import numpy as np
+import torch
+import gpytorch
+from gpytorch.constraints import GreaterThan
+from gpytorch.kernels import Kernel
+from gpytorch.likelihoods import GaussianLikelihood
+from gpytorch.means import Mean
+from gpytorch.mlls import ExactMarginalLogLikelihood
+from gpytorch.models import ExactGP
 
 from ..gp_interface import GPRegressorInterface
 
-
-if not GPYTORCH_AVAILABLE:
-    raise ImportError(
-        "GPyTorch is not installed. Please install it with: pip install gpytorch"
-    )
+MIN_NOISE = 1e-4  # Lowest noise variance of the likelihood, for numerical stability
 
 
 class SimpleGPModel(ExactGP):
-    """
-    A simple GPyTorch exact GP model.
-
-    This is a basic implementation that can be used when the user doesn't
-    provide their own custom GPyTorch model.
-
-    Parameters
-    ----------
-    train_x : torch.Tensor
-        Training inputs.
-    train_y : torch.Tensor
-        Training targets.
-    likelihood : GaussianLikelihood
-        The likelihood function.
-    mean_module : Mean, optional
-        The mean function. If None, uses ConstantMean.
-    covar_module : Kernel, optional
-        The kernel/covariance function. If None, uses ScaleKernel(RBFKernel).
-    """
+    """An exact GP with the given mean and kernel: by default a constant mean and
+    a scaled RBF kernel."""
 
     def __init__(
         self,
@@ -65,88 +36,52 @@ class SimpleGPModel(ExactGP):
         mean_module: Optional[Mean] = None,
         covar_module: Optional[Kernel] = None
     ):
-        super(SimpleGPModel, self).__init__(train_x, train_y, likelihood)
-
-        if mean_module is None:
-            self.mean_module = gpytorch.means.ConstantMean()
-        else:
-            self.mean_module = mean_module
-
-        if covar_module is None:
-            self.covar_module = gpytorch.kernels.ScaleKernel(
-                gpytorch.kernels.RBFKernel()
-            )
-        else:
-            self.covar_module = covar_module
+        super().__init__(train_x, train_y, likelihood)
+        self.mean_module = mean_module if mean_module is not None else gpytorch.means.ConstantMean()
+        self.covar_module = (covar_module if covar_module is not None
+                             else gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel()))
 
     def forward(self, x):
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+        return gpytorch.distributions.MultivariateNormal(self.mean_module(x), self.covar_module(x))
 
 
 class GPyTorchAdapter(GPRegressorInterface):
-    """
-    Adapter for GPyTorch GP models.
-
-    This class wraps a GPyTorch model to provide the interface required
-    by pygptreeo. It handles conversion between numpy arrays and PyTorch
-    tensors, and manages training with optimization.
+    """Adapter for GPyTorch. Each fit builds a ``SimpleGPModel`` on the training
+    data and optimises its hyperparameters.
 
     Parameters
     ----------
-    model : ExactGP or None
-        A GPyTorch ExactGP model instance. If None, a SimpleGPModel will
-        be created on first fit.
-    likelihood : GaussianLikelihood or None
-        The likelihood function. If None, creates a default GaussianLikelihood.
-    mean_module : Mean, optional
-        Mean function for SimpleGPModel (only used if model is None).
-    covar_module : Kernel, optional
-        Kernel for SimpleGPModel (only used if model is None).
-    optimizer : str, default='adam'
-        Optimizer to use for training ('adam' or 'lbfgs').
+    mean_module : gpytorch.means.Mean, optional
+        Mean of the model. A constant mean by default.
+    covar_module : gpytorch.kernels.Kernel, optional
+        Kernel of the model. A scaled RBF kernel by default. A mean or kernel
+        given is used by every fit, which so starts from the hyperparameters of
+        the fit before it.
+    optimizer : {'adam', 'lbfgs'}, default='adam'
+        Optimiser of the hyperparameters.
     learning_rate : float, default=0.1
-        Learning rate for the optimizer.
+        Learning rate of the optimiser.
     training_iterations : int, default=50
-        Number of optimization iterations during fit().
+        Steps of the optimiser in a fit.
     n_restarts_optimizer : int, default=0
-        Number of times to restart hyperparameter optimization from random
-        initializations. The best result (lowest loss) is kept. Similar to
-        sklearn's n_restarts_optimizer.
+        Further optimisations in a fit, from random hyperparameters. The result
+        with the lowest loss is kept.
     device : str, default='cpu'
-        Device to use for computation ('cpu' or 'cuda').
-
-    Attributes
-    ----------
-    _model : ExactGP or None
-        The underlying GPyTorch model.
-    _likelihood : GaussianLikelihood
-        The likelihood function.
-    _trained : bool
-        Whether the model has been trained.
+        'cpu' or 'cuda'.
+    normalize_y : bool, default=False
+        Standardise the targets within the adapter.
 
     Examples
     --------
     >>> import gpytorch
-    >>> from pygptreeo.adapters import GPyTorchAdapter
-    >>>
-    >>> # Create adapter with default model (will be initialized on first fit)
-    >>> adapter = GPyTorchAdapter()
-    >>>
-    >>> # Or create with custom kernel
-    >>> kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=1.5))
-    >>> adapter = GPyTorchAdapter(covar_module=kernel, training_iterations=100)
-    >>>
-    >>> # Use with pygptreeo
     >>> from pygptreeo import GPTree
-    >>> gpt = GPTree(GPR=adapter)
+    >>> from pygptreeo.adapters import GPyTorchAdapter
+    >>> kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=1.5))
+    >>> gpt = GPTree(GPR=GPyTorchAdapter(covar_module=kernel, training_iterations=100))
     """
 
     def __init__(
         self,
-        model: Optional[ExactGP] = None,
-        likelihood: Optional[GaussianLikelihood] = None,
         mean_module: Optional[Mean] = None,
         covar_module: Optional[Kernel] = None,
         optimizer: str = 'adam',
@@ -156,22 +91,6 @@ class GPyTorchAdapter(GPRegressorInterface):
         device: str = 'cpu',
         normalize_y: bool = False
     ):
-        """Initialize the GPyTorch adapter."""
-        self._model = model
-
-        # Initialize likelihood with better numerical stability
-        # Default noise constraint prevents noise from getting too small (1e-6 minimum)
-        if likelihood is not None:
-            self._likelihood = likelihood
-        else:
-            from gpytorch.constraints import GreaterThan
-            # Use more conservative noise floor for better numerical stability
-            self._likelihood = GaussianLikelihood(
-                noise_constraint=GreaterThan(1e-4)
-            )
-            # Initialize noise to a reasonable value
-            self._likelihood.noise = 1e-4
-
         self._mean_module = mean_module
         self._covar_module = covar_module
         self._optimizer_type = optimizer.lower()
@@ -179,130 +98,56 @@ class GPyTorchAdapter(GPRegressorInterface):
         self._training_iterations = training_iterations
         self._n_restarts_optimizer = n_restarts_optimizer
         self._device = device
-        self._trained = False
-        self._observation_noise = None
-
-        # Y normalization parameters (for numerical stability)
-        # Only used if normalize_y=True
         self._normalize_y = normalize_y
+
+        # The model and the likelihood of the last fit
+        self._model = None
+        self._likelihood = None
+        self._observation_noise = None
+        # Mean and standard deviation of the targets, with normalize_y
         self._y_mean = None
         self._y_std = None
 
-        # Move likelihood to device
-        self._likelihood = self._likelihood.to(device)
-
     def fit(self, X: np.ndarray, y: np.ndarray) -> 'GPyTorchAdapter':
-        """
-        Train the GP on the provided data.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Training input data of shape (n_samples, n_features).
-        y : np.ndarray
-            Training target values of shape (n_samples,) or (n_samples, 1).
-
-        Returns
-        -------
-        self : GPyTorchAdapter
-            The fitted adapter instance.
-        """
-        # Convert numpy arrays to PyTorch tensors
-        # Use the default dtype (respects torch.set_default_dtype)
+        """Build a new model on the data and optimise its hyperparameters. The
+        likelihood has one noise variance for all points. It starts from the
+        mean of those set with ``set_observation_noise``, not below 1e-4, and
+        is optimised with the other hyperparameters."""
         train_x = torch.from_numpy(X).to(self._device)
-
-        # Normalize y values for numerical stability if requested
-        y_array = y.flatten()
+        y = y.flatten()
         if self._normalize_y:
-            self._y_mean = y_array.mean()
-            self._y_std = y_array.std()
+            self._y_mean = y.mean()
+            self._y_std = y.std()
             if self._y_std < 1e-10:  # Avoid division by zero
                 self._y_std = 1.0
-            y_normalized = (y_array - self._y_mean) / self._y_std
-            train_y = torch.from_numpy(y_normalized).to(self._device)
-        else:
-            # No normalization - use y values as-is
-            train_y = torch.from_numpy(y_array).to(self._device)
+            y = (y - self._y_mean) / self._y_std
+        train_y = torch.from_numpy(y).to(self._device)
 
-        # Always create a fresh model AND fresh likelihood for each fit
-        # Reusing the likelihood causes numerical issues because LBFGS modifies its parameters
-        # Create a completely new likelihood from scratch instead of deepcopy to avoid state issues
-        from gpytorch.constraints import GreaterThan
-        fresh_likelihood = GaussianLikelihood(
-            noise_constraint=GreaterThan(1e-4)
-        ).to(self._device)
-
-        # Set observation noise on the fresh likelihood if specified
-        # Note: Noise must be scaled if y is normalized
+        noise = MIN_NOISE
         if self._observation_noise is not None:
-            # The default GaussianLikelihood is homoskedastic (one noise variance for
-            # all points), so per-point noise variances (as handed over by GPTree)
-            # are reduced to their mean.
-            if isinstance(self._observation_noise, np.ndarray):
-                obs_noise = float(np.mean(self._observation_noise))
-            else:
-                obs_noise = float(self._observation_noise)
-            # Scale the noise *variance* if y is normalized
-            if self._normalize_y and self._y_std is not None:
-                obs_noise = obs_noise / (self._y_std ** 2)
-            # Ensure noise doesn't get too small (match likelihood constraint)
-            noise = max(obs_noise, 1e-4)
-            # Set the noise value
-            with torch.no_grad():
-                fresh_likelihood.noise = noise
-        else:
-            # Default noise
-            fresh_likelihood.noise = 1e-4
-
-        # Create fresh kernel instances for each fit
-        # Reusing the same kernel object across models causes numerical issues
-        # Need to recreate the kernel structure from scratch
-        if self._covar_module is None:
-            fresh_covar = None
-        else:
-            # TODO: This is a hacky way to create a fresh kernel - we should have a better method
-            # For now, just use the original (this works if it's not reused across fits)
-            fresh_covar = self._covar_module
-
-        if self._mean_module is None:
-            fresh_mean = None
-        else:
-            fresh_mean = self._mean_module
-
-        self._model = SimpleGPModel(
-            train_x, train_y, fresh_likelihood,
-            mean_module=fresh_mean,
-            covar_module=fresh_covar
-        ).to(self._device)
-
-        # Update our reference to use the fresh likelihood
-        self._likelihood = fresh_likelihood
-
-        # Set to training mode
+            noise = float(np.mean(self._observation_noise))
+            if self._normalize_y:
+                noise = noise / self._y_std ** 2
+            noise = max(noise, MIN_NOISE)
+        # A new likelihood for each fit: one that L-BFGS has changed the parameters
+        # of gives numerical problems when it is used again
+        self._likelihood = GaussianLikelihood(noise_constraint=GreaterThan(MIN_NOISE)).to(self._device)
+        self._likelihood.noise = noise
+        self._model = SimpleGPModel(train_x, train_y, self._likelihood,
+                                    self._mean_module, self._covar_module).to(self._device)
         self._model.train()
         self._likelihood.train()
-
-        # Create marginal log likelihood
         mll = ExactMarginalLogLikelihood(self._likelihood, self._model)
 
-        # Hyperparameter optimization with restarts
-        # Similar to sklearn's n_restarts_optimizer
-        best_loss = float('inf')
-        best_state_dict = None
-
-        n_attempts = self._n_restarts_optimizer + 1  # 1 initial + n restarts
-
-        for attempt in range(n_attempts):
-            # Randomize hyperparameters for restarts (skip first attempt)
+        best_loss, best_state = float('inf'), None
+        for attempt in range(self._n_restarts_optimizer + 1):
             if attempt > 0:
-                # Re-initialize hyperparameters to random values within bounds
+                # A restart: from random hyperparameters
                 with torch.no_grad():
-                    for param_name, param in self._model.named_parameters():
-                        if 'raw_' in param_name or 'noise' in param_name:
-                            # Randomize within a reasonable range
+                    for name, param in self._model.named_parameters():
+                        if 'raw_' in name or 'noise' in name:
                             param.data.uniform_(-2.0, 2.0)
 
-            # Create optimizer for this attempt
             if self._optimizer_type == 'adam':
                 optimizer = torch.optim.Adam(self._model.parameters(), lr=self._learning_rate)
             elif self._optimizer_type == 'lbfgs':
@@ -310,44 +155,24 @@ class GPyTorchAdapter(GPRegressorInterface):
             else:
                 raise ValueError(f"Unknown optimizer: {self._optimizer_type}")
 
-            # Training loop with numerical stability settings
-            # Add jitter for numerical stability in Cholesky decomposition
+            def closure():
+                optimizer.zero_grad()
+                loss = -mll(self._model(train_x), train_y)
+                loss.backward()
+                return loss
+
+            # Jitter for the numerical stability of the Cholesky decomposition
             with gpytorch.settings.cholesky_jitter(1e-3):
-                if self._optimizer_type == 'lbfgs':
-                    # LBFGS requires a closure function
-                    def closure():
-                        optimizer.zero_grad()
-                        output = self._model(train_x)
-                        loss = -mll(output, train_y)
-                        loss.backward()
-                        return loss
+                for _ in range(self._training_iterations):
+                    optimizer.step(closure)
 
-                    for i in range(self._training_iterations):
-                        loss = optimizer.step(closure)
-                else:
-                    # Standard training loop for other optimizers (e.g., Adam)
-                    for i in range(self._training_iterations):
-                        optimizer.zero_grad()
-                        output = self._model(train_x)
-                        loss = -mll(output, train_y)
-                        loss.backward()
-                        optimizer.step()
-
-            # Evaluate final loss for this attempt
             with torch.no_grad():
-                output = self._model(train_x)
-                final_loss = -mll(output, train_y).item()
+                loss = -mll(self._model(train_x), train_y).item()
+            if loss < best_loss:
+                best_loss, best_state = loss, deepcopy(self._model.state_dict())
 
-            # Keep the best result
-            if final_loss < best_loss:
-                best_loss = final_loss
-                best_state_dict = deepcopy(self._model.state_dict())
-
-        # Restore the best model state
-        if best_state_dict is not None:
-            self._model.load_state_dict(best_state_dict)
-
-        self._trained = True
+        if best_state is not None:
+            self._model.load_state_dict(best_state)
         return self
 
     def predict(
@@ -355,111 +180,46 @@ class GPyTorchAdapter(GPRegressorInterface):
         X: np.ndarray,
         return_std: bool = False
     ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
-        """
-        Make predictions at test points.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Test input data of shape (n_samples, n_features).
-        return_std : bool, default=False
-            If True, return both mean predictions and standard deviations.
-
-        Returns
-        -------
-        y_mean : np.ndarray
-            Mean predictions of shape (n_samples, 1).
-        y_std : np.ndarray, optional
-            Standard deviations of shape (n_samples, 1).
-            Only returned if return_std=True.
-        """
-        # If not trained, return prior predictions
-        if not self._trained:
-            n_samples = X.shape[0]
-            # If we normalized y, return priors in original scale
-            if self._normalize_y and self._y_mean is not None and self._y_std is not None:
-                mean = np.full((n_samples, 1), self._y_mean)
-                std = np.full((n_samples, 1), self._y_std)
-            else:
-                # No normalization or not yet fitted - return standard priors
-                mean = np.zeros((n_samples, 1))
-                std = np.ones((n_samples, 1))
-
-            if return_std:
-                return mean, std
-            else:
-                return mean
-
-        # Convert to tensor (use default dtype)
-        test_x = torch.from_numpy(X).to(self._device)
-
-        # Set to evaluation mode
-        self._model.eval()
-        self._likelihood.eval()
-
-        # Make predictions
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            observed_pred = self._likelihood(self._model(test_x))
-            mean = observed_pred.mean.cpu().numpy().reshape(-1, 1)
-            std = observed_pred.stddev.cpu().numpy().reshape(-1, 1)
-
-            # Denormalize predictions if we normalized during training
-            if self._normalize_y and self._y_mean is not None and self._y_std is not None:
+        """The mean at ``X`` and, with ``return_std``, the standard deviation of an
+        observation (the noise included), each of shape (n_samples, 1). Before the
+        first fit: the prior."""
+        if self._model is None:
+            mean, std = np.zeros((X.shape[0], 1)), np.ones((X.shape[0], 1))
+        else:
+            self._model.eval()
+            self._likelihood.eval()
+            with torch.no_grad(), gpytorch.settings.fast_pred_var():
+                pred = self._likelihood(self._model(torch.from_numpy(X).to(self._device)))
+                mean = pred.mean.cpu().numpy().reshape(-1, 1)
+                std = pred.stddev.cpu().numpy().reshape(-1, 1)
+            if self._normalize_y:
                 mean = mean * self._y_std + self._y_mean
-                std = std * self._y_std  # std scales but doesn't shift
-
-            if return_std:
-                return mean, std
-            else:
-                return mean
+                std = std * self._y_std
+        return (mean, std) if return_std else mean
 
     def is_trained(self) -> bool:
-        """
-        Check whether the GP has been trained on data.
-
-        Returns
-        -------
-        bool
-            True if the GP has been fitted, False otherwise.
-        """
-        return self._trained
+        """Whether ``fit`` has been called."""
+        return self._model is not None
 
     def nbytes(self) -> int:
         """Size of the training data and of the n x n factor that GPyTorch caches
         for predictions."""
-        if not self._trained:
+        if self._model is None:
             return 0
         train_x = self._model.train_inputs[0]
         n = train_x.shape[0]
         return (train_x.nelement() + n + n * n) * train_x.element_size()
 
     def set_observation_noise(self, alpha: Union[float, np.ndarray]) -> None:
-        """
-        Set the observation noise levels for training data.
-
-        Parameters
-        ----------
-        alpha : float or np.ndarray
-            If float: a single noise level applied to all observations.
-            If array: per-observation noise levels of shape (n_samples,).
-        """
+        """Keep the noise variances of the training points for the next ``fit``."""
         self._observation_noise = alpha
 
     def clone(self) -> 'GPyTorchAdapter':
-        """
-        Create a deep copy of this GP regressor.
-
-        Returns
-        -------
-        GPyTorchAdapter
-            A deep copy of this adapter instance.
-        """
-        # Create a new adapter with the same configuration
+        """A copy with the same settings, and with a copy of the fitted model if
+        there is one."""
         new_adapter = GPyTorchAdapter(
-            model=None,  # Will be created on first fit
-            likelihood=deepcopy(self._likelihood),
-            mean_module=deepcopy(self._mean_module) if self._mean_module is not None else None,
-            covar_module=deepcopy(self._covar_module) if self._covar_module is not None else None,
+            mean_module=deepcopy(self._mean_module),
+            covar_module=deepcopy(self._covar_module),
             optimizer=self._optimizer_type,
             learning_rate=self._learning_rate,
             training_iterations=self._training_iterations,
@@ -467,71 +227,33 @@ class GPyTorchAdapter(GPRegressorInterface):
             device=self._device,
             normalize_y=self._normalize_y
         )
-
-        # If current model is trained, copy its state
-        if self._trained and self._model is not None:
-            new_adapter._model = deepcopy(self._model)
-            new_adapter._trained = True
-
-        # Copy normalization parameters
+        new_adapter._model = deepcopy(self._model)
+        new_adapter._likelihood = deepcopy(self._likelihood)
         new_adapter._y_mean = self._y_mean
         new_adapter._y_std = self._y_std
-
         return new_adapter
 
     def get_kernel(self):
-        """
-        Get the kernel/covariance module.
-
-        Returns
-        -------
-        kernel
-            The kernel object (gpytorch.kernels.Kernel).
-        """
+        """The kernel of the model, or the one given if there is no model yet."""
         if self._model is not None:
             return self._model.covar_module
-        else:
-            return self._covar_module
+        return self._covar_module
 
     def set_kernel(self, kernel) -> None:
-        """
-        Set the kernel/covariance module.
-
-        This is used for hyperparameter inheritance when creating child nodes.
-
-        Parameters
-        ----------
-        kernel
-            The kernel object to set (gpytorch.kernels.Kernel).
-        """
+        """Set the kernel of the model and of later fits."""
         if self._model is not None:
             self._model.covar_module = kernel
         self._covar_module = kernel
 
     @property
     def model(self) -> Optional[ExactGP]:
-        """
-        Access the underlying GPyTorch model.
-
-        Returns
-        -------
-        ExactGP or None
-            The underlying GPyTorch model.
-        """
+        """The GPyTorch model of the last fit."""
         return self._model
 
     @property
-    def likelihood(self) -> GaussianLikelihood:
-        """
-        Access the likelihood function.
-
-        Returns
-        -------
-        GaussianLikelihood
-            The likelihood function.
-        """
+    def likelihood(self) -> Optional[GaussianLikelihood]:
+        """The likelihood of the last fit."""
         return self._likelihood
 
     def __repr__(self) -> str:
-        """String representation of the adapter."""
-        return f"GPyTorchAdapter(trained={self._trained}, device={self._device})"
+        return f"GPyTorchAdapter(trained={self.is_trained()}, device={self._device})"
