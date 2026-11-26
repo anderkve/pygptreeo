@@ -108,6 +108,11 @@ write the last one, and neither code has arcsin.
 - With squared-exponential holes (`--kernel rbf`) the first 13 targets give
   38 of 39, and the last target never gives the plain hole.
 - Three of the PySR results counted as right contain a small spurious term.
+- With 300 s per run on the four of the first 13 targets where PySR has 0, it
+  has 1, 1, 1 and 0 of 3 right, in the order of the table, and 1, 2, 2 and 0
+  with the best equation of its Pareto front in place of the one it selects.
+  The one for `x1 + x2 + 2·√(x1·x2)·cos(x3)` is not that formula, but close
+  enough to it to count as right.
 - The rules and the library were developed on these targets, and PySR's
   settings were not adapted to them.
 
@@ -176,5 +181,5 @@ the standard deviation of the target), and no series.
 - More inputs. The number of candidates per step grows with the square of the
   number of inputs of a hole.
 - Noise levels other than 1%, and inputs that are not all positive.
-- Targets that were not used to develop the rules, and PySR with a longer run
-  and tuned settings.
+- Targets that were not used to develop the rules, and PySR with tuned
+  settings.

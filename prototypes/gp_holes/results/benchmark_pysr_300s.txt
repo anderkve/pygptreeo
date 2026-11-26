@@ -1,0 +1,38 @@
+
+I.13.4:  0.5*x1*(x2^2 + x3^2 + x4^2)
+  n 100 noise 0.01 seed 0: ((((((sin(cos(x1)) + sin(cos(x2))) + sin(cos(x3))) * 0.48854443) + ((x3 + x1) + x2)) + -3.4655707) * x0) * 0.1281418
+          rmse in 0.0090 out 0.1318, best on the front 0.1290, 301 s
+  n 100 noise 0.01 seed 1: (x0 * 0.02035327) * (square(x1) + (square(x2) + square(x3)))
+          rmse in 0.0012 out 0.0018, best on the front 0.0018, 300 s
+  n 100 noise 0.01 seed 2: ((((((sin(cos(x2)) + sin(cos(x1))) + sin(cos(x3))) * 0.48444128) + x2) + (x3 + x1)) - 3.4781082) * (x0 * 0.12659869)
+          rmse in 0.0089 out 0.1397, best on the front 0.1397, 300 s
+
+I.6.2:  exp(-(x1/x2)^2/2)/(sqrt(2*pi)*x2)
+  n 100 noise 0.01 seed 0: sin(sin(x0 * (0.5459871 / x1)) * 3.0225096) / (x0 * 0.17692618)
+          rmse in 0.0059 out 0.4136, best on the front 0.4025, 300 s
+  n 100 noise 0.01 seed 1: ((exp(square(x0 / x1) / -1.9962384) / x1) * 10.379943) + (-0.00068414793 / cos(x1 / -0.062792085))
+          rmse in 0.0189 out 0.0950, best on the front 0.0029, 300 s
+  n 100 noise 0.01 seed 2: (8.534577 / sqrt(exp(square(x0 / x1)))) / x1
+          rmse in 0.0012 out 0.0014, best on the front 0.0013, 300 s
+
+I.37.4:  x1 + x2 + 2*sqrt(x1*x2)*cos(x3)
+  n 100 noise 0.01 seed 0: ((x1 + x0) * 0.31175563) * ((cos(sin(log(sqrt(x1 / x0)))) * cos(x2)) + 1.0012805)
+          rmse in 0.0018 out 0.0078, best on the front 0.0078, 300 s
+  n 100 noise 0.01 seed 1: ((cos(log(x1 / x0) * 0.47227067) * (cos(x2) * 0.34254858)) + 0.3430968) * (x1 + x0)
+          rmse in 0.0031 out 0.0296, best on the front 0.0195, 300 s
+  n 100 noise 0.01 seed 2: ((x0 + x1) * ((cos(sin(log(sqrt(x1 / x0)))) * cos(x2)) + 1.0011374)) * 0.37617117
+          rmse in 0.0016 out 0.0103, best on the front 0.0081, 300 s
+
+I.10.7:  x1/sqrt(1 - x2^2/x3^2)
+  n 100 noise 0.01 seed 0: (x0 / 2.3621202) / (sin(cos(x1 / x2)) - 0.30818024)
+          rmse in 0.0014 out 1.4882, best on the front 1.4052, 300 s
+  n 100 noise 0.01 seed 1: (0.7740116 / sqrt(cos((x1 / x2) / 0.68874454))) * x0
+          rmse in 0.0022 out 0.7995, best on the front 0.6247, 300 s
+  n 100 noise 0.01 seed 2: x0 * (0.8149849 / ((-0.00043409618 / cos(x0 / 0.4253492)) + cos(x1 / ((-0.32209948 / (sin(square(x0) / 0.17583929) + -2.1367753)) - x2))))
+          rmse in 0.0814 out 0.8986, best on the front 0.8980, 300 s
+
+target           n  noise right front
+I.13.4         100   0.01     1     1
+I.6.2          100   0.01     1     2
+I.37.4         100   0.01     1     2
+I.10.7         100   0.01     0     0
