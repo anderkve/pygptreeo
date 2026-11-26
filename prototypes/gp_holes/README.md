@@ -225,26 +225,6 @@ counts; its own numbers are in the last column.
   `−4.8e-11·x1/x2`, which is `h·ν/(k·T)`, and for Rydberg `2·log(x1)` and the
   input `x1/x2`.
 
-## What does not work yet
+## Limitations, issues and ideas
 
-- A formula that fits within the noise is preferred to a hole. The two costs
-  in the score were chosen after seeing this on these targets, and they
-  reduce it without removing it.
-- A hole times a hole, and a function of a hole, are not GPs. The rules get
-  around a product only when one factor is in the library.
-- A step that does not raise the score by itself is rarely followed up, so
-  structure that pays off after two steps can be missed.
-- The search is greedy and its result depends on the seed for the harder
-  targets.
-- Inputs spread over many decades, inputs that change sign, and fewer than
-  about 15 points (see "Targets that PySR provides").
-
-## Tests still to do
-
-- The benchmark with the polynomial in the library.
-- More inputs. The number of candidates per step grows with the square of the
-  number of inputs of a hole.
-- Noise levels other than 1%.
-- Holes that take the logarithm of a positive input, for inputs over many
-  decades, and then EmpiricalBench again.
-- PySR with tuned settings.
+See [NOTES.md](NOTES.md).
