@@ -65,6 +65,18 @@ SERIES = [
      lambda X: np.sqrt(X[:, 0] / X[:, 1])),
 ]
 
+# The examples of PySR's documentation ("Toy examples with code"): name, formula,
+# function, and how the documentation draws the data (normal inputs of that scale).
+PYSR_DOCS = [
+    ('simple', '2*cos(x4) + x1^2 - 2', lambda X: 2 * np.cos(X[:, 3]) + X[:, 0] ** 2 - 2,
+     dict(n=100, d=5, scale=2.0, noise=0.0)),
+    ('inverse', '1/x1', lambda X: 1 / X[:, 0], dict(n=100, d=5, scale=2.0, noise=0.0)),
+    ('selection', 'x4^2 - x20^2 + 1.5', lambda X: X[:, 3] ** 2 - X[:, 19] ** 2 + 1.5,
+     dict(n=300, d=30, scale=1.0, noise=0.0, select=5)),
+    ('denoising', 'exp(x1) + x2 + x3', lambda X: np.exp(X[:, 0]) + X[:, 1] + X[:, 2],
+     dict(n=100, d=5, scale=1.0, noise=0.1, denoise=True)),
+]
+
 
 def sample(target, n, rng, widen=0.0):
     """n inputs, uniform in the target's box. With widen > 0 the box is that
