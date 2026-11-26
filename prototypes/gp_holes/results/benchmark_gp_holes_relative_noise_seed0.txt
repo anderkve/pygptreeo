@@ -1,0 +1,87 @@
+
+toy:  x2*sin(2*x1) + 0.5*x3^2
+  seed 0: 1*x2*sin(2*x1) + 0.499*(x3^2) + 0.0019
+          holes 0, rmse in 0.0016 out 0.0027, 5 steps, 3868 fits, 157 s
+
+I.14.3:  x1*x2*x3
+  seed 0: 1*x3*x1*x2 + 0.00185
+          holes 0, rmse in 0.0007 out 0.0012, 3 steps, 3177 fits, 106 s
+
+I.12.2:  x1*x2/(4*pi*x3^2)
+  seed 0: 0.0796*(x1/x3^2)*x2 - 5.77e-05
+          holes 0, rmse in 0.0003 out 0.0005, 3 steps, 3757 fits, 130 s
+
+I.34.8:  x1*x2*x3/x4
+  seed 0: 1*(1/x4)*x2*x3*x1 + 0.00144
+          holes 0, rmse in 0.0002 out 0.0003, 4 steps, 5385 fits, 232 s
+
+I.13.4:  0.5*x1*(x2^2 + x3^2 + x4^2)
+  seed 0: 0.5*x1*(x4^2) + 0.501*x1*(x2^2) + 0.499*x1*(x3^2) + 0.0315
+          holes 0, rmse in 0.0014 out 0.0025, 6 steps, 8160 fits, 290 s
+
+I.24.6:  0.25*x1*(x2^2 + x3^2)*x4^2
+  seed 0: 0.249*x1*(x4^2)*(x3^2) + 0.25*x1*(x4^2)*(x2^2) + 0.231
+          holes 0, rmse in 0.0017 out 0.0044, 5 steps, 6366 fits, 240 s
+
+I.6.2:  exp(-(x1/x2)^2/2)/(sqrt(2*pi)*x2)
+  seed 0: 0.399*(exp(-0.5*(x1/x2)^2))*(1/x2) - 1.63e-06
+          holes 0, rmse in 0.0015 out 0.0016, 4 steps, 3218 fits, 97 s
+
+I.12.11:  x1*(x2 + x3*x4*sin(x5))
+  seed 0: 0.999*x1*(x3*x4)*sin(1*x5) + 1*x1*x2 - 0.00113
+          holes 0, rmse in 0.0012 out 0.0026, 7 steps, 7111 fits, 291 s
+
+I.37.4:  x1 + x2 + 2*sqrt(x1*x2)*cos(x3)
+  seed 0: 2*cos(1*x3)*(x1*x2)^0.5 + 1*(x1 + x2) - 0.000469
+          holes 0, rmse in 0.0025 out 0.0044, 6 steps, 4211 fits, 166 s
+
+I.40.1:  x1*exp(-x2*x3/x4)
+  seed 0: 1*(exp(-0.999/(x4/(x2*x3))))*x1 - 2.62e-05
+          holes 0, rmse in 0.0007 out 0.0007, 4 steps, 3527 fits, 141 s
+
+isothermal:  x1*x2*log(x3/x4)
+  seed 0: 0.999*x1*x2*(log(x3) - log(x4)) + 0.00122
+          holes 0, rmse in 0.0007 out 0.0015, 6 steps, 3687 fits, 127 s
+
+I.50.26:  x1*(cos(x2*x3) + x4*cos(x2*x3)^2)
+  seed 0: 0.499*x1*x4*(cos(2*(x2*x3))) + 0.5*x1*x4 + 0.997*x1*(cos(1*(x2*x3))) + 0.000335
+          holes 0, rmse in 0.0027 out 0.0030, 7 steps, 4633 fits, 127 s
+
+I.10.7:  x1/sqrt(1 - x2^2/x3^2)
+  seed 0: 1*x1*(1 - 1*(x2/x3)^2)^-0.5 - 0.000168
+          holes 0, rmse in 0.0004 out 0.0005, 3 steps, 3475 fits, 88 s
+
+I.30.5:  arcsin(x1/(x2*x3))
+  seed 0: 1/(1.01*(1/x1)*x2*x3 - 0.0689)
+          holes 0, rmse in 0.0050 out 0.2884, 4 steps, 3332 fits, 87 s
+
+I.8.14:  sqrt((x2 - x1)^2 + (x4 - x3)^2)
+  seed 0: sqrt(1*(x3 - x4)^2 + 0.998*(x1 - x2)^2 + 0.000712)
+          holes 0, rmse in 0.0020 out 0.0028, 6 steps, 8307 fits, 253 s
+
+I.18.4:  (x1*x3 + x2*x4)/(x1 + x2)
+  seed 0: (x3 - x4)*H(log(x1/x2)) + 0.999*x3 + 0.00259
+          holes 1, rmse in 0.0019 out 0.0093, 7 steps, 9796 fits, 397 s
+
+II.11.28:  1 + x1*x2/(1 - x1*x2/3)
+  seed 0: 0.987*(exp(0.899*(x1*x2))) + 0.0729*(x1*x2)^0.5 + 8.34e-07
+          holes 0, rmse in 0.0022 out 0.0212, 2 steps, 1656 fits, 61 s
+
+target       right holes other  seconds
+toy              1     0     0      157
+I.14.3           1     0     0      106
+I.12.2           1     0     0      130
+I.34.8           1     0     0      232
+I.13.4           1     0     0      290
+I.24.6           1     0     0      240
+I.6.2            1     0     0       97
+I.12.11          1     0     0      291
+I.37.4           1     0     0      166
+I.40.1           1     0     0      141
+isothermal       1     0     0      127
+I.50.26          1     0     0      127
+I.10.7           1     0     0       88
+I.30.5           0     0     1       87
+I.8.14           1     0     0      253
+I.18.4           0     1     0      397
+II.11.28         0     0     1       61

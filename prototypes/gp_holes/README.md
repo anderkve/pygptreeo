@@ -54,7 +54,7 @@ functions of one input:
 
 The library is `u^p`, `log(u)`, `exp(c·v)`, `(1 + c·v)^p` and `sin(a + b·u)`,
 with `v` one of `u`, `u²`, `1/u`. For an input that changes sign, `u^p` and
-`log(u)` are replaced by the powers 1, 2, 3, −1 and −2. A sine must show at
+`log(u)` are replaced by the powers 1, 2, 3, −1 and −2 and by `log|u|`. A sine must show at
 least half a period over the data. A polynomial `1 + c1·v + … + ck·v^k` with
 `k` from 2 to 4 can be added (`'poly'` in `CFG['library']`); it is not in the
 library by default.
@@ -66,10 +66,14 @@ minus 3 per symbolic function, minus 10 per exponent that is not a simple
 number (`NICE` in `gpholes.py`). Fitted exponents, coefficients of merged
 inputs and phases are rounded to simple values where that raises the score.
 
-With a function `g` around the expression, the inner expression is fitted to
-`g⁻¹(y)`, and the logarithm of the Jacobian of this transform is added to the
-score, as in a warped GP. Such a model has a noise term inside the function and
-one outside it, carried through the transform to first order.
+Every model has noise of the same size at every point and noise in
+proportion to the target, of at most 30%, whose variance at a point is in
+proportion to the square of the observed value there. With a function `g` around the expression,
+the inner expression is fitted to `g⁻¹(y)`, and the logarithm of the Jacobian
+of this transform is added to the score, as in a warped GP. The noise of the
+same size is then inside the function; outside it there is noise of the same
+size and noise in proportion to the target, carried through the transform to
+first order.
 
 Each step refines those of the 4 best models that have not been refined yet,
 and in the first 6 steps the best model of each outer function. Every candidate
@@ -309,6 +313,56 @@ Right: Hubble, Schechter, Bode, as `log(0.0154·exp(0.691·n) + 0.0208) + 2.96`
 inside the logarithm; Newton and Kepler have a further term at the level of
 the noise; Leavitt is still an exponential and Planck still a hole. Before
 the change: 2 of 9.
+
+## Relative noise, log|x|, and a second held-out sample
+
+The first SRSD sample showed two problems: for targets that change sign, a
+hole stayed beside the right formula, since the noise did not grow with the
+target, and `log|x|` was missing. The search got a noise term in proportion
+to the target, of at most 30%, and `log|x|` for inputs that change sign. A
+second sample of 15 SRSD equations, none used before, was drawn and fixed
+before the change (`make_srsd_sample.py --sample 2`), with the same data and
+rule (`run_held_out.py --set srsd2`).
+
+| Equation | Before | After | PySR | PySR front |
+|---|---|---|---|---|
+| i.12.5 `q·E` | 0 | 2 | 2 | 2 |
+| i.25.13 `q/C` | 0 | 2 | 2 | 2 |
+| i.34.14 `(1 + v/c)·ω0/√(1 − v²/c²)`, see below | 0 | 2 | 2 | 2 |
+| i.43.16 `μ·q·V/d` | 0 | 2 | 0 | 0 |
+| i.47.23 `√(γ·p/ρ)` | 2 | 2 | 2 | 2 |
+| ii.8.7 `3·q²/(20π·ε0·d)` | 1 | 2 | 0 | 2 |
+| ii.8.31 `ε0·E²/2` | 2 | 2 | 0 | 2 |
+| ii.11.3 `q·E/(m·(ω0² − ω²))` | 0 | 0 | 0 | 0 |
+| ii.38.3 `Y·A·x/d` | 0 | 2 | 0 | 2 |
+| iii.13.18 `2·E·d²·k/ħ` | 0 | 2 | 0 | 0 |
+| bonus.1 `(Z1·Z2·α·ħ·c/(4·E·sin²(θ/2)))²` | 1 | 0 | 0 | 0 |
+| bonus.7 `√(8π·G·ρ/3 − α·c²/d²)` | 0 | 2 | 0 | 0 |
+| bonus.14 `E·cos θ·(−r + d³·(α − 1)/(r²·(α + 2)))` | 0 | 0 | 0 | 0 |
+| bonus.19 `−(c⁴·k/r² + H²·c²·(1 − 2α))/(8π·G)` | 0 | 2 | 0 | 1 |
+| bonus.20 `(ω0/ω)²·(ω0/ω + ω/ω0 − sin²β)` times a constant | 0 | 0 | 0 | 0 |
+| Total of 30 | 6 | 22 | 8 | 17 |
+
+- "Before" is the search of the previous section. Its misses were mostly
+  the right formula with a hole beside it (i.12.5, i.25.13, i.43.16, ii.8.7).
+- By eye, 20 of the 22 right results of the search are the formula, at most
+  with a small constant added, e.g. `exp(2·log|q| − log(d) + 22.4)` for ii.8.7
+  and `√(−9e16·α/d² + 5.6e-10·ρ)` for bonus.7. The other 2 are the leading
+  terms of i.34.14 (next point). Of PySR's 8, 2 are the formula (i.47.23), 4
+  the formula with further small terms, and 2 approximations.
+- The benchmark's code computes i.34.14 as `(1 + v/ω0)·ω0/√(1 − v²/ω0²)`,
+  with ω0 in place of c. Both codes saw that function; the search returned its
+  leading terms, `ω0 + v`.
+- On ii.11.3, which has a pole within the data (ω0 = ω), one run returned
+  only a constant.
+
+**The first sample again**, on the five equations where a hole had stood
+beside the formula (i.12.4, i.14.4, ii.11.20, ii.34.29b, bonus.18): right in 9
+of 10 runs, against 1 of 10 before. This sample was used to find the change.
+
+**The original benchmark again**, seed 0: 14 of the 17 targets right, against
+15 before. I.18.4 and II.11.28 are missed; both have turned out right in some
+runs of nearly the same code and wrong in others.
 
 ## Limitations, issues and ideas
 

@@ -1,0 +1,197 @@
+
+i.12.5:  q2 * Ef   [100 points, 2 inputs]
+  seed 0: (1 - 0.0755*x2)^-0.5*H(x2*x1) + 1*(x2*x1) - 0.0531
+          relative error in 0.0067 out 0.007  58 s  
+          holes 1
+          next -0.3: (exp(0.0171*(x2^2)))*H(x2*x1) + 0.998*(x2*x1) - 0.00399
+          next -2.5: H(x2*x1) + 1*(x2*x1) - 0.0033
+  seed 1: x1*H(x2*x1) + 0.998*(x2*x1) + 0.00132
+          relative error in 0.0055 out 0.0061  36 s  
+          holes 1
+          next -7.9: x1*H(x2*x1) + 0.998*(x2*x1) + H(x2*x1) + 0.000669
+          next -8.0: x1*H(x2*x1) + 0.998*(x2*x1) - 0.0076*(cos(0.908*(x2*x1))) + 0.00662
+
+i.25.13:  q / C   [100 points, 2 inputs]
+  seed 0: 0.998*(1/x2)*x1 + (1/x2)*H(x1) - 5.22e-05
+          relative error in 0.0049 out 0.0051  32 s  
+          holes 1
+          next -4.9: 0.998*(1/x2)*x1 + (1/x2)*H(x1) + H(x1) - 2.56e-05
+          next -6.7: 0.998*(1/x2)*x1 + (1/x2)*H(x1) - 3.46e+06*(x1^3) - 7.6e-05
+  seed 1: sin(-0.817 + 2.05e+03*x1)*H(x1/x2) + 1.01*(x1/x2) - 0.0125
+          relative error in 0.0053 out 0.0059  66 s  
+          holes 1
+          next -5.1: sin(-0.797 + 2.03e+03*x1)*H(x1/x2) + 1.01*(x1/x2) - 1.84e-06*(x1/x2)^3 - 0.0133
+          next -5.6: sin(-0.786 + 1.88e+03*x1)*H(x1/x2) + 1.01*(x1/x2) - 0.0325*(sin(0.464*(x1/x2))) - 0.000515
+
+i.34.14:  (1 + v / 2.99792458e8) / sqrt(1 - v ** 2 / 2.99792458e8 ** 2) * omega_0   [100 points, 2 inputs]
+  seed 0: exp(log(x2)*H(x1) + 3.45e-09*x1 + 0.0274)
+          relative error in 0.0018 out 0.0029  52 s  
+          holes 1
+          next -1.2: exp(0.999*log(x2)*(1 + 1.1e-10*x1)^-1 + 2.73e-09*x1 + 0.0294)
+          next -1.7: exp(0.999*log(x2) + 2.49e-26*(x1^3) + 0.0302)
+  seed 1: exp(log(x2)*H(x1) + 5.13e-09*x1 + 5.99e-05)
+          relative error in 0.00086 out 0.0015  45 s  
+          holes 1
+          next -1.9: exp(1*log(x2)*(1 + 9.04e-11*x1)^-2 + 4.39e-09*x1 + 3.7e-05)
+          next -4.6: exp(log(x2)*H(x1) + 5.13e-09*x1 + H(x1) + 5.97e-05)
+
+i.43.16:  mu_drift * q * Volt / d   [100 points, 4 inputs]
+  seed 0: 1*(1/x4)*x3*x2*x1 + (1/x4)*x3*x2*H(x1) + 8.49e-17
+          relative error in 0.0071 out 0.0081  106 s  
+          holes 1
+          next -5.0: 1*(1/x4)*x2*x3*x1 + (1/x4)*x2*x3*H(x1) + H(x1) + 6.77e-17
+          next -5.6: 1*(1/x4)*x2*x3*x1 + (1/x4)*x2*x3*H(x1) + 3.99e-17*(1 + 2*x1)^-0.5 + 4.5e-17
+  seed 1: 0.998*x3*(x2/x4)*x1 + x3*(x2/x4)*H(x1) - 7.67e-17
+          relative error in 0.0072 out 0.0087  83 s  
+          holes 1
+          next -0.0: 0.998*(1/x4)*x3*x2*x1 + (1/x4)*x3*x2*H(x1) - 7.67e-17
+          next -4.9: 0.998*(1/x4)*x3*x2*x1 + (1/x4)*x3*x2*H(x1) + H(x1) - 7.57e-17
+
+i.47.23:  sqrt(gamma * pr / rho)   [100 points, 3 inputs]
+  seed 0: 1/(0.997*(1/x2^0.5)*(x3^0.5)*(1/x1^0.5) + 0.000689)
+          relative error in 0.0027 out 0.0027  RIGHT  131 s  
+          holes 0
+          next -0.4: 1*(x2/x3)^0.5*(x1^0.5) + 2.97e-09
+          next -0.4: 1*(x2^0.5)*(1/x3^0.5)*(x1^0.5) + 2.97e-09
+  seed 1: 1*(1/x3^0.5)*(x2^0.5)*(x1^0.5) - 6.98e-08
+          relative error in 0.00088 out 0.00088  RIGHT  134 s  
+          holes 0
+          next -0.0: 1*(x2/x3)^0.5*(x1^0.5) - 6.05e-08
+          next -2.2: (x2/x3)^0.5*H(x1) - 1.95e-08
+
+ii.8.7:  3 / 5 * q ** 2 / (4 * pi * 8.854e-12 * d)   [100 points, 2 inputs]
+  seed 0: 5.38e+09*(x1/x2)*x1 + (x1/x2)*H(x1) - 0.00808
+          relative error in 0.0073 out 0.0076  50 s  
+          holes 1
+          next -5.6: 5.38e+09*(x1/x2)*x1 - 0.00404*(1 - 2*x1)^-1 + (x1/x2)*H(x1) - 0.00404
+          next -6.8: 5.38e+09*(x1/x2)*x1 + 1.7e+17*(x1^2) + (x1/x2)*H(x1) - 0.0138
+  seed 1: 1/(1.86e-10*(1/x1^2)*x2 + 0.000184)
+          relative error in 0.0014 out 0.0015  RIGHT  48 s  
+          holes 0
+          next -3.0: 1/(1.86e-10*(1/x1^2)*(1 + 2*x2)^-1*x2 + 0.000184)
+          next -5.0: 1/(1.86e-10*(1/x1^2)*x2 + H(x2) + 9.97e-05)
+
+ii.8.31:  8.854e-12 * Ef ** 2 / 2   [100 points, 1 inputs]
+  seed 0: exp(2*log(x1) - 26.1)
+          relative error in 0.0011 out 0.0011  RIGHT  32 s  
+          holes 0
+          next -4.6: exp(2*log(x1) + H(x1) - 26.1)
+          next -4.8: exp(2*log(x1) - 10.6*(1/x1^3) - 26.1)
+  seed 1: exp(2*log(x1) - 26.1)
+          relative error in 0.0022 out 0.0022  RIGHT  30 s  
+          holes 0
+          next -4.6: exp(2*log(x1) + H(x1) - 26.1)
+          next -5.3: exp(2*log(x1) + 0.00157*(1/x1^0.5) - 26.1)
+
+ii.11.3:  q * Ef / (m * (omega_0 ** 2 - omega ** 2))   [100 points, 5 inputs]
+  seed 0: (x2^3)*(exp(-1.04e-19*(x4^2)))*(exp(-3.89e-20*(x5^2)))*H(x1) + 2.3e-12
+          relative error in 2.3 out 7.2  295 s  
+          holes 1
+          next -1.7: (x2^3)*(exp(-1.02e-19*(x4^2)))*(exp(-3.69e-20*(x5^2)))*sin(0.783 + 1.39e+27*x3)*H(x1) + 1.44e-13
+          next -2.3: (x2^3)*(exp(-1.04e-19*(x4^2)))*(exp(-3.89e-20*(x5^2)))*H(x1, x3) + 2.3e-12
+  seed 1: (1/x5^2)*(1 + 4.57e-21*(x4^2))^-4*(1 + 1.1e+27*x3)^-1*H((x1/x3^2)*x2, x2) + (x2^1.5)*sin(0.533 + 5.76e-11*x4)*x1*H(x3) + 8.55e-14
+          relative error in 1.5 out 3.1  439 s  
+          holes 2
+          next -3.0: (1/x5^2)*(1 + 4.56e-21*(x4^2))^-4*(1 + 1.1e+27*x3)^-1*H(((x1/x3^2)*x2 - 2*x2), x2) + (x2^1.5)*sin(0.533 + 5.76e-11*x4)*x1*H(x3) + 8.55e-14
+          next -3.8: (1/x5^2)*(1 + 4.75e-21*(x4^2))^-4*(1 + 1.23e+27*x3)^-1*H((x1/x3^2)*x2, x2) + (x2^1.5)*x1*H(x4*x3, x4) + 2.75e-14
+
+ii.38.3:  Y * A * x / d   [100 points, 4 inputs]
+  seed 0: 0.996*(1/x4)*x3*x1*x2 + (1/x4)*x3*x1*H(x2) - 8.3e-08
+          relative error in 0.007 out 0.0075  125 s  
+          holes 1
+          next -0.0: 0.996*(x3/x4)*x1*x2 + (x3/x4)*x1*H(x2) - 8.3e-08
+          next -8.0: -1.68e-07*x1 + 0.996*(1/x4)*x3*x1*x2 + (1/x4)*x3*x1*H(x2) + 2.28e-07
+  seed 1: x3*sin(0.347 + 506*x2)*H(x2*(x1/x4)) + 0.998*x3*(x2*(x1/x4)) + H(x2*(x1/x4)) - 4.23e-06
+          relative error in 0.0053 out 0.0065  155 s  
+          holes 2
+          next -1.0: x3*sin(-0.295 + 696*x2)*H(x2*(x1/x4)) + 0.998*x3*(x2*(x1/x4)) + x3*H(x2*(x1/x4)) + 2.02e-08
+          next -4.1: (1/x4)*x3*sin(0.922 + 2.05*x1)*H(x1*x2) + 0.992*(1/x4)*x3*(1 - 0.5*(x1*x2))^-0.5*(x1*x2) + 1.23e-07
+
+iii.13.18:  2 * E_n * d ** 2 * k / (6.626e-34 / (2 * pi))   [100 points, 3 inputs]
+  seed 0: 1.9e+34*(x1*x2^2)*x3 + (x1*x2^2)*H(x3) + (x1*x2^2)*H(x2) + 0.00067
+          relative error in 0.021 out 0.032  73 s  
+          holes 2
+          next -2.6: 1.9e+34*(x1*x2^2)*x3 + (x1*x2^2)*H(x3) + (x1*x2^2)*H(log(x2)) + 0.000248
+          next -2.7: (x1*x2^2)*(1 + 5.12e+09*x2)^-0.5*H(x3) + 1.9e+34*(x1*x2^2)*x3 - 2.19e+32*(x1*x2^2)*sin(2.08*x3)*x3 - 0.000622
+  seed 1: (x1*x2^2)*sin(5.94e+08*x2)*H(x3) + (x1*x2^2)*H(x3) - 0.000232
+          relative error in 0.0096 out 0.021  92 s  
+          holes 2
+          next -5.0: (x1*x2^2)*sin(5.94e+08*x2)*H(x3) + (x1*x2^2)*H(x3) + H(x2) - 0.000117
+          next -5.0: (x1*x2^2)*sin(5.94e+08*x2)*H(x3) + (x1*x2^2)*H(x3) + H(x3) - 0.000112
+
+bonus.1:  (Z_1 * Z_2 * alpha * 1.054571817e-34 * 2.99792458e8 / (4 * E_n * sin(theta / 2) ** 2)) ** 2   [100 points, 4 inputs]
+  seed 0: exp(-2*log(x3) + 2*log(x2) + 2*log(x1) - 3.97*log(x4) - 127*(1 - 0.0254*(x4^2))^0.0342 + 0.0724*log(x4)*(x4^1.5) + 1.77e-07)
+          relative error in 0.0027 out 0.0023  RIGHT  692 s  
+          holes 0
+          next -1.5: exp(-2*log(x3) + log(x2)*H(x1) + 2*log(x1) - 3.97*log(x4) - 127*(1 - 0.0254*(x4^2))^0.0342 + 0.0726*log(x4)*(x4^1.5) - 3.87e-08)
+          next -1.9: exp(-2*log(x3) + 1.99*log(x2)*(1 - 0.000644*x1)^-1 + 2*log(x1) - 3.97*log(x4) - 127*(1 - 0.0254*(x4^2))^0.0342 + 0.0726*log(x4)*(x4^1.5) - 6.18e-08)
+  seed 1: exp(-2*log(x3) + 520*(x2^0.00382)*(1 - 0.00128*log(x1))^-1 + 1.33*log(x1/x4^3) - 542*(1 - 0.159*x4)^0.00766 + H(x4) - 1.19e-07)
+          relative error in 0.003 out 0.0048  836 s  
+          holes 1
+          next -3.6: exp(log(x3)*H(log(x2)) + 349*(x2^0.00569)*(1 - 0.0019*log(x1))^-1 + 1.33*log(x1/x4^3) - 387*(1 - 0.159*x4)^0.0108 + H(x4) - 6.96e-08)
+          next -5.0: exp(-2*log(x3) + (x2^0.00378)*H(log(x1)) + 1.33*log(x1/x4^3) - 523*(1 - 0.159*x4)^0.00796 + H(x4) - 1.13e-07)
+
+bonus.7:  sqrt(8 * pi * 6.67430e-11 * rho / 3 - alpha * 2.99792458e8 ** 2 / d ** 2)   [100 points, 3 inputs]
+  seed 0: (x1 - 2*(x2/x3))*H(x1) + H(log(x1), x2/x3) + 8.46e-23
+          relative error in 0.0062 out 0.013  125 s  
+          holes 2
+          next -0.6: 1.51e+08*(x1 - 2*(x2/x3))*exp(-1.5e+25*x1) + H(log(x1), x2/x3) + 1.36e-22
+          next -0.7: 1.51e+08*(x1 - 2*(x2/x3))*(1 + 7.77e+24*x1)^-2 + H(log(x1), x2/x3) + 9.57e-23
+  seed 1: (x1^0.5)*H((x2/x3)/x1^0.5) - 3.01e+08*(x2/x3) + 1.55e-21
+          relative error in 0.0027 out 0.0051  149 s  
+          holes 1
+          next -5.0: (x1^0.5)*H((x2/x3)/x1^0.5) + 3.34e-06*(x1^0.5) - 2.99e+08*(x2/x3) + 1.45e-21
+          next -6.1: (x1^0.5)*H((x2/x3)/x1^0.5) - 4.51e-126*(exp(-2.86e+27*(x2/x3))) - 3.01e+08*(x2/x3) + 1.92e-21
+
+bonus.14:  Ef * cos(theta) * (-r + d ** 3 / r ** 2 * (alpha - 1) / (alpha + 2))   [100 points, 5 inputs]
+  seed 0: (x4^3)*(x1/x3^2)*sin(-1.64 + 1.04*x2)*H(x1, log(x5)) + 0.982*x1*x3*sin(-1.64 + 1.04*x2) - 0.203
+          relative error in 0.028 out 0.082  489 s  
+          holes 1
+          next -1.4: (x4^3)*(x1/x3^2)*sin(-1.63 + 1.04*x2)*H(log(x5)) + 0.981*x1*x3*sin(-1.63 + 1.04*x2) - 0.136
+          next -2.5: (x4^3)*(x1/x3^2)*sin(-1.63 + 1.04*x2)*H(log(x5)/x1, log(x5)) + 0.973*x1*x3*sin(-1.63 + 1.04*x2) + 0.0208
+  seed 1: (x4^1.5)*(1/x3^1.5)*log(x5)*H(x1, x2) + x1*sin(1.53 + 1.02*x2)*H(x3, x5) - 0.0282
+          relative error in 0.6 out 0.79  467 s  
+          holes 2
+          next -0.9: (x4^1.5)*(1/x3^1.5)*log(x5)*H(x1, x2) + x1*sin(1.53 + 1.02*x2)*H(x3) - 0.0946
+          next -0.9: (x4^1.5)*(1/x3^1.5)*log(x5)*H(x1, x2) + x1*sin(1.53 + 1.02*x2)*(1 - 0.00726*x5)^-1*H(x3) - 0.0737
+
+bonus.19:  -1 / (8 * pi * 6.67430e-11) * (2.99792458e8 ** 4 * k_f / r ** 2 + H_G ** 2 * 2.99792458e8 ** 2 * (1 - 2 * alpha))   [100 points, 4 inputs]
+  seed 0: -4.83e+42*(1/x2^2)*x1 + H(x4*x3^2) + (x3^2)*exp(-0.000959*x1)*H(x4) + (x3^2)*H(x4) - 2.07e+27
+          relative error in 0.0064 out 0.0081  501 s  
+          holes 3
+          next -0.0: -1.21e+42*(1 + 0.5*x2)^-2*x1 + H(x4*x3^2) + (x3^2)*exp(-0.000959*x1)*H(x4) + (x3^2)*H(x4) - 2.08e+27
+          next -1.2: -1.21e+42*(1 + 0.5*x2)^-2*x1 + H(x4*x3^2) + (x3^2)*(1 + 0.000414*x1)^-2*H(x4) + (x3^2)*H(x4) - 2.34e+27
+  seed 1: -4.8e+42*(1/x2^2)*x1 + (x3^2)*sin(-0.868 + 0.0193*x1)*H(x4) + (x3^2)*H(x4) - 3.15e+25
+          relative error in 0.0077 out 0.0075  464 s  
+          holes 2
+          next -1.5: -4.8e+42*(1/x2^2)*x1 + (x3^2)*sin(-0.869 + 0.0193*x1)*H(x4) + 1.06e+26*(x3^2)*x4 + (x3^2)*H(x4) - 3.26e+25
+          next -2.5: (1/x2^2)*x1*H(x3) + (x3^2)*sin(-0.969 + 0.0192*x1)*H(x4) + 1.07e+26*(x3^2)*x4 - 5.28e+25*(x3^2) - 1.13e+25
+
+bonus.20:  1 / (4 * pi) * 7.2973525693e-3 ** 2 * 6.626e-34 ** 2 / (9.10938356e-31 ** 2 * 2.99792458e8 ** 2) * (omega_0 / omega) ** 2 * (omega_0 / omega + omega / omega_0 - sin(beta) ** 2)   [100 points, 3 inputs]
+  seed 0: exp(cos(2*x3)*H(log(x1/x2)) + H(log(x1/x2)) - 50)
+          relative error in 0.0054 out 0.0067  172 s  
+          holes 2
+          next -0.8: exp(cos(2*x3)*H(log(x1/x2)) - 2.2*(1 + 0.5*(log(x1/x2)^2))^-0.5 + H(log(x1/x2)) - 0.00493)
+          next -2.1: exp(0.303*cos(2*x3)*(exp(-0.512*(log(x1/x2)^2))) + 0.0268*cos(2*x3) + H(log(x1/x2)) - 49.5)
+  seed 1: exp(0.301*sin(1.46 + 2.04*x3)*(exp(-0.506*(log(x1/x2)^2))) + 0.0231*cos(1.93*x3) + H(log(x1/x2)) - 48.6)
+          relative error in 0.0071 out 0.009  183 s  
+          holes 1
+          next -0.6: exp(0.318*sin(1.48 + 2.03*x3)*(exp(-0.414*(log(x1/x2)^2))) + H(log(x1/x2)) - 45.3)
+          next -2.9: exp(sin(1.47 + 2.03*x3)*H(log(x1/x2)) + H(log(x1/x2)) - 49.6)
+
+equation     right top 3
+i.12.5           0     0
+i.25.13          0     0
+i.34.14          0     2
+i.43.16          0     0
+i.47.23          2     2
+ii.8.7           1     1
+ii.8.31          2     2
+ii.11.3          0     0
+ii.38.3          0     0
+iii.13.18        0     0
+bonus.1          1     1
+bonus.7          0     0
+bonus.14         0     0
+bonus.19         0     0
+bonus.20         0     0

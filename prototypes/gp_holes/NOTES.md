@@ -52,18 +52,18 @@ hierarchy of holes:
   only when one factor is in the library. A logarithm around the whole
   expression (above) turns a product of positive functions into a sum.
 - **Inputs that change sign.** A fitted exponent is undefined for negative
-  numbers, so such inputs only get the integer powers 1, 2, 3, −1 and −2, and
-  the product and ratio with another input. They have no logarithm, so inside
-  an outer logarithm `log|x|` is missing: for `y = k·x²/2` with `x` of both
-  signs one version of the search returned a contrived formula in place of
-  `2·log|x|`.
-- **Relative noise.** The noise is the same at every point, apart from the
-  noise outside an outer function. With relative noise (1% in the SRSD
-  sample) a target of one sign does well with an outer logarithm. For a target
-  that changes sign a hole stays beside the right formula to take up the
-  difference (SRSD i.12.4, ii.11.20, ii.34.29b, bonus.18). A noise term in
-  proportion to `y²` fixes this in a test: on i.12.4 the formula alone then
-  scores 608, against 566 for formula and hole with the present noise.
+  numbers, so such inputs get the integer powers 1, 2, 3, −1 and −2, `log|x|`,
+  and the product and ratio with another input, but no fitted power `|x|^p`.
+- **Relative noise.** The variance of the relative noise at a point is in
+  proportion to the square of the observed value, not of the model's
+  prediction, which is close for small noise only. A constant can therefore
+  explain any data as relative noise of about 100%: on SRSD sample 2, i.43.16,
+  it scored 309 against 297 for a single hole, and the search stalled. The
+  relative noise is bounded at 30% for this reason; a variance from the
+  model's own prediction would not need the bound. Without the term, a hole
+  stayed beside the right formula for targets that change sign and have
+  relative noise (SRSD sample 1: i.12.4, ii.11.20, ii.34.29b, bonus.18); with
+  it, the formula alone scores higher on i.12.4 (608 against 603).
 - **Inputs over many decades.** A hole takes its inputs as they are
   (standardised), or the logarithm of a positive input. Inputs that change
   sign and span decades remain a poor fit for the GP.
@@ -98,8 +98,6 @@ hierarchy of holes:
 
 ## Ideas
 
-- A noise term in proportion to `y²` (see "Relative noise"), and `log|x|`
-  for inputs that change sign.
 - Models without the constant, for the evidence to decide.
 - Functions of holes in the interior by linearisation (see above).
 - A score for few points that integrates over the parameters in place of BIC.
@@ -114,6 +112,22 @@ hierarchy of holes:
 - A GP over expressions as a surrogate for an expensive score, with a distance
   between the functions two expressions can represent, not between their
   syntax. Only worth it when the score is expensive.
+
+## Questions to discuss
+
+- **The search.** It is greedy: a beam of the best models, refined step by
+  step, so it can stop at a form that is only locally best. Alternatives to
+  weigh: moves that make a part of a model a hole again (so that a step can be
+  undone), stochastic search over models (simulated annealing, MCMC),
+  sequential Monte Carlo over models with the data added in batches, a wider
+  beam with more diversity, and proposals from the posterior of a hole. A first
+  measurement: the score of the true formula against that of the returned one,
+  to tell failures of the search from failures of the score.
+- **Against handing the data to an AI agent.** What does the algorithmic way
+  give that asking an agent for the formula does not, and what must hold for
+  it to stay useful? Points raised: it should stay light enough to run inside
+  other computations, e.g. live during the calibration of a large model or a
+  simulation, or in continual learning.
 
 ## Tests still to do
 

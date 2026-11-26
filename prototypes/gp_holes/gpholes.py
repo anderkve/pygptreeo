@@ -21,7 +21,7 @@ CFG = dict(
     node_cost=3.0,      # cost in log evidence of each symbolic function in a model
     power_cost=10.0,    # ... and of each exponent that is not a simple number
     max_power=3,        # the largest integer power counted as simple
-    library=('pow', 'log', 'exp', 'aff', 'sin'),    # functions of one input; also 'poly'
+    library=('pow', 'log', 'logabs', 'exp', 'aff', 'sin'),     # functions of one input; also 'poly'
     outer=('log', 'exp', 'expneg', 'inv', 'square'),    # functions around the expression; also 'sqrt'
 )
 # Values a fitted parameter is rounded to if the evidence allows (see nice).
@@ -40,7 +40,9 @@ EXPONENT = {'pow': 0, 'mono': 0, 'aff': 1}      # which parameter of a node is a
 SCALED = {'lin': 0, 'exp': 0, 'aff': 0, 'sin': 1}   # ... and which multiplies the argument, as th/scale
 OUTER_TEXT = {'log': 'exp({m})', 'exp': 'log({m}) + {c}', 'expneg': '{c} - log({m})', 'inv': '1/({m})',
               'sqrt': '({m})^2', 'square': 'sqrt({m})'}
-LOG_BOUNDS = {'amp': (-7, 4), 'ls': (-3, 5), 'const': (-7, 4), 'noise': (-9, 1), 'outside': (-9, 1)}
+# The relative noise is at most 30%: with more, a constant explains any data as noise.
+LOG_BOUNDS = {'amp': (-7, 4), 'ls': (-3, 5), 'const': (-7, 4), 'noise': (-9, 1), 'outside': (-9, 1),
+              'relative': (-9, np.log(0.3))}
 
 
 def nice(node, k):
@@ -128,6 +130,8 @@ class Node:
             return np.sin(th[0] + th[1] / self.scale * u)
         if k == 'log':
             return np.log(u)
+        if k == 'logabs':
+            return np.log(np.abs(u))
         if k == 'poly':                 # 1 + th[0]*v + th[1]*v^2 + ..., v = u/scale
             v = u / self.scale
             return 1 + sum(c * v ** (i + 1) for i, c in enumerate(th))
@@ -184,6 +188,8 @@ class Node:
             return f"sin({p[0]} + {times(p[1])})"
         if k == 'log':
             return f"log({u})"
+        if k == 'logabs':
+            return f"log|{u}|"
         if k == 'poly':
             c = ['?' if (key and f) else num(v / self.scale ** (i + 1))
                  for i, (v, f) in enumerate(zip(self.th, self.free))]
@@ -259,16 +265,19 @@ class Term:
 
 
 class Model:
-    """A sum of terms and a constant. With warp set, the sum is the expression
-    inside that function (see warp), fitted to the transformed target: offset
-    is then the term that makes its score one of the target itself, warp_args
-    the scale of the transformed target and the constant of the function. Such
-    a model has two noise terms: one inside the function, and one outside it,
-    which in the transformed target has the variance w of each point."""
+    """A sum of terms and a constant, with noise of the same size at every
+    point and noise in proportion to the size of the target. With warp set,
+    the sum is the expression inside that function (see warp), fitted to the
+    transformed target: offset is then the term that makes its score one of the
+    target itself, warp_args the scale of the transformed target and the
+    constant of the function. The noise of the same size is then the noise
+    inside the function, and there is noise of the same size outside it as
+    well. The noise outside the function is carried through the transform."""
 
     def __init__(self, terms, const=-1.0, noise=-2.0):
         self.terms = terms
-        self.hyp = np.array([const, noise, -2.0])       # log const amplitude, log noise (inside, outside)
+        # log const amplitude, log noise: of the same size inside, outside, relative
+        self.hyp = np.array([const, noise, -2.0, -3.0])
         self.score = -np.inf
         self.warp, self.offset, self.warp_args, self.y_scale = None, 0.0, None, 1.0
 
@@ -300,14 +309,17 @@ class Model:
         out.append((self.hyp, 1, LOG_BOUNDS['noise'], 'noise', None, None))
         if self.warp:
             out.append((self.hyp, 2, LOG_BOUNDS['outside'], 'outside', None, None))
+        out.append((self.hyp, 3, LOG_BOUNDS['relative'], 'relative', None, None))
         return out
 
     def noise(self, n, w):
-        """The noise variance of each of n points."""
+        """The noise variance of each of n points. w has the variance at each
+        point of noise outside the function and of relative noise (see search)."""
         s2 = np.exp(2 * self.hyp[1:])
-        return s2[0] + 1e-8 + (s2[1] * w if self.warp else 0.0) * np.ones(n)
+        var = s2[0] + 1e-8 + s2[2] * w[1] * np.ones(n)
+        return var + s2[1] * w[0] if self.warp else var
 
-    def nll_grad(self, p, X, y, slots, w=None):
+    def nll_grad(self, p, X, y, slots, w):
         """Negative log evidence and its gradient at the parameters p."""
         for v, s in zip(p, slots):
             s[0][s[1]] = v
@@ -334,7 +346,9 @@ class Model:
                 elif tag == 'noise':
                     dK = 2 * s2 * np.eye(n)
                 elif tag == 'outside':
-                    dK = 2 * np.exp(2 * self.hyp[2]) * np.diag(w)
+                    dK = 2 * np.exp(2 * self.hyp[2]) * np.diag(w[0])
+                elif tag == 'relative':
+                    dK = 2 * np.exp(2 * self.hyp[3]) * np.diag(w[1])
                 else:                                   # a parameter of a symbolic node
                     v, eps = arr[idx], 1e-6 * max(1.0, abs(arr[idx]))
                     arr[idx] = v + eps
@@ -351,7 +365,9 @@ class Model:
         """Maximise the evidence over the free parameters. The score is the log
         evidence with a BIC penalty on the number of parameters and a cost for
         each symbolic function and each free exponent. score0 leaves out the
-        cost of the exponents, for models that have not been through snap."""
+        cost of the exponents, for models that have not been through snap.
+        Without w the relative noise follows y (see search)."""
+        w = w or (None, y ** 2)
         slots = self.slots()
         bounds = [s[2] for s in slots]
         p0 = np.clip([s[0][s[1]] for s in slots], [b[0] for b in bounds], [b[1] for b in bounds])
@@ -360,8 +376,9 @@ class Model:
             p = p0.copy()
             for q, s in enumerate(slots):
                 if s[3] != 'th':
-                    p[q] = rng.uniform(-3, -1) if s[3] in ('noise', 'outside') else rng.uniform(-1.5, 1.5)
-            starts.append(p)
+                    p[q] = (rng.uniform(-3, -1) if s[3] in ('noise', 'outside', 'relative')
+                            else rng.uniform(-1.5, 1.5))
+            starts.append(np.clip(p, [b[0] for b in bounds], [b[1] for b in bounds]))
         best = None
         for p in starts:
             r = minimize(self.nll_grad, p, args=(X, y, slots, w), jac=True, method='L-BFGS-B',
@@ -378,15 +395,17 @@ class Model:
 
     def condition(self, X, y, w=None):
         """Store what predict and text need."""
+        w = w or (None, y ** 2)
         self.X = X
-        K = sum(t.K(X, X, X) for t in self.terms) + np.exp(2 * self.hyp[0])
+        K = sum((t.K(X, X, X) for t in self.terms), np.full((len(X), len(X)), np.exp(2 * self.hyp[0])))
         self.alpha = np.linalg.solve(K + np.diag(self.noise(len(y), w)), y)
         return self
 
     def predict(self, Xs):
         """The target at Xs, in the units the search was given it in."""
         with np.errstate(all='ignore'):
-            Ks = sum(t.K(Xs, self.X, self.X) for t in self.terms) + np.exp(2 * self.hyp[0])
+            Ks = sum((t.K(Xs, self.X, self.X) for t in self.terms),
+                     np.full((len(Xs), len(self.X)), np.exp(2 * self.hyp[0])))
         z = Ks @ self.alpha
         if self.warp is None:
             return z
@@ -449,7 +468,7 @@ def library(f, X):
         inner.append(Node('pow', [f], [-1.0], [False]))
         out = [Node('pow', [f], [p]) for p in (1.0, -1.0)] + [Node('log', [f])]
     else:               # a fitted exponent needs a positive argument
-        out = [Node('pow', [f], [p], [False]) for p in (1.0, 2.0, 3.0, -1.0, -2.0)]
+        out = [Node('pow', [f], [p], [False]) for p in (1.0, 2.0, 3.0, -1.0, -2.0)] + [Node('logabs', [f])]
     for g in inner:
         v = g(X)
         size, top = size_of(v), np.abs(v).max()
@@ -616,19 +635,22 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, max_ste
     t0 = time.time()
     d = X.shape[1]
     # The target of each function around the expression, in units of its spread,
-    # and the variance there of noise outside the function, with mean 1.
-    targets, outer = {None: (y, None)}, []
+    # the variance there of noise outside the function (with mean 1), and that of
+    # noise of 100% of the target, so that the relative noise is in units of the target.
+    targets, outer = {None: (y, (None, y ** 2))}, []
     for name in CFG['outer']:
         warped = warp(name, y * y_scale)
         if warped is not None:
             z, jac, c = warped
             w = np.exp(2 * (jac - jac.max()))
-            targets[name] = (z / z.std(), w / w.mean())
+            with np.errstate(divide='ignore'):
+                rel = np.exp(2 * (np.log(np.abs(y * y_scale)) + jac)) / z.var()
+            targets[name] = (z / z.std(), (w / w.mean(), rel))
             outer.append((name, jac.sum() + len(y) * np.log(y_scale / z.std()) - CFG['node_cost'],
                           (z.std(), c)))
     root = Model([Term(feats=[var(j) for j in range(d)])])
     root.y_scale = y_scale
-    root.fit(X, y, restarts=6, rng=rng)
+    root.fit(X, *targets[None], restarts=6, rng=rng)
     seen = {root.key(): root}          # structure key -> fitted model
     tried, expanded, n_quick = {root.key()}, set(), {}
     best_of, stale = {}, 0             # the best score of each function around the expression

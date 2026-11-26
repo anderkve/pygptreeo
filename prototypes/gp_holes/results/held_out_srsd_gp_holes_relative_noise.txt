@@ -1,0 +1,67 @@
+
+i.12.4:  q1 * r / (4 * pi * 8.854e-12 * r ** 3)   [100 points, 2 inputs]
+  seed 0: 9e+09*(1/x2^2)*x1 + 1.59e+06
+          relative error in 0.0016 out 0.0016  RIGHT  31 s  
+          holes 0
+          next -0.0: 9e+09*(x1/x2^2) + 1.59e+06
+          next -2.7: (x1/x2^2)*H(x2) + 1.3e+06
+  seed 1: 8.99e+09*(x1/x2^2) - 3.25e+06
+          relative error in 0.00053 out 0.00044  RIGHT  37 s  
+          holes 0
+          next -0.0: 8.99e+09*(1/x2^2)*x1 - 3.25e+06
+          next -2.7: (x1/x2^2)*H(x2) - 3.9e+06
+
+i.14.4:  1 / 2 * k_spring * x ** 2   [100 points, 2 inputs]
+  seed 0: exp(2*log|x2| + 1*log(x1) - 0.691)
+          relative error in 0.0012 out 0.0018  RIGHT  72 s  
+          holes 0
+          next -3.9: exp(2*log|x2|*(1 - 1.56e-07*x1)^-1 + 1*log(x1) - 0.701)
+          next -4.0: exp(2*log|x2| + 1*log(x1) + H(x1) - 0.691)
+  seed 1: exp(2*log|x2| + 1*log(x1) - 0.69)
+          relative error in 0.00047 out 0.0007  RIGHT  78 s  
+          holes 0
+          next -4.6: exp(2*log|x2| + 1*log(x1) + H(x1) - 0.69)
+          next -5.0: exp(log|x2|*H(x1) + 0.999*log(x1) - 0.683)
+
+ii.11.20:  n_rho * p_d ** 2 * Ef / (3 * 1.380649e-23 * T)   [100 points, 4 inputs]
+  seed 0: 2.41e+22*(x2^2)*(1/x4)*x1*x3 + 47
+          relative error in 0.0026 out 0.0026  RIGHT  93 s  
+          holes 0
+          next -0.0: 2.41e+22*(x2^2)*(1/x4)*(x3*x1) + 47
+          next -0.0: 2.41e+22*(x2^2)*(x3/x4)*x1 + 47
+  seed 1: 2.41e+22*(x2^2)*(1/x4)*x1*x3 + 290
+          relative error in 0.012 out 0.011  102 s  
+          holes 0
+          next -0.0: 2.41e+22*(x2^2)*x1*(x3/x4) + 290
+          next -3.9: 2.4e+22*(x2^2)*(x3/x4)*(1 - 2.32e-27*x1)^-0.5*x1 + 303
+
+ii.34.29b:  g_ * 9.2740100783e-24 * B * Jz / (6.626e-34 / (2 * pi))   [100 points, 3 inputs]
+  seed 0: 8.8e+10*x3*(x2*x1) + 2.16e-19
+          relative error in 0.0012 out 0.001  RIGHT  40 s  
+          holes 0
+          next -0.0: 8.8e+10*(x3*x2)*x1 + 2.16e-19
+          next -0.0: 8.8e+10*x2*x3*x1 + 2.16e-19
+  seed 1: 8.8e+10*x3*x1*x2 + 1.51e-19
+          relative error in 0.00052 out 0.00038  RIGHT  43 s  
+          holes 0
+          next -0.0: 8.8e+10*(x3*x2)*x1 + 1.51e-19
+          next -0.0: 8.8e+10*(x3*x2)*x1 + 1.51e-19
+
+bonus.18:  3 / (8 * pi * 6.67430e-11) * (2.99792458e8 ** 2 * k_f / r ** 2 + H_G ** 2)   [100 points, 3 inputs]
+  seed 0: 1.61e+26*(1/x2^2)*x1 + 1.79e+09*(x3^2) - 1e+08
+          relative error in 0.00084 out 0.00067  RIGHT  92 s  
+          holes 0
+          next -0.0: 1.79e+09*(x3^2) + 1.61e+26*(x1/x2^2) - 1e+08
+          next -2.7: 1.61e+26*(1/x2^2)*x1 + (x3^2)*H(x1) - 9.72e+07
+  seed 1: 1.79e+09*(x3^2) + 1.61e+26*(x1/x2^2) - 2.81e+07
+          relative error in 0.00083 out 0.00087  RIGHT  70 s  
+          holes 0
+          next -0.0: 1.61e+26*(1/x2^2)*x1 + 1.79e+09*(x3^2) - 2.81e+07
+          next -3.0: (1/x2^2)*x1*H(x3) + 1.79e+09*(x3^2) - 1.23e+07
+
+equation     right top 3
+i.12.4           2     2
+i.14.4           2     2
+ii.11.20         1     1
+ii.34.29b        2     2
+bonus.18         2     2
