@@ -10,21 +10,34 @@ from gpholes import search
 from targets import TARGETS, sample
 
 
-def run(target, n, noise, seed, verbose, **kw):
+def data(target, n, noise, seed):
+    """Training inputs and targets, the scale of the targets, and two test
+    sets: inside the training box and outside it. All targets are in units of
+    the standard deviation of the noise-free training targets."""
     rng = np.random.default_rng(seed)
     X = sample(target, n, rng)
     f = target[2](X)
     ystd = f.std()
     y = f / ystd + noise * rng.standard_normal(n)
-    model, trace, info = search(X, y, seed=seed, verbose=verbose, **kw)
-    err = {}
+    tests = {}
     for name, widen in (('in', 0.0), ('out', 0.25)):
         Xs = sample(target, 2000, rng, widen)
         with np.errstate(all='ignore'):
             fs = target[2](Xs)
         ok = np.isfinite(fs)
-        err[name] = np.sqrt(np.mean((model.predict(Xs[ok]) - fs[ok] / ystd) ** 2))
-    return model.text(ystd), model.n_holes(), err, trace, info
+        tests[name] = (Xs[ok], fs[ok] / ystd)
+    return X, y, ystd, tests
+
+
+def errors(predict, tests):
+    """The rms error of a prediction function on each test set."""
+    return {name: np.sqrt(np.mean((predict(Xs) - fs) ** 2)) for name, (Xs, fs) in tests.items()}
+
+
+def run(target, n, noise, seed, verbose, **kw):
+    X, y, ystd, tests = data(target, n, noise, seed)
+    model, trace, info = search(X, y, seed=seed, verbose=verbose, **kw)
+    return model.text(ystd), model.n_holes(), errors(model.predict, tests), trace, info
 
 
 if __name__ == '__main__':

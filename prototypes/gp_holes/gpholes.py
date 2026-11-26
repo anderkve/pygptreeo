@@ -16,23 +16,35 @@ from scipy.linalg import cho_factor, cho_solve
 from scipy.optimize import minimize
 from threadpoolctl import threadpool_limits
 
-# Values a fitted parameter is rounded to if the evidence allows.
+CFG = dict(
+    kernel='matern52',  # kernel of the holes: 'rbf' or 'matern52'
+    node_cost=3.0,      # cost in log evidence of each symbolic function in a model
+    power_cost=10.0,    # ... and of each exponent that is not a simple number
+    max_power=3,        # the largest integer power counted as simple
+    library=('pow', 'log', 'exp', 'aff', 'sin'),    # functions of one input; also 'poly'
+)
+# Values a fitted parameter is rounded to if the evidence allows (see nice).
 NICE = {
-    'pow': [np.array([-3, -2, -1.5, -1, -0.5, 0.5, 1, 1.5, 2, 3])],
     'mono': [np.array([-3, -2, -1, -0.5, 0.5, 1, 2, 3])],
     'lin': [np.array([-2, -1, -0.5, 0.5, 1, 2])],
     'sin': [np.array([0, np.pi / 2]), None],
     'aff': [np.array([-2, -1, -0.5, 0.5, 1, 2]), np.array([-2, -1, -0.5, 0.5, 2])],
 }
 BOUNDS = {
-    'pow': [(-4, 4)], 'mono': [(-4, 4)], 'lin': [(-50, 50)], 'exp': [(-50, 50)],
+    'mono': [(-4, 4)], 'lin': [(-50, 50)], 'exp': [(-50, 50)],
     'aff': [(-50, 50), (-4, 4)], 'sin': [(-2, 2), (1e-3, 100)], 'log': [],
+    'poly': [(-50, 50)] * 8,
 }
-KERNEL = 'matern52'     # kernel of the holes: 'rbf' or 'matern52'
-NODE_COST = 3.0         # cost in log evidence of each symbolic function in a model
-POWER_COST = 10.0       # ... and of each exponent that is not one of the NICE values
 EXPONENT = {'pow': 0, 'mono': 0, 'aff': 1}      # which parameter of a node is an exponent
 LOG_BOUNDS = {'amp': (-7, 4), 'ls': (-3, 5), 'const': (-7, 4), 'noise': (-9, 1)}
+
+
+def nice(kind, k):
+    """The simple values of parameter k of a node, or None."""
+    if kind == 'pow':
+        ints = np.arange(1, CFG['max_power'] + 1)
+        return np.concatenate([-ints, ints, [-1.5, -0.5, 0.5, 1.5]])
+    return NICE[kind][k] if kind in NICE else None
 
 
 def num(v):
@@ -51,10 +63,12 @@ def wrap(s):
 class Node:
     """A symbolic function of the inputs, with parameters th."""
 
-    def __init__(self, kind, kids=(), th=(), free=None, j=None, bounds=None):
-        self.kind, self.kids, self.j = kind, list(kids), j
+    def __init__(self, kind, kids=(), th=(), free=None, j=None, bounds=None, scale=1.0):
+        self.kind, self.kids, self.j, self.scale = kind, list(kids), j, scale
         self.th = np.array(th, float)
         self.free = np.ones(len(self.th), bool) if free is None else np.array(free, bool)
+        if kind == 'pow':
+            bounds = [(-CFG['max_power'] - 1, CFG['max_power'] + 1)]
         self.bounds = bounds or BOUNDS.get(kind, [])
 
     def __call__(self, X):
@@ -76,6 +90,9 @@ class Node:
             return np.sin(th[0] + th[1] * u)
         if k == 'log':
             return np.log(u)
+        if k == 'poly':                 # 1 + th[0]*v + th[1]*v^2 + ..., v = u/scale
+            v = u / self.scale
+            return 1 + sum(c * v ** (i + 1) for i, c in enumerate(th))
 
     def walk(self):
         yield self
@@ -128,6 +145,11 @@ class Node:
             return f"sin({p[0]} + {times(p[1])})"
         if k == 'log':
             return f"log({u})"
+        if k == 'poly':
+            c = ['?' if (key and f) else num(v / self.scale ** (i + 1))
+                 for i, (v, f) in enumerate(zip(self.th, self.free))]
+            terms = [f"{c[0]}*{wrap(u)}"] + [f"{ci}*{wrap(u)}^{i + 2}" for i, ci in enumerate(c[1:])]
+            return '(' + ' + '.join(['1'] + terms).replace('+ -', '- ') + ')'
 
 
 def var(j):
@@ -187,7 +209,7 @@ class Term:
         dK = []
         if Za is not None:
             d2 = [(Za[:, None, j] - Zb[None, :, j]) ** 2 for j in range(Za.shape[1])]
-            if KERNEL == 'rbf':
+            if CFG['kernel'] == 'rbf':
                 k = g = np.exp(-0.5 * sum(d2))
             else:
                 r = np.sqrt(5 * sum(d2))
@@ -293,8 +315,8 @@ class Model:
             s[0][s[1]] = v
         self.logml, self.n_par = -best.fun, len(slots)
         self.score0 = (self.logml - 0.5 * self.n_par * np.log(len(y))
-                       - NODE_COST * self.n_nodes())
-        self.score = self.score0 - POWER_COST * self.n_free_powers()
+                       - CFG['node_cost'] * self.n_nodes())
+        self.score = self.score0 - CFG['power_cost'] * self.n_free_powers()
         return self
 
     def condition(self, X, y):
@@ -360,11 +382,14 @@ def library(f, X):
         v = g(X)
         out += [Node('exp', [g], [c / v.std()]) for c in (-1, 1)]
         out += [Node('aff', [g], [c / np.abs(v).max(), -1.0]) for c in (-0.5, 0.5)]
+        # Polynomials of degree 2 to 4 with constant term 1.
+        out += [Node('poly', [g], [c] + [0.0] * (deg - 1), scale=np.abs(v).max())
+                for deg in (2, 3, 4) for c in (-0.5, 0.5)]
     # A sine has to show at least half a period over the data.
     span = np.ptp(u)
     out += [Node('sin', [f], [0.0, 2 * np.pi * k / span], bounds=[(-2, 2), (np.pi / span, 100)])
             for k in (0.5, 1, 2, 4)]
-    return out
+    return [n for n in out if n.kind in CFG['library']]
 
 
 def pairings(a, b, X):
@@ -452,14 +477,14 @@ def snap(model, X, y):
         nodes = [n for t in model.terms for n in t.nodes()]
         for a, node in enumerate(nodes):
             for k in np.flatnonzero(node.free):
-                nice = NICE.get(node.kind, [None] * len(node.th))[k]
-                if nice is None:
+                values = nice(node.kind, k)
+                if values is None:
                     continue
                 trial = copy.deepcopy(model)
                 tn = [n for t in trial.terms for n in t.nodes()][a]
                 # A phase of -pi/2 is one of pi/2 with the sign of the weight changed.
                 v = abs(node.th[k]) if node.kind == 'sin' else node.th[k]
-                tn.th[k] = nice[np.argmin(np.abs(nice - v))]
+                tn.th[k] = values[np.argmin(np.abs(values - v))]
                 tn.free[k] = False
                 trial.fit(X, y, maxiter=100)
                 if trial.score > model.score:
@@ -470,10 +495,11 @@ def snap(model, X, y):
     return model
 
 
-def _init_worker(kernel, node_cost, power_cost):
+def _init_worker(cfg):
     # The matrices are small, so BLAS threads in each worker only compete.
-    global _limit, KERNEL, NODE_COST, POWER_COST
-    _limit, KERNEL, NODE_COST, POWER_COST = threadpool_limits(1), kernel, node_cost, power_cost
+    global _limit
+    _limit = threadpool_limits(1)
+    CFG.update(cfg)
 
 
 def _quick(args):
@@ -486,14 +512,13 @@ def _full(args):
     return snap(model.fit(X, y, maxiter=300), X, y)
 
 
-def search(X, y, beam=4, top_k=12, patience=3, max_steps=40, workers=4, seed=0,
-           kernel='matern52', node_cost=3.0, power_cost=10.0, verbose=True):
+def search(X, y, beam=4, top_k=12, patience=3, max_steps=40, workers=4, seed=0, verbose=True,
+           **cfg):
     """Beam search from a single hole, until the models in the beam have all
     been refined or the best score has not risen for `patience` steps. Returns
     the model with the best score, the trace of the best score and some
-    counts. y should be scaled to unit variance."""
-    global KERNEL, NODE_COST, POWER_COST
-    KERNEL, NODE_COST, POWER_COST = kernel, node_cost, power_cost
+    counts. y should be scaled to unit variance. cfg replaces entries of CFG."""
+    CFG.update(cfg)
     rng = np.random.default_rng(seed)
     t0 = time.time()
     d = X.shape[1]
@@ -504,7 +529,7 @@ def search(X, y, beam=4, top_k=12, patience=3, max_steps=40, workers=4, seed=0,
     trace, n_fits = [(root.score, root.key(), 'start')], 1
     say = print if verbose else (lambda *a: None)
     say(f"   0 {root.score:9.2f}  {root.key()}")
-    with Pool(workers, initializer=_init_worker, initargs=(kernel, node_cost, power_cost)) as pool:
+    with Pool(workers, initializer=_init_worker, initargs=(dict(CFG),)) as pool:
         for step in range(1, max_steps + 1):
             front = sorted(seen.values(), key=lambda m: -m.score)[:beam]
             todo = [m for m in front if m.key() not in expanded]

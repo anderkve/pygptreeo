@@ -1,10 +1,11 @@
-"""Target functions for the GP-hole prototype, mostly from the Feynman
-symbolic regression database. Each entry: name, formula as text, function of
-the input array, and the range of each input."""
+"""Target functions for the GP-hole prototype. Each entry: name, formula as
+text, function of the input array, and the range of each input."""
 import numpy as np
+from scipy.special import ellipk, erf, j0
 
 R15 = (1.0, 5.0)
 
+# Mostly from the Feynman symbolic regression database.
 TARGETS = [
     # Within the reach of the rewrite rules.
     ('toy', 'x2*sin(2*x1) + 0.5*x3^2',
@@ -43,6 +44,25 @@ TARGETS = [
      lambda X: (X[:, 0] * X[:, 2] + X[:, 1] * X[:, 3]) / (X[:, 0] + X[:, 1]), [R15] * 4),
     ('II.11.28', '1 + x1*x2/(1 - x1*x2/3)',
      lambda X: 1 + X[:, 0] * X[:, 1] / (1 - X[:, 0] * X[:, 1] / 3), [(0.2, 1.0)] * 2),
+]
+
+# Targets without a closed form. The further entries give the series: the
+# input it is in, the powers, their coefficients and the factor in front.
+SQPI = np.sqrt(np.pi)
+SERIES = [
+    ('erf', 'erf(x1) = 1.128*x1 - 0.376*x1^3 + 0.113*x1^5 - 0.0269*x1^7 + ...',
+     lambda X: erf(X[:, 0]), [(0.1, 1.5)],
+     0, [1, 3, 5, 7, 9], [2 / SQPI, -2 / (3 * SQPI), 2 / (10 * SQPI), -2 / (42 * SQPI), 2 / (216 * SQPI)],
+     lambda X: 1.0),
+    ('bessel', 'J0(x1) = 1 - x1^2/4 + x1^4/64 - x1^6/2304 + ...',
+     lambda X: j0(X[:, 0]), [(0.1, 2.5)],
+     0, [0, 2, 4, 6, 8], [1, -1 / 4, 1 / 64, -1 / 2304, 1 / 147456],
+     lambda X: 1.0),
+    ('pendulum', '4*sqrt(x1/x2)*K(sin(x3/2)) = 2*pi*sqrt(x1/x2)*(1 + x3^2/16 + 11*x3^4/3072 + ...)',
+     lambda X: 4 * np.sqrt(X[:, 0] / X[:, 1]) * ellipk(np.sin(X[:, 2] / 2) ** 2),
+     [R15, R15, (0.1, 2.0)],
+     2, [0, 2, 4, 6, 8], [2 * np.pi * c for c in (1, 1 / 16, 11 / 3072, 173 / 737280, 22931 / 1321205760)],
+     lambda X: np.sqrt(X[:, 0] / X[:, 1])),
 ]
 
 
