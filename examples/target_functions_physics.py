@@ -3,9 +3,10 @@
 Each target is cheap (closed form, a small quadrature or a 4 x 4 eigenproblem) but built
 to have the features that make the real computation hard to emulate: values over many
 orders of magnitude, kinematic thresholds, resonances on oblique lines of the parameter
-space, interference zeros, oscillations whose frequency depends on a parameter, ratios
-that are invariant along a direction, Monte Carlo noise, and a likelihood with nuisance
-parameters. The formulas are schematic: right in structure, not in normalisation.
+space, interference zeros, jumps where two mass eigenstates change places, oscillations
+whose frequency depends on a parameter, ratios that are invariant along a direction,
+Monte Carlo noise, and a likelihood with nuisance parameters. The formulas are
+schematic: right in structure, not in normalisation.
 
 Every target takes inputs in the unit cube, one row per point, and maps them to physical
 ranges (masses and energies logarithmically). ``TARGETS[name]`` is a :class:`Target`;
@@ -16,7 +17,7 @@ given as a logarithm, a fixed small number in the target's unit otherwise.
 """
 
 import numpy as np
-from scipy.special import roots_genlaguerre
+from scipy.special import roots_genlaguerre, roots_legendre
 
 SQRT_S = 13000.0                         # collider energy, GeV
 M_W, M_Z, M_TOP, M_B, M_TAU = 80.4, 91.19, 173.0, 4.2, 1.78
@@ -217,6 +218,14 @@ def relic_density(X):
 # --------------------------------------------------------------------------- #
 # 8. Mass spectrum from a mixing matrix
 # --------------------------------------------------------------------------- #
+def _neutralino_matrix(M1, M2, mu, tan_beta):
+    """One 4 x 4 mass matrix per point, in the basis (bino, wino, down higgsino, up higgsino)."""
+    beta = np.arctan(tan_beta); sw, cw = np.sqrt(SIN2_W), np.sqrt(1 - SIN2_W)
+    cb, sb = np.cos(beta), np.sin(beta); zero = np.zeros_like(M1)
+    a, b, c, d = -M_Z * sw * cb, M_Z * sw * sb, M_Z * cw * cb, -M_Z * cw * sb
+    return np.array([[M1, zero, a, b], [zero, M2, c, d], [a, c, zero, -mu], [b, d, -mu, zero]]).transpose(2, 0, 1)
+
+
 def neutralino_mass(X):
     """Mass of the lightest neutralino in GeV (4D).
 
@@ -226,10 +235,7 @@ def neutralino_mass(X):
     cross (rounded by the mixing) and no dependence on the others away from the crossings.
     """
     M1 = _log(X[:, 0], 50.0, 1000.0); M2 = _log(X[:, 1], 100.0, 1000.0); mu = _log(X[:, 2], 100.0, 1000.0)
-    beta = np.arctan(_lin(X[:, 3], 2.0, 50.0)); sw, cw = np.sqrt(SIN2_W), np.sqrt(1 - SIN2_W)
-    cb, sb = np.cos(beta), np.sin(beta); zero = np.zeros_like(M1)
-    a, b, c, d = -M_Z * sw * cb, M_Z * sw * sb, M_Z * cw * cb, -M_Z * cw * sb
-    matrix = np.array([[M1, zero, a, b], [zero, M2, c, d], [a, c, zero, -mu], [b, d, -mu, zero]]).transpose(2, 0, 1)
+    matrix = _neutralino_matrix(M1, M2, mu, _lin(X[:, 3], 2.0, 50.0))
     return np.abs(np.linalg.eigvalsh(matrix)).min(axis=1)
 
 
@@ -342,6 +348,97 @@ def global_fit_loglike(X):
 
 
 # --------------------------------------------------------------------------- #
+# 12. Chargino-neutralino production at next-to-leading order
+# --------------------------------------------------------------------------- #
+_COS, _COS_W = roots_legendre(16)                # scattering angle
+_LNS, _LNS_W = roots_genlaguerre(24, 0.5)        # 1.5 ln(s / threshold): the flux times the partonic rate falls as s^-1.5
+_LNS_W = _LNS_W * np.exp(_LNS) / np.sqrt(_LNS)   # weights of an integral over _LNS
+_XSEC_UNIT = 4.09                                # a wino-like pair of 500 GeV is then near its cross-section in pb
+
+
+def electroweakino_spectrum(X):
+    """The physical parameters that :func:`electroweakino_xsec` depends on, one row per point.
+
+    Columns: the mass of the lighter chargino, the mass of the second-lightest neutralino
+    with the sign of its eigenvalue, the squark mass and the gluino mass (GeV), and four
+    couplings: of the W to the pair, left- and right-handed, and of the pair to a quark
+    and an up or a down squark. The couplings have a common sign that is not physical;
+    here the left-handed W coupling is positive.
+    """
+    M1 = _log(X[:, 0], 50.0, 1500.0); M2 = _log(X[:, 1], 150.0, 1500.0); mu = _log(X[:, 2], 150.0, 1500.0)
+    tan_beta = _lin(X[:, 3], 2.0, 50.0); m_sq = _log(X[:, 4], 500.0, 5000.0); m_gl = _log(X[:, 5], 500.0, 5000.0)
+    rows = np.arange(len(X))
+    mass, vectors = np.linalg.eigh(_neutralino_matrix(M1, M2, mu, tan_beta))
+    second = np.argsort(np.abs(mass), axis=1)[:, 1]
+    m_n, n = mass[rows, second], vectors[rows, :, second]
+    # Charginos: U X V^T is diagonal, the lighter one last
+    beta = np.arctan(tan_beta); root2 = np.sqrt(2.0)
+    u, m_c, vh = np.linalg.svd(np.array([[M2, root2 * M_W * np.sin(beta)], [root2 * M_W * np.cos(beta), mu]]).transpose(2, 0, 1))
+    U, V, m_c = u[:, :, 1], vh[:, 1, :], m_c[:, 1]
+    tw = np.sqrt(SIN2_W / (1 - SIN2_W))
+    couplings = np.column_stack([n[:, 1] * V[:, 0] - n[:, 3] * V[:, 1] / root2,
+                                 n[:, 1] * U[:, 0] + n[:, 2] * U[:, 1] / root2,
+                                 V[:, 0] * (0.5 * n[:, 1] + tw / 6 * n[:, 0]),
+                                 U[:, 0] * (-0.5 * n[:, 1] + tw / 6 * n[:, 0])])
+    return np.column_stack([m_c, m_n, m_sq, m_gl, couplings * np.where(couplings[:, :1] < 0.0, -1.0, 1.0)])
+
+
+def _electroweakino_rates(P):
+    """The tree-level rate and the K-factor of each channel, for rows ``P`` as
+    :func:`electroweakino_spectrum` returns them: two arrays with the columns s-channel W,
+    squark exchange and their interference. A rate is a quadratic form in the couplings,
+    with coefficients that depend on the masses."""
+    m_c, m_n, m_sq, m_gl, w_left, w_right, g_up, g_down = (P[:, k, None, None] for k in range(8))
+    s0 = (m_c + np.abs(m_n)) ** 2
+    s = s0 * np.exp(_LNS[None, :, None] / 1.5)
+    momentum = np.sqrt((s - s0) * (s - (m_c - np.abs(m_n)) ** 2))
+    t = m_c ** 2 - 0.5 * (s + m_c ** 2 - m_n ** 2) + 0.5 * momentum * _COS
+    u = m_c ** 2 + m_n ** 2 - s - t
+    a, b, c = (u - m_c ** 2) * (u - m_n ** 2), (t - m_c ** 2) * (t - m_n ** 2), m_c * m_n * s
+    w = (w_left / (s - M_W ** 2), w_right / (s - M_W ** 2))
+    squark = (g_up / (u - m_sq ** 2), -g_down / (t - m_sq ** 2))
+    x = np.clip(np.sqrt(s[:, :, 0]) / SQRT_S, None, 1.0)
+    flux = (1.0 - x) ** 12 / x
+
+    def rate(p, q):
+        """The bilinear form of the amplitudes ``p`` and ``q``, integrated over the angle and the partonic energy."""
+        angle = ((a * p[0] * q[0] + b * p[1] * q[1] + c * (p[0] * q[1] + q[0] * p[1])) * _COS_W).sum(axis=2)
+        return (angle * momentum[:, :, 0] / s[:, :, 0] ** 2 * flux * _LNS_W).sum(axis=1)
+
+    rates = np.column_stack([rate(w, w), rate(squark, squark), 2 * rate(w, squark)])
+
+    # K-factors. That of the squark exchange also depends on the gluino mass, with a cusp where the two masses meet.
+    scale = 0.5 * (P[:, 0] + np.abs(P[:, 1])); ratio = (P[:, 3] / P[:, 2]) ** 2
+    alpha_s = 0.118 / (1.0 + 23.0 / (12 * np.pi) * 0.118 * np.log(scale ** 2 / M_Z ** 2))
+    k_w = 1.0 + alpha_s * (2.0 + 6.0 * scale / SQRT_S)
+    cusp = (1 - ratio) * np.log(np.abs(1 - ratio) + 1e-300) / (1 + ratio ** 2)
+    k_squark = k_w + alpha_s * (0.25 * np.log(ratio) + 0.6 * cusp)
+    return rates, np.column_stack([k_w, k_squark, (1.0 - 0.1 * alpha_s) * np.sqrt(k_w * k_squark)])
+
+
+def electroweakino_xsec(X):
+    """log10 of sigma(pp -> lighter chargino + second-lightest neutralino) at next-to-leading order (6D).
+
+    Inputs: M_1 (50 GeV to 1.5 TeV), M_2 and mu (150 GeV to 1.5 TeV), tan beta (2 to 50),
+    squark mass and gluino mass (0.5 to 5 TeV). The mixing matrices give the masses and
+    the couplings of the pair; the rate is that of an s-channel W and of squark exchange,
+    which interfere destructively, and each of the three has a K-factor of its own. A
+    quadratic form in the couplings with a parton flux that falls steeply with the masses
+    of the pair, a term that depends on the sign of the neutralino mass, valleys where the
+    two exchanges cancel, and jumps where two neutralinos with eigenvalues of opposite
+    sign change places in the order of the masses.
+    """
+    rates, k = _electroweakino_rates(electroweakino_spectrum(X))
+    return np.log10((k * rates).sum(axis=1)) + _XSEC_UNIT
+
+
+def electroweakino_xsec_lo(X):
+    """log10 of the tree-level cross-section of :func:`electroweakino_xsec`: its rates without the K-factors."""
+    rates, _ = _electroweakino_rates(electroweakino_spectrum(X))
+    return np.log10(rates.sum(axis=1)) + _XSEC_UNIT
+
+
+# --------------------------------------------------------------------------- #
 PRECISION = {"dex": 0.001 / np.log(10.0), "probability": 1e-4, "branching ratio": 1e-4, "GeV": 0.01, "signal strength": 1e-3,
              "log-likelihood": 1e-3}
 
@@ -374,6 +471,7 @@ TARGETS = {
     "eft_signal_strength": Target(eft_signal_strength, 6, "signal strength"),
     "signal_yield_mc": Target(signal_yield, 4, "dex", noisy=signal_yield_mc),
     "global_fit_loglike": Target(global_fit_loglike, 10, "log-likelihood"),
+    "electroweakino_xsec": Target(electroweakino_xsec, 6, "dex"),
 }
 
 

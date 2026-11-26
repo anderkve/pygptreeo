@@ -57,13 +57,13 @@ The scripts write their figures to the current directory, except
   - `make_stream(kind, target, d, N, rng)` generates the input streams
     `'uniform'`, `'focusing'`, `'sweeping'` and `'walker'`.
 
-- **`target_functions_physics.py`**: eleven cheap targets with the structure of
+- **`target_functions_physics.py`**: twelve cheap targets with the structure of
   quantities emulated in particle physics (`resonance_xsec`,
   `dilepton_spectrum`, `jet_spectrum`, `oscillation_probability`,
   `branching_ratio`, `loop_decay_width`, `relic_density`, `neutralino_mass`,
-  `eft_signal_strength`, `signal_yield_mc` with Monte Carlo noise, and
-  `global_fit_loglike`, a likelihood with nuisance parameters), in 4 to 10
-  inputs. They take one row per point:
+  `eft_signal_strength`, `signal_yield_mc` with Monte Carlo noise,
+  `global_fit_loglike`, a likelihood with nuisance parameters, and
+  `electroweakino_xsec`), in 4 to 10 inputs. They take one row per point:
 
   ```python
   from target_functions_physics import TARGETS
@@ -72,6 +72,10 @@ The scripts write their figures to the current directory, except
   truth = target(X)                        # noise-free values
   y, sigma, truth = target.sample(X, rng)  # observations and their declared sigma
   ```
+
+  For `electroweakino_xsec`, a next-to-leading-order cross-section, the file
+  also has the tree-level cross-section (`electroweakino_xsec_lo`) and the
+  physical masses and couplings of each point (`electroweakino_spectrum`).
 
 - **`target_functions_curves.py`**: twelve families of curves f(x; theta) with
   the structure of functions emulated in physics, as multi-output targets: the
