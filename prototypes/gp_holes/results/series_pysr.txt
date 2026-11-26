@@ -1,0 +1,53 @@
+
+erf:  erf(x1) = 1.128*x1 - 0.376*x1^3 + 0.113*x1^5 - 0.0269*x1^7 + ...
+  n 100 noise 0.1 seed 0: sin(sin(x0)) * 4.38338
+          rmse in 0.0151 out 0.1368, 61 s
+  n 100 noise 0.1 seed 1: ((cos((x0 * 61.159046) + sin(x0 * 79512.234)) * -0.018184032) - sin(x0)) * ((x0 * 0.5328205) + -4.556414)
+          rmse in 0.0591 out 0.2993, 60 s
+  n 100 noise 0.01 seed 0: sin(sin(sin(x0 / 1.632209)) * 1.8502344) * 3.8608875
+          rmse in 0.0012 out 0.0016, 60 s
+  n 100 noise 0.01 seed 1: (sin(sin(x0)) / 0.22357589) + ((sin(sin(exp(x0) + sin(x0)) / 0.004471848) + (sin(exp(sin(x0) + exp(x0))) + square(exp(x0)))) * 0.0042868815)
+          rmse in 0.0054 out 0.0594, 60 s
+  n 100 noise 0.001 seed 0: ((square(x0 * square(x0)) * 0.0073271375) + 4.3696365) * sin(sin(x0))
+          rmse in 0.0002 out 0.0062, 60 s
+  n 100 noise 0.001 seed 1: sin(sin(sin(x0 * 0.59919214)) * 1.8982912) * 3.962709
+          rmse in 0.0004 out 0.0064, 60 s
+
+bessel:  J0(x1) = 1 - x1^2/4 + x1^4/64 - x1^6/2304 + ...
+  n 100 noise 0.1 seed 0: (sin(cos(x0)) * 1.8364396) + 1.3047997
+          rmse in 0.0503 out 0.3677, 60 s
+  n 100 noise 0.1 seed 1: cos(x0 * 0.6677649) * 2.9866464
+          rmse in 0.0477 out 0.3334, 60 s
+  n 100 noise 0.01 seed 0: (cos(x0 * 0.85721046) + 0.47122616) * 1.9595684
+          rmse in 0.0013 out 0.0151, 60 s
+  n 100 noise 0.01 seed 1: ((cos(square(x0) * -0.12692866) + cos(x0 * 1.0044609)) / 0.6540354) * cos((cos(18.603481 / square(x0)) * cos(x0 * -17.768362)) * -0.13214289)
+          rmse in 0.0061 out 0.0587, 60 s
+  n 100 noise 0.001 seed 0: 2.8820882 - ((0.67621684 - (log(x0) * (x0 * 0.08430932))) * square(x0))
+          rmse in 0.0005 out 0.0298, 60 s
+  n 100 noise 0.001 seed 1: (cos((x0 * 0.8496638) + 0.0049723396) * 2.0909488) + 0.96091706
+          rmse in 0.0004 out 0.0089, 60 s
+
+pendulum:  4*sqrt(x1/x2)*K(sin(x3/2)) = 2*pi*sqrt(x1/x2)*(1 + x3^2/16 + 11*x3^4/3072 + ...)
+  n 100 noise 0.1 seed 0: sqrt(((((sin(exp(x0 + 8.344074)) * -0.08611716) + x0) * 0.7538) * (exp(x2) + 7.6584744)) / x1)
+          rmse in 0.0452 out 0.1656, 60 s
+  n 100 noise 0.1 seed 1: sqrt(x0 * ((exp(x2) + 7.1559734) / x1)) * 0.92388254
+          rmse in 0.0254 out 0.1388, 60 s
+  n 100 noise 0.01 seed 0: ((square(x2) + 11.831413) / sqrt(x1)) / sqrt((sin(square(x2) / 1.4374515) - -20.775436) / x0)
+          rmse in 0.0024 out 0.0589, 60 s
+  n 100 noise 0.01 seed 1: sqrt((x0 * (exp(x2 - -0.16324617) + (6.085504 - x2))) / x1)
+          rmse in 0.0025 out 0.0607, 60 s
+  n 100 noise 0.001 seed 0: sqrt((((exp((x2 + (x2 / (271.87003 / sin(exp(x2))))) - -0.08916432) + (x2 / -1.075999)) + 5.6267495) * x0) / x1)
+          rmse in 0.0008 out 0.0648, 60 s
+  n 100 noise 0.001 seed 1: sqrt(((cos(exp(x2)) * -0.060022507) + ((x2 * (log(square(x2)) + (exp(x2) * 2.4205914))) + 51.21447)) / ((x1 / x0) * 6.9795356))
+          rmse in 0.0005 out 0.0341, 60 s
+
+target           n  noise right
+erf            100    0.1     0
+erf            100   0.01     1
+erf            100  0.001     0
+bessel         100    0.1     0
+bessel         100   0.01     0
+bessel         100  0.001     0
+pendulum       100    0.1     0
+pendulum       100   0.01     0
+pendulum       100  0.001     0

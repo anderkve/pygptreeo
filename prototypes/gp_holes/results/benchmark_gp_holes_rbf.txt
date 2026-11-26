@@ -1,0 +1,136 @@
+
+toy:  x2*sin(2*x1) + 0.5*x3^2
+  seed 0: 0.499*(x3^2) + 1*x2*sin(2*x1) + 0.00193
+          holes 0, rmse in 0.0016 out 0.0027, 6 steps, 3731 fits, 101 s
+  seed 1: 0.5*(x3^2) + 1*x2*sin(2*x1) + 0.000118
+          holes 0, rmse in 0.0003 out 0.0003, 5 steps, 2975 fits, 71 s
+  seed 2: 0.499*(x3^2) + 1*sin(2*x1)*x2 + 0.00196
+          holes 0, rmse in 0.0014 out 0.0028, 5 steps, 2733 fits, 67 s
+
+I.14.3:  x1*x2*x3
+  seed 0: 1*x3*x2*x1 + 0.000988
+          holes 0, rmse in 0.0006 out 0.0010, 3 steps, 956 fits, 22 s
+  seed 1: 1*x2*x1*x3 - 0.00224
+          holes 0, rmse in 0.0004 out 0.0006, 3 steps, 958 fits, 23 s
+  seed 2: 0.999*x3*(x1*x2) + 0.0142
+          holes 0, rmse in 0.0006 out 0.0013, 3 steps, 955 fits, 20 s
+
+I.12.2:  x1*x2/(4*pi*x3^2)
+  seed 0: 0.0796*(1/x3^2)*x1*x2 - 5.75e-05
+          holes 0, rmse in 0.0003 out 0.0005, 3 steps, 1047 fits, 31 s
+  seed 1: 0.0795*(1/x3^2)*x2*x1 + 5.37e-05
+          holes 0, rmse in 0.0005 out 0.0022, 3 steps, 1049 fits, 24 s
+  seed 2: 0.0796*(1/x3^2)*x1*x2 + 8.02e-06
+          holes 0, rmse in 0.0006 out 0.0021, 3 steps, 1049 fits, 26 s
+
+I.34.8:  x1*x2*x3/x4
+  seed 0: 1*(x2/x4)*x3*x1 + 0.00144
+          holes 0, rmse in 0.0002 out 0.0003, 4 steps, 1845 fits, 47 s
+  seed 1: 0.999*(1/x4)*x3*x2*x1 + 0.0188
+          holes 0, rmse in 0.0013 out 0.0018, 4 steps, 1844 fits, 51 s
+  seed 2: 1*(x3/x4)*x1*x2 - 0.00251
+          holes 0, rmse in 0.0005 out 0.0008, 4 steps, 1679 fits, 42 s
+
+I.13.4:  0.5*x1*(x2^2 + x3^2 + x4^2)
+  seed 0: 0.5*x1*(x4^2) + 0.501*x1*(x2^2) + 0.499*x1*(x3^2) + 0.0316
+          holes 0, rmse in 0.0014 out 0.0025, 7 steps, 4972 fits, 121 s
+  seed 1: 0.5*x1*(x4^2) + 0.499*x1*(x3^2) + 0.501*x1*(x2^2) + 0.0146
+          holes 0, rmse in 0.0015 out 0.0023, 7 steps, 5067 fits, 134 s
+  seed 2: 0.499*x1*(x3^2) + 0.5*x1*(x2^2) + 0.501*x1*(x4^2) - 0.00567
+          holes 0, rmse in 0.0011 out 0.0019, 7 steps, 4711 fits, 112 s
+
+I.24.6:  0.25*x1*(x2^2 + x3^2)*x4^2
+  seed 0: 0.25*(x4^2)*x1*(x2^2) + 0.249*(x4^2)*x1*(x3^2) + 0.231
+          holes 0, rmse in 0.0017 out 0.0044, 5 steps, 2839 fits, 69 s
+  seed 1: 0.25*(x4^2)*x1*(x2^2) + 0.25*(x4^2)*x1*(x3^2) + 0.142
+          holes 0, rmse in 0.0011 out 0.0015, 5 steps, 3229 fits, 78 s
+  seed 2: 0.25*(x1*x4^2)*(x3^2) + 0.25*(x1*x4^2)*(x2^2) - 0.0431
+          holes 0, rmse in 0.0008 out 0.0016, 4 steps, 2723 fits, 64 s
+
+I.6.2:  exp(-(x1/x2)^2/2)/(sqrt(2*pi)*x2)
+  seed 0: (1/x1)*H(x1/x2) - 3.25e-07
+          holes 1, rmse in 0.0022 out 0.0349, 2 steps, 850 fits, 19 s
+  seed 1: 0.399*(1/x2)*(exp(-0.501*(x1/x2)^2)) + 2.23e-06
+          holes 0, rmse in 0.0025 out 0.0029, 4 steps, 1291 fits, 21 s
+  seed 2: 0.399*(1/x2)*(exp(-0.5*(x1/x2)^2)) - 3.49e-07
+          holes 0, rmse in 0.0013 out 0.0013, 4 steps, 1069 fits, 22 s
+
+I.12.11:  x1*(x2 + x3*x4*sin(x5))
+  seed 0: 0.999*x1*(x3*x4)*sin(1*x5) + 1*x1*x2 - 0.0027
+          holes 0, rmse in 0.0012 out 0.0026, 7 steps, 5951 fits, 175 s
+  seed 1: 1*x1*(x3*x4)*sin(1*x5) + 0.999*x1*x2 + 0.00297
+          holes 0, rmse in 0.0022 out 0.0030, 7 steps, 5805 fits, 172 s
+  seed 2: 1*x1*(x3*x4)*sin(1*x5) + 1*x1*x2 + 0.000643
+          holes 0, rmse in 0.0022 out 0.0049, 7 steps, 6503 fits, 170 s
+
+I.37.4:  x1 + x2 + 2*sqrt(x1*x2)*cos(x3)
+  seed 0: 2*cos(1*x3)*(x1*x2)^0.5 + 1*(x1 + x2) - 0.000462
+          holes 0, rmse in 0.0025 out 0.0044, 6 steps, 2715 fits, 74 s
+  seed 1: 2*cos(1*x3)*(x1*x2)^0.5 + 1*(x1 + x2) - 0.00101
+          holes 0, rmse in 0.0005 out 0.0006, 5 steps, 2518 fits, 71 s
+  seed 2: 2*cos(1*x3)*(x1*x2)^0.5 + 1*(x1 + x2) - 7.75e-05
+          holes 0, rmse in 0.0023 out 0.0036, 6 steps, 3187 fits, 88 s
+
+I.40.1:  x1*exp(-x2*x3/x4)
+  seed 0: 1*x1*(exp(-1/(x4/(x2*x3)))) + 1.08e-05
+          holes 0, rmse in 0.0005 out 0.0007, 6 steps, 2290 fits, 62 s
+  seed 1: 1*x1*(exp(-0.999/(x4/(x2*x3)))) + 0.000232
+          holes 0, rmse in 0.0013 out 0.0012, 4 steps, 2114 fits, 57 s
+  seed 2: 1*x1*(exp(-1/(x4/(x2*x3)))) - 7.21e-05
+          holes 0, rmse in 0.0022 out 0.0051, 4 steps, 2105 fits, 60 s
+
+isothermal:  x1*x2*log(x3/x4)
+  seed 0: -1*x2*x1*log(x4) + 0.999*x2*x1*log(x3) + 0.00495
+          holes 0, rmse in 0.0008 out 0.0016, 5 steps, 3646 fits, 82 s
+  seed 1: 0.999*x1*x2*log(x3) - 0.999*x1*x2*log(x4) + 0.00963
+          holes 0, rmse in 0.0016 out 0.0025, 5 steps, 3373 fits, 81 s
+  seed 2: 1*x1*x2*log(x3/x4) - 0.00199
+          holes 0, rmse in 0.0007 out 0.0013, 4 steps, 2833 fits, 74 s
+
+I.50.26:  x1*(cos(x2*x3) + x4*cos(x2*x3)^2)
+  seed 0: 0.499*x1*x4*(cos(2*(x2*x3))) + 0.5*x1*x4 + 0.997*x1*(cos(1*(x2*x3))) + 0.000348
+          holes 0, rmse in 0.0027 out 0.0030, 7 steps, 4369 fits, 104 s
+  seed 1: 0.5*x1*x4*(cos(2*(x2*x3))) + 0.5*x1*x4 + 0.998*x1*(cos(1*(x2*x3))) + 0.000396
+          holes 0, rmse in 0.0029 out 0.0031, 7 steps, 3853 fits, 92 s
+  seed 2: 0.499*x1*x4*(cos(2*(x2*x3))) + 0.5*x1*x4 + 1*x1*(cos(1*(x2*x3))) - 0.000762
+          holes 0, rmse in 0.0024 out 0.0028, 7 steps, 3643 fits, 92 s
+
+I.10.7:  x1/sqrt(1 - x2^2/x3^2)
+  seed 0: 1*(1 - 1*(x2/x3)^2)^-0.5*x1 - 0.000168
+          holes 0, rmse in 0.0004 out 0.0005, 3 steps, 1381 fits, 32 s
+  seed 1: 1*(1 - 1*(x2/x3)^2)^-0.5*x1 + 0.00011
+          holes 0, rmse in 0.0000 out 0.0001, 3 steps, 1326 fits, 34 s
+  seed 2: 1*(1 - 1*(x2/x3)^2)^-0.5*x1 - 1.07e-05
+          holes 0, rmse in 0.0005 out 0.0007, 3 steps, 1260 fits, 28 s
+
+I.30.5:  arcsin(x1/(x2*x3))
+  seed 0: 0.993*(exp(0.0709*(x1/x3)/x2))*(x1/x3)/x2 + 1.03e-05
+          holes 0, rmse in 0.0050 out 0.2886, 4 steps, 1539 fits, 42 s
+  seed 1: H((x1/x2)/x3) + 6.61e-08
+          holes 1, rmse in 0.0017 out 0.1285, 3 steps, 1650 fits, 40 s
+  seed 2: (1/x3)*H(x1/x2) + H(x1/x2) - 4.55e-06
+          holes 2, rmse in 0.0048 out 0.2544, 2 steps, 1010 fits, 25 s
+
+I.8.14:  sqrt((x2 - x1)^2 + (x4 - x3)^2)
+  seed 0: -6.04*(1 + 0.024*(x1 - x2)^2)^-2*(exp(-0.0402*(x3 - x4)^2)) + (1 + 0.5*(x1 - x2)^2)^-2*H((x3 - x4)) + 7.11
+          holes 1, rmse in 0.0227 out 0.0881, 7 steps, 3498 fits, 111 s
+  seed 1: H((x3 - x4), (x1 - x2)) - 0.597*(1 + 1*(x1 - x2)^2)^-2*(exp(-1.77*(x3 - x4)^2)) + 4.9
+          holes 1, rmse in 0.0218 out 0.1803, 6 steps, 3448 fits, 102 s
+  seed 2: -0.407*(exp(-2.51*(x1 - x2)^2))*(1 + 2*(x3 - x4)^2)^-2 - 0.848*(exp(-0.393*(x1 - x2)^2))*(exp(-0.389*(x3 - x4)^2)) + (exp(-0.032*(x1 - x2)^2))*H((x3 - x4)) + 7.87
+          holes 1, rmse in 0.0086 out 0.0379, 9 steps, 5049 fits, 149 s
+
+I.18.4:  (x1*x3 + x2*x4)/(x1 + x2)
+  seed 0: 0.999*(x3 - x4)*(1 + 1/(x1/x2))^-1 + 1*x4 + 0.00156
+          holes 0, rmse in 0.0007 out 0.0010, 8 steps, 5076 fits, 143 s
+  seed 1: 1*(x3 - x4)*(1 + 1/(x1/x2))^-1 + 1*x4 + 0.00019
+          holes 0, rmse in 0.0014 out 0.0017, 8 steps, 5168 fits, 135 s
+  seed 2: -0.462*(exp(-0.211*(x1/x2)))*(x3 - x4)*exp(-0.0001*x3) - 0.506*(exp(-1.39*(x1/x2)))*(x3 - x4) + 1*x3 - 0.000135
+          holes 0, rmse in 0.0027 out 0.0145, 6 steps, 3730 fits, 126 s
+
+II.11.28:  1 + x1*x2/(1 - x1*x2/3)
+  seed 0: 2.96*(1 - 0.337*(x1*x2))^-1 - 1.96
+          holes 0, rmse in 0.0018 out 0.0067, 3 steps, 739 fits, 18 s
+  seed 1: 1.25*(exp(0.781*(x1*x2))) - 0.251
+          holes 0, rmse in 0.0048 out 0.0821, 3 steps, 754 fits, 18 s
+  seed 2: 2.16*(1 - 0.231*(x1*x2))^-2 - 1.16
+          holes 0, rmse in 0.0029 out 0.0361, 2 steps, 754 fits, 18 s

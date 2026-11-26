@@ -21,6 +21,8 @@ threadpoolctl.
   form.
 - `compare_pysr.py`: [PySR](https://github.com/MilesCranmer/PySR) on the same
   data (needs `pip install pysr`).
+- `make_plots.py`: figures of the results, drawn into `plots/` from the logs
+  of the runs in `results/` (needs matplotlib).
 
 ```bash
 python run_benchmark.py --seeds 3            # all targets
@@ -28,6 +30,7 @@ python run_benchmark.py --only I.6.2 --verbose
 python run_growth.py --target toy
 python run_series.py
 python compare_pysr.py --seconds 60
+python make_plots.py
 ```
 
 ## Rewrite rules

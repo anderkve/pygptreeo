@@ -1,0 +1,37 @@
+toy:  x2*sin(2*x1) + 0.5*x3^2
+  n   10 seed 0: -0.00594*sin(1.44*x1)*x2*sin(3.02*x3) + 1.01*sin(2*x1)*x2*(1 + 0.00829*x3)^-1 + 0.501*(x3^2)*(1 - 0.00269*x2)^-1 - 0.00963
+          holes 0, rmse in 0.0073 out 0.0133, 16 s
+  n   10 seed 1: (1 - 0.193*x2)^-0.5*H(x1, x3) + 3.48e-06
+          holes 1, rmse in 0.4135 out 1.1215, 3 s
+  n   10 seed 2: 0.981*x2*sin(-0.244 + 2.15*x1)*(1 + 0.0479*x3)^-1 + 0.0105*(x3^2)*sin(-2 + 5.23*x1) + 0.556*(x3^2)*(1 + 0.0507*(x1^2))^-1 - 0.000298
+          holes 0, rmse in 0.0827 out 0.2685, 19 s
+  n   15 seed 0: 0.502*(x3^2) + 0.996*x2*sin(2*x1) - 0.00021
+          holes 0, rmse in 0.0051 out 0.0075, 14 s
+  n   15 seed 1: 1*x2*sin(2*x1) + 0.497*(x3^2) + 0.0145
+          holes 0, rmse in 0.0051 out 0.0085, 16 s
+  n   15 seed 2: 1*x2*sin(2*x1) + 0.502*(x3^2) + 8.43e-05
+          holes 0, rmse in 0.0051 out 0.0092, 16 s
+  n   25 seed 0: 0.501*(x3^2) + 1.01*sin(2*x1)*x2 + 1.21e-05
+          holes 0, rmse in 0.0050 out 0.0058, 14 s
+  n   25 seed 1: 1*sin(2*x1)*x2 + 0.501*(x3^2) - 0.004
+          holes 0, rmse in 0.0029 out 0.0048, 19 s
+  n   25 seed 2: 0.998*x2*sin(2*x1) + 0.499*(x3^2) + 0.00011
+          holes 0, rmse in 0.0023 out 0.0039, 17 s
+  n   40 seed 0: 0.5*(x3^2) + 1*sin(2*x1)*x2 - 0.000267
+          holes 0, rmse in 0.0015 out 0.0026, 17 s
+  n   40 seed 1: 1*x2*sin(2*x1) + 0.499*(x3^2) + 0.000238
+          holes 0, rmse in 0.0038 out 0.0050, 20 s
+  n   40 seed 2: 0.5*(x3^2) + 1*x2*sin(2*x1) - 0.000411
+          holes 0, rmse in 0.0004 out 0.0007, 19 s
+  n   60 seed 0: 1*x2*sin(2*x1) + 0.499*(x3^2) + 0.000213
+          holes 0, rmse in 0.0016 out 0.0026, 24 s
+  n   60 seed 1: 0.997*x2*sin(2*x1) + 0.499*(x3^2) - 0.000263
+          holes 0, rmse in 0.0034 out 0.0039, 23 s
+  n   60 seed 2: 0.5*(x3^2) + 0.998*x2*sin(2*x1) + 0.000408
+          holes 0, rmse in 0.0035 out 0.0051, 24 s
+  n  100 seed 0: 1*x2*sin(2*x1) + 0.499*(x3^2) + 0.00124
+          holes 0, rmse in 0.0016 out 0.0025, 41 s
+  n  100 seed 1: 1*x2*sin(2*x1) + 0.5*(x3^2) + 0.000118
+          holes 0, rmse in 0.0003 out 0.0003, 44 s
+  n  100 seed 2: 1*x2*sin(2*x1) + 0.499*(x3^2) + 0.00243
+          holes 0, rmse in 0.0015 out 0.0029, 48 s

@@ -1,0 +1,155 @@
+
+toy:  x2*sin(2*x1) + 0.5*x3^2
+  n 100 noise 0.01 seed 0: (square(x2) * 0.2515866) + ((x1 * -0.50414723) * sin(x0 * -2.0004778))
+          rmse in 0.0016 out 0.0022, 60 s
+  n 100 noise 0.01 seed 1: (((x1 * 1.0345945) * cos(x0)) * sin(x0)) + square(x2 * 0.5084997)
+          rmse in 0.0003 out 0.0003, 60 s
+  n 100 noise 0.01 seed 2: (square(x2) * 0.2713048) + (sin(x0) * (cos(x0) * (x1 / 0.9207217)))
+          rmse in 0.0007 out 0.0009, 60 s
+
+I.14.3:  x1*x2*x3
+  n 100 noise 0.01 seed 0: ((sin(x1 * cos(x1)) * 0.0017125413) + ((((exp(cos(square(x1))) * 0.039176784) * cos(x2 / cos(1.0126468 - x0))) - (x1 * x0)) * -0.04825321)) * x2
+          rmse in 0.0064 out 0.0093, 60 s
+  n 100 noise 0.01 seed 1: (x0 / (18.741585 / x2)) * x1
+          rmse in 0.0003 out 0.0005, 60 s
+  n 100 noise 0.01 seed 2: (x0 * (x1 * ((0.011559994 * cos(sin(x1) * x0)) - x2))) * -0.052424505
+          rmse in 0.0039 out 0.0056, 60 s
+
+I.12.2:  x1*x2/(4*pi*x3^2)
+  n 100 noise 0.01 seed 0: ((x0 / square(x2)) * 0.30238244) * x1
+          rmse in 0.0002 out 0.0007, 60 s
+  n 100 noise 0.01 seed 1: (x0 * (x1 / square(x2))) * 0.37548387
+          rmse in 0.0004 out 0.0018, 60 s
+  n 100 noise 0.01 seed 2: (x0 * square(0.70878714 / x2)) * x1
+          rmse in 0.0006 out 0.0022, 60 s
+
+I.34.8:  x1*x2*x3/x4
+  n 100 noise 0.01 seed 0: x0 * ((x1 * 0.095273025) * (x2 / x3))
+          rmse in 0.0002 out 0.0004, 60 s
+  n 100 noise 0.01 seed 1: x2 / (((x3 * 10.131511) / x1) / x0)
+          rmse in 0.0004 out 0.0009, 60 s
+  n 100 noise 0.01 seed 2: (((x0 * 0.13412914) * x2) * ((0.0016835578 / cos(x3 * x0)) + x1)) / x3
+          rmse in 0.0440 out 1.0667, 60 s
+
+I.13.4:  0.5*x1*(x2^2 + x3^2 + x4^2)
+  n 100 noise 0.01 seed 0: (1.1410875 + (x1 + x2)) / (((37.95476 - cos(x2)) / x0) / (((sin(x1 - ((x1 * x3) * 0.091914564)) - (x2 / x3)) * -0.50312376) + x3))
+          rmse in 0.0857 out 0.3829, 60 s
+  n 100 noise 0.01 seed 1: x0 * (((x2 + -2.3129394) + (x1 + ((((sin(cos(x1)) + sin(cos(x2))) * 3.057718) + square(x3)) * 0.15961434))) * 0.12746586)
+          rmse in 0.0070 out 0.0993, 60 s
+  n 100 noise 0.01 seed 2: x0 * ((((x2 + (sin(cos(x2)) / 2.029005)) + (-3.4782567 + (sin(cos(x1)) / 2.1250906))) + (((sin(cos(x3)) / 2.0516174) + x3) + x1)) * 0.12658262)
+          rmse in 0.0095 out 0.1404, 60 s
+
+I.24.6:  0.25*x1*(x2^2 + x3^2)*x4^2
+  n 100 noise 0.01 seed 0: (((((x1 * x1) * 0.16022134) + x2) + (sin(cos(x2)) * 0.48890728)) + -1.151067) * ((square(x3) * x0) * 0.009505062)
+          rmse in 0.0047 out 0.0824, 60 s
+  n 100 noise 0.01 seed 1: (square(x3 * (sin(sqrt(sqrt(sqrt(x1 - cos(x2 / 0.83618504))) * x1)) - (x2 + (((x1 - 0.9568302) / sqrt(x2)) + 1.3396459)))) * 0.0013612271) * x0
+          rmse in 0.0206 out nan, 60 s
+  n 100 noise 0.01 seed 2: ((square(x3) * 0.0008270354) * x0) * (square(x1 + x2) + square(x2 - x1))
+          rmse in 0.0006 out 0.0013, 60 s
+
+I.6.2:  exp(-(x1/x2)^2/2)/(sqrt(2*pi)*x2)
+  n 100 noise 0.01 seed 0: square(square(cos((x0 - x1) * (-0.8794473 / ((x0 / 4.6505203) + x1))))) / (x0 / 5.6681533)
+          rmse in 0.0084 out 0.1148, 60 s
+  n 100 noise 0.01 seed 1: 6.28519 / (((exp(square(x0 * (0.50911 / x1))) + -0.32129428) * (square(x0 - x1) / x1)) + x0)
+          rmse in 0.0061 out 0.0354, 60 s
+  n 100 noise 0.01 seed 2: (5.169104 - (square(log(x0 / x1)) * ((sin((x0 / 0.7340245) / x1) + (5.216348 / (x1 / x0))) - square((x0 / 0.9047832) / x1)))) / x0
+          rmse in 0.0085 out 1.7976, 60 s
+
+I.12.11:  x1*(x2 + x3*x4*sin(x5))
+  n 100 noise 0.01 seed 0: (x1 + ((x2 * sin(x4)) * x3)) * (x0 / 28.058428)
+          rmse in 0.0007 out 0.0010, 60 s
+  n 100 noise 0.01 seed 1: x0 * ((((sin(x4) * x2) * x3) + x1) * 0.036428105)
+          rmse in 0.0009 out 0.0012, 60 s
+  n 100 noise 0.01 seed 2: ((x3 * (sin(x4) * x2)) + x1) * (x0 * 0.038516887)
+          rmse in 0.0008 out 0.0012, 60 s
+
+I.37.4:  x1 + x2 + 2*sqrt(x1*x2)*cos(x3)
+  n 100 noise 0.01 seed 0: (x0 + x1) * (((cos(log(x0 / x1) * 0.47076687) * cos(x2)) + 1.0033212) * 0.3111414)
+          rmse in 0.0036 out 0.0249, 60 s
+  n 100 noise 0.01 seed 1: ((x0 + x1) * 0.34254837) * ((cos(x2) * cos(log(x0 / x1) * 0.47226167)) + 1.0016012)
+          rmse in 0.0031 out 0.0296, 60 s
+  n 100 noise 0.01 seed 2: (((cos(x2) * cos(log(x0 / x1) * -0.46973667)) + 1.0030794) * (x1 + x0)) * 0.37534297
+          rmse in 0.0038 out 0.0328, 60 s
+
+I.40.1:  x1*exp(-x2*x3/x4)
+  n 100 noise 0.01 seed 0: 2.0055275 / (exp(x2 * (x1 / x3)) / x0)
+          rmse in 0.0005 out 0.0009, 60 s
+  n 100 noise 0.01 seed 1: x0 / exp(((x1 / x3) * x2) + -0.65140337)
+          rmse in 0.0009 out 0.0015, 60 s
+  n 100 noise 0.01 seed 2: x0 / exp(((x2 * x1) / x3) + -0.8676122)
+          rmse in 0.0004 out 0.0006, 60 s
+
+isothermal:  x1*x2*log(x3/x4)
+  n 100 noise 0.01 seed 0: ((x0 * 0.15707648) * log(x2 / x3)) * x1
+          rmse in 0.0007 out 0.0014, 60 s
+  n 100 noise 0.01 seed 1: (log(((cos(x3 / 0.0020334471) * 0.00825779) + x2) / x3) * (x1 * 0.17371163)) * x0
+          rmse in 0.0047 out 0.0091, 60 s
+  n 100 noise 0.01 seed 2: (x0 * (x1 * log(x2 / x3))) * 0.20178245
+          rmse in 0.0006 out 0.0012, 60 s
+
+I.50.26:  x1*(cos(x2*x3) + x4*cos(x2*x3)^2)
+  n 100 noise 0.01 seed 0: x0 * ((cos(x2 * x1) + (x3 * square(cos(x2 * x1)))) * 0.50484955)
+          rmse in 0.0015 out 0.0017, 60 s
+  n 100 noise 0.01 seed 1: (((x3 * square(cos(x1 * x2))) + cos(x1 * x2)) * x0) * 0.5243618
+          rmse in 0.0005 out 0.0005, 60 s
+  n 100 noise 0.01 seed 2: x0 * (((square(cos(x2 * x1)) * x3) + cos(x1 * x2)) * 0.49735588)
+          rmse in 0.0010 out 0.0011, 60 s
+
+I.10.7:  x1/sqrt(1 - x2^2/x3^2)
+  n 100 noise 0.01 seed 0: x0 * ((0.40334758 / (square(x2 / x1) + -0.7471011)) + 0.79388225)
+          rmse in 0.0010 out 1.4126, 60 s
+  n 100 noise 0.01 seed 1: x0 * ((0.119352244 / ((x2 / x1) - 1.0865061)) + 0.7608512)
+          rmse in 0.0050 out 108.4556, 60 s
+  n 100 noise 0.01 seed 2: ((0.10903378 / ((x2 / x1) - 1.2117425)) + 0.80444294) * x0
+          rmse in 0.0170 out 9.7666, 60 s
+
+I.30.5:  arcsin(x1/(x2*x3))
+  n 100 noise 0.01 seed 0: square(-8.606923 - (x0 / (x1 * x2))) + -74.08188
+          rmse in 0.0066 out 0.3034, 60 s
+  n 100 noise 0.01 seed 1: ((x0 * (exp((x0 / x1) / x2) + 14.45952)) / x2) / x1
+          rmse in 0.0029 out 0.1661, 60 s
+  n 100 noise 0.01 seed 2: 4.771662 / ((x1 / (3.1357906 / (x2 / x0))) - 0.025153466)
+          rmse in 0.0034 out 0.2088, 60 s
+
+I.8.14:  sqrt((x2 - x1)^2 + (x4 - x3)^2)
+  n 100 noise 0.01 seed 0: sqrt(square(x2 - x3) + square(x1 - x0)) * 1.0174156
+          rmse in 0.0005 out 0.0007, 60 s
+  n 100 noise 0.01 seed 1: ((2.013462 - cos((x0 - x1) * -0.4272157)) * 2.308776) - (cos((x3 - x2) / 1.4368286) / cos(cos((x0 - x1) * -0.57301027)))
+          rmse in 0.0888 out 0.3242, 60 s
+  n 100 noise 0.01 seed 2: (cos((x0 - x1) * -0.7065198) * ((cos(x2 - x3) * -0.4119337) + -1.2489607)) + (3.1959243 - cos((x2 - x3) * 0.7226494))
+          rmse in 0.0956 out 0.4896, 60 s
+
+I.18.4:  (x1*x3 + x2*x4)/(x1 + x2)
+  n 100 noise 0.01 seed 0: (x3 - (x0 * ((x3 - x2) / (x1 + x0)))) * 1.1691139
+          rmse in 0.0000 out 0.0001, 60 s
+  n 100 noise 0.01 seed 1: sqrt(((x2 + ((log(x1 / x0) / 0.54899704) + 2.6075926)) * (x3 + ((x0 + (x0 / x3)) / x1))) + -7.341621) + -0.6112604
+          rmse in 0.1290 out nan, 60 s
+  n 100 noise 0.01 seed 2: (((x3 - x2) / ((x0 / x1) + 1.000405)) + x2) * 1.1405818
+          rmse in 0.0009 out 0.0011, 60 s
+
+II.11.28:  1 + x1*x2/(1 - x1*x2/3)
+  n 100 noise 0.01 seed 0: exp(((x0 * 0.8252115) * x1) - -1.3466598) - 0.52030015
+          rmse in 0.0041 out 0.0330, 60 s
+  n 100 noise 0.01 seed 1: exp((x1 * (x0 * 0.78006715)) - -1.5948025) + -0.9947199
+          rmse in 0.0049 out 0.0830, 60 s
+  n 100 noise 0.01 seed 2: square(square(square(1.173144 - (x1 * (x0 * -0.1408293)))))
+          rmse in 0.0046 out 0.0756, 60 s
+
+target           n  noise right
+toy            100   0.01     3
+I.14.3         100   0.01     3
+I.12.2         100   0.01     3
+I.34.8         100   0.01     2
+I.13.4         100   0.01     0
+I.24.6         100   0.01     1
+I.6.2          100   0.01     0
+I.12.11        100   0.01     3
+I.37.4         100   0.01     0
+I.40.1         100   0.01     3
+isothermal     100   0.01     3
+I.50.26        100   0.01     3
+I.10.7         100   0.01     0
+I.30.5         100   0.01     0
+I.8.14         100   0.01     1
+I.18.4         100   0.01     2
+II.11.28       100   0.01     0
