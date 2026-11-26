@@ -1,17 +1,19 @@
-"""Write srsd_sample.json: a random sample of the Feynman equations of the SRSD
-benchmark (Matsubara et al., arXiv:2206.10540), with its ranges of the inputs.
+"""Write a random sample of the Feynman equations of the SRSD benchmark (Matsubara
+et al., arXiv:2206.10540), with its ranges of the inputs: srsd_sample.json for the
+first sample, srsd_sample2.json for the second, and so on.
 
-    python make_srsd_sample.py PATH_TO_CLONE_OF github.com/omron-sinicx/srsd-benchmark
+    python make_srsd_sample.py PATH_TO_CLONE_OF github.com/omron-sinicx/srsd-benchmark [--sample 2]
 
-The sample is drawn from the equations with at most 5 inputs that were not used
-to develop the search (USED). The file datasets/feynman.py of the clone is parsed,
-not run: the formula of each equation is kept as an expression of x[0], x[1], ...
-with numpy functions and the constants of that file.
+A sample is drawn from the equations with at most 5 inputs that were not used to
+develop the search (USED) and are not in an earlier sample. The file
+datasets/feynman.py of the clone is parsed, not run: the formula of each equation is
+kept as an expression of x[0], x[1], ... with numpy functions and the constants of
+that file.
 """
+import argparse
 import ast
 import json
 import re
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -19,7 +21,7 @@ import numpy as np
 USED = ['i.6.20', 'i.8.14', 'i.10.7', 'i.12.2', 'i.12.11', 'i.13.4', 'i.14.3', 'i.18.4', 'i.24.6',
         'i.30.5', 'i.34.8', 'i.37.4', 'i.40.1', 'i.44.4', 'i.50.26', 'ii.11.28',
         'i.39.22', 'i.41.16']               # the last two are laws of EmpiricalBench
-N_SAMPLE, SEED = 15, 0
+N_SAMPLE = 15
 NUMPY = {'sqrt', 'exp', 'log', 'sin', 'cos', 'tan', 'tanh', 'arcsin', 'arccos', 'arctan', 'pi', 'abs'}
 
 
@@ -43,8 +45,17 @@ def value(node, constants):
     return float(eval(compile(ast.Expression(node), '<range>', 'eval'), {'__builtins__': {}, 'np': np}, constants))
 
 
+def sample_file(k):
+    """The file of sample k."""
+    return Path(__file__).parent / ('srsd_sample.json' if k == 1 else f'srsd_sample{k}.json')
+
+
 if __name__ == '__main__':
-    tree = ast.parse((Path(sys.argv[1]) / 'datasets' / 'feynman.py').read_text())
+    ap = argparse.ArgumentParser()
+    ap.add_argument('clone')
+    ap.add_argument('--sample', type=int, default=1)
+    a = ap.parse_args()
+    tree = ast.parse((Path(a.clone) / 'datasets' / 'feynman.py').read_text())
     constants = {n.targets[0].id: n.value.value for n in tree.body
                  if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)}
     equations = []
@@ -66,11 +77,13 @@ if __name__ == '__main__':
         check(func.body[0].value, constants)
         equations.append(dict(name=name, formula=re.search(r'Raw: (.*)', doc).group(1),
                               expression=ast.unparse(func.body[0].value), samplers=samplers))
-    eligible = [e for e in equations if len(e['samplers']) <= 5 and e['name'] not in USED]
-    pick = np.random.default_rng(SEED).choice(len(eligible), N_SAMPLE, replace=False)
+    used = set(USED)
+    for k in range(1, a.sample):
+        used |= {e['name'] for e in json.load(open(sample_file(k)))['equations']}
+    eligible = [e for e in equations if len(e['samplers']) <= 5 and e['name'] not in used]
+    pick = np.random.default_rng(a.sample - 1).choice(len(eligible), N_SAMPLE, replace=False)
     sample = [eligible[i] for i in sorted(pick)]
-    json.dump(dict(constants=constants, equations=sample),
-              open(Path(__file__).parent / 'srsd_sample.json', 'w'), indent=1)
+    json.dump(dict(constants=constants, equations=sample), open(sample_file(a.sample), 'w'), indent=1)
     print(len(equations), 'equations,', len(eligible), 'eligible')
     for e in sample:
         print(f"{e['name']:12s} {len(e['samplers'])}  {e['formula'][:100]}")

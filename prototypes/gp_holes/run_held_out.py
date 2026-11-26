@@ -1,12 +1,12 @@
 """The GP-hole search and PySR on targets that were not used to develop the search.
 
-    python run_held_out.py --set docs|empirical|srsd --code gp_holes|pysr [--seeds 3] [--seconds 60]
+    python run_held_out.py --set docs|empirical|srsd|srsd2 --code gp_holes|pysr [--seeds 3] [--seconds 60]
 
 docs: the examples of PySR's documentation, with the data drawn as there.
 empirical: EmpiricalBench of the PySR paper (empirical_bench.json, written by
 make_empirical_bench.py), where the data are fixed and the seed is that of the search.
-srsd: a random sample of the Feynman equations of the SRSD benchmark (srsd_sample.json,
-written by make_srsd_sample.py), with 100 points drawn from its ranges of the inputs and
+srsd, srsd2: a random sample of the Feynman equations of the SRSD benchmark (srsd_sample.json,
+srsd_sample2.json, written by make_srsd_sample.py), with 100 points drawn from its ranges of the inputs and
 1% relative noise. A result is right if it has no hole and its median relative error is
 below 1% for inputs from ranges half a decade wider on each side.
 PySR gets the settings of the documentation or of the paper, and names the inputs from x0.
@@ -99,8 +99,9 @@ def problems(which, seeds):
                 X, y, tests, note = docs_data(target, seed)
                 yield (target[0], target[1], seed, X, y, tests, note,
                        dict(DOCS, denoise=bool(target[3].get('denoise'))))
-    elif which == 'srsd':
-        sample = json.load(open(os.path.join(os.path.dirname(__file__), 'srsd_sample.json')))
+    elif which.startswith('srsd'):
+        from make_srsd_sample import sample_file
+        sample = json.load(open(sample_file(int(which[4:] or 1))))
         for eq in sample['equations']:
             for seed in range(seeds):
                 X, y, tests = srsd_data(eq, sample['constants'], seed)
@@ -164,14 +165,14 @@ if __name__ == '__main__':
                                                     for m in others]
             predict = lambda Z: model.predict(Z) * ystd
         else:
-            scale = ystd if a.set == 'srsd' else 1.0     # the targets of SRSD in units of their spread
+            scale = ystd if a.set.startswith('srsd') else 1.0     # the targets of SRSD in units of their spread
             model = PySRRegressor(niterations=1000000, timeout_in_seconds=a.seconds, verbosity=0,
                                   progress=False, temp_equation_file=True, **settings).fit(X, y / scale)
             result, predict = model.get_best()['equation'], lambda Z: model.predict(Z) * scale
             front = [f"front {int(c):3d}  {e}" for c, e in zip(model.equations_['complexity'],
                                                               model.equations_['equation'])]
         report = errors(predict, tests, ystd)
-        if a.set == 'srsd':             # relative errors, and whether the result is right
+        if a.set.startswith('srsd'):    # relative errors, and whether the result is right
             rel = {k: relative(predict, tests, k) for k in tests}
             right = rel['out'] < 0.01 and not (a.code == 'gp_holes' and model.n_holes())
             report = f"relative error in {rel['in']:.2g} out {rel['out']:.2g}{'  RIGHT' if right else ''}"
