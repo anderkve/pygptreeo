@@ -151,8 +151,17 @@ if __name__ == '__main__':
         ystd, t0 = np.std(y), time.time()
         if a.code == 'gp_holes':
             from gpholes import search
-            model, trace, info = search(X, y / ystd, seed=seed, verbose=False, workers=a.workers)
-            result, front = model.text(ystd), [f"holes {model.n_holes()}"]
+            try:
+                model, trace, info = search(X, y / ystd, y_scale=ystd, seed=seed, verbose=False,
+                                            workers=a.workers)
+            except Exception as error:          # a run that fails counts as not right
+                print(f"  seed {seed}: crashed: {type(error).__name__}: {error}", flush=True)
+                summary.setdefault(name, [0, 0])
+                continue
+            others = info['candidates'][1:3]
+            result = model.text(ystd)
+            front = [f"holes {model.n_holes()}"] + [f"next {m.score - model.score:+.1f}: {m.text(ystd)}"
+                                                    for m in others]
             predict = lambda Z: model.predict(Z) * ystd
         else:
             scale = ystd if a.set == 'srsd' else 1.0     # the targets of SRSD in units of their spread
@@ -168,7 +177,10 @@ if __name__ == '__main__':
             report = f"relative error in {rel['in']:.2g} out {rel['out']:.2g}{'  RIGHT' if right else ''}"
             counts = summary.setdefault(name, [0, 0])
             counts[0] += right
-            if a.code == 'pysr':        # ... and whether some equation of the front is right
+            if a.code == 'gp_holes':    # ... and whether one of the 3 best models is right
+                counts[1] += right or any(relative(lambda Z: m.predict(Z) * ystd, tests) < 0.01
+                                          and not m.n_holes() for m in others)
+            if a.code == 'pysr':        # ... or some equation of the front
                 best = min(relative(lambda Z: model.predict(Z, index=i) * scale, tests)
                            for i in range(len(model.equations_)))
                 counts[1] += best < 0.01
@@ -179,6 +191,6 @@ if __name__ == '__main__':
         for line in front:
             print(f"          {line}", flush=True)
     if summary:
-        print(f"\n{'equation':12s} right" + (' front' if a.code == 'pysr' else ''))
+        print(f"\n{'equation':12s} right " + ('front' if a.code == 'pysr' else 'top 3'))
         for name, (right, front) in summary.items():
-            print(f"{name:12s} {right:5d}" + (f" {front:5d}" if a.code == 'pysr' else ''))
+            print(f"{name:12s} {right:5d} {front:5d}")

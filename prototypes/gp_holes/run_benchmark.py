@@ -36,7 +36,7 @@ def errors(predict, tests):
 
 def run(target, n, noise, seed, verbose, **kw):
     X, y, ystd, tests = data(target, n, noise, seed)
-    model, trace, info = search(X, y, seed=seed, verbose=verbose, **kw)
+    model, trace, info = search(X, y, y_scale=ystd, seed=seed, verbose=verbose, **kw)
     return model.text(ystd), model.n_holes(), errors(model.predict, tests), trace, info
 
 

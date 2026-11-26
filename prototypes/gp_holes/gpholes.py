@@ -22,6 +22,7 @@ CFG = dict(
     power_cost=10.0,    # ... and of each exponent that is not a simple number
     max_power=3,        # the largest integer power counted as simple
     library=('pow', 'log', 'exp', 'aff', 'sin'),    # functions of one input; also 'poly'
+    outer=('log', 'exp', 'expneg', 'inv', 'square'),    # functions around the expression; also 'sqrt'
 )
 # Values a fitted parameter is rounded to if the evidence allows (see nice).
 NICE = {
@@ -36,15 +37,50 @@ BOUNDS = {
     'poly': [(-50, 50)] * 8,
 }
 EXPONENT = {'pow': 0, 'mono': 0, 'aff': 1}      # which parameter of a node is an exponent
-LOG_BOUNDS = {'amp': (-7, 4), 'ls': (-3, 5), 'const': (-7, 4), 'noise': (-9, 1)}
+SCALED = {'lin': 0, 'exp': 0, 'aff': 0, 'sin': 1}   # ... and which multiplies the argument, as th/scale
+OUTER_TEXT = {'log': 'exp({m})', 'exp': 'log({m}) + {c}', 'expneg': '{c} - log({m})', 'inv': '1/({m})',
+              'sqrt': '({m})^2', 'square': 'sqrt({m})'}
+LOG_BOUNDS = {'amp': (-7, 4), 'ls': (-3, 5), 'const': (-7, 4), 'noise': (-9, 1), 'outside': (-9, 1)}
 
 
-def nice(kind, k):
+def nice(node, k):
     """The simple values of parameter k of a node, or None."""
-    if kind == 'pow':
+    if node.kind == 'pow':
         ints = np.arange(1, CFG['max_power'] + 1)
         return np.concatenate([-ints, ints, [-1.5, -0.5, 0.5, 1.5]])
-    return NICE[kind][k] if kind in NICE else None
+    values = NICE[node.kind][k] if node.kind in NICE else None
+    return values * node.scale if values is not None and SCALED.get(node.kind) == k else values
+
+
+def warp(name, y):
+    """The target z of a model with the function `name` around it, log|dz/dy|
+    at each point and the constant of the function. None if it does not apply."""
+    with np.errstate(all='ignore'):
+        c = 0.0
+        if name == 'log':                   # y = exp(m)
+            ok, z, jac = (y > 0).all(), np.log(y), -np.log(y)
+        elif name == 'exp':                 # y = log(m) + c
+            c = y.max()
+            ok, z, jac = True, np.exp(y - c), y - c
+        elif name == 'expneg':              # y = c - log(m)
+            c = y.min()
+            ok, z, jac = True, np.exp(c - y), c - y
+        elif name == 'inv':                 # y = 1/m
+            ok, z, jac = (y > 0).all() or (y < 0).all(), 1 / y, -2 * np.log(np.abs(y))
+        elif name == 'sqrt':                # y = m^2
+            ok, z, jac = (y > 0).all(), np.sqrt(y), -np.log(2) - 0.5 * np.log(y)
+        elif name == 'square':              # y = sqrt(m)
+            ok, z, jac = (y > 0).all(), y ** 2, np.log(2) + np.log(y)
+    if not ok or not (np.isfinite(z).all() and np.isfinite(jac).all()) or z.std() == 0:
+        return None
+    return z, jac, c
+
+
+def unwarp(name, z, c):
+    """y from the value z of the expression inside the function `name`."""
+    with np.errstate(all='ignore'):
+        return {'log': lambda: np.exp(z), 'exp': lambda: c + np.log(z), 'expneg': lambda: c - np.log(z),
+                'inv': lambda: 1 / z, 'sqrt': lambda: z ** 2, 'square': lambda: np.sqrt(z)}[name]()
 
 
 def num(v):
@@ -61,7 +97,9 @@ def wrap(s):
 
 
 class Node:
-    """A symbolic function of the inputs, with parameters th."""
+    """A symbolic function of the inputs, with parameters th. A parameter that
+    multiplies the argument is kept as th*scale, with scale the size of the
+    argument, so that the fitted values are of order one."""
 
     def __init__(self, kind, kids=(), th=(), free=None, j=None, bounds=None, scale=1.0):
         self.kind, self.kids, self.j, self.scale = kind, list(kids), j, scale
@@ -79,15 +117,15 @@ class Node:
         if k == 'mono':
             return u * self.kids[1](X) ** th[0]
         if k == 'lin':
-            return u + th[0] * self.kids[1](X)
+            return u + th[0] / self.scale * self.kids[1](X)
         if k == 'pow':
             return u ** th[0]
         if k == 'exp':
-            return np.exp(th[0] * u)
+            return np.exp(th[0] / self.scale * u)
         if k == 'aff':
-            return (1 + th[0] * u) ** th[1]
+            return (1 + th[0] / self.scale * u) ** th[1]
         if k == 'sin':
-            return np.sin(th[0] + th[1] * u)
+            return np.sin(th[0] + th[1] / self.scale * u)
         if k == 'log':
             return np.log(u)
         if k == 'poly':                 # 1 + th[0]*v + th[1]*v^2 + ..., v = u/scale
@@ -103,7 +141,8 @@ class Node:
         """The expression as a string. With key=True free parameters are shown
         as '?', so that models with the same structure get the same string."""
         k = self.kind
-        p = ['?' if (key and f) else num(v) for v, f in zip(self.th, self.free)]
+        raw = [v / self.scale if SCALED.get(k) == i else v for i, v in enumerate(self.th)]
+        p = ['?' if (key and f) else num(v) for v, f in zip(raw, self.free)]
         if k == 'var':
             return f"x{self.j + 1}"
         u = self.kids[0].text(key)
@@ -220,13 +259,22 @@ class Term:
 
 
 class Model:
+    """A sum of terms and a constant. With warp set, the sum is the expression
+    inside that function (see warp), fitted to the transformed target: offset
+    is then the term that makes its score one of the target itself, warp_args
+    the scale of the transformed target and the constant of the function. Such
+    a model has two noise terms: one inside the function, and one outside it,
+    which in the transformed target has the variance w of each point."""
+
     def __init__(self, terms, const=-1.0, noise=-2.0):
         self.terms = terms
-        self.hyp = np.array([const, noise])             # log const amplitude, log noise
+        self.hyp = np.array([const, noise, -2.0])       # log const amplitude, log noise (inside, outside)
         self.score = -np.inf
+        self.warp, self.offset, self.warp_args, self.y_scale = None, 0.0, None, 1.0
 
     def key(self):
-        return ' + '.join(sorted(t.key() for t in self.terms)) or '0'
+        inner = ' + '.join(sorted(t.key() for t in self.terms)) or '0'
+        return OUTER_TEXT[self.warp].format(m=inner, c='?') if self.warp else inner
 
     def n_holes(self):
         return sum(t.feats is not None for t in self.terms)
@@ -250,17 +298,24 @@ class Model:
                         for k in range(len(node.th)) if node.free[k]]
         out.append((self.hyp, 0, LOG_BOUNDS['const'], 'const', None, None))
         out.append((self.hyp, 1, LOG_BOUNDS['noise'], 'noise', None, None))
+        if self.warp:
+            out.append((self.hyp, 2, LOG_BOUNDS['outside'], 'outside', None, None))
         return out
 
-    def nll_grad(self, p, X, y, slots):
+    def noise(self, n, w):
+        """The noise variance of each of n points."""
+        s2 = np.exp(2 * self.hyp[1:])
+        return s2[0] + 1e-8 + (s2[1] * w if self.warp else 0.0) * np.ones(n)
+
+    def nll_grad(self, p, X, y, slots, w=None):
         """Negative log evidence and its gradient at the parameters p."""
         for v, s in zip(p, slots):
             s[0][s[1]] = v
         n = len(y)
         with np.errstate(all='ignore'):
             parts = [t.K(X, X, X, grad=True) for t in self.terms]
-            c2, s2 = np.exp(2 * self.hyp)
-            K = sum(k for k, _ in parts) + c2 + (s2 + 1e-8) * np.eye(n)
+            c2, s2 = np.exp(2 * self.hyp[0]), np.exp(2 * self.hyp[1])
+            K = sum(k for k, _ in parts) + c2 + np.diag(self.noise(n, w))
             try:
                 chol = cho_factor(K, lower=True, check_finite=True)
             except (np.linalg.LinAlgError, ValueError):
@@ -278,6 +333,8 @@ class Model:
                     dK = 2 * c2 * np.ones((n, n))
                 elif tag == 'noise':
                     dK = 2 * s2 * np.eye(n)
+                elif tag == 'outside':
+                    dK = 2 * np.exp(2 * self.hyp[2]) * np.diag(w)
                 else:                                   # a parameter of a symbolic node
                     v, eps = arr[idx], 1e-6 * max(1.0, abs(arr[idx]))
                     arr[idx] = v + eps
@@ -290,7 +347,7 @@ class Model:
                 return 1e10, np.zeros(len(p))
         return nll, grad
 
-    def fit(self, X, y, maxiter=200, restarts=0, rng=None):
+    def fit(self, X, y, w=None, maxiter=200, restarts=0, rng=None):
         """Maximise the evidence over the free parameters. The score is the log
         evidence with a BIC penalty on the number of parameters and a cost for
         each symbolic function and each free exponent. score0 leaves out the
@@ -303,11 +360,11 @@ class Model:
             p = p0.copy()
             for q, s in enumerate(slots):
                 if s[3] != 'th':
-                    p[q] = rng.uniform(-3, -1) if s[3] == 'noise' else rng.uniform(-1.5, 1.5)
+                    p[q] = rng.uniform(-3, -1) if s[3] in ('noise', 'outside') else rng.uniform(-1.5, 1.5)
             starts.append(p)
         best = None
         for p in starts:
-            r = minimize(self.nll_grad, p, args=(X, y, slots), jac=True, method='L-BFGS-B',
+            r = minimize(self.nll_grad, p, args=(X, y, slots, w), jac=True, method='L-BFGS-B',
                          bounds=bounds, options={'maxiter': maxiter})
             if best is None or r.fun < best.fun:
                 best = r
@@ -315,24 +372,34 @@ class Model:
             s[0][s[1]] = v
         self.logml, self.n_par = -best.fun, len(slots)
         self.score0 = (self.logml - 0.5 * self.n_par * np.log(len(y))
-                       - CFG['node_cost'] * self.n_nodes())
+                       - CFG['node_cost'] * self.n_nodes() + self.offset)
         self.score = self.score0 - CFG['power_cost'] * self.n_free_powers()
         return self
 
-    def condition(self, X, y):
+    def condition(self, X, y, w=None):
         """Store what predict and text need."""
         self.X = X
         K = sum(t.K(X, X, X) for t in self.terms) + np.exp(2 * self.hyp[0])
-        self.alpha = np.linalg.solve(K + (np.exp(2 * self.hyp[1]) + 1e-8) * np.eye(len(y)), y)
+        self.alpha = np.linalg.solve(K + np.diag(self.noise(len(y), w)), y)
         return self
 
     def predict(self, Xs):
+        """The target at Xs, in the units the search was given it in."""
         with np.errstate(all='ignore'):
             Ks = sum(t.K(Xs, self.X, self.X) for t in self.terms) + np.exp(2 * self.hyp[0])
-        return Ks @ self.alpha
+        z = Ks @ self.alpha
+        if self.warp is None:
+            return z
+        return unwarp(self.warp, z * self.warp_args[0], self.warp_args[1]) / self.y_scale
 
     def text(self, ystd=1.0):
         """The model as a string, with the posterior mean of the weights."""
+        if self.warp:
+            return OUTER_TEXT[self.warp].format(m=self.inner_text(self.warp_args[0]),
+                                                c=num(self.warp_args[1]))
+        return self.inner_text(ystd)
+
+    def inner_text(self, ystd):
         out = []
         for t in self.terms:
             a = '*'.join(wrap(f.text()) for f in t.factors)
@@ -369,6 +436,11 @@ def tidy(model):
     return model
 
 
+def size_of(v):
+    """The typical size of the values v."""
+    return np.median(np.abs(v)) or np.abs(v).max()
+
+
 def library(f, X):
     """Candidate functions of the feature f: nodes with starting values."""
     u = f(X)
@@ -376,37 +448,48 @@ def library(f, X):
     if (u > 0).all():
         inner.append(Node('pow', [f], [-1.0], [False]))
         out = [Node('pow', [f], [p]) for p in (1.0, -1.0)] + [Node('log', [f])]
-    else:
-        out = [Node('pow', [f], [p], [False]) for p in (1.0, 2.0)]
+    else:               # a fitted exponent needs a positive argument
+        out = [Node('pow', [f], [p], [False]) for p in (1.0, 2.0, 3.0, -1.0, -2.0)]
     for g in inner:
         v = g(X)
-        out += [Node('exp', [g], [c / v.std()]) for c in (-1, 1)]
-        out += [Node('aff', [g], [c / np.abs(v).max(), -1.0]) for c in (-0.5, 0.5)]
+        size = size_of(v)
+        out += [Node('exp', [g], [c * size / v.std()], scale=size) for c in (-1, 1)]
+        out += [Node('aff', [g], [c, -1.0], scale=size) for c in (-0.5, 0.5)]
         # Polynomials of degree 2 to 4 with constant term 1.
-        out += [Node('poly', [g], [c] + [0.0] * (deg - 1), scale=np.abs(v).max())
+        out += [Node('poly', [g], [c] + [0.0] * (deg - 1), scale=size)
                 for deg in (2, 3, 4) for c in (-0.5, 0.5)]
-    # A sine has to show at least half a period over the data.
-    span = np.ptp(u)
-    out += [Node('sin', [f], [0.0, 2 * np.pi * k / span], bounds=[(-2, 2), (np.pi / span, 100)])
+    # A sine has to show at least half a period over the data, and at most 60.
+    size, span = size_of(u), np.ptp(u)
+    out += [Node('sin', [f], [0.0, 2 * np.pi * k * size / span], scale=size,
+                 bounds=[(-2, 2), (np.pi * size / span, 120 * np.pi * size / span)])
             for k in (0.5, 1, 2, 4)]
     return [n for n in out if n.kind in CFG['library']]
 
 
 def pairings(a, b, X):
     """Candidate combinations of two features into one: a + c*b and a*b^p."""
-    out = [Node('lin', [a, b], [c]) for c in (1.0, -1.0)]
+    with np.errstate(all='ignore'):
+        size = size_of(b(X)) / size_of(a(X))
+    out = [Node('lin', [a, b], [c], scale=size) for c in (1.0, -1.0)]
     if not (b(X) > 0).all():
         a, b = b, a
     if (b(X) > 0).all():
         out += [Node('mono', [a, b], [p]) for p in (1.0, -1.0)]
     else:
-        out += [Node('mono', [a, b], [1.0], [False])]
+        out += [Node('mono', [a, b], [p], [False]) for p in (1.0, -1.0)]
     return out
 
 
-def moves(model, X):
-    """All one-step refinements of a model, as (rule, new model)."""
+def moves(model, X, outer=()):
+    """All one-step refinements of a model, as (rule, new model). outer has
+    the functions that can go around a model without symbolic functions, as
+    (name, offset, warp_args)."""
     out = []
+    if model.warp is None and model.n_nodes() == 0:
+        for name, offset, args in outer:
+            m = copy.deepcopy(model)
+            m.warp, m.offset, m.warp_args, m.fresh = name, offset, args, True
+            out.append(('outer function', m))
 
     def emit(rule, i, new_terms):
         m = copy.deepcopy(model)
@@ -435,6 +518,11 @@ def moves(model, X):
             # The hole does not depend on input j.
             if q > 1 or t.factors:
                 emit('drop input', i, [lower])
+            # The hole is simpler in the logarithm of input j.
+            if t.feats[j].kind != 'log' and (t.feats[j](X) > 0).all():
+                new = copy.deepcopy(t)
+                new.feats[j] = Node('log', [t.feats[j]])
+                emit('change input', i, [new])
             # The hole is a known function of input j times a smaller hole.
             lib = library(t.feats[j], X)
             for f in lib:
@@ -469,7 +557,7 @@ def moves(model, X):
     return out
 
 
-def snap(model, X, y):
+def snap(model, X, y, w=None):
     """Round parameters to simple values where that does not lower the score."""
     improved = True
     while improved:
@@ -477,7 +565,7 @@ def snap(model, X, y):
         nodes = [n for t in model.terms for n in t.nodes()]
         for a, node in enumerate(nodes):
             for k in np.flatnonzero(node.free):
-                values = nice(node.kind, k)
+                values = nice(node, k)
                 if values is None:
                     continue
                 trial = copy.deepcopy(model)
@@ -486,7 +574,7 @@ def snap(model, X, y):
                 v = abs(node.th[k]) if node.kind == 'sin' else node.th[k]
                 tn.th[k] = values[np.argmin(np.abs(values - v))]
                 tn.free[k] = False
-                trial.fit(X, y, maxiter=100)
+                trial.fit(X, y, w, maxiter=100)
                 if trial.score > model.score:
                     model, improved = trial, True
                     break
@@ -503,59 +591,88 @@ def _init_worker(cfg):
 
 
 def _quick(args):
-    model, X, y = args
-    return model.fit(X, y, maxiter=25)
+    model, X, (y, w) = args
+    fresh = model.__dict__.pop('fresh', False)      # a new target: the parameters are redrawn too
+    return model.fit(X, y, w, maxiter=25, restarts=3 if fresh else 0, rng=np.random.default_rng(0))
 
 
 def _full(args):
-    model, X, y = args
-    return snap(model.fit(X, y, maxiter=300), X, y)
+    model, X, (y, w) = args
+    return snap(model.fit(X, y, w, maxiter=300), X, y, w)
 
 
-def search(X, y, beam=4, top_k=12, patience=3, max_steps=40, workers=4, seed=0, verbose=True,
-           **cfg):
-    """Beam search from a single hole, until the models in the beam have all
-    been refined or the best score has not risen for `patience` steps. Returns
-    the model with the best score, the trace of the best score and some
-    counts. y should be scaled to unit variance. cfg replaces entries of CFG."""
+def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, max_steps=40, workers=4,
+           seed=0, verbose=True, **cfg):
+    """Beam search from a single hole. Each step refines the `beam` best
+    models and, for its first `own_steps` steps, the best model of each
+    function around the expression, until all of these have been refined or
+    none of them has improved for `patience` steps. Returns the model with the
+    best score, the trace of the best score and some counts, among them the 5
+    best models. y should be scaled to unit variance, with y_scale the factor
+    that gives it its units back. cfg replaces entries of CFG."""
     CFG.update(cfg)
     rng = np.random.default_rng(seed)
     t0 = time.time()
     d = X.shape[1]
-    root = Model([Term(feats=[var(j) for j in range(d)])]).fit(X, y, restarts=6, rng=rng)
+    # The target of each function around the expression, in units of its spread,
+    # and the variance there of noise outside the function, with mean 1.
+    targets, outer = {None: (y, None)}, []
+    for name in CFG['outer']:
+        warped = warp(name, y * y_scale)
+        if warped is not None:
+            z, jac, c = warped
+            w = np.exp(2 * (jac - jac.max()))
+            targets[name] = (z / z.std(), w / w.mean())
+            outer.append((name, jac.sum() + len(y) * np.log(y_scale / z.std()) - CFG['node_cost'],
+                          (z.std(), c)))
+    root = Model([Term(feats=[var(j) for j in range(d)])])
+    root.y_scale = y_scale
+    root.fit(X, y, restarts=6, rng=rng)
     seen = {root.key(): root}          # structure key -> fitted model
     tried, expanded, n_quick = {root.key()}, set(), {}
-    best_score, stale = root.score, 0
+    best_of, stale = {}, 0             # the best score of each function around the expression
+    own = {w: 0 for w in targets}      # ... and how often its best model was refined
     trace, n_fits = [(root.score, root.key(), 'start')], 1
     say = print if verbose else (lambda *a: None)
     say(f"   0 {root.score:9.2f}  {root.key()}")
     with Pool(workers, initializer=_init_worker, initargs=(dict(CFG),)) as pool:
         for step in range(1, max_steps + 1):
-            front = sorted(seen.values(), key=lambda m: -m.score)[:beam]
-            todo = [m for m in front if m.key() not in expanded]
+            ranked = sorted(seen.values(), key=lambda m: -m.score)
+            front = ranked[:beam]
+            for w in targets:
+                first = next((m for m in ranked if m.warp == w), None)
+                if first is not None and own[w] < own_steps and first.key() not in expanded:
+                    front.append(first)
+                    own[w] += 1
+            todo = list({m.key(): m for m in front if m.key() not in expanded}.values())
             if not todo:
                 break
             cands = []
             for m in todo:
                 expanded.add(m.key())
-                cands += [(rule, c) for rule, c in moves(m, X) if c.key() not in tried]
+                cands += [(rule, c) for rule, c in moves(m, X, outer) if c.key() not in tried]
             # A structure gets quick fits in at most two steps.
             for key in {c.key() for _, c in cands}:
                 n_quick[key] = n_quick.get(key, 0) + 1
             cands = [(rule, c) for rule, c in cands if n_quick[c.key()] <= 2]
             t1 = time.time()
-            quick = pool.map(_quick, [(c, X, y) for _, c in cands], chunksize=4)
+            quick = pool.map(_quick, [(c, X, targets[c.warp]) for _, c in cands], chunksize=4)
             t2 = time.time()
             n_fits += len(quick)
             best = {}                  # the best quick fit of each structure
             for (rule, _), m in zip(cands, quick):
                 if m.key() not in best or m.score0 > best[m.key()][1].score0:
                     best[m.key()] = (rule, m)
-            short = sorted(best.values(), key=lambda rm: -rm[1].score0)[:top_k]
+            # A full fit for the best structures, and for the 3 best of each outer function.
+            order = sorted(best.values(), key=lambda rm: -rm[1].score0)
+            short = {id(rm[1]): rm for rm in order[:top_k]}
+            for w in targets:
+                short.update({id(rm[1]): rm for rm in [rm for rm in order if rm[1].warp == w][:3]})
+            short = list(short.values())
             if verbose > 1:
                 for rule, m in short:
                     print(f"        quick {m.score0:9.2f}  {rule:14s} {m.key()}")
-            full = pool.map(_full, [(m, X, y) for _, m in short])
+            full = pool.map(_full, [(m, X, targets[m.warp]) for _, m in short])
             n_fits += len(full)
             for (rule, k), m in zip(short, full):
                 tried.update((k.key(), m.key()))
@@ -565,13 +682,16 @@ def search(X, y, beam=4, top_k=12, patience=3, max_steps=40, workers=4, seed=0, 
                     seen[m.key()] = m
                     m.rule = rule
             top = max(seen.values(), key=lambda m: m.score)
-            stale = 0 if top.score > best_score + 0.1 else stale + 1
-            best_score = max(best_score, top.score)
+            now = {w: max((m.score for m in seen.values() if m.warp == w), default=-np.inf)
+                   for w in targets}
+            stale = 0 if any(now[w] > best_of.get(w, -np.inf) + 0.1 for w in now) else stale + 1
+            best_of = now
             if top.key() != trace[-1][1]:
                 trace.append((top.score, top.key(), getattr(top, 'rule', '')))
             say(f"{step:4d} {top.score:9.2f}  {top.key()}   [{len(cands)} candidates, "
                 f"{t2 - t1:.0f} + {time.time() - t2:.0f} s]")
             if stale >= patience:
                 break
-    top = max(seen.values(), key=lambda m: m.score).condition(X, y)
-    return top, trace, dict(n_fits=n_fits, n_models=len(tried), seconds=time.time() - t0)
+    best = [m.condition(X, *targets[m.warp]) for m in sorted(seen.values(), key=lambda m: -m.score)[:5]]
+    return best[0], trace, dict(n_fits=n_fits, n_models=len(tried), seconds=time.time() - t0,
+                                candidates=best)
