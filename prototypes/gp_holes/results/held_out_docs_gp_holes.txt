@@ -1,0 +1,44 @@
+
+simple:  2*cos(x4) + x1^2 - 2   [100 points, 5 inputs]
+  seed 0: 1*(x1^2) + 2*cos(1*x4) - 2
+          in: rms 0.0000, median 0.0000; out: rms 0.0000, median 0.0000  137 s  
+          holes 0
+  seed 1: 1*(x1^2) + 2*cos(1*x4) - 2
+          in: rms 0.0000, median 0.0000; out: rms 0.0000, median 0.0000  88 s  
+          holes 0
+  seed 2: 1*(x1^2) + 2*cos(1*x4) - 2
+          in: rms 0.0000, median 0.0000; out: rms 0.0000, median 0.0000  126 s  
+          holes 0
+
+inverse:  1/x1   [100 points, 5 inputs]
+  seed 0: (exp(-22.4*(x1^2)))*H((x4 + 9.88*x5)) + H(x1) - 1.24e-08
+          in: rms 25.0053, median 0.0000; out: rms 8.3672, median 0.0000  135 s  
+          holes 2
+  seed 1: (1 + 42.4*(x1^2))^-1*H(x2, (x2 + 0.426*x3)) - 0.000669
+          in: rms 3.4645, median 0.0525; out: rms 2.8262, median 0.0378  41 s  
+          holes 1
+  seed 2: (1 - 0.00181*(x3 - x4))^-1*H(x1) + 1.03e-05
+          in: rms 18.7347, median 0.0096; out: rms 4.5026, median 0.0143  22 s  
+          holes 1
+
+selection:  x4^2 - x20^2 + 1.5   [300 points, 5 inputs]
+  seed 0: 1*(x1^2) - 1*(x5^2) + 1.5
+          in: rms 0.0000, median 0.0000; out: rms 0.0000, median 0.0000  978 s  inputs kept: x4, x10, x13, x17, x20
+          holes 0
+  seed 1: -1*(x4^2) + 1*(x1^2) + 1.5
+          in: rms 0.0000, median 0.0000; out: rms 0.0000, median 0.0000  951 s  inputs kept: x4, x11, x19, x20, x28
+          holes 0
+  seed 2: 1*(x1^2) - 1*(x2^2) + 1.5
+          in: rms 0.0000, median 0.0000; out: rms 0.0000, median 0.0000  934 s  inputs kept: x4, x20, x22, x25, x26
+          holes 0
+
+denoising:  exp(x1) + x2 + x3   [100 points, 5 inputs]
+  seed 0: 1*exp(0.995*x1) + 1.01*(x2 + x3) + 2.08e-05
+          in: rms 0.0089, median 0.0037; out: rms 0.0578, median 0.0056  76 s  
+          holes 0
+  seed 1: 0.99*exp(1*x1) + 0.988*(x2 + x3) + 3.49e-05
+          in: rms 0.0130, median 0.0086; out: rms 0.0194, median 0.0120  65 s  
+          holes 0
+  seed 2: 1*exp(0.997*x1) + 0.991*(x2 + x3) - 0.000392
+          in: rms 0.0077, median 0.0039; out: rms 0.0368, median 0.0063  84 s  
+          holes 0

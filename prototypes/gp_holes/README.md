@@ -21,6 +21,8 @@ threadpoolctl.
   form.
 - `compare_pysr.py`: [PySR](https://github.com/MilesCranmer/PySR) on the same
   data (needs `pip install pysr`).
+- `run_held_out.py`: the search or PySR on targets that PySR provides.
+  `make_empirical_bench.py` writes the data of one set, `empirical_bench.json`.
 - `make_plots.py`: figures of the results, drawn into `plots/` from the logs
   of the runs in `results/` (needs matplotlib).
 
@@ -30,6 +32,7 @@ python run_benchmark.py --only I.6.2 --verbose
 python run_growth.py --target toy
 python run_series.py
 python compare_pysr.py --seconds 60
+python run_held_out.py --set empirical --code gp_holes
 python make_plots.py
 ```
 
@@ -163,6 +166,65 @@ PySR on the same data also returns short formulas that agree to within the
 noise, e.g. `1.96·(cos(0.857·x1) + 0.471)` for `J0` at 1% noise (in units of
 the standard deviation of the target), and no series.
 
+## Targets that PySR provides
+
+These were not used to develop the search, and it was run on them as it was
+(`run_held_out.py`). The results are judged by the form of the formula.
+
+**The examples of PySR's documentation.** Normal inputs, so also negative ones,
+and 5 inputs of which 1 to 3 matter. 3 seeds, PySR with 60 s on 4 threads.
+
+| Target | Points | Right | PySR right |
+|---|---|---|---|
+| `2·cos(x4) + x1² − 2` | 100 | 3 | 3 |
+| `1/x1` | 100 | 0 | 3 |
+| `x4² − x20² + 1.5`, 30 inputs | 300 | 3 | 3 |
+| `exp(x1) + x2 + x3`, noise 0.1 | 100 | 3 | 0 |
+
+- For an input that changes sign the library has no `1/u`, so `1/x1` cannot be
+  written; the search returns products of holes and other factors.
+- The third target has 30 inputs, which is out of reach of the search. As in
+  the documentation, PySR's selection of inputs first keeps 5 of them, for
+  both codes. A run then takes 16 minutes.
+- For the last target PySR's three results have further terms, with 3 to 5
+  times the error of the search inside the range of the data. Several of its
+  other results have terms with coefficients below 1e-6.
+
+**EmpiricalBench of the PySR paper** (arXiv:2305.01582): nine empirical laws,
+with the original data for four of them and generated data with 1 to 20% noise
+for the others (`make_empirical_bench.py`). Six targets are logarithms, and the
+inputs are in their units, over up to eight decades. The data are fixed, so the
+3 runs differ in the seed of the search only. PySR has the settings of the
+paper, but 60 s on 4 threads in place of 50 minutes on 8 cores. "Front" counts
+the runs with the law somewhere on PySR's Pareto front, which is how the paper
+counts; its own numbers are in the last column.
+
+| Law | Points | Right | PySR right | PySR front | PySR in its paper |
+|---|---|---|---|---|---|
+| Hubble, `v = H0·D` | 32 | 3 | 0 | 3 | 5 of 5 |
+| Kepler, `P = k·a^1.5` | 6 | 0 | 0 | 3 | 5 of 5 |
+| Newton, `log(G·m1·m2/r²)` | 30 | 0 | 3 | 3 | 5 of 5 |
+| Planck | 100 | 0 | 0 | 0 | 0 of 5 |
+| Leavitt, `M = α·log10(P) + δ` | 26 | 0 | 0 | 0 | 5 of 5 |
+| Schechter, `log(n)` | 27 | 3 | 1 | 1 | 5 of 5 |
+| Bode, `log(0.4 + 0.3·2^n)` | 8 | 0 | 0 | 3 | 5 of 5 |
+| Ideal gas, `log(n·R·T/V)` | 30 | 0 | 3 | 3 | 5 of 5 |
+| Rydberg | 50 | 0 | 0 | 0 | 0 of 5 |
+
+- The search returns `473·x1` for Hubble and
+  `−1.21·log(x1) − 4.03e-9·x1 − 2.13` for Schechter. PySR has both laws on its
+  front and mostly selects a longer formula.
+- Kepler: `365·x1^1.5` with a further term that takes up the residual of the
+  last of the 6 points.
+- Newton and ideal gas: one part right, `−2.02·log(x1)` and `−0.97·log(x3)`,
+  and a hole or a product of logarithms for the rest. The holes take the
+  inputs as they are, which does not suit inputs spread over many decades.
+- Leavitt: `3.89·exp(−0.043·x1) + 11.2`. The same form is on PySR's front.
+- Bode: a hole. Bode, Planck and Rydberg need the logarithm of a sum, which
+  the library does not have. For Planck the search finds the term
+  `−4.8e-11·x1/x2`, which is `h·ν/(k·T)`, and for Rydberg `2·log(x1)` and the
+  input `x1/x2`.
+
 ## What does not work yet
 
 - A formula that fits within the noise is preferred to a hole. The two costs
@@ -174,12 +236,15 @@ the standard deviation of the target), and no series.
   structure that pays off after two steps can be missed.
 - The search is greedy and its result depends on the seed for the harder
   targets.
+- Inputs spread over many decades, inputs that change sign, and fewer than
+  about 15 points (see "Targets that PySR provides").
 
 ## Tests still to do
 
 - The benchmark with the polynomial in the library.
 - More inputs. The number of candidates per step grows with the square of the
   number of inputs of a hole.
-- Noise levels other than 1%, and inputs that are not all positive.
-- Targets that were not used to develop the rules, and PySR with tuned
-  settings.
+- Noise levels other than 1%.
+- Holes that take the logarithm of a positive input, for inputs over many
+  decades, and then EmpiricalBench again.
+- PySR with tuned settings.
