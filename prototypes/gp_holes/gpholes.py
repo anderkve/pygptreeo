@@ -452,11 +452,12 @@ def library(f, X):
         out = [Node('pow', [f], [p], [False]) for p in (1.0, 2.0, 3.0, -1.0, -2.0)]
     for g in inner:
         v = g(X)
-        size = size_of(v)
+        size, top = size_of(v), np.abs(v).max()
         out += [Node('exp', [g], [c * size / v.std()], scale=size) for c in (-1, 1)]
-        out += [Node('aff', [g], [c, -1.0], scale=size) for c in (-0.5, 0.5)]
+        # In units of the largest |v|, 1 + th*v/scale stays positive for |th| < 1.
+        out += [Node('aff', [g], [c, -1.0], scale=top) for c in (-0.5, 0.5)]
         # Polynomials of degree 2 to 4 with constant term 1.
-        out += [Node('poly', [g], [c] + [0.0] * (deg - 1), scale=size)
+        out += [Node('poly', [g], [c] + [0.0] * (deg - 1), scale=top)
                 for deg in (2, 3, 4) for c in (-0.5, 0.5)]
     # A sine has to show at least half a period over the data, and at most 60.
     size, span = size_of(u), np.ptp(u)

@@ -48,13 +48,16 @@ functions of one input:
 | linear | `φ(uj)·H(all but uj) + H(all but uj)` |
 | peel (`q = 1`) | `w·φ(u) + H(u)` |
 | merge | `H(…, v, …)` with `v = uj·uk^p` or `v = uj + c·uk` in place of `uj, uk` |
-| change input | the same with `v` in place of only one of the two |
+| change input | the same with `v` in place of only one of the two, or `log(uj)` in place of a positive `uj` |
 | drop input, drop factor, drop term | the model without it |
+| outer function | `g(m)` for a model `m` of holes only, with `g(m)` one of `exp(m)`, `log(m) + c`, `c − log(m)`, `1/m`, `√m` |
 
 The library is `u^p`, `log(u)`, `exp(c·v)`, `(1 + c·v)^p` and `sin(a + b·u)`,
-with `v` one of `u`, `u²`, `1/u`. A sine must show at least half a period over
-the data. A polynomial `1 + c1·v + … + ck·v^k` with `k` from 2 to 4 can be
-added (`'poly'` in `CFG['library']`); it is not in the library by default.
+with `v` one of `u`, `u²`, `1/u`. For an input that changes sign, `u^p` and
+`log(u)` are replaced by the powers 1, 2, 3, −1 and −2. A sine must show at
+least half a period over the data. A polynomial `1 + c1·v + … + ck·v^k` with
+`k` from 2 to 4 can be added (`'poly'` in `CFG['library']`); it is not in the
+library by default.
 
 ## Score
 
@@ -63,8 +66,15 @@ minus 3 per symbolic function, minus 10 per exponent that is not a simple
 number (`NICE` in `gpholes.py`). Fitted exponents, coefficients of merged
 inputs and phases are rounded to simple values where that raises the score.
 
-Each step refines those of the 4 best models that have not been refined yet.
-Every candidate gets a short fit, and the 12 best structures a full one.
+With a function `g` around the expression, the inner expression is fitted to
+`g⁻¹(y)`, and the logarithm of the Jacobian of this transform is added to the
+score, as in a warped GP. Such a model has a noise term inside the function and
+one outside it, carried through the transform to first order.
+
+Each step refines those of the 4 best models that have not been refined yet,
+and in the first 6 steps the best model of each outer function. Every candidate
+gets a short fit, and the 12 best structures, and the 3 best of each outer
+function, a full one. The search returns its 5 best models.
 
 ## Results
 
@@ -224,6 +234,81 @@ counts; its own numbers are in the last column.
   the library does not have. For Planck the search finds the term
   `−4.8e-11·x1/x2`, which is `h·ν/(k·T)`, and for Rydberg `2·log(x1)` and the
   input `x1/x2`.
+
+## After the outer function and the logarithms of inputs
+
+The results above were obtained before the function around the expression,
+the logarithms of inputs and the further powers were added. With them:
+
+**A held-out sample of SRSD equations.** 15 Feynman equations of the SRSD
+benchmark (Matsubara et al. 2022, arXiv:2206.10540), drawn at random from those
+with at most 5 inputs that had not been used (`make_srsd_sample.py`), with the
+benchmark's ranges of the inputs: often many decades, and of both signs. 100
+points, 1% relative noise, 2 seeds. A result is right if it has no hole and
+its median relative error is below 1% for inputs from ranges half a decade
+wider on each side. The sample and this rule were fixed before the search was
+changed (`run_held_out.py --set srsd`). PySR had 60 s on 4 threads; "front"
+counts the runs with a right equation anywhere on its Pareto front.
+
+| Equation | Before | After | PySR | PySR front |
+|---|---|---|---|---|
+| i.6.20b `exp(−((θ − θ1)/σ)²/2)/(√(2π)·σ)` | 0 | 0 | 2 | 2 |
+| i.12.4 `q1/(4π·ε0·r²)` | 0 | 0 | 2 | 2 |
+| i.14.4 `k·x²/2` | 0 | 1 | 1 | 2 |
+| i.27.6 `1/(1/d1 + n/d2)` | 0 | 2 | 2 | 2 |
+| i.34.27 `ħ·ω` | 1 | 2 | 2 | 2 |
+| i.39.11 `p·V/(γ − 1)` | 0 | 0 | 1 | 1 |
+| ii.11.20 `n·p²·E/(3·k·T)` | 0 | 0 | 0 | 0 |
+| ii.13.34 `ρ·v/√(1 − v²/c²)` | 0 | 1 | 0 | 1 |
+| ii.27.18 `ε0·E²` | 0 | 2 | 2 | 2 |
+| ii.34.29b `g·μB·B·J/ħ` | 0 | 0 | 0 | 0 |
+| ii.35.21 `n·μ·tanh(μ·B/(k·T))` | 0 | 2 | 0 | 0 |
+| iii.10.19 `μ·√(Bx² + By² + Bz²)` | 0 | 0 | 0 | 0 |
+| iii.15.12 `2·U·(1 − cos(k·d))` | 0 | 0 | 0 | 0 |
+| bonus.8 `E/(1 + E·(1 − cos θ)/(m·c²))` | 0 | 2 | 0 | 2 |
+| bonus.18 `3·(c²·k/r² + H²)/(8π·G)` | 0 | 0 | 0 | 1 |
+| Total of 30 | 1 | 12 | 12 | 17 |
+
+- Before the change the search stopped with an error on 8 of the equations:
+  the bounds of the frequency of a sine crossed for inputs of small range.
+- The targets of iii.15.12 are dominated by rounding errors (`1 − cos(k·d)`
+  with `k·d` about 1e-8, 10% in the range of the data), so no result can be
+  right.
+- In ii.35.21 and bonus.8 a part of the formula has no visible effect in the
+  ranges of the benchmark (`tanh(z)` with `z` below 0.01, and a correction of
+  1e-10). The search returns the formula without it, `n·μ²·B/T` times a
+  constant and `y = E`.
+- The rule also counts approximations as right. By eye, of the 12 right
+  results of the search 7 are the formula, at most with a constant added (in
+  i.14.4 that constant is not small for the largest targets), 4 the formula
+  without the invisible part, and 1 an approximation (ii.13.34). PySR's 12 are
+  the formula with further terms of up to a few percent (9), or
+  approximations (3). Its fronts were not logged for this sample.
+- In 10 of the other 18 runs of the search the right formula, or its main
+  terms, stands beside a hole. 8 of them are for targets that change sign,
+  where the noise of the model does not grow with the target (NOTES.md,
+  "Relative noise").
+- The code before the last fix, a scale for `(1 + c·u)^p` (below), had 14 of
+  30 right; the two results it had in addition were approximations.
+
+**The original benchmark again**, seed 0 only: 15 of the 17 targets right,
+against 14 before. I.8.14 is now right, as
+`√((x3 − x4)² + 0.998·(x1 − x2)² + 0.0007)`, and so is I.18.4; II.11.28 is
+missed, although the right formula scores higher (277 against 273). I.13.4
+comes out as `√(0.25·(x1·x2² + x1·x3² + x1·x4²)² + 1.09)`: right within the
+noise, but the constant does not belong there. A first version of the change
+lost I.10.7 and II.11.28: the coefficient in `(1 + c·u)^p` was in units of the
+median of `|u|`, so that `1 + c·u` could turn negative within the data. It is
+in units of the largest `|u|` again.
+
+**EmpiricalBench after the change.** This is no longer a held-out test: the
+change was made while looking at it. 3 seeds, the same result each time.
+Right: Hubble, Schechter, Bode, as `log(0.0154·exp(0.691·n) + 0.0208) + 2.96`
+(that is `log(0.4 + 0.3·2^n)`), and Rydberg, as
+`−16.2 − log(1.01·(1/n1² − 1/n2²))`. The ideal gas law has a small constant
+inside the logarithm; Newton and Kepler have a further term at the level of
+the noise; Leavitt is still an exponential and Planck still a hole. Before
+the change: 2 of 9.
 
 ## Limitations, issues and ideas
 

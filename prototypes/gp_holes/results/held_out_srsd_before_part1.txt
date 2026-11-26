@@ -1,0 +1,77 @@
+
+i.6.20b:  exp(-((theta - theta1) / sigma) ** 2 / 2) / (sqrt(2 * pi) * sigma)   [100 points, 3 inputs]
+  seed 0: (1 + 2*x3)^-2*H(x1, x2) + 0.129*(1 + 0.5*(x1 - x2)^2)^-0.5 - 4.07e-07
+          relative error in 0.67 out 0.88  16 s  
+          holes 1
+  seed 1: (1 + 0.5*x3)^-2*exp(-0.213*x1)*H((x1 - x2)) + (1 + 4.86*x3)^-2*H((x1 - x2)) + H(x1) + 1.62e-06
+          relative error in 0.4 out 1.1  43 s  
+          holes 3
+
+i.12.4:  q1 * r / (4 * pi * 8.854e-12 * r ** 3)   [100 points, 2 inputs]
+  seed 0: 8.97e+09*(1/x2^2)*x1 + (1/x2^2)*H(x1) + 9.31e+06
+          relative error in 0.0076 out 0.01  13 s  
+          holes 1
+  seed 1: 8.98e+09*(x1/x2^2) + H(x1/x2^2) + 2.81e+07
+          relative error in 0.005 out 0.0058  15 s  
+          holes 1
+
+i.14.4:  1 / 2 * k_spring * x ** 2   [100 points, 2 inputs]
+  seed 0: 0.499*(x2^2)*x1 + (x2^2)*H(x1) - 0.00154
+          relative error in 0.0072 out 0.0091  13 s  
+          holes 1
+  seed 1: 0.5*(x2^2)*x1 - 4.44*(x2^2)*sin(3.9*x1) + (x2^2)*H(x1) - 0.00503
+          relative error in 0.013 out 0.016  13 s  
+          holes 1
+
+i.27.6:  1 / (1 / d1 + n / d2)   [100 points, 3 inputs]
+  seed 0: H(x1, (x1 - 0.5*(x1/(x2*(x1/x3^0.5)^2)^0.5))) + 2.62e-09
+          relative error in 0.012 out 0.039  35 s  
+          holes 1
+  seed 1: H(x1, x1/(x2*(x1/x3^0.5)^2)^0.5) + H(x1, (x1 - 0.5*(x1/(x2*(x1/x3^0.5)^2)^0.5))) + 1.66e-09
+          relative error in 0.0094 out 0.042  74 s  
+          holes 2
+
+i.34.27:  (6.626e-34 / (2 * pi)) * omega   [100 points, 1 inputs]
+  seed 0: 1.06e-34*x1 - 4.16e-28
+          relative error in 0.0014 out 0.0016  RIGHT  8 s  
+          holes 0
+  seed 1: 1.05e-34*x1 + H(x1) - 1.43e-28
+          relative error in 0.0036 out 0.003  8 s  
+          holes 1
+
+i.39.11:  1 / (gamma - 1) * pr * V   [100 points, 3 inputs]
+multiprocessing.pool.RemoteTraceback: 
+"""
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/multiprocessing/pool.py", line 125, in worker
+    result = (True, func(*args, **kwds))
+                    ~~~~^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/multiprocessing/pool.py", line 48, in mapstar
+    return list(map(*args))
+  File "/tmp/claude-0/-home-user-pygptreeo/0f9c9d26-ea92-5bb3-b3d2-c2422b9bc649/scratchpad/baseline_code/gpholes.py", line 507, in _quick
+    return model.fit(X, y, maxiter=25)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-0/-home-user-pygptreeo/0f9c9d26-ea92-5bb3-b3d2-c2422b9bc649/scratchpad/baseline_code/gpholes.py", line 310, in fit
+    r = minimize(self.nll_grad, p, args=(X, y, slots), jac=True, method='L-BFGS-B',
+                 bounds=bounds, options={'maxiter': maxiter})
+  File "/usr/local/lib/python3.13/site-packages/scipy/optimize/_minimize.py", line 705, in minimize
+    bounds = _validate_bounds(bounds, x0, meth)
+  File "/usr/local/lib/python3.13/site-packages/scipy/optimize/_minimize.py", line 1110, in _validate_bounds
+    raise ValueError(msg)
+ValueError: An upper bound is less than the corresponding lower bound.
+"""
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/tmp/claude-0/-home-user-pygptreeo/0f9c9d26-ea92-5bb3-b3d2-c2422b9bc649/scratchpad/baseline_code/run_held_out.py", line 154, in <module>
+    model, trace, info = search(X, y / ystd, seed=seed, verbose=False, workers=a.workers)
+                         ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-0/-home-user-pygptreeo/0f9c9d26-ea92-5bb3-b3d2-c2422b9bc649/scratchpad/baseline_code/gpholes.py", line 547, in search
+    quick = pool.map(_quick, [(c, X, y) for _, c in cands], chunksize=4)
+  File "/usr/local/lib/python3.13/multiprocessing/pool.py", line 367, in map
+    return self._map_async(func, iterable, mapstar, chunksize).get()
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/multiprocessing/pool.py", line 774, in get
+    raise self._value
+ValueError: An upper bound is less than the corresponding lower bound.

@@ -1,0 +1,153 @@
+
+hubble:  v = H0*D   (original data, inputs D)   [32 points, 1 inputs]
+  seed 0: 473*x1 + 0.000512
+            2 s  
+          holes 0
+          next -0.7: H(x1) + 0.000197
+          next -2.2: 1.31e+03*exp(-0.866/x1) - 0.000231
+  seed 1: 473*x1 + 0.000322
+            3 s  
+          holes 0
+          next -0.7: H(x1) + 0.000124
+          next -2.2: 1.31e+03*exp(-0.866/x1) - 0.000146
+  seed 2: 473*x1 + 0.000237
+            5 s  
+          holes 0
+          next -0.7: H(x1) + 9.11e-05
+          next -2.2: 1.31e+03*exp(-0.866/x1) - 0.000107
+
+kepler:  P = k*a^1.5   (original data, inputs a)   [6 points, 1 inputs]
+  seed 0: 364*(1 - 0.000939*x1)^-1*(x1^1.5) + 0.765
+            3 s  
+          holes 0
+          next -0.8: 365*(1 - 6.34e-05*(x1^2))^-1*(x1^1.5) + 0.0455
+          next -1.2: 365*(x1^1.5) + 6.04e-48*exp(11.8*x1) - 0.515
+  seed 1: 365*(1 - 6.34e-05*(x1^2))^-1*(x1^1.5) + 0.0455
+            4 s  
+          holes 0
+          next -0.5: 365*(x1^1.5) + 6.04e-48*exp(11.8*x1) - 0.515
+          next -0.9: 367*(x1^1.5) + H(x1) - 0.678
+  seed 2: 365*(1 - 6.34e-05*(x1^2))^-1*(x1^1.5) + 0.0455
+            3 s  
+          holes 0
+          next -0.5: 365*(x1^1.5) + 6.04e-48*exp(11.8*x1) - 0.515
+          next -0.9: 367*(x1^1.5) + H(x1) - 0.678
+
+newton:  log(G*m1*m2/r^2)   (generated, inputs r, m1, m2)   [30 points, 3 inputs]
+  seed 0: 0.126*sin(1.37e-11*x1) + 1*log(x3) - 1.99*log(x1) + 1.01*log(x2) - 24.2
+            50 s  
+          holes 0
+          next -2.0: 0.999*log(x3) - 1.99*log(x1) + 1.01*log(x2) - 24.1
+          next -3.8: 0.0021*log(x3)*sin(1.37e-11*x1) + 1*log(x3) - 1.99*log(x1) + 1.01*log(x2) - 24.2
+  seed 1: 0.126*sin(1.37e-11*x1) + 1*log(x3) - 1.99*log(x1) + 1.01*log(x2) - 24.2
+            50 s  
+          holes 0
+          next -2.0: 0.999*log(x3) - 1.99*log(x1) + 1.01*log(x2) - 24.1
+          next -3.8: 0.0021*log(x3)*sin(1.37e-11*x1) + 1*log(x3) - 1.99*log(x1) + 1.01*log(x2) - 24.2
+  seed 2: 0.126*sin(1.37e-11*x1) + 1*log(x3) - 1.99*log(x1) + 1.01*log(x2) - 24.2
+            51 s  
+          holes 0
+          next -2.0: 0.999*log(x3) - 1.99*log(x1) + 1.01*log(x2) - 24.1
+          next -3.8: 0.0021*log(x3)*sin(1.37e-11*x1) + 1*log(x3) - 1.99*log(x1) + 1.01*log(x2) - 24.2
+
+planck:  log(2*h*nu^3/c^2/(exp(h*nu/(k*T)) - 1))   (generated, inputs nu, T)   [100 points, 2 inputs]
+  seed 0: -4.8e-11*(1/x2)*x1 + (1/x2)*H(log(x1)) + H(log(x1)) - 7e-05
+            66 s  
+          holes 2
+          next -0.5: -430*(1/x2)*exp(-1.63e-14*x1) - 4.8e-11*(1/x2)*x1 + H(log(x1)) - 0.000106
+          next -2.9: -4.8e-11*(1/x2)*x1 + (1/x2)*H(log(x1)) + 14.4*(exp(0.0437*log(x1))) - 76.6
+  seed 1: -4.8e-11*(1/x2)*x1 + (1/x2)*H(log(x1)) + H(log(x1)) - 0.000107
+            62 s  
+          holes 2
+          next -0.5: -4.8e-11*(1/x2)*x1 - 430*(1/x2)*exp(-1.63e-14*x1) + H(log(x1)) - 0.000162
+          next -2.9: -4.8e-11*(1/x2)*x1 + (1/x2)*H(log(x1)) + 14.4*(exp(0.0437*log(x1))) - 76.6
+  seed 2: -4.8e-11*(1/x2)*x1 + (1/x2)*H(log(x1)) + H(log(x1)) - 5.68e-05
+            71 s  
+          holes 2
+          next -0.5: -4.8e-11*(1/x2)*x1 - 430*(1/x2)*exp(-1.63e-14*x1) + H(log(x1)) - 8.47e-05
+          next -3.5: -4.8e-11*(1/x2)*x1 - 427*(1/x2)*(exp(-2.85e-28*(x1^2))) + H(log(x1)) - 5.99e-05
+
+leavitt:  M = alpha*log10(P) + delta   (original data, inputs P)   [26 points, 1 inputs]
+  seed 0: 3.89*exp(-0.0433*x1) + 11.2
+            5 s  
+          holes 0
+          next -0.6: 4.33*(1 + 0.0228*x1)^-2 + 10.8
+          next -0.8: log(1.08*(1 + 0.12*x1)^-2 + 0.0137) + 15.1
+  seed 1: 3.89*exp(-0.0433*x1) + 11.2
+            5 s  
+          holes 0
+          next -0.6: 4.33*(1 + 0.0228*x1)^-2 + 10.8
+          next -0.8: log(1.08*(1 + 0.12*x1)^-2 + 0.0137) + 15.1
+  seed 2: 3.89*exp(-0.0433*x1) + 11.2
+            5 s  
+          holes 0
+          next -0.6: 4.33*(1 + 0.0228*x1)^-2 + 10.8
+          next -0.8: log(1.08*(1 + 0.12*x1)^-2 + 0.0137) + 15.1
+
+schechter:  log(phi/L0*(L/L0)^alpha*exp(-L/L0))   (generated, inputs L)   [27 points, 1 inputs]
+  seed 0: -1.21*log(x1) - 4.03e-09*x1 - 2.13
+            5 s  
+          holes 0
+          next -1.7: -1.21*log(x1) + H(x1) - 4.33e-05
+          next -3.0: -1.21*log(x1) - 1.01e-09*(1 + 0.5*x1)^-2*(x1^3) - 2.13
+  seed 1: -1.21*log(x1) - 4.03e-09*x1 - 2.13
+            5 s  
+          holes 0
+          next -1.7: -1.21*log(x1) + H(x1) - 4.34e-05
+          next -3.0: -1.21*log(x1) - 1.01e-09*(1 + 0.5*x1)^-2*(x1^3) - 2.13
+  seed 2: -1.21*log(x1) - 4.03e-09*x1 - 2.13
+            5 s  
+          holes 0
+          next -1.7: -1.21*log(x1) + H(x1) - 4.33e-05
+          next -3.0: -1.21*log(x1) - 2.85e-09*(1 + 0.5*x1)^-0.5*(x1^1.5) - 2.13
+
+bode:  log(0.4 + 0.3*2^n)   (original data, inputs n)   [8 points, 1 inputs]
+  seed 0: log(0.0154*exp(0.691*x1) + 0.0208) + 2.96
+            4 s  
+          holes 0
+          next -2.1: log(0.0153*exp(0.692*x1) + H(x1) + 4.33e-06) + 2.96
+          next -3.3: 0.399*(1 - 0.026*x1)^-2*x1 - 0.39
+  seed 1: log(0.0154*exp(0.691*x1) + 0.0208) + 2.96
+            4 s  
+          holes 0
+          next -2.1: log(0.0153*exp(0.692*x1) + H(x1) + 4.33e-06) + 2.96
+          next -3.3: 0.399*(1 - 0.026*x1)^-2*x1 - 0.39
+  seed 2: log(0.0154*exp(0.691*x1) + 0.0208) + 2.96
+            4 s  
+          holes 0
+          next -2.1: log(0.0153*exp(0.692*x1) + H(x1) + 4.33e-06) + 2.96
+          next -3.3: 0.399*(1 - 0.026*x1)^-2*x1 - 0.39
+
+ideal_gas:  log(n*R*T/V)   (generated, inputs n, T, V)   [30 points, 3 inputs]
+  seed 0: 3.75 - log(5.18*(1/x1)*x3*(1/x2) + 0.000127)
+            30 s  
+          holes 0
+          next -0.0: 3.75 - log(2.61*(1/x1)*x3*(1 + 0.5*x2)^-1 + 0.000127)
+          next -1.0: 3.75 - log((1/x1)*x3*H(x2) + 0.00013)
+  seed 1: 3.75 - log(5.18*(1/x1)*x3*(1/x2) + 0.000127)
+            32 s  
+          holes 0
+          next -0.0: 3.75 - log(2.61*(1/x1)*x3*(1 + 0.5*x2)^-1 + 0.000127)
+          next -1.0: 3.75 - log((1/x1)*x3*H(x2) + 0.00013)
+  seed 2: 3.75 - log(5.18*(1/x1)*x3*(1/x2) + 0.000127)
+            30 s  
+          holes 0
+          next -0.0: 3.75 - log(2.61*(1/x1)*x3*(1 + 0.5*x2)^-1 + 0.000127)
+          next -1.0: 3.75 - log((1/x1)*x3*H(x2) + 0.00013)
+
+rydberg:  log(1/(R*(1/n_1^2 - 1/n_2^2)))   (generated, inputs n_1, n_2)   [50 points, 2 inputs]
+  seed 0: -16.2 - log(1.01*(1/x1^2) - 1.01*(1/x2^2) + 3.92e-07)
+            36 s  
+          holes 0
+          next -3.6: -16.2 - log((1/x1^2)*H(x2) - 1.01*(1/x2^2) + 1.49e-05)
+          next -4.2: -16.2 - log(1.01*(1/x1^2) - 1.01*(1/x2^2) + H(x2) + 1.92e-07)
+  seed 1: -16.2 - log(1.01*(1/x1^2) - 1.01*(1/x2^2) + 3.92e-07)
+            36 s  
+          holes 0
+          next -3.6: -16.2 - log((1/x1^2)*H(x2) - 1.01*(1/x2^2) + 1.49e-05)
+          next -4.2: -16.2 - log(1.01*(1/x1^2) - 1.01*(1/x2^2) + H(x2) + 1.92e-07)
+  seed 2: -16.2 - log(1.01*(1/x1^2) - 1.01*(1/x2^2) + 3.92e-07)
+            34 s  
+          holes 0
+          next -3.6: -16.2 - log((1/x1^2)*H(x2) - 1.01*(1/x2^2) + 1.49e-05)
+          next -4.2: -16.2 - log(1.01*(1/x1^2) - 1.01*(1/x2^2) + H(x2) + 1.92e-07)

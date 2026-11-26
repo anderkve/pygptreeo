@@ -10,23 +10,41 @@ prototype does and the results.
 A hole may be multiplied by symbolic factors, `x3·H(…)`, and take symbolic
 inputs, `H(x1/x2)`. In both cases it enters the model linearly, so the model
 is a GP and its evidence is exact. A hole inside a function, `log(H(x))`, is
-not a GP, and the prototype has no rule that makes one.
+not a GP.
 
-So a function can only be applied to what the rules put into it: an input, a
-product of powers of inputs, or a linear combination of two inputs.
-`log(x1 + c·x2)` can be written, `log(0.4 + 0.3·e^x)` cannot. Three laws of
-EmpiricalBench fail for this reason (Bode, Rydberg, Planck).
+**Around the whole expression** the prototype has it (`CFG['outer']`): for
+`y = g(m(x))` the inner expression `m` is fitted to `g⁻¹(y)`, with the
+Jacobian of the transform in the score, as in a warped GP (Snelson et al.
+2003). This is exact for noise inside the function. Noise outside it is
+carried through the transform to first order, as a second noise term with a
+variance for each point. The same would work for one hole in one function
+when the rest of the expression is symbolic, `y = a(x)·g(H) + b(x)`.
 
-Two ways to add it:
+**In the interior**, `x1·log(H(x2, x3)) + H(x4)`, it is missing. The evidence
+is then an integral over the values of the inner hole at the data points,
+without a closed form. A way that keeps the structure of the search, as a
+hierarchy of holes:
 
-- **A function around the whole expression.** If `y = g(H)`, then
-  `g⁻¹(y) = H`: transform the target and search as before, with the Jacobian
-  of the transform in the score so that scores of different transforms can be
-  compared. Exact. The same works for one hole in one function when the rest
-  of the expression is symbolic, `y = a(x)·g(H) + b(x)`.
-- **A function of a hole in the interior**, `x1·log(H(x2, x3)) + H(x4)`. This
-  needs approximate inference, e.g. a linearisation around the current
-  estimate of the hole, and gives up the exact evidence.
+- Linearise the function around the current estimate ĥ of the inner hole,
+  `g(H) ≈ g(ĥ) + g'(ĥ)·(H − ĥ)`. The hole then enters linearly, with the
+  numerically evaluated factor `g'(ĥ(x))`: a term that the prototype already
+  scores exactly.
+- Iterate, with the posterior mean of the hole as the next ĥ (Gauss–Newton).
+  At convergence ĥ is the posterior mode, and the evidence of the linearised
+  model is the Laplace approximation of the evidence.
+- Nested functions, `log(H1 + exp(H2))`, are linearised by the chain rule, so
+  the holes of all levels end up in one GP, with factors that are products of
+  derivatives at the current estimates. There is one evidence for the whole
+  hierarchy: the data enter only at the top, so a level has none of its own.
+- The approximation is good where `g` is close to linear over the spread of
+  the inner hole, and poor for `H²` or `sin(H)` (several modes) and for
+  `log(H)` with `H` near 0. Its error differs between models, so it should be
+  checked against a numerical integral (e.g. importance sampling around the
+  mode) on small problems before linearised and exact models are compared.
+- Related: the extended GP (Steinberg & Bonilla 2014), the same linearisation
+  in a variational framework; deep GPs (Damianou & Lawrence 2013) and chained
+  GPs (Saul et al. 2016), with variational bounds on the evidence; Laplace
+  evidence with a Gauss–Newton Hessian for model selection (Immer et al. 2021).
 
 ### Other limitations
 
@@ -34,11 +52,23 @@ Two ways to add it:
   only when one factor is in the library. A logarithm around the whole
   expression (above) turns a product of positive functions into a sum.
 - **Inputs that change sign.** A fitted exponent is undefined for negative
-  numbers, so such inputs only get the powers 1 and 2, and no ratio with
-  another input. `1/x` cannot be written for them.
+  numbers, so such inputs only get the integer powers 1, 2, 3, −1 and −2, and
+  the product and ratio with another input. They have no logarithm, so inside
+  an outer logarithm `log|x|` is missing: for `y = k·x²/2` with `x` of both
+  signs one version of the search returned a contrived formula in place of
+  `2·log|x|`.
+- **Relative noise.** The noise is the same at every point, apart from the
+  noise outside an outer function. With relative noise (1% in the SRSD
+  sample) a target of one sign does well with an outer logarithm. For a target
+  that changes sign a hole stays beside the right formula to take up the
+  difference (SRSD i.12.4, ii.11.20, ii.34.29b, bonus.18). A noise term in
+  proportion to `y²` fixes this in a test: on i.12.4 the formula alone then
+  scores 608, against 566 for formula and hole with the present noise.
 - **Inputs over many decades.** A hole takes its inputs as they are
-  (standardised). For inputs spread log-uniformly over decades the points lie
-  bunched at one end, and the GP is a poor model.
+  (standardised), or the logarithm of a positive input. Inputs that change
+  sign and span decades remain a poor fit for the GP.
+- **A constant is always added** to the expression, also inside an outer
+  function. It comes out small but not zero, e.g. `1/(1/d1 + n/d2 + 0.048)`.
 - **Few points.** Below about 15 points the score (BIC for the parameters)
   lets spurious terms in, or the search stays at a hole.
 - **A formula that fits within the noise is preferred to a hole**, also when
@@ -47,28 +77,31 @@ Two ways to add it:
 - **Greedy search.** A step that does not raise the score by itself is rarely
   followed up, so structure that pays off after two steps is missed, e.g. a
   series built one term at a time. The result depends on the seed for the
-  harder targets.
+  harder targets. The search can also miss a model that scores far higher: on
+  SRSD i.6.20b the right formula scores 922 and the returned one 488, and on
+  II.11.28 277 against 273.
 - **Number of inputs.** The candidates per step grow with the square of the
   number of inputs of a hole. 5 inputs take minutes, 30 are out of reach.
-- **One formula is returned.** PySR returns a Pareto front, and its paper
+- **The score decides alone.** The search returns its 5 best models, but no
+  Pareto front of accuracy against complexity as PySR does; PySR's paper
   counts a law as found if it is anywhere on the front.
 
 ## Issues
 
-- The gradient of the evidence with respect to a parameter of a symbolic
-  function is a finite difference with a step of 1e-6 for parameters below 1
-  in size. For inputs of size 1e9 a coefficient in `exp(c·u)` is far smaller
-  than the step, and such candidates fail.
 - The benchmark has not been run with the polynomial in the library.
+- A numerical criterion of success (an error below the noise outside the
+  range of the data) also counts close approximations as right, for both
+  codes, e.g. `exp(log(x1) + log(x2) + 8.3e-26·x2³)` for `x1·x2/√(1 − x2²/c²)`.
+  The results need a look at the formulas as well.
 - The rules, the library and the costs were developed on the benchmark
   targets, so the benchmark overstates how well the search does.
 
 ## Ideas
 
-- The pieces above that keep the evidence exact: integer powers for inputs
-  that change sign, the logarithm of a positive input as an input of a hole,
-  and a function around the whole expression.
-- Return the few best models with their scores.
+- A noise term in proportion to `y²` (see "Relative noise"), and `log|x|`
+  for inputs that change sign.
+- Models without the constant, for the evidence to decide.
+- Functions of holes in the interior by linearisation (see above).
 - A score for few points that integrates over the parameters in place of BIC.
 - A hole of one input that the library cannot fill could be handed to another
   symbolic regression code, with the GP posterior as data.
@@ -86,5 +119,7 @@ Two ways to add it:
 
 - The benchmark with the polynomial in the library.
 - More inputs.
-- Noise levels other than 1%.
+- Noise levels other than 1%, and noise that is not relative.
 - PySR with tuned settings and longer runs.
+- A fresh held-out sample once the SRSD sample has been used to develop the
+  search.

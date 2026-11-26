@@ -1,0 +1,60 @@
+
+i.39.11:  1 / (gamma - 1) * pr * V   [100 points, 3 inputs]
+  seed 0: crashed: An upper bound is less than the corresponding lower bound.
+  seed 1: crashed: An upper bound is less than the corresponding lower bound.
+
+ii.11.20:  n_rho * p_d ** 2 * Ef / (3 * 1.380649e-23 * T)   [100 points, 4 inputs]
+  seed 0: crashed: An upper bound is less than the corresponding lower bound.
+  seed 1: crashed: An upper bound is less than the corresponding lower bound.
+
+ii.13.34:  rho_c_0 * v / sqrt(1 - v ** 2 / 2.99792458e8 ** 2)   [100 points, 2 inputs]
+  seed 0: (x1*x2)*x2^2^0.5*H(x1*x2) + 1.01*(x1*x2) + H(x1*x2) - 9.56e+31
+          relative error in 0.0045 out 0.0075  20 s  
+          holes 2
+  seed 1: (x1*x2)*x2^1.5*H(x1*x2) + 1*(x1*x2) - 1.41e+32
+          relative error in 0.0035 out 0.0092  23 s  
+          holes 1
+
+ii.27.18:  8.854e-12 * Ef ** 2   [100 points, 1 inputs]
+  seed 0: 8.86e-12*(x1^2) + H(x1) - 2.44e-15
+          relative error in 0.004 out 0.004  8 s  
+          holes 1
+  seed 1: 8.86e-12*(x1^2) + 3.36e-17*(x1^3) + H(x1) - 1.07e-14
+          relative error in 0.0057 out 0.0049  13 s  
+          holes 1
+
+ii.34.29b:  g_ * 9.2740100783e-24 * B * Jz / (6.626e-34 / (2 * pi))   [100 points, 3 inputs]
+  seed 0: crashed: An upper bound is less than the corresponding lower bound.
+  seed 1: crashed: An upper bound is less than the corresponding lower bound.
+
+ii.35.21:  n_rho * mom * tanh(mom * B / (1.380649e-23 * T))   [100 points, 4 inputs]
+  seed 0: crashed: An upper bound is less than the corresponding lower bound.
+  seed 1: crashed: An upper bound is less than the corresponding lower bound.
+
+iii.10.19:  mom * sqrt(Bx ** 2 + By ** 2 + Bz ** 2)   [100 points, 4 inputs]
+  seed 0: crashed: An upper bound is less than the corresponding lower bound.
+  seed 1: crashed: An upper bound is less than the corresponding lower bound.
+
+iii.15.12:  2 * U * (1 - cos(k * d))   [100 points, 3 inputs]
+  seed 0: crashed: An upper bound is less than the corresponding lower bound.
+  seed 1: crashed: An upper bound is less than the corresponding lower bound.
+
+bonus.8:  E_n / (1 + E_n / (9.10938356e-31 * 2.99792458e8 ** 2) * (1 - cos(theta)))   [100 points, 2 inputs]
+  seed 0: crashed: An upper bound is less than the corresponding lower bound.
+  seed 1: crashed: An upper bound is less than the corresponding lower bound.
+
+bonus.18:  3 / (8 * pi * 6.67430e-11) * (2.99792458e8 ** 2 * k_f / r ** 2 + H_G ** 2)   [100 points, 3 inputs]
+  seed 0: crashed: An upper bound is less than the corresponding lower bound.
+  seed 1: crashed: An upper bound is less than the corresponding lower bound.
+
+equation     right
+i.39.11          0
+ii.11.20         0
+ii.13.34         0
+ii.27.18         0
+ii.34.29b        0
+ii.35.21         0
+iii.10.19        0
+iii.15.12        0
+bonus.8          0
+bonus.18         0
