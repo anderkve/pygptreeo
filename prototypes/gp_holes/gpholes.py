@@ -667,6 +667,120 @@ def moves(model, X, outer=()):
     return out
 
 
+def simple(f, X):
+    """Functions of the feature f without a parameter, as (node, values)."""
+    if (f(X) > 0).all():
+        nodes = [Node('pow', [f], [p], [False]) for p in (1.0, 2.0, 3.0, 0.5, -1.0, -2.0)] + [Node('log', [f])]
+    else:
+        nodes = [Node('pow', [f], [p], [False]) for p in (1.0, 2.0, 3.0, -1.0, -2.0)] + [Node('logabs', [f])]
+    with np.errstate(all='ignore'):
+        return [(node, v) for node, v in ((node, node(X)) for node in nodes) if np.isfinite(v).all()]
+
+
+def sums(groups, t, s, const):
+    """Weighted least squares of the target t, with errors s, on one column of
+    each group and, with const, a constant. For every choice of columns: the
+    chi^2 with log n added per coefficient, the choice and the coefficients."""
+    cols = np.column_stack(groups + [np.ones(len(t))] * const) / s[:, None]
+    norm = np.sqrt((cols ** 2).sum(0))
+    cols, y = cols / norm, t / s
+    first = np.cumsum([0] + [g.shape[1] for g in groups])
+    pick = np.array(list(itertools.product(*[range(a, b) for a, b in zip(first, first[1:])])))
+    if const:
+        pick = np.column_stack([pick, np.full(len(pick), first[-1])])
+    gram, rhs = cols.T @ cols, cols.T @ y
+    A = gram[pick[:, :, None], pick[:, None, :]] + 1e-9 * np.eye(pick.shape[1])
+    coef = np.linalg.solve(A, rhs[pick][:, :, None])[:, :, 0]
+    chi2 = y @ y - (rhs[pick] * coef).sum(1) + pick.shape[1] * np.log(len(t))
+    return chi2, pick - first[:pick.shape[1]], coef / norm[pick]
+
+
+def total(nodes, coef, X, const, p, free):
+    """The node of (sum)^p, or with const of (1 + c*sum)^p, for the sum of
+    the nodes with the coefficients coef, the last of which is the constant.
+    The exponent is fitted if free. None for a sum that cannot be written so."""
+    nodes = [nd.kids[0] if nd.kind == 'pow' and nd.th[0] == 1 else nd for nd in nodes]
+    order = sorted(range(len(nodes)), key=lambda k: -abs(coef[k]) * size_of(nodes[k](X)))
+    if free and not const:      # the first function of a sum with a fitted exponent has to count positive
+        order = sorted(order, key=lambda k: coef[k] <= 0)
+    lead = coef[order[0]]
+    if free and (coef[-1] if const else lead) <= 0:
+        return None
+    node = nodes[order[0]]
+    for k in order[1:]:
+        scale = size_of(nodes[k](X)) / size_of(node(X))
+        node = Node('lin', [node, nodes[k]], [coef[k] / lead * scale], scale=scale)
+    if const:
+        top = np.abs(node(X)).max()
+        return Node('aff', [node], [lead / coef[-1] * top, p], [True, free], scale=top)
+    return Node('pow', [node], [p]) if free else node
+
+
+def inside(model, X, y, w, n_best=2):
+    """Candidates from a look inside the holes of a fitted model, as (rule, new
+    model). The fit gives the values of a hole at the data. Least squares
+    finds the sum of simple functions of the inputs of the hole that is
+    closest to them, and the hole is replaced by the terms of that sum, or by
+    the sum as a factor. For a hole of two to four inputs and of one sign the
+    same is done with powers of its values, and the hole is replaced by a
+    power of the sum."""
+    out, n = [], len(y)
+    with np.errstate(all='ignore'):
+        cache = [dict(free_a=True, free_u=True) for _ in model.terms]
+        solved = model.solve(X, y, w, cache)
+        for i, (t, c) in enumerate(zip(model.terms, cache)):
+            if solved is None or t.feats is None or len(t.feats) > 4:
+                continue
+            h, err = c['K'] @ solved[1] / c['a'], np.sqrt(model.noise(n, w)) / np.abs(c['a'])
+            if not np.isfinite(h).all():
+                continue
+            menu = [simple(f, X) for f in t.feats]
+            groups = [np.column_stack([v for _, v in m]) for m in menu]
+
+            def emit(new_terms):
+                m = copy.deepcopy(model)
+                m.terms[i:i + 1] = copy.deepcopy(new_terms)
+                out.append(('look inside', tidy(m)))
+
+            def best(target, s):
+                """The sums closest to the target, without a constant and with
+                one that is not small beside the sum, the closest first: (chi^2,
+                nodes, coefficients, const)."""
+                found = []
+                for const in (False, True):
+                    chi2, pick, coef = sums(groups, target, s, const)
+                    for k in np.argsort(chi2)[:n_best]:
+                        nodes = [menu[j][f][0] for j, f in enumerate(pick[k, :len(menu)])]
+                        part = sum(cf * nd(X) for cf, nd in zip(coef[k], nodes))
+                        if not const or abs(coef[k, -1]) > 0.1 * np.sqrt(np.mean(part ** 2)):
+                            found.append((chi2[k], nodes, coef[k], const))
+                return sorted(found, key=lambda f: f[0])
+
+            # The hole as a sum.
+            _, nodes, coef, const = best(h, err)[0]
+            emit([Term(t.factors + [nd], None, t.amp[0]) for nd in nodes]
+                 + [Term(t.factors, None, t.amp[0])] * (const and bool(t.factors)))
+            if t.factors and (const or len(nodes) > 1):
+                emit([Term(t.factors + [total(nodes, coef, X, const, 1.0, False)], None, t.amp[0])])
+            if len(t.feats) < 2 or not ((h > 0).all() or (h < 0).all()):
+                continue
+            # The hole as a power of a sum: the sum from |hole|^(1/p).
+            found = []
+            for p in (0.5, -0.5, -1.0, -2.0, 2.0):
+                target = np.abs(h) ** (1 / p)
+                if np.isfinite(target).all():
+                    found += [f + (p,) for f in best(target, np.abs(target / (p * h)) * err)]
+            done = set()
+            for _, nodes, coef, const, p in sorted(found, key=lambda f: f[0]):
+                key = (tuple(nd.text() for nd in nodes), const)
+                value = sum(cf * nd(X) for cf, nd in zip(coef, nodes)) + (coef[-1] if const else 0)
+                node = total(nodes, coef, X, const, p, True)
+                if key not in done and len(done) < n_best and (value > 0).all() and node is not None:
+                    done.add(key)
+                    emit([Term(t.factors + [node], None, t.amp[0])])
+    return out
+
+
 def snap(model, X, y, w=None):
     """Round parameters to simple values where that does not lower the score."""
     improved = True
@@ -777,7 +891,8 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
             cands = []
             for m in todo:
                 expanded.add(m.key())
-                cands += [(rule, c) for rule, c in moves(m, X, outer) if c.key() not in tried]
+                cands += [(rule, c) for rule, c in moves(m, X, outer) + inside(m, X, *targets[m.warp])
+                          if c.key() not in tried]
             # A structure gets quick fits in at most two steps.
             for key in {c.key() for _, c in cands}:
                 n_quick[key] = n_quick.get(key, 0) + 1

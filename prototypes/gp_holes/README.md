@@ -57,6 +57,7 @@ functions of one input:
 | change input | the same with `v` in place of only one of the two, or `log(uj)` in place of a positive `uj` |
 | drop input, drop factor, drop term | the model without it |
 | add hole | for a model with no hole left: the model and `H(xj)`, or a hole of all inputs; kept only if it scores above the model |
+| look inside | for a hole of up to four inputs: the sum of simple functions of its inputs that is closest to the values of the hole at the data, as terms or as one factor; for two to four inputs also a power of such a sum |
 | outer function | `g(m)` for a model `m` of holes only, with `g(m)` one of `exp(m)`, `log(m) + c`, `c − log(m)`, `1/m`, `√m` |
 
 The library is `u^p`, `log(u)`, `exp(c·v)`, `(1 + c·v)^p` and `sin(a + b·u)`,
@@ -436,6 +437,39 @@ score is higher. On the two sets of the last section:
 Right are now 23 of 24 on the first set and 7 of 13 on the second. Of the 7
 runs that are not right, one has a result with a score below that of the
 right formula (SRSD i.39.11, 557 against 567).
+
+## A look inside a hole
+
+The fit of a model gives the values of each of its holes at the data. The
+rule "look inside" takes those of a hole of up to four inputs and finds, by
+least squares, the sum of simple functions of the inputs that is closest to
+them: one function for each input, a power or the logarithm, and a constant
+if it is not small beside the sum. The hole is replaced by the terms of the
+sum, or by the sum as one factor. For a hole of two to four inputs whose
+values have one sign, the same is done with powers of the values, and the
+hole is replaced by a power of the sum, `(sum)^p` or `(1 + c·sum)^p`.
+
+The least squares only proposes: the proposals have no hole in place of the
+one looked into, and are fitted and scored as every other candidate. A power
+of a sum of several functions could not be reached before, since on the way
+to it a hole would stand inside a function. On the two sets:
+
+- SRSD iii.10.19 is found as `0.998·x1·(x2² + x3² + x4²)^0.5`, with a score
+  of 428 against 268, in 2,200 fits in place of 5,100. The search comes to
+  `x1·H(x2, x3, x4)` in its first step and looks into that hole in its second.
+- SRSD i.39.11 is found as `1/(−0.997·(1 − x1)/(x2·x3))`, 567 against 557:
+  the hole of `1/(H(x1)/(x2·x3))` is a line in `x1`.
+- SRSD i.27.6 is now `1/(1/x1 + x2/x3)` without the constant of 0.1 that it
+  had beside the two terms, and I.18.4 has `x4 − x3` as one factor.
+- SRSD ii.13.34 counts as right with `x1·x2·(1 + 8.5e-26·x2³)`, in place of
+  `x1·x2·H(x2)`. This is an approximation of the factor `1/√(1 − x2²/c²)`
+  that fits within the noise, not the formula.
+- The other results are the same, and the searches need 16% fewer fits.
+
+Right are now 24 of 24 on the first set and 9 of 13 on the second, and no
+result has a score below that of the right formula. The four that are not
+right are the two of II.11.28 with another function that fits within the
+noise, I.30.5 (no arcsin in the library) and SRSD bonus.20.
 
 ## Limitations, issues and ideas
 

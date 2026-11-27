@@ -82,7 +82,7 @@ FORMS = {
     'ii.27.18': ["T(pw(x1, 2))", ('log', "T(log(x1))")],
     'ii.34.29b': "T(x1, x2, x3)",
     'ii.35.21': "T(x1, pw(x2, 2), x3, pw(x4, -1))",             # tanh(z) = z for the z of the data
-    'iii.10.19': "H(x2, x3, x4, factors=[x1])",                 # the root of a sum, times an input of both signs
+    'iii.10.19': "T(x1, pw(add(add(pw(x2, 2), pw(x3, 2)), pw(x4, 2)), 0.5))",
     'bonus.8': ["T(x1)", ('log', "T(log(x1))")],                # the correction is 1e-9 in the data
     'bonus.18': "T(x1, pw(x2, -2)), T(pw(x3, 2))",
     # The second sample of SRSD.
