@@ -181,7 +181,7 @@ class Node:
         if k == 'exp':
             return f"exp({times(p[0])})"
         if k == 'aff':
-            return f"(1 + {times(p[0])})^{p[1]}"
+            return f"(1 + {times(p[0])})" + ('' if p[1] == '1' else f"^{p[1]}")
         if k == 'sin':
             if p[0] == '0':
                 return f"sin({times(p[1])})"
@@ -758,9 +758,10 @@ def inside(model, X, y, w, n_best=2):
     finds the sum of functions of the inputs of the hole that is closest to
     them (see simple), and the hole is replaced by the terms of that sum, or
     by the sum as a factor. For a hole of one sign the same is done with
-    powers of its values, and the hole is replaced by a power of the sum; for
-    a hole of one input only where the sum is a constant and a function that
-    is not a power."""
+    powers of its values, and the hole is replaced by a power of the sum.
+    With exponentials of its values, it is replaced by the logarithm of the
+    sum. For a hole of one input these two only where the library does not
+    have the result already."""
     out, n = [], len(y)
     with np.errstate(all='ignore'):
         cache = [dict(free_a=True, free_u=True) for _ in model.terms]
@@ -794,17 +795,20 @@ def inside(model, X, y, w, n_best=2):
                             found.append((chi2[k], nodes, coef[k], const))
                 return sorted(found, key=lambda f: f[0])
 
+            def flat(value, coef, const):
+                """Whether a sum stays so close to its constant that a power or
+                a logarithm of it is close to the sum itself."""
+                return const and np.abs(value / coef[-1] - 1).max() < 0.3
+
             # The hole as a sum.
             _, nodes, coef, const = best(h, err)[0]
             emit([Term(t.factors + [nd], None, t.amp[0]) for nd in nodes]
                  + [Term(t.factors, None, t.amp[0])] * (const and bool(t.factors)))
             if t.factors and (const or len(nodes) > 1):
                 emit([Term(t.factors + [total(nodes, coef, X, const, 1.0, False)], None, t.amp[0])])
-            if not ((h > 0).all() or (h < 0).all()):
-                continue
             # The hole as a power of a sum: the sum from |hole|^(1/p).
             found = []
-            for p in (0.5, -0.5, -1.0, -2.0, 2.0):
+            for p in (0.5, -0.5, -1.0, -2.0, 2.0) if (h > 0).all() or (h < 0).all() else ():
                 target = np.abs(h) ** (1 / p)
                 if np.isfinite(target).all():
                     found += [f + (p,) for f in best(target, np.abs(target / (p * h)) * err)]
@@ -815,9 +819,27 @@ def inside(model, X, y, w, n_best=2):
                 node = total(nodes, coef, X, const, p, True)
                 # For one input the library has (1 + c*v)^p of a power v already.
                 if (key not in done and len(done) < n_best and (value > 0).all() and node is not None
-                        and (len(nodes) > 1 or (const and nodes[0].kind != 'pow'))):
+                        and (len(nodes) > 1 or (const and nodes[0].kind != 'pow')) and not flat(value, coef, const)):
                     done.add(key)
                     emit([Term(t.factors + [node], None, t.amp[0])])
+            # The hole as the logarithm of a sum: the sum from exp(hole/v), for some sizes of v.
+            found = []
+            for v in h.std() * np.array([0.5, 1.0, 2.0, -0.5, -1.0, -2.0]) if 'log' in CFG['library'] else ():
+                target = np.exp(h / v)
+                if np.isfinite(target).all():
+                    found += best(target, np.abs(target / v) * err)
+            for _, nodes, coef, const in sorted(found, key=lambda f: f[0]):
+                value = sum(cf * nd(X) for cf, nd in zip(coef, nodes)) + (coef[-1] if const else 0)
+                node = total(nodes, coef, X, const, 1.0, True)
+                # For one input the logarithm of a power or of an exponential is in the library.
+                if ((value > 0).all() and node is not None and not flat(value, coef, const)
+                        and (len(nodes) > 1 or nodes[0].kind == 'sin' or (const and nodes[0].kind != 'pow'))):
+                    if const:       # (1 + c*sum)^1, with c kept away from 0, where the logarithm is a line
+                        node.free[1] = False
+                        node.bounds = [(0.3, 50.0) if node.th[0] > 0 else (-50.0, -0.3), node.bounds[1]]
+                    emit([Term(t.factors + [Node('log', [node if const else node.kids[0]])], None, t.amp[0])]
+                         + [Term(t.factors, None, t.amp[0])] * bool(t.factors))
+                    break
     return out
 
 

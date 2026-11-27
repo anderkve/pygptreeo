@@ -3,6 +3,75 @@
 Notes for the further development of the prototype. The README has what the
 prototype does and the results.
 
+## Where the prototype stands
+
+Closing notes of the session of 27 November 2026, for the one that takes over.
+
+**Added in this session.** Each has a section in the README, from "A faster
+search" on.
+
+- `truth.py` has the right formula of each target as a model that the rules
+  can write, and scores it on a data set. For I.30.5 and Planck's law it is a
+  model with a hole, and SRSD iii.15.12 has none. `run_baseline.py` runs the
+  search on the five sets with that score beside each result, and with
+  `--check` on 41 of the runs.
+- Speed: the gradient of the evidence without a second kernel matrix, outer
+  functions that trail are left alone, and the short fit starts with scaled
+  variances and has 20 iterations. A search takes less than half the time it
+  took: 31 s against 71 s for `toy`.
+- Rules: "add hole", for a model that has no hole left, and "look inside",
+  which proposes a sum, a power of a sum or the logarithm of a sum from the
+  values of a hole.
+
+**The check runs.** `python run_baseline.py NAME --check` takes half an hour
+on 4 cores: 19 runs of the benchmark, 11 and 7 of the two SRSD samples and 4
+empirical laws. `results/baseline_check.txt` has them for the last commit:
+33 of the 37 runs with a rule are right, against 24 at the start of the
+session, and the 4 laws are found. No result scores more than 0.3 below the
+right formula.
+Not right are II.11.28 in two of three seeds (another function fits within
+the noise), I.30.5 (no arcsin in the library) and SRSD bonus.20 (see
+"Inputs over many decades").
+
+These runs are not a test: every change was tried on them, and some were
+made for one of them (SRSD i.6.20b, iii.10.19 and i.39.11).
+
+**Not done: the full pass.** `python run_baseline.py NAME` runs the 150
+searches of the five sets. No version of this session has run it; it should
+take about two hours on 4 cores. The tables of the README before "A faster
+search" are from the search as it was before. The 109 runs outside the check
+runs are the only ones on which the changes have not been tried. The docs
+set needs PySR, for its selection of inputs.
+
+**What I would do next, in this order.**
+
+1. The full pass, with its results beside those of the README.
+2. A third SRSD sample (`make_srsd_sample.py --sample 3`), drawn before any
+   further change, as the next test that is held out.
+3. Parentheses in the text of merged inputs (Issues). The search tells
+   structures apart by this text, so results can change.
+4. `snap` with the best rounding in place of the first (Issues).
+5. One function of holes with symbolic terms around it,
+   `y = a(x)·g(H) + b(x)`, by taking `a`, `b` and `g` off the target. This is
+   exact (see "A hole cannot sit inside a function").
+6. A product of two holes, and products inside the sums of the look inside
+   (Ideas).
+
+**Practical.**
+
+- The prototype needs numpy, scipy and threadpoolctl; the docs set also pysr
+  and scikit-learn. The first import of pysr sets up Julia, which takes some
+  minutes.
+- A search gives the same result every time for the same data and seed. A
+  change that does not alter the path of a search leaves its score the same
+  to two decimals, so two versions can be compared run by run
+  (`results/baseline_check.json`).
+- Run times vary by 10% between runs on a shared machine. The number of fits
+  is the steadier measure.
+- What is under "Speed" and "The short fit cannot be much shorter" was
+  measured with a copy of the search that logged every candidate of every
+  step and its short fit. It is not in the repository.
+
 ## Limitations
 
 ### A hole cannot sit inside a function
@@ -20,11 +89,13 @@ carried through the transform to first order, as a second noise term with a
 variance for each point. The same would work for one hole in one function
 when the rest of the expression is symbolic, `y = a(x)·g(H) + b(x)`.
 
-**From the values of a hole** the rule "look inside" proposes a power of a
-sum of functions of the inputs, with least squares for the sum. Such a
-formula has no hole, so its evidence is exact. The sum has one function for
-each input of the hole, so a product of functions of two inputs inside it is
-out of reach, and so is the logarithm of a sum.
+**From the values of a hole** the rule "look inside" proposes a sum of
+functions of the inputs, a power of such a sum or its logarithm, with least
+squares for the sum. Such a formula has no hole, so its evidence is exact.
+The sum has one function for each input of the hole, so a product of
+functions of two inputs inside it is out of reach. So is the logarithm of a
+sine with its zeros at the ends of the data, as in SRSD bonus.1: with a
+frequency that is a little off, the sine is negative there.
 
 **In the interior**, `x1·log(H(x2, x3)) + H(x4)`, it is missing. The evidence
 is then an integral over the values of the inner hole at the data points,
@@ -73,6 +144,13 @@ hierarchy of holes:
 - **Inputs over many decades.** A hole takes its inputs as they are
   (standardised), or the logarithm of a positive input. Inputs that change
   sign and span decades remain a poor fit for the GP.
+- **Targets over many decades.** The noise of the same size at every point
+  cannot go below 1.6e-4 of the spread of the targets (its bound, and a
+  jitter of 1e-8 on the variances). The targets of SRSD bonus.20 span 7.6
+  decades, and 63% of them lie below that. Its formula is a sum of four
+  terms, which the rules can write, but it scores 670 where a model under a
+  logarithm scores 1102; there the formula is the logarithm of a sum with
+  products of functions of two inputs.
 - **A constant is always added** to the expression, also inside an outer
   function. It comes out small but not zero, e.g. `1/(1/d1 + n/d2 + 0.048)`.
 - **Few points.** Below about 15 points the score (BIC for the parameters)
@@ -83,11 +161,14 @@ hierarchy of holes:
 - **Greedy search.** A step that does not raise the score by itself is rarely
   followed up, so structure that pays off after two steps is missed, e.g. a
   series built one term at a time. The result depends on the seed for the
-  harder targets. The search can also miss a model that scores higher: on
-  SRSD i.39.11 the right formula scores 567 and the returned model, which
-  has a hole, 557.
+  harder targets, and on small changes to the search: for Newton's law, with
+  30 points, one version went on from the law to `√(H(log(r/√(m1·m2))))`,
+  which scores 1.7 higher, and the versions before and after it return the
+  law. The search can also miss a model that scores higher, though in the
+  check runs no result is now more than 0.3 below the right formula.
 - **Number of inputs.** The candidates per step grow with the square of the
-  number of inputs of a hole. 5 inputs take minutes, 30 are out of reach.
+  number of inputs of a hole. 5 inputs take one to four minutes, 30 are out
+  of reach.
 - **The score decides alone.** The search returns its 5 best models, but no
   Pareto front of accuracy against complexity as PySR does; PySR's paper
   counts a law as found if it is anywhere on the front.
@@ -115,9 +196,9 @@ hierarchy of holes:
 - The text of a merged input inside another one can be read in two ways,
   e.g. `x1/(x1*x2^0.5)/x3^0.5` for `x1/((x1·x2^0.5)/x3^0.5)`. The structures
   of the search are told apart by this text.
-- With more candidates the search goes on for longer and can come to a model
-  with a hole that scores above the right formula: for Newton's law with 30
-  points, `√(H(log(r/√(m1·m2))))` by 1.7.
+- A sine inside a sum keeps a phase of −π/2, as in
+  `(1 − sin(−1.57 + 2·u))` for `1 + cos(2·u)`: `snap` rounds a phase to
+  π/2 with the sign of a weight changed, and here there is no weight.
 - `snap` rounds the first parameter whose rounding raises the score, so its
   result depends on the order of the parameters. For `(1 + c·u)^p` of
   II.11.28 it can round `c` and keep a free exponent, 12 below the score with
@@ -131,10 +212,9 @@ hierarchy of holes:
 - A score for few points that integrates over the parameters in place of BIC.
 - A hole of one input that the library cannot fill could be handed to another
   symbolic regression code, with the GP posterior as data.
-- More from the values of a hole: the logarithm of a sum (for a hole `h`
-  without a factor, the sum from `exp(h/p)`), products of functions of two
-  inputs in the sums, and a product of two holes where the values of a hole
-  of both inputs, on a grid, have rank one.
+- More from the values of a hole: products of functions of two inputs in the
+  sums of the look inside, and a product of two holes where the values of a
+  hole of both inputs, on a grid, have rank one.
 - A hole inside a function as its values at a few knots, with a GP prior,
   fitted as an exponent is. The rest of the model stays a GP.
 - New points where the candidate formulas disagree most (active learning).
@@ -166,6 +246,7 @@ hierarchy of holes:
 
 ## Tests still to do
 
+- The full pass with the present search (see "Where the prototype stands").
 - The benchmark with the polynomial in the library.
 - More inputs.
 - Noise levels other than 1%, and noise that is not relative.

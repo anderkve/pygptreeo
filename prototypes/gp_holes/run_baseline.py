@@ -1,7 +1,7 @@
 """The search on every set of targets, with the score of the right formula
 beside each result.
 
-    python run_baseline.py NAME [--sets benchmark srsd srsd2 empirical docs] [--only TARGET ...]
+    python run_baseline.py NAME [--sets benchmark srsd srsd2 empirical docs] [--only TARGET ...] [--check]
 
 Writes results/baseline_NAME.json, with one entry per run, and the log
 results/baseline_NAME.txt. A call with a name that has been used goes on where
@@ -12,6 +12,10 @@ are those of run_held_out.py. A result of benchmark is right if it has no hole
 and its rms error outside the training box is below the noise, one of srsd and
 srsd2 if it has no hole and its median relative error is below 1% for the wider
 ranges. The results of empirical and docs are judged by the form of the formula.
+
+With --check only the 41 runs of CHECK are done, which take about half an hour
+in place of the hours of all 150: the runs that the changes to the search have
+been tried on.
 
 The right formula is that of truth.py, fitted to the same data. A result that
 is not right is put down to the search if the right formula scores higher by
@@ -31,6 +35,15 @@ from truth import truth
 
 SEEDS = dict(benchmark=3, srsd=2, srsd2=2, empirical=3, docs=3)
 NOISE = 0.01            # of the benchmark, and the largest relative error of a right result of srsd
+# The check runs: the seeds of some targets of each set.
+CHECK = dict(
+    benchmark={'toy': (0,), 'I.14.3': (0,), 'I.12.2': (0,), 'I.6.2': (0,), 'I.12.11': (0,), 'I.37.4': (0, 1),
+               'I.50.26': (0, 1), 'I.10.7': (0,), 'I.30.5': (0,), 'I.8.14': (0, 1), 'I.18.4': (0, 1, 2),
+               'II.11.28': (0, 1, 2)},
+    srsd={'i.6.20b': (0, 1), 'i.12.4': (0,), 'i.14.4': (0,), 'i.27.6': (0, 1), 'i.39.11': (0,), 'ii.11.20': (0,),
+          'ii.13.34': (0,), 'iii.10.19': (0,), 'bonus.18': (0,)},
+    srsd2={'i.34.14': (0,), 'i.47.23': (0,), 'ii.8.7': (0,), 'bonus.7': (0, 1), 'bonus.19': (0,), 'bonus.20': (0,)},
+    empirical={'newton': (0,), 'schechter': (0,), 'bode': (0,), 'rydberg': (0,)})
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -138,13 +151,15 @@ if __name__ == '__main__':
     ap.add_argument('--sets', nargs='*', default=list(SEEDS))
     ap.add_argument('--only', nargs='*')
     ap.add_argument('--workers', type=int, default=4)
+    ap.add_argument('--check', action='store_true')
     a = ap.parse_args()
     path = os.path.join(HERE, 'results', f"baseline_{a.name}")
     runs = json.load(open(path + '.json')) if os.path.exists(path + '.json') else {}
-    for which in a.sets:
+    for which in [w for w in a.sets if w in CHECK] if a.check else a.sets:
         for name, text, seed, X, y, ystd, tests, inputs in problems(which):
             key = f"{which}/{name}/{seed}"
-            if (key in runs and 'truth' in runs[key]) or (a.only and name not in a.only):
+            if ((key in runs and 'truth' in runs[key]) or (a.only and name not in a.only)
+                    or (a.check and seed not in CHECK[which].get(name, ()))):
                 continue
             if key not in runs:
                 runs[key] = dict(target=text, n=len(y), d=X.shape[1],

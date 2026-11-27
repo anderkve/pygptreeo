@@ -24,7 +24,7 @@ threadpoolctl.
 - `run_held_out.py`: the search or PySR on targets that PySR provides.
   `make_empirical_bench.py` writes the data of one set, `empirical_bench.json`.
 - `run_baseline.py`: the search on every set of targets, with the score of the
-  right formula beside each result.
+  right formula beside each result. With `--check`, on 41 of the runs only.
 - `truth.py`: the right formula of each target as a model that the search can
   write.
 - `make_plots.py`: figures of the results, drawn into `plots/` from the logs
@@ -38,6 +38,7 @@ python run_series.py
 python compare_pysr.py --seconds 60
 python run_held_out.py --set empirical --code gp_holes
 python run_baseline.py NAME                  # every set, into results/baseline_NAME.*
+python run_baseline.py NAME --check          # the 41 check runs, half an hour
 python truth.py                              # checks the formulas of truth.py
 python make_plots.py
 ```
@@ -57,7 +58,7 @@ functions of one input:
 | change input | the same with `v` in place of only one of the two, or `log(uj)` in place of a positive `uj` |
 | drop input, drop factor, drop term | the model without it |
 | add hole | for a model with no hole left: the model and `H(xj)`, or a hole of all inputs; kept only if it scores above the model |
-| look inside | for a hole: the sum of functions of its inputs that is closest to the values of the hole at the data, as terms or as one factor, and a power of such a sum |
+| look inside | for a hole: the sum of functions of its inputs that is closest to the values of the hole at the data, as terms or as one factor, and a power or the logarithm of such a sum |
 | outer function | `g(m)` for a model `m` of holes only, with `g(m)` one of `exp(m)`, `log(m) + c`, `c − log(m)`, `1/m`, `√m` |
 
 The library is `u^p`, `log(u)`, `exp(c·v)`, `(1 + c·v)^p` and `sin(a + b·u)`,
@@ -467,7 +468,7 @@ to it a hole would stand inside a function. On the two sets:
 - The other results are the same, and the searches need 16% fewer fits.
 
 Right are now 24 of 24 on the first set and 9 of 13 on the second, and no
-result has a score below that of the right formula. The four that are not
+result has a score more than 0.3 below that of the right formula. The four that are not
 right are the two of II.11.28 with another function that fits within the
 noise, I.30.5 (no arcsin in the library) and SRSD bonus.20.
 
@@ -489,13 +490,28 @@ constant and a sine, exponential or logarithm.
 - On the two sets, right are 24 of 24 and 9 of 13 as before, with 1% more
   fits on the first and 2% fewer on the second. I.50.26 is now
   `0.5·x1·x4·(1 + cos(2·x2·x3)) + x1·cos(x2·x3)`, 10 higher in score.
-- Newton's law of EmpiricalBench is no longer the result. It is found in the
-  first step, as before, with a score of 53.2, but the search now goes on
-  and ends at `√(H(log(r/√(m1·m2))))` with 54.9. Of the nine laws this is the
-  only one that changes.
-- SRSD bonus.1 is not found. The search works under a logarithm there, where
-  the formula has the logarithm of `1 − cos(x4)`, and the rule proposes powers
-  of sums, not logarithms of them.
+- For Newton's law of EmpiricalBench, with 30 points, this version went on
+  from the law, which it finds in its first step with a score of 53.2, to
+  `√(H(log(r/√(m1·m2))))` with 54.9. Of the nine laws it is the only one
+  that changed. With the logarithm of a sum, below, the search returns the
+  law again.
+
+**The logarithm of a sum.** With `exp(h/v)` of the values `h` of a hole, for
+six sizes of `v`, the same least squares gives the sum of `w·log(sum)`, and
+the hole is replaced by that term.
+
+- On made-up targets the search finds `x3·log(x1² + x2²)`, and
+  `x2 + 2·log(1 + 0.6·cos(x1))` as `log(exp(x2)·(1 + 0.6·cos(x1))²)` and
+  constants.
+- SRSD bonus.1 is still not found. Its `log(sin(x4/2))` has the zeros of the
+  sine at both ends of the range of `x4`, so a sine with a frequency that is
+  a little off is negative there and has no logarithm, and the rule leaves
+  such a sum out.
+
+With all of the above, the 41 check runs (`python run_baseline.py NAME
+--check`, in `results/baseline_check.txt`) have 33 right of the 37 with a
+rule, and the 4 empirical laws, in 940 s of search. Not right are II.11.28
+in two of its three seeds, I.30.5 and SRSD bonus.20, as before.
 
 ## Limitations, issues and ideas
 
