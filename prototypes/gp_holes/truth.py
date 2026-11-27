@@ -28,7 +28,7 @@ import copy
 
 import numpy as np
 
-from gpholes import Model, Term, library, nice, pairings, snap, transforms, var, warp
+from gpholes import Model, Term, library, nice, pairings, transforms, var, warp
 
 C = 299792458.0
 FORMS = {
@@ -194,28 +194,27 @@ def models(name, X, inputs=None):
 
 def truth(name, X, y, y_scale, inputs=None):
     """The alternative of the formula of a target with the best score, as an
-    entry of the results. None if there is none. Each is fitted from the
-    parameters of the formula and rounded as in the search, once with all
-    parameters free and once with those that have a simple value held there."""
+    entry of the results. None if there is none. The parameters of the formula
+    that have a simple value are held there, and the others are fitted from
+    their values in the formula."""
     targets, outer = transforms(y, y_scale)
     outer = {o[0]: o[1:] for o in outer}
     best = None
     for name_outer, terms in models(name, X, inputs):
         if name_outer and name_outer not in outer:
             continue
-        for hold in (False, True):
-            m = Model(copy.deepcopy(terms))
-            m.y_scale = y_scale
-            if name_outer:
-                m.warp, (m.offset, m.warp_args) = name_outer, outer[name_outer]
-            for node in (n for t in m.terms for n in t.nodes()) if hold else ():
-                for k in np.flatnonzero(node.free):
-                    values = nice(node, k)
-                    node.free[k] = values is None or not np.isclose(values, node.th[k]).any()
-            data = (X, *targets[name_outer])
-            m = snap(m.fit(*data, maxiter=300, restarts=3, rng=np.random.default_rng(0)), *data).condition(*data)
-            if best is None or m.score > best.score:
-                best = m
+        m = Model(terms)
+        m.y_scale = y_scale
+        if name_outer:
+            m.warp, (m.offset, m.warp_args) = name_outer, outer[name_outer]
+        for node in (n for t in m.terms for n in t.nodes()):
+            for k in np.flatnonzero(node.free):
+                values = nice(node, k)
+                node.free[k] = values is None or not np.isclose(values, node.th[k]).any()
+        data = (X, *targets[name_outer])
+        m.fit(*data, maxiter=300, restarts=3, rng=np.random.default_rng(0)).condition(*data)
+        if best is None or m.score > best.score:
+            best = m
     if best is None or best.score < -1e9:           # no alternative, or none that could be fitted
         return None
     return dict(score=float(best.score), holes=best.n_holes(), key=best.key(), text=best.text(y_scale))
