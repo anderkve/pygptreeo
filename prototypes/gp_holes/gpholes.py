@@ -201,6 +201,21 @@ def var(j):
     return Node('var', j=j)
 
 
+def free(roots):
+    """Whether a node below the roots has a free parameter."""
+    return any(n.free.any() for root in roots for n in root.walk())
+
+
+def kernel(r2):
+    """The kernel of the holes at squared distances r2, and g = -2 dk/d(r2)."""
+    if CFG['kernel'] == 'rbf':
+        k = np.exp(-0.5 * r2)
+        return k, k
+    r = np.sqrt(5 * r2)
+    e = np.exp(-r)
+    return (1 + r + r * r / 3) * e, 5 / 3 * (1 + r) * e
+
+
 class Term:
     """a(x) * H(u(x)) if feats is a list of nodes, w * a(x) if feats is None.
     a(x) is the product of the factors."""
@@ -234,34 +249,61 @@ class Term:
             a = a * f(X)
         return a
 
-    def parts(self, X, ref):
-        """a(x) in units of its rms over ref, and the hole inputs standardised
-        over ref and divided by the length scales."""
+    def factor(self, X, ref):
+        """a(x) in units of its rms over ref."""
         a = self.scale(X)
-        a = a / np.sqrt(np.mean((a if ref is X else self.scale(ref)) ** 2))
+        return a / np.sqrt(np.mean((a if ref is X else self.scale(ref)) ** 2))
+
+    def inputs(self, X, ref):
+        """The hole inputs, standardised over ref. None without a hole."""
         if self.feats is None:
-            return a, None
+            return None
         U = np.column_stack([f(X) for f in self.feats])
         R = U if ref is X else np.column_stack([f(ref) for f in self.feats])
-        return a, (U - R.mean(0)) / (R.std(0) * np.exp(self.ls))
+        return (U - R.mean(0)) / R.std(0)
 
-    def K(self, Xa, Xb, ref, grad=False):
-        """The term's kernel matrix and, with grad=True, its derivatives with
-        respect to the log length scales."""
-        aa, Za = self.parts(Xa, ref)
-        ab, Zb = (aa, Za) if Xb is Xa else self.parts(Xb, ref)
+    def K(self, Xa, Xb, ref):
+        """The term's kernel matrix."""
+        aa, Va = self.factor(Xa, ref), self.inputs(Xa, ref)
+        ab, Vb = (aa, Va) if Xb is Xa else (self.factor(Xb, ref), self.inputs(Xb, ref))
         K = np.exp(2 * self.amp[0]) * np.outer(aa, ab)
-        dK = []
-        if Za is not None:
-            d2 = [(Za[:, None, j] - Zb[None, :, j]) ** 2 for j in range(Za.shape[1])]
-            if CFG['kernel'] == 'rbf':
-                k = g = np.exp(-0.5 * sum(d2))
-            else:
-                r = np.sqrt(5 * sum(d2))
-                k, g = (1 + r + r * r / 3) * np.exp(-r), 5 / 3 * (1 + r) * np.exp(-r)
-            dK = [K * g * d for d in d2] if grad else []
-            K = K * k
-        return (K, dK) if grad else K
+        if Va is None:
+            return K
+        return K * kernel((Va[:, None] - Vb[None]) ** 2 @ np.exp(-2 * self.ls))[0]
+
+    def train(self, X, c):
+        """The term's kernel matrix K on the training inputs X and its pieces,
+        into c: a(x) and its outer product P, the standardised hole inputs V
+        and the squared differences E of each, and k and g of the hole (see
+        kernel). What depends on no free parameter of a node is kept from the
+        last call."""
+        if 'P' not in c or c['free_a']:
+            c['a'] = self.factor(X, X)
+            c['P'] = np.outer(c['a'], c['a'])
+        c['K'] = np.exp(2 * self.amp[0]) * c['P']
+        if self.feats is None:
+            return
+        if 'E' not in c or c['free_u']:
+            c['V'] = self.inputs(X, X)
+            c['E'] = (c['V'][:, None] - c['V'][None]) ** 2
+        c['k'], c['g'] = kernel(c['E'] @ np.exp(-2 * self.ls))
+        c['K'] = c['K'] * c['k']
+
+    def grad(self, W, c):
+        """The derivatives of the negative log evidence with respect to the
+        log amplitude, the log length scales, a(x) at each point and the
+        standardised hole inputs at each point, from the pieces in c and
+        W = K^-1 - alpha alpha^T of the whole model."""
+        A2 = np.exp(2 * self.amp[0])
+        d_amp = np.sum(W * c['K'])
+        if self.feats is None:
+            return d_amp, None, A2 * (W @ c['a']), None
+        w = np.exp(-2 * self.ls)
+        Q = A2 * W * c['P'] * c['g']
+        d_ls = 0.5 * w * (Q.ravel() @ c['E'].reshape(-1, len(w)))
+        d_a = (A2 * W * c['k']) @ c['a']
+        d_V = (Q @ c['V'] - Q.sum(1)[:, None] * c['V']) * w
+        return d_amp, d_ls, d_a, d_V
 
 
 class Model:
@@ -297,13 +339,18 @@ class Model:
                    if node.kind in EXPONENT)
 
     def slots(self):
-        """One (array, index, bounds, tag, term index, length scale index) per free parameter."""
+        """One (array, index, bounds, tag, term index, length scale index) per
+        free parameter. For a parameter of a node the last entry tells whether
+        the node is in a(x) and whether it is in the hole inputs."""
         out = []
         for i, t in enumerate(self.terms):
             out.append((t.amp, 0, LOG_BOUNDS['amp'], 'amp', i, None))
             out += [(t.ls, j, LOG_BOUNDS['ls'], 'ls', i, j) for j in range(len(t.ls))]
-            for node in t.nodes():
-                out += [(node.th, k, node.bounds[k], 'th', i, None)
+            in_a = [n for f in t.factors for n in f.walk()]
+            in_u = [n for f in t.feats or [] for n in f.walk()]
+            for node in in_a + in_u:
+                where = any(n is node for n in in_a), any(n is node for n in in_u)
+                out += [(node.th, k, node.bounds[k], 'th', i, where)
                         for k in range(len(node.th)) if node.free[k]]
         out.append((self.hyp, 0, LOG_BOUNDS['const'], 'const', None, None))
         out.append((self.hyp, 1, LOG_BOUNDS['noise'], 'noise', None, None))
@@ -319,15 +366,17 @@ class Model:
         var = s2[0] + 1e-8 + s2[2] * w[1] * np.ones(n)
         return var + s2[1] * w[0] if self.warp else var
 
-    def nll_grad(self, p, X, y, slots, w):
-        """Negative log evidence and its gradient at the parameters p."""
+    def nll_grad(self, p, X, y, slots, w, cache):
+        """Negative log evidence and its gradient at the parameters p. cache
+        has a dict for each term (see Term.train)."""
         for v, s in zip(p, slots):
             s[0][s[1]] = v
         n = len(y)
         with np.errstate(all='ignore'):
-            parts = [t.K(X, X, X, grad=True) for t in self.terms]
-            c2, s2 = np.exp(2 * self.hyp[0]), np.exp(2 * self.hyp[1])
-            K = sum(k for k, _ in parts) + c2 + np.diag(self.noise(n, w))
+            for t, c in zip(self.terms, cache):
+                t.train(X, c)
+            c2 = np.exp(2 * self.hyp[0])
+            K = sum(c['K'] for c in cache) + c2 + np.diag(self.noise(n, w))
             try:
                 chol = cho_factor(K, lower=True, check_finite=True)
             except (np.linalg.LinAlgError, ValueError):
@@ -335,28 +384,33 @@ class Model:
             alpha = cho_solve(chol, y)
             W = cho_solve(chol, np.eye(n)) - np.outer(alpha, alpha)
             nll = 0.5 * y @ alpha + np.log(np.diag(chol[0])).sum() + 0.5 * n * np.log(2 * np.pi)
+            diag = np.diag(W)
+            d = [t.grad(W, c) for t, c in zip(self.terms, cache)]
             grad = np.zeros(len(p))
             for q, (arr, idx, _, tag, i, j) in enumerate(slots):
                 if tag == 'amp':
-                    dK = 2 * parts[i][0]
+                    grad[q] = d[i][0]
                 elif tag == 'ls':
-                    dK = parts[i][1][j]
+                    grad[q] = d[i][1][j]
                 elif tag == 'const':
-                    dK = 2 * c2 * np.ones((n, n))
+                    grad[q] = c2 * W.sum()
                 elif tag == 'noise':
-                    dK = 2 * s2 * np.eye(n)
+                    grad[q] = np.exp(2 * self.hyp[1]) * diag.sum()
                 elif tag == 'outside':
-                    dK = 2 * np.exp(2 * self.hyp[2]) * np.diag(w[0])
+                    grad[q] = np.exp(2 * self.hyp[2]) * (diag @ w[0])
                 elif tag == 'relative':
-                    dK = 2 * np.exp(2 * self.hyp[3]) * np.diag(w[1])
-                else:                                   # a parameter of a symbolic node
-                    v, eps = arr[idx], 1e-6 * max(1.0, abs(arr[idx]))
+                    grad[q] = np.exp(2 * self.hyp[3]) * (diag @ w[1])
+                else:           # a parameter of a symbolic node, from differences of a(x) and the hole inputs
+                    t, v, eps = self.terms[i], arr[idx], 1e-6 * max(1.0, abs(arr[idx]))
                     arr[idx] = v + eps
-                    Kp = self.terms[i].K(X, X, X)
+                    ap, Vp = j[0] and t.factor(X, X), j[1] and t.inputs(X, X)
                     arr[idx] = v - eps
-                    dK = (Kp - self.terms[i].K(X, X, X)) / (2 * eps)
+                    am, Vm = j[0] and t.factor(X, X), j[1] and t.inputs(X, X)
                     arr[idx] = v
-                grad[q] = 0.5 * np.sum(W * dK)
+                    if j[0]:
+                        grad[q] += (ap - am) @ d[i][2] / (2 * eps)
+                    if j[1]:
+                        grad[q] += np.sum((Vp - Vm) * d[i][3]) / (2 * eps)
             if not (np.isfinite(nll) and np.isfinite(grad).all()):
                 return 1e10, np.zeros(len(p))
         return nll, grad
@@ -369,6 +423,7 @@ class Model:
         Without w the relative noise follows y (see search)."""
         w = w or (None, y ** 2)
         slots = self.slots()
+        cache = [dict(free_a=free(t.factors), free_u=free(t.feats or [])) for t in self.terms]
         bounds = [s[2] for s in slots]
         p0 = np.clip([s[0][s[1]] for s in slots], [b[0] for b in bounds], [b[1] for b in bounds])
         starts = [p0]
@@ -381,7 +436,7 @@ class Model:
             starts.append(np.clip(p, [b[0] for b in bounds], [b[1] for b in bounds]))
         best = None
         for p in starts:
-            r = minimize(self.nll_grad, p, args=(X, y, slots, w), jac=True, method='L-BFGS-B',
+            r = minimize(self.nll_grad, p, args=(X, y, slots, w, cache), jac=True, method='L-BFGS-B',
                          bounds=bounds, options={'maxiter': maxiter})
             if best is None or r.fun < best.fun:
                 best = r

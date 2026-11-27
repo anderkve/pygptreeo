@@ -85,6 +85,10 @@ hierarchy of holes:
 - **The score decides alone.** The search returns its 5 best models, but no
   Pareto front of accuracy against complexity as PySR does; PySR's paper
   counts a law as found if it is anywhere on the front.
+- **Speed.** A run fits thousands of candidates (about 4,000 for 3 inputs and
+  7,000 for 5), and these short fits take 90% of its time. All but 1.5% of
+  the candidates are dropped after their fit. A fit is about 30 evaluations
+  of the evidence, of about 1 ms each for 100 points.
 
 ## Issues
 
@@ -103,6 +107,8 @@ hierarchy of holes:
 - A score for few points that integrates over the parameters in place of BIC.
 - A hole of one input that the library cannot fill could be handed to another
   symbolic regression code, with the GP posterior as data.
+- Fewer short fits: rank the candidates of a step before fitting them, and
+  stop refining the outer functions that trail.
 - New points where the candidate formulas disagree most (active learning).
 - On the pygptreeo tree: one symbolic skeleton shared by all leaves, the holes
   local to each leaf, and the summed evidence of the leaves as score. The
