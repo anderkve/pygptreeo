@@ -27,6 +27,7 @@ threadpoolctl.
   right formula beside each result. With `--check`, on 41 of the runs only.
 - `truth.py`: the right formula of each target as a model that the search can
   write.
+- `run_ode.py`: a differential equation for a hole of one input.
 - `make_plots.py`: figures of the results, drawn into `plots/` from the logs
   of the runs in `results/` (needs matplotlib).
 
@@ -41,6 +42,7 @@ python run_baseline.py NAME                  # every set, into results/baseline_
 python run_baseline.py NAME --check          # the 41 check runs, half an hour
 python run_baseline.py NAME --check --symmetry first    # ... with the rule "symmetry"
 python truth.py                              # checks the formulas of truth.py
+python run_ode.py                            # equations for erf, J0 and others
 python make_plots.py
 ```
 
@@ -569,6 +571,61 @@ logarithm, and of the functions that a hole is linear in) or `'first'` (as
 `'replace'`, but once the rule has nothing new for the best models, or the
 search has stopped improving, the 4 best models get the rules that were left
 out).
+
+## A differential equation for a hole of one input
+
+For a hole of one input the same can be done with the columns
+`u^a·d^kH/du^k`, with `a` and `k` from 0 to 2, and a constant
+(`run_ode.py`). A relation between two or three of them is a differential
+equation with polynomial coefficients, which most functions of the library
+obey, and so do functions without a closed form: `H'' + 2·u·H' = 0` for `erf`
+and `u·H'' + H' + u·H = 0` for `J0`.
+
+The solutions of an equation are a model without a hole: a term for each
+basis solution, with a weight, and one more for an equation with a constant.
+They are computed by numerical integration from the median of the data. The
+evidence of the model is that of a formula, and it predicts outside the data.
+The coefficients of the equation are fitted by least squares of its solutions
+to the data, and each is held at a simple value where BIC allows. The cost
+of a symbolic function is counted for each column of the equation. The 3
+equations of two columns and of three with the smallest residuals are
+scored.
+
+100 points, 2 seeds, a squared-exponential hole. "Right" counts the runs
+where the equation of the target has the best score and scores above the
+hole.
+
+| Target | Its equation | 10% noise | 1% | 0.1% |
+|---|---|---|---|---|
+| `erf(u)` | `H'' + 2·u·H' = 0` | 0 | 1 | 2 |
+| `J0(u)` | `u·H'' + H' + u·H = 0` | 0 | 0 | 2 |
+| `Ai(−u)` | `H'' + u·H = 0` | 2 | 2 | 2 |
+| `exp(−u²/2)` | `H' + u·H = 0` | 2 | 2 | 2 |
+| `sin(2·u)` | `H'' + 4·H = 0` | 2 | 2 | 2 |
+| `1/(1 + u)` | `H' + u·H' + H = 0` | 0 | 2 | 2 |
+| `arcsin(u)` | `H'' − u·H' − u²·H'' = 0` | 0 | 0 | 0 |
+
+- Where the equation is found, it holds outside the data. For `erf` at 0.1%
+  noise the rms error on a range 25% wider on each side is 8e-5 and 7e-5,
+  against 2e-3 and 7e-3 for the hole; for the Airy function at 1% noise
+  3e-3 and 2e-3 against 0.5 and 0.3.
+- For `J0` at 10% and 1% noise no equation scores above the hole, so the hole
+  stays. At 0.1% the result of one seed is `1.01·H' + u·H + u·H'' = 0`, with
+  the coefficient not rounded.
+- In 8 of the 42 runs another equation scores above the hole: for `erf` at
+  10% noise and in one run at 1%, for `1/(1 + u)` in one run at 10%, and for
+  `arcsin` at 1% and 0.1%. These fit within the noise and are as wrong
+  outside the data as the hole. `arcsin` is never found: its equation is
+  singular at `u = 1`, and the derivatives of the fit are poor near the end
+  of the range.
+- The factor `K(sin²(u/2))` of the period of a pendulum has an equation with
+  trigonometric coefficients, which the columns cannot write. An equation
+  scores above the hole in all 6 runs, e.g. `u·H'' − 7.62·H' + u·H = 0` at
+  0.1% noise; its error outside the data is 0.03 and 0.001, against 0.05 and
+  0.07 for the hole.
+
+The script is not part of the search. A hole of one input that the library
+cannot fill could be handed to it.
 
 ## Limitations, issues and ideas
 

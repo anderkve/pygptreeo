@@ -1,0 +1,208 @@
+
+erf:  erf(u),  H'' + 2*u*H' = 0
+  noise 0.1, seed 0: hole 64.4, rmse in 0.019 out 0.1
+          65.7  -0.561*H + u^2*H' = 0   [residual 0.057, 1 fitted, rmse in 0.034 out 0.16]
+          59.6  H'' - 2*u^2*H + 4*u^2*H' = 0   [residual 0.030, 0 fitted, rmse in 0.018 out 0.11]
+          53.7  1.41*H + H' = 4   [residual 0.030, 1 fitted, rmse in 0.038 out 0.13]
+  noise 0.1, seed 1: hole 65.8, rmse in 0.028 out 0.2
+          66.6  -1*H + u*H' + 0.5*u^2*H = 0   [residual 0.006, 0 fitted, rmse in 0.036 out 0.23]
+          61.9  H + H'' = 0   [residual 0.053, 0 fitted, rmse in 0.029 out 0.24]
+          59.8  2*H + u*H'' = 0   [residual 0.159, 0 fitted, rmse in 0.035 out 0.22]
+  noise 0.01, seed 0: hole 285.0, rmse in 0.0023 out 0.017
+         288.2  H'' + 2*u*H' = 0   [residual 0.046, 0 fitted, rmse in 0.00083 out 0.00084]
+         281.9  -0.5*H + u*H'' + 2.86*u^2*H' = 0   [residual 0.021, 1 fitted, rmse in 0.0024 out 0.015]
+         281.7  3*H + H'' - 1.89*u*H = 0   [residual 0.014, 1 fitted, rmse in 0.0027 out 0.044]
+  noise 0.01, seed 1: hole 284.3, rmse in 0.0029 out 0.026
+         287.7  -1.28*H + 0.762*u*H + u*H' = 0   [residual 0.007, 2 fitted, rmse in 0.0035 out 0.046]
+         286.5  H'' + 2*u*H' = 0   [residual 0.036, 0 fitted, rmse in 0.00062 out 0.00068]
+         279.8  2*H + H'' - 1.06*u*H = 0   [residual 0.004, 1 fitted, rmse in 0.0035 out 0.025]
+  noise 0.001, seed 0: hole 501.9, rmse in 0.00025 out 0.0018
+         513.3  H'' + 2*u*H' = 0   [residual 0.004, 0 fitted, rmse in 8.1e-05 out 8e-05]
+         494.8  2.54*H + H'' - 1.51*u*H = 0   [residual 0.008, 2 fitted, rmse in 0.00041 out 0.019]
+         409.6  -1.25*H + 0.735*u*H + u*H' = 0   [residual 0.007, 2 fitted, rmse in 0.0026 out 0.034]
+  noise 0.001, seed 1: hole 501.5, rmse in 0.0003 out 0.0067
+         512.1  H'' + 2*u*H' = 0   [residual 0.005, 0 fitted, rmse in 6.2e-05 out 6.7e-05]
+         496.6  2.5*H + H'' - 1.48*u*H = 0   [residual 0.007, 2 fitted, rmse in 0.00044 out 0.016]
+         418.8  -1.26*H + 0.744*u*H + u*H' = 0   [residual 0.006, 2 fitted, rmse in 0.0027 out 0.039]
+
+bessel:  J0(u),  u*H'' + H' + u*H = 0
+  noise 0.1, seed 0: hole 66.9, rmse in 0.019 out 0.096
+          66.0  H' + 0.333*u*H - 0.25*u*H' = 0   [residual 0.026, 0 fitted, rmse in 0.019 out 0.11]
+          62.6  H' + 0.459*u*H - 0.149*u^2*H' = 0   [residual 0.015, 2 fitted, rmse in 0.018 out nan]
+          58.8  H' + 0.5*u^2*H = 0   [residual 0.245, 0 fitted, rmse in 0.069 out 0.3]
+  noise 0.1, seed 1: hole 66.6, rmse in 0.026 out 0.18
+          63.9  0.333*H + H'' = 0   [residual 0.023, 0 fitted, rmse in 0.028 out 0.18]
+          58.5  -1.54*H + u*H' = -4   [residual 0.012, 1 fitted, rmse in 0.038 out 0.3]
+          55.3  H'' + 0.25*u*H' = -3   [residual 0.025, 0 fitted, rmse in 0.025 out 0.19]
+  noise 0.01, seed 0: hole 288.5, rmse in 0.0023 out 0.014
+         282.0  -1*H' + 0.5*u*H + u*H'' = 0   [residual 0.011, 0 fitted, rmse in 0.0032 out 0.036]
+         281.3  0.333*H + H'' + 0.129*u^2*H' = 0   [residual 0.012, 1 fitted, rmse in 0.0024 out 0.013]
+         278.0  H'' + 0.232*u^2*H' = -0.5   [residual 0.012, 1 fitted, rmse in 0.0031 out 0.012]
+  noise 0.01, seed 1: hole 286.9, rmse in 0.0028 out 0.034
+         284.7  -1*H' + u*H'' + 0.281*u^2*H' = 0   [residual 0.013, 1 fitted, rmse in 0.0035 out 0.051]
+         283.3  0.5*H + H'' + 0.132*u*H' = 0   [residual 0.005, 1 fitted, rmse in 0.0028 out 0.031]
+         277.3  0.689*H + H'' = -0.25   [residual 0.014, 1 fitted, rmse in 0.0026 out 0.012]
+  noise 0.001, seed 0: hole 506.4, rmse in 0.00026 out 0.00045
+         510.6  H' + u*H + u*H'' = 0   [residual 0.002, 0 fitted, rmse in 8.3e-05 out 0.00012]
+         501.7  0.778*H + H'' - 0.0159*u^2*H' = 0   [residual 0.019, 2 fitted, rmse in 0.00027 out 0.008]
+         500.2  0.726*H + H'' = 3   [residual 0.006, 1 fitted, rmse in 0.00039 out 0.0078]
+  noise 0.001, seed 1: hole 504.9, rmse in 0.00031 out 0.0062
+         505.7  1.01*H' + u*H + u*H'' = 0   [residual 0.003, 1 fitted, rmse in 0.00025 out 0.0016]
+         501.5  0.638*H + H'' + 0.0579*u*H' = 0   [residual 0.012, 2 fitted, rmse in 0.00029 out 0.0034]
+         491.8  0.721*H + H'' = -0.25   [residual 0.007, 1 fitted, rmse in 0.00043 out 0.0063]
+
+pendulum:  K(sin(u/2)^2),  sin(u)*H'' + cos(u)*H' - sin(u)*H/4 = 0, which has no polynomial coefficients
+  noise 0.1, seed 0: hole 60.4, rmse in 0.021 out 0.15
+          64.2  H' - 0.333*u*H = 0   [residual 0.072, 0 fitted, rmse in 0.017 out 0.019]
+          60.1  H' - 5.31*u*H + 4*u*H' = 0   [residual 0.028, 1 fitted, rmse in 0.017 out 0.052]
+          59.3  H' + 0.25*u*H - 0.21*u^2*H' = 0   [residual 0.026, 1 fitted, rmse in 0.016 out nan]
+  noise 0.1, seed 1: hole 62.9, rmse in 0.035 out 0.5
+          63.8  H' - 0.25*u*H = 0   [residual 0.034, 0 fitted, rmse in 0.011 out 0.16]
+          60.1  H' - u^2*H + 1.38*u^2*H' = 0   [residual 0.006, 1 fitted, rmse in 0.028 out 0.35]
+          59.7  -0.333*H + H'' = 0   [residual 0.060, 0 fitted, rmse in 0.027 out 0.36]
+  noise 0.01, seed 0: hole 278.4, rmse in 0.0029 out 0.091
+         285.2  H' - 0.674*u*H + 0.333*u*H' = 0   [residual 0.009, 1 fitted, rmse in 0.0023 out 0.053]
+         280.8  H' - 0.283*u*H = 0   [residual 0.049, 1 fitted, rmse in 0.0029 out 0.079]
+         277.5  -5.41*H' + 0.333*u*H + u*H'' = 0   [residual 0.009, 1 fitted, rmse in 0.0023 out 0.02]
+  noise 0.01, seed 1: hole 277.7, rmse in 0.0039 out 0.17
+         288.7  H' - 0.27*u*H = 0   [residual 0.038, 1 fitted, rmse in 0.0036 out 0.12]
+         285.5  H' - 0.333*u*H + 0.0549*u*H' = 0   [residual 0.005, 1 fitted, rmse in 0.003 out 0.11]
+         273.5  -0.918*H + H'' = -4   [residual 0.006, 1 fitted, rmse in 0.0041 out 0.14]
+  noise 0.001, seed 0: hole 481.6, rmse in 0.00032 out 0.054
+         490.2  -7.62*H' + u*H + u*H'' = 0   [residual 0.001, 1 fitted, rmse in 0.00038 out 0.034]
+         471.5  -0.862*H' + u*H'' - 0.317*u^2*H'' = 0   [residual 0.005, 2 fitted, rmse in 0.00094 out 0.019]
+         408.1  H' - 0.279*u*H = 0   [residual 0.048, 1 fitted, rmse in 0.0025 out 0.085]
+  noise 0.001, seed 1: hole 477.0, rmse in 0.00047 out 0.073
+         482.8  -11.3*H' + 2*u*H + u*H'' = 0   [residual 0.001, 1 fitted, rmse in 0.00032 out 0.0012]
+         468.4  -0.87*H' + u*H'' - 0.312*u^2*H'' = 0   [residual 0.004, 2 fitted, rmse in 0.0011 out 0.035]
+         421.7  H' - 0.276*u*H = 0   [residual 0.041, 1 fitted, rmse in 0.0028 out 0.1]
+
+gauss:  exp(-u^2/2),  H' + u*H = 0
+  noise 0.1, seed 0: hole 66.5, rmse in 0.024 out 0.16
+          70.4  H' + u*H = 0   [residual 0.071, 0 fitted, rmse in 0.0044 out 0.0054]
+          59.1  H'' + 2*u*H - 1.8*u^2*H = 0   [residual 0.056, 1 fitted, rmse in 0.024 out 0.26]
+          58.4  -3*H' + H'' - 3*u^2*H = 0   [residual 0.046, 0 fitted, rmse in 0.02 out 0.24]
+  noise 0.1, seed 1: hole 63.9, rmse in 0.025 out 0.19
+          68.7  H' + u*H = 0   [residual 0.053, 0 fitted, rmse in 0.0067 out 0.0082]
+          56.7  -1.68*H' + u*H'' - 2*u^2*H = 0   [residual 0.040, 1 fitted, rmse in 0.028 out 0.35]
+          55.6  -1.53*H + u^2*H' = -4   [residual 0.032, 1 fitted, rmse in 0.041 out 0.19]
+  noise 0.01, seed 0: hole 283.9, rmse in 0.0026 out 0.0055
+         298.5  H' + u*H = 0   [residual 0.007, 0 fitted, rmse in 0.0004 out 0.0004]
+         286.8  -1*H' + u*H'' + u^2*H' = 0   [residual 0.018, 0 fitted, rmse in 0.0009 out 0.0011]
+         286.1  H + H'' - u^2*H = 0   [residual 0.019, 0 fitted, rmse in 0.00079 out 0.002]
+  noise 0.01, seed 1: hole 282.4, rmse in 0.003 out 0.037
+         296.6  H' + u*H = 0   [residual 0.007, 0 fitted, rmse in 0.00066 out 0.0008]
+         284.3  H + H'' - u^2*H = 0   [residual 0.019, 0 fitted, rmse in 0.0015 out 0.014]
+         284.3  -1*H' + u*H'' + u^2*H' = 0   [residual 0.041, 0 fitted, rmse in 0.00067 out 0.00076]
+  noise 0.001, seed 0: hole 498.5, rmse in 0.00025 out 0.0055
+         525.2  H' + u*H = 0   [residual 0.001, 0 fitted, rmse in 8.7e-05 out 0.0001]
+         512.4  -1*H' + u*H'' + u^2*H' = 0   [residual 0.003, 0 fitted, rmse in 8.9e-05 out 0.00011]
+         511.5  H + H'' - u^2*H = 0   [residual 0.003, 0 fitted, rmse in 0.00012 out 0.00061]
+  noise 0.001, seed 1: hole 497.4, rmse in 0.0003 out 0.0015
+         522.8  H' + u*H = 0   [residual 0.001, 0 fitted, rmse in 6.8e-05 out 7.8e-05]
+         509.8  H + H'' - u^2*H = 0   [residual 0.002, 0 fitted, rmse in 0.00016 out 0.0016]
+         509.8  -1*H' + u*H'' + u^2*H' = 0   [residual 0.003, 0 fitted, rmse in 6.8e-05 out 7.8e-05]
+
+sine:  sin(2*u),  H'' + 4*H = 0
+  noise 0.1, seed 0: hole 62.5, rmse in 0.023 out 0.079
+          65.1  4*H + H'' = 0   [residual 0.067, 0 fitted, rmse in 0.0063 out 0.0027]
+          58.8  H'' + 4*u*H + 0.188*u^2*H'' = 0   [residual 0.035, 1 fitted, rmse in 0.029 out 0.11]
+          58.5  H'' + 4.33*u*H - u^2*H = 0   [residual 0.032, 1 fitted, rmse in 0.029 out 0.11]
+  noise 0.1, seed 1: hole 62.8, rmse in 0.032 out 0.3
+          63.2  4*H + H'' = 0   [residual 0.091, 0 fitted, rmse in 0.0079 out 0.0038]
+          59.1  H'' + 6.18*u*H - 2*u^2*H = 0   [residual 0.007, 1 fitted, rmse in 0.044 out 0.35]
+          45.6  5.96*H + u*H'' = 0   [residual 0.249, 1 fitted, rmse in 0.074 out 0.37]
+  noise 0.01, seed 0: hole 278.4, rmse in 0.0026 out 0.028
+         290.8  4*H + H'' = 0   [residual 0.014, 0 fitted, rmse in 0.00097 out 0.00041]
+         254.9  H'' + 5.51*u*H + 0.4*u^2*H'' = 0   [residual 0.040, 2 fitted, rmse in 0.0086 out 0.074]
+         221.2  H'' + 4.93*u*H - 1.33*u^2*H = 0   [residual 0.040, 2 fitted, rmse in 0.016 out 0.12]
+  noise 0.01, seed 1: hole 278.2, rmse in 0.003 out 0.028
+         288.6  4*H + H'' = 0   [residual 0.009, 0 fitted, rmse in 0.00085 out 0.00071]
+         267.7  H'' + 5.79*u*H + 0.445*u^2*H'' = 0   [residual 0.031, 2 fitted, rmse in 0.0082 out 0.076]
+         232.0  H'' + 5.11*u*H - 1.42*u^2*H = 0   [residual 0.033, 2 fitted, rmse in 0.015 out 0.13]
+  noise 0.001, seed 0: hole 492.0, rmse in 0.00028 out 0.0056
+         514.6  4*H + H'' = 0   [residual 0.002, 0 fitted, rmse in 0.0001 out 4.9e-05]
+         295.9  H'' + 5.66*u*H + 0.423*u^2*H'' = 0   [residual 0.042, 2 fitted, rmse in 0.0085 out 0.073]
+         217.8  -7.1*H + 11.7*u*H + u^2*H'' = 0   [residual 0.042, 2 fitted, rmse in 0.019 out 0.34]
+  noise 0.001, seed 1: hole 491.4, rmse in 0.00032 out 0.0047
+         512.6  4*H + H'' = 0   [residual 0.001, 0 fitted, rmse in 0.00011 out 0.00013]
+         307.2  H'' + 5.7*u*H + 0.43*u^2*H'' = 0   [residual 0.035, 2 fitted, rmse in 0.0081 out 0.072]
+         225.4  -7.09*H + 11.7*u*H + u^2*H'' = 0   [residual 0.035, 2 fitted, rmse in 0.02 out 0.33]
+
+rational:  1/(1 + u),  H' + u*H' + H = 0
+  noise 0.1, seed 0: hole 54.3, rmse in 0.031 out 0.15
+          52.9  0.086*H + u*H' = 0   [residual 0.250, 1 fitted, rmse in 0.051 out 0.39]
+          51.5  H'' + 1.5*u*H = 4   [residual 0.036, 1 fitted, rmse in 0.027 out 0.068]
+          50.9  0.724*H' + H'' = 0   [residual 0.167, 1 fitted, rmse in 0.054 out 0.23]
+  noise 0.1, seed 1: hole 51.9, rmse in 0.034 out 0.35
+          53.7  0.101*H + u*H' = 0   [residual 0.219, 1 fitted, rmse in 0.054 out 0.45]
+          52.0  -1*H + H'' = -4   [residual 0.042, 0 fitted, rmse in 0.05 out 0.53]
+          49.5  H'' + u*H = 0.333   [residual 0.023, 0 fitted, rmse in 0.037 out 0.14]
+  noise 0.01, seed 0: hole 262.8, rmse in 0.0041 out 0.18
+         295.2  H + H' + u*H' = 0   [residual 0.022, 0 fitted, rmse in 0.00065 out 0.00094]
+         168.6  -0.934*H + u^2*H' = -3   [residual 0.027, 1 fitted, rmse in 0.048 out 0.28]
+         139.9  0.092*H + u*H' = 0   [residual 0.204, 1 fitted, rmse in 0.058 out 0.34]
+  noise 0.01, seed 1: hole 259.6, rmse in 0.0049 out 0.33
+         293.3  H + H' + u*H' = 0   [residual 0.016, 0 fitted, rmse in 0.00052 out 0.00079]
+         194.3  u*H' + 0.0456*u^2*H = -4   [residual 0.024, 1 fitted, rmse in 0.028 out 0.28]
+         139.9  0.0813*H + u*H' = 0   [residual 0.173, 1 fitted, rmse in 0.061 out 0.34]
+  noise 0.001, seed 0: hole 459.0, rmse in 0.00051 out 0.13
+         521.9  H + H' + u*H' = 0   [residual 0.003, 0 fitted, rmse in 7.9e-05 out 7.2e-05]
+         432.0  u*H'' - 0.471*u^2*H' = 2   [residual 0.016, 1 fitted, rmse in 0.0024 out 0.054]
+         374.8  -0.565*H + u*H'' = 0   [residual 0.109, 1 fitted, rmse in 0.0065 out 0.058]
+  noise 0.001, seed 1: hole 456.1, rmse in 0.0006 out 0.21
+         519.9  H + H' + u*H' = 0   [residual 0.002, 0 fitted, rmse in 6.1e-05 out 5.9e-05]
+         432.6  u*H'' - 0.474*u^2*H' = 2   [residual 0.011, 1 fitted, rmse in 0.0025 out 0.08]
+         385.1  0.39*u*H + u*H'' = 4   [residual 0.013, 1 fitted, rmse in 0.0043 out 0.044]
+
+airy:  Ai(-u),  H'' + u*H = 0
+  noise 0.1, seed 0: hole 55.8, rmse in 0.03 out 0.18
+          66.8  H'' + u*H = 0   [residual 0.041, 0 fitted, rmse in 0.021 out 0.028]
+          59.2  H'' + u^2*H + 0.207*u^2*H'' = 0   [residual 0.049, 1 fitted, rmse in 0.033 out 0.18]
+         -33.5  H'' + 0.378*u^2*H = 0   [residual 0.186, 1 fitted, rmse in 0.23 out 0.78]
+  noise 0.1, seed 1: hole 54.5, rmse in 0.03 out 0.23
+          65.0  H'' + u*H = 0   [residual 0.061, 0 fitted, rmse in 0.021 out 0.015]
+          56.3  H'' + u^2*H + 0.205*u^2*H'' = 0   [residual 0.080, 1 fitted, rmse in 0.03 out 0.16]
+         -16.1  H'' + 0.4*u^2*H = 0   [residual 0.222, 1 fitted, rmse in 0.25 out 0.83]
+  noise 0.01, seed 0: hole 266.2, rmse in 0.0032 out 0.49
+         292.7  H'' + u*H = 0   [residual 0.012, 0 fitted, rmse in 0.0023 out 0.0027]
+         201.4  H'' + u^2*H + 0.204*u^2*H'' = 0   [residual 0.047, 1 fitted, rmse in 0.026 out 0.15]
+         -21.0  H'' + 0.379*u^2*H = 0   [residual 0.181, 1 fitted, rmse in 0.25 out 0.84]
+  noise 0.01, seed 1: hole 265.1, rmse in 0.004 out 0.3
+         290.4  H'' + u*H = 0   [residual 0.013, 0 fitted, rmse in 0.0021 out 0.0016]
+         206.5  H'' + u^2*H + 0.205*u^2*H'' = 0   [residual 0.060, 1 fitted, rmse in 0.024 out 0.16]
+          10.7  H'' + 0.4*u^2*H = 0   [residual 0.221, 1 fitted, rmse in 0.26 out 0.87]
+  noise 0.001, seed 0: hole 472.1, rmse in 0.00036 out 0.15
+         516.9  H'' + u*H = 0   [residual 0.002, 0 fitted, rmse in 0.00025 out 0.0003]
+         216.1  H'' + 0.969*u^2*H + 0.191*u^2*H'' = 0   [residual 0.040, 2 fitted, rmse in 0.028 out 0.11]
+         -19.3  H'' + 0.379*u^2*H = 0   [residual 0.187, 1 fitted, rmse in 0.25 out 0.85]
+  noise 0.001, seed 1: hole 473.0, rmse in 0.00063 out 0.33
+         514.1  H'' + u*H = 0   [residual 0.002, 0 fitted, rmse in 0.00021 out 0.00016]
+         230.3  H'' + u^2*H + 0.205*u^2*H'' = 0   [residual 0.053, 1 fitted, rmse in 0.024 out 0.16]
+          12.8  H'' + 0.4*u^2*H = 0   [residual 0.225, 1 fitted, rmse in 0.26 out 0.86]
+
+arcsin:  arcsin(u),  H'' - u*H' - u^2*H'' = 0
+  noise 0.1, seed 0: hole 63.5, rmse in 0.019 out 0.12
+          62.4  -0.735*H + u*H' - u^2*H = 0   [residual 0.028, 1 fitted, rmse in 0.018 out 0.1]
+          60.8  -0.5*H + u*H' - 0.807*u^2*H' = 0   [residual 0.023, 1 fitted, rmse in 0.03 out 0.14]
+          59.4  -1.22*H + u*H' = 0   [residual 0.093, 1 fitted, rmse in 0.024 out 0.29]
+  noise 0.1, seed 1: hole 67.3, rmse in 0.027 out 0.36
+          67.1  -1.21*H + u*H' = 0   [residual 0.018, 1 fitted, rmse in 0.025 out 0.32]
+          60.8  -2*H + 3*u*H + u*H'' = 0   [residual 0.007, 0 fitted, rmse in 0.031 out 0.38]
+          59.7  -2*H + u*H'' + 2*u^2*H' = 0   [residual 0.011, 0 fitted, rmse in 0.024 out 0.34]
+  noise 0.01, seed 0: hole 283.5, rmse in 0.0027 out 0.12
+         285.6  H'' - 4*u*H = 0   [residual 0.105, 0 fitted, rmse in 0.0029 out 0.1]
+         284.4  H' - u^2*H = 4   [residual 0.006, 0 fitted, rmse in 0.0018 out 0.11]
+         275.5  H' - 0.597*u^2*H' = 4   [residual 0.008, 1 fitted, rmse in 0.0028 out 0.12]
+  noise 0.01, seed 1: hole 283.9, rmse in 0.0037 out 0.18
+         285.2  H'' - 1.37*u*H' = 0   [residual 0.054, 1 fitted, rmse in 0.0055 out 0.19]
+         283.0  -0.86*H + u*H' - 0.422*u^2*H' = 0   [residual 0.006, 2 fitted, rmse in 0.0056 out 0.19]
+         282.6  4*H - 4.33*u*H' + u*H'' = 0   [residual 0.010, 1 fitted, rmse in 0.0034 out 0.15]
+  noise 0.001, seed 0: hole 495.8, rmse in 0.00031 out 0.092
+         505.0  5.99*H - 6.1*u*H' + u*H'' = 0   [residual 0.002, 2 fitted, rmse in 0.0004 out 0.079]
+         491.8  -4.41*H' + H'' = -4   [residual 0.005, 1 fitted, rmse in 0.0005 out 0.09]
+         450.2  H' - 0.93*u^2*H = 2   [residual 0.004, 1 fitted, rmse in 0.0014 out 0.12]
+  noise 0.001, seed 1: hole 495.1, rmse in 0.00043 out 0.11
+         502.9  5.33*H + H'' - 6.07*u*H' = 0   [residual 0.006, 2 fitted, rmse in 0.00042 out 0.086]
+         494.5  -4.24*H' + H'' = -4   [residual 0.004, 1 fitted, rmse in 0.00062 out 0.11]
+         455.3  H'' - 2.81*u*H = 0   [residual 0.064, 1 fitted, rmse in 0.0017 out 0.14]
