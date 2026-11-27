@@ -41,6 +41,7 @@ EXPONENT = {'pow': 0, 'mono': 0, 'aff': 1}      # which parameter of a node is a
 SCALED = {'lin': 0, 'exp': 0, 'aff': 0, 'sin': 1}   # ... and which multiplies the argument, as th/scale
 OUTER_TEXT = {'log': 'exp({m})', 'exp': 'log({m}) + {c}', 'expneg': '{c} - log({m})', 'inv': '1/({m})',
               'sqrt': '({m})^2', 'square': 'sqrt({m})'}
+QUICK = 20      # iterations of the short fit of a candidate
 # The relative noise is at most 30%: with more, a constant explains any data as noise.
 LOG_BOUNDS = {'amp': (-7, 4), 'ls': (-3, 5), 'const': (-7, 4), 'noise': (-9, 1), 'outside': (-9, 1),
               'relative': (-9, np.log(0.3))}
@@ -367,6 +368,32 @@ class Model:
         var = s2[0] + 1e-8 + s2[2] * w[1] * np.ones(n)
         return var + s2[1] * w[0] if self.warp else var
 
+    def solve(self, X, y, w, cache):
+        """The Cholesky factor of the covariance matrix of the targets and
+        alpha = K^-1 y, or None if there is no factor. cache has a dict for
+        each term (see Term.train)."""
+        for t, c in zip(self.terms, cache):
+            t.train(X, c)
+        K = sum(c['K'] for c in cache) + np.exp(2 * self.hyp[0]) + np.diag(self.noise(len(y), w))
+        try:
+            chol = cho_factor(K, lower=True, check_finite=True)
+        except (np.linalg.LinAlgError, ValueError):
+            return None
+        return chol, cho_solve(chol, y)
+
+    def rescale(self, X, y, w):
+        """Multiply all variances by the factor that maximises the evidence,
+        within their bounds."""
+        with np.errstate(all='ignore'):
+            solved = self.solve(X, y, w, [dict(free_a=True, free_u=True) for _ in self.terms])
+        if solved is not None and y @ solved[1] > 0:
+            shift = 0.5 * np.log(y @ solved[1] / len(y))
+            for t in self.terms:
+                t.amp[0] = np.clip(t.amp[0] + shift, *LOG_BOUNDS['amp'])
+            for i, name in enumerate(('const', 'noise', 'outside', 'relative')):
+                self.hyp[i] = np.clip(self.hyp[i] + shift, *LOG_BOUNDS[name])
+        return self
+
     def nll_grad(self, p, X, y, slots, w, cache):
         """Negative log evidence and its gradient at the parameters p. cache
         has a dict for each term (see Term.train)."""
@@ -374,15 +401,11 @@ class Model:
             s[0][s[1]] = v
         n = len(y)
         with np.errstate(all='ignore'):
-            for t, c in zip(self.terms, cache):
-                t.train(X, c)
-            c2 = np.exp(2 * self.hyp[0])
-            K = sum(c['K'] for c in cache) + c2 + np.diag(self.noise(n, w))
-            try:
-                chol = cho_factor(K, lower=True, check_finite=True)
-            except (np.linalg.LinAlgError, ValueError):
+            solved = self.solve(X, y, w, cache)
+            if solved is None:
                 return 1e10, np.zeros(len(p))
-            alpha = cho_solve(chol, y)
+            chol, alpha = solved
+            c2 = np.exp(2 * self.hyp[0])
             inv = dpotri(chol[0], lower=True)[0]         # the lower triangle of the inverse
             W = np.tril(inv) + np.tril(inv, -1).T - np.outer(alpha, alpha)
             nll = 0.5 * y @ alpha + np.log(np.diag(chol[0])).sum() + 0.5 * n * np.log(2 * np.pi)
@@ -670,7 +693,8 @@ def _init_worker(cfg):
 def _quick(args):
     model, X, (y, w) = args
     fresh = model.__dict__.pop('fresh', False)      # a new target: the parameters are redrawn too
-    return model.fit(X, y, w, maxiter=25, restarts=3 if fresh else 0, rng=np.random.default_rng(0))
+    return model.rescale(X, y, w).fit(X, y, w, maxiter=QUICK, restarts=3 if fresh else 0,
+                                      rng=np.random.default_rng(0))
 
 
 def _full(args):
@@ -698,15 +722,18 @@ def transforms(y, y_scale):
     return targets, outer
 
 
-def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, max_steps=40, workers=4,
-           seed=0, verbose=True, **cfg):
+def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_best=3, own_gap=10.0,
+           max_steps=40, workers=4, seed=0, verbose=True, **cfg):
     """Beam search from a single hole. Each step refines the `beam` best
-    models and, for its first `own_steps` steps, the best model of each
-    function around the expression, until all of these have been refined or
-    none of them has improved for `patience` steps. Returns the model with the
-    best score, the trace of the best score and some counts, among them the 5
-    best models. y should be scaled to unit variance, with y_scale the factor
-    that gives it its units back. cfg replaces entries of CFG."""
+    models and the best model of each function around the expression, until
+    all of these have been refined or none of them has improved for `patience`
+    steps. A function has its best model refined in at most `own_steps` steps:
+    once, and then while it is among the `own_best` best functions, and not
+    if its score is more than `own_gap` per point below the best. Returns the
+    model with the best score, the trace of the best score and some counts,
+    among them the 5 best models. y should be scaled to unit variance, with
+    y_scale the factor that gives it its units back. cfg replaces entries of
+    CFG."""
     CFG.update(cfg)
     rng = np.random.default_rng(seed)
     t0 = time.time()
@@ -726,9 +753,12 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, max_ste
         for step in range(1, max_steps + 1):
             ranked = sorted(seen.values(), key=lambda m: -m.score)
             front = ranked[:beam]
+            rank = {w: r for r, w in enumerate(dict.fromkeys(m.warp for m in ranked))}
             for w in targets:
                 first = next((m for m in ranked if m.warp == w), None)
-                if first is not None and own[w] < own_steps and first.key() not in expanded:
+                if (first is not None and own[w] < own_steps and first.key() not in expanded
+                        and (own[w] == 0 or rank[w] < own_best)
+                        and ranked[0].score - first.score <= own_gap * len(y)):
                     front.append(first)
                     own[w] += 1
             todo = list({m.key(): m for m in front if m.key() not in expanded}.values())

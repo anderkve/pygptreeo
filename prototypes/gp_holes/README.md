@@ -82,9 +82,13 @@ size and noise in proportion to the target, carried through the transform to
 first order.
 
 Each step refines those of the 4 best models that have not been refined yet,
-and in the first 6 steps the best model of each outer function. Every candidate
-gets a short fit, and the 12 best structures, and the 3 best of each outer
-function, a full one. The search returns its 5 best models.
+and the best model of an outer function: once for each function, and in up to
+6 steps for the 3 functions with the best scores. A function whose score is
+more than 10 per point below the best is left out. Every candidate gets a
+short fit of 20 iterations, from the parameters of the model it was made
+from, with all variances scaled by the factor that maximises the evidence.
+The 12 best structures, and the 3 best of each outer function, get a full
+fit. The search returns its 5 best models.
 
 ## Results
 
@@ -369,6 +373,47 @@ of 10 runs, against 1 of 10 before. This sample was used to find the change.
 **The original benchmark again**, seed 0: 14 of the 17 targets right, against
 15 before. I.18.4 and II.11.28 are missed; both have turned out right in some
 runs of nearly the same code and wrong in others.
+
+## A faster search
+
+Three changes. They were checked on 28 runs from the four sets above (11
+targets of the benchmark, 12 equations of SRSD and 4 empirical laws, mostly
+seed 0), and on 13 runs of harder targets with other seeds.
+
+- **The gradient of the evidence** needs no second kernel matrix for a
+  parameter of a symbolic function, and a fit computes once what does not
+  change. An evaluation takes half the time, and the results are the same.
+- **Outer functions.** Each used to have its best model refined in six steps.
+  One that is not among the 3 best after the first of them is now left alone.
+- **The start of the short fit.** A candidate used to start with the noise
+  level of the model it was made from, far too low for it, and to spend 10 to
+  20 iterations getting back from a score of minus several thousand. All its
+  variances are now scaled first, by the factor that maximises the evidence,
+  and the short fit has 20 iterations in place of 25.
+
+| Search | Right of 24, first set | Seconds, first set | Right of 13, second set |
+|---|---|---|---|
+| With the faster gradient | 19 | 1025 | 5 |
+| Outer functions limited | 19 | 823 | |
+| ... and the scaled start, 25 iterations | 21 | 1051 | 7 |
+| ... 20 iterations | 21 | 716 | 7 |
+| ... 15 iterations | 21 | 613 | 7 |
+| ... 10 iterations | 19 | 455 | |
+
+- With the outer functions limited, all 28 results are the same as before.
+- With the scaled start I.18.4 is found in all three seeds, as
+  `x3 − (x3 − x4)/(1 + x1/x2)`, against none before, and II.11.28 in one of
+  three. Of the 41 results, 8 have a higher score than before and one a score
+  lower by 0.6, for another way of writing the same law.
+- With 15 iterations one result of the second set is a less simple form with
+  a lower score. With 10, one search of the first set stops at the first hole.
+- The 4 empirical laws of the first set are found before and after.
+
+The score of the right formula (`truth.py`) is beside each result. Of the 9
+runs that are not right, 3 have a result with a score below that of the right
+formula, so the search missed it (SRSD i.6.20b twice, by more than 400, and
+i.39.11). In the other 6 the result scores as high as the right formula, or
+as the model with a hole that the rules should arrive at, or higher.
 
 ## Limitations, issues and ideas
 
