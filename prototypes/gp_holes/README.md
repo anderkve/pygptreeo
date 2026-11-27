@@ -56,6 +56,7 @@ functions of one input:
 | merge | `H(…, v, …)` with `v = uj·uk^p` or `v = uj + c·uk` in place of `uj, uk` |
 | change input | the same with `v` in place of only one of the two, or `log(uj)` in place of a positive `uj` |
 | drop input, drop factor, drop term | the model without it |
+| add hole | for a model with no hole left: the model and `H(xj)`, or a hole of all inputs; kept only if it scores above the model |
 | outer function | `g(m)` for a model `m` of holes only, with `g(m)` one of `exp(m)`, `log(m) + c`, `c − log(m)`, `1/m`, `√m` |
 
 The library is `u^p`, `log(u)`, `exp(c·v)`, `(1 + c·v)^p` and `sin(a + b·u)`,
@@ -414,6 +415,27 @@ runs that are not right, 3 have a result with a score below that of the right
 formula, so the search missed it (SRSD i.6.20b twice, by more than 400, and
 i.39.11). In the other 6 the result scores as high as the right formula, or
 as the model with a hole that the rules should arrive at, or higher.
+
+## A new hole for a model that has none left
+
+Once every hole of a model had been replaced, the model could only lose
+terms, so a search that had filled its last hole with the wrong function
+could not go on. The rule "add hole" proposes such a model with a new hole
+beside its terms, in every search, and the search goes on from there if the
+score is higher. On the two sets of the last section:
+
+- SRSD i.6.20b is found in both seeds, as
+  `exp(−0.5·(x1 − x2)²/x3² − log(x3) − 0.92)` with the score of the right
+  formula, 920 and 1085, against 486 and 656 before. The search used to end
+  at `0.05/x3²` in place of `−log(x3)`; a hole in `x3` beside that model
+  scores 848, and the logarithm is the next step.
+- The other 39 results are the same as before, with 2% more fits.
+- With a new hole proposed for every model, also for those that still have
+  one, the 41 results are the same again, with 10% more fits on the first set.
+
+Right are now 23 of 24 on the first set and 7 of 13 on the second. Of the 7
+runs that are not right, one has a result with a score below that of the
+right formula (SRSD i.39.11, 557 against 567).
 
 ## Limitations, issues and ideas
 

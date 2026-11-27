@@ -77,9 +77,9 @@ hierarchy of holes:
 - **Greedy search.** A step that does not raise the score by itself is rarely
   followed up, so structure that pays off after two steps is missed, e.g. a
   series built one term at a time. The result depends on the seed for the
-  harder targets. The search can also miss a model that scores far higher: on
-  SRSD i.6.20b the right formula scores 922 and the returned one 488, and on
-  II.11.28 277 against 273.
+  harder targets. The search can also miss a model that scores higher: on
+  SRSD i.39.11 the right formula scores 567 and the returned model, which
+  has a hole, 557.
 - **Number of inputs.** The candidates per step grow with the square of the
   number of inputs of a hole. 5 inputs take minutes, 30 are out of reach.
 - **The score decides alone.** The search returns its 5 best models, but no
@@ -136,9 +136,10 @@ hierarchy of holes:
   weigh: moves that make a part of a model a hole again (so that a step can be
   undone), stochastic search over models (simulated annealing, MCMC),
   sequential Monte Carlo over models with the data added in batches, a wider
-  beam with more diversity, and proposals from the posterior of a hole. A first
-  measurement: the score of the true formula against that of the returned one,
-  to tell failures of the search from failures of the score.
+  beam with more diversity, and proposals from the posterior of a hole. One
+  move of the first kind is in: a new hole beside a model that has none left.
+  `run_baseline.py` has the score of the right formula beside that of each
+  result, which tells failures of the search from failures of the score.
 - **Against handing the data to an AI agent.** What does the algorithmic way
   give that asking an agent for the formula does not, and what must hold for
   it to stay useful? Points raised: it should stay light enough to run inside

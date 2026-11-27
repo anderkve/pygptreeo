@@ -591,6 +591,16 @@ def moves(model, X, outer=()):
             m.warp, m.offset, m.warp_args, m.fresh = name, offset, args, True
             out.append(('outer function', m))
 
+    # A model with no hole left gets a new one beside its terms, in one input or
+    # in all of them. It is kept only if it scores above this model (see search).
+    d = X.shape[1]
+    if not model.n_holes():
+        for js in [[j] for j in range(d)] + [list(range(d))] * (d > 1):
+            m = copy.deepcopy(model)
+            m.terms.append(Term(feats=[var(j) for j in js]))
+            m.floor = model.score
+            out.append(('add hole', tidy(m)))
+
     def emit(rule, i, new_terms):
         m = copy.deepcopy(model)
         m.terms[i:i + 1] = copy.deepcopy(new_terms)
@@ -778,6 +788,8 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
             n_fits += len(quick)
             best = {}                  # the best quick fit of each structure
             for (rule, _), m in zip(cands, quick):
+                if m.score <= m.__dict__.pop('floor', -np.inf):     # a hole that was added has to raise the score
+                    continue
                 if m.key() not in best or m.score0 > best[m.key()][1].score0:
                     best[m.key()] = (rule, m)
             # A full fit for the best structures, and for the 3 best of each outer function.
