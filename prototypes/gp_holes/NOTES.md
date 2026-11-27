@@ -21,10 +21,10 @@ variance for each point. The same would work for one hole in one function
 when the rest of the expression is symbolic, `y = a(x)·g(H) + b(x)`.
 
 **From the values of a hole** the rule "look inside" proposes a power of a
-sum of simple functions of the inputs, with least squares for the sum. Such
-a formula has no hole, so its evidence is exact. The functions of the sum
-have no parameter of their own (powers and the logarithm), and the sum has
-one function for each input of the hole.
+sum of functions of the inputs, with least squares for the sum. Such a
+formula has no hole, so its evidence is exact. The sum has one function for
+each input of the hole, so a product of functions of two inputs inside it is
+out of reach, and so is the logarithm of a sum.
 
 **In the interior**, `x1·log(H(x2, x3)) + H(x4)`, it is missing. The evidence
 is then an integral over the values of the inner hole at the data points,
@@ -115,6 +115,9 @@ hierarchy of holes:
 - The text of a merged input inside another one can be read in two ways,
   e.g. `x1/(x1*x2^0.5)/x3^0.5` for `x1/((x1·x2^0.5)/x3^0.5)`. The structures
   of the search are told apart by this text.
+- With more candidates the search goes on for longer and can come to a model
+  with a hole that scores above the right formula: for Newton's law with 30
+  points, `√(H(log(r/√(m1·m2))))` by 1.7.
 - `snap` rounds the first parameter whose rounding raises the score, so its
   result depends on the order of the parameters. For `(1 + c·u)^p` of
   II.11.28 it can round `c` and keep a free exponent, 12 below the score with
@@ -128,9 +131,10 @@ hierarchy of holes:
 - A score for few points that integrates over the parameters in place of BIC.
 - A hole of one input that the library cannot fill could be handed to another
   symbolic regression code, with the GP posterior as data.
-- More from the values of a hole: functions with a parameter in the sums of
-  the look inside, and a product of two holes where the values of a hole of
-  both inputs, on a grid, have rank one.
+- More from the values of a hole: the logarithm of a sum (for a hole `h`
+  without a factor, the sum from `exp(h/p)`), products of functions of two
+  inputs in the sums, and a product of two holes where the values of a hole
+  of both inputs, on a grid, have rank one.
 - A hole inside a function as its values at a few knots, with a GP prior,
   fitted as an exponent is. The rest of the model stays a GP.
 - New points where the candidate formulas disagree most (active learning).

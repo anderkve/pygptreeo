@@ -57,7 +57,7 @@ functions of one input:
 | change input | the same with `v` in place of only one of the two, or `log(uj)` in place of a positive `uj` |
 | drop input, drop factor, drop term | the model without it |
 | add hole | for a model with no hole left: the model and `H(xj)`, or a hole of all inputs; kept only if it scores above the model |
-| look inside | for a hole of up to four inputs: the sum of simple functions of its inputs that is closest to the values of the hole at the data, as terms or as one factor; for two to four inputs also a power of such a sum |
+| look inside | for a hole: the sum of functions of its inputs that is closest to the values of the hole at the data, as terms or as one factor, and a power of such a sum |
 | outer function | `g(m)` for a model `m` of holes only, with `g(m)` one of `exp(m)`, `log(m) + c`, `c − log(m)`, `1/m`, `√m` |
 
 The library is `u^p`, `log(u)`, `exp(c·v)`, `(1 + c·v)^p` and `sin(a + b·u)`,
@@ -470,6 +470,32 @@ Right are now 24 of 24 on the first set and 9 of 13 on the second, and no
 result has a score below that of the right formula. The four that are not
 right are the two of II.11.28 with another function that fits within the
 noise, I.30.5 (no arcsin in the library) and SRSD bonus.20.
+
+**More functions and inputs.** The first version, above, had powers and the
+logarithm in its sums and looked into holes of at most four inputs. Now the
+sums can also have a sine or cosine, at one of seven frequencies, and an
+exponential, at one of four rates; the fit of a candidate adjusts the
+frequency or rate. A hole can have any number of inputs: all combinations of
+functions are tried if they are at most 2,000, and with more the function of
+one input at a time is chosen with the others kept, in turn until none
+changes. A hole of one input gets a power of a sum too, where the sum is a
+constant and a sine, exponential or logarithm.
+
+- On four made-up targets with 1% noise, the search finds
+  `x2/(1 + 0.5·cos(x1))`, `x3·√(x1² + 2·exp(−x2))` and, with six inputs,
+  `x1·√(x2² + … + x6²)`, each in its second step. It does not find
+  `√(x1² + x2² − 2·x1·x2·cos(x3))`, whose sum has a product of functions of
+  three inputs.
+- On the two sets, right are 24 of 24 and 9 of 13 as before, with 1% more
+  fits on the first and 2% fewer on the second. I.50.26 is now
+  `0.5·x1·x4·(1 + cos(2·x2·x3)) + x1·cos(x2·x3)`, 10 higher in score.
+- Newton's law of EmpiricalBench is no longer the result. It is found in the
+  first step, as before, with a score of 53.2, but the search now goes on
+  and ends at `√(H(log(r/√(m1·m2))))` with 54.9. Of the nine laws this is the
+  only one that changes.
+- SRSD bonus.1 is not found. The search works under a logarithm there, where
+  the formula has the logarithm of `1 − cos(x4)`, and the rule proposes powers
+  of sums, not logarithms of them.
 
 ## Limitations, issues and ideas
 

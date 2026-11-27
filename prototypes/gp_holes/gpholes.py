@@ -540,6 +540,15 @@ def size_of(v):
     return np.median(np.abs(v)) or np.abs(v).max()
 
 
+def sine(f, X, k, phase=0.0):
+    """A sine of the feature f with k periods over the data. It has to show
+    at least half a period over the data, and at most 60."""
+    u = f(X)
+    size, span = size_of(u), np.ptp(u)
+    return Node('sin', [f], [phase, 2 * np.pi * k * size / span], scale=size,
+                bounds=[(-2, 2), (np.pi * size / span, 120 * np.pi * size / span)])
+
+
 def library(f, X):
     """Candidate functions of the feature f: nodes with starting values."""
     u = f(X)
@@ -558,11 +567,7 @@ def library(f, X):
         # Polynomials of degree 2 to 4 with constant term 1.
         out += [Node('poly', [g], [c] + [0.0] * (deg - 1), scale=top)
                 for deg in (2, 3, 4) for c in (-0.5, 0.5)]
-    # A sine has to show at least half a period over the data, and at most 60.
-    size, span = size_of(u), np.ptp(u)
-    out += [Node('sin', [f], [0.0, 2 * np.pi * k * size / span], scale=size,
-                 bounds=[(-2, 2), (np.pi * size / span, 120 * np.pi * size / span)])
-            for k in (0.5, 1, 2, 4)]
+    out += [sine(f, X, k) for k in (0.5, 1, 2, 4)]
     return [n for n in out if n.kind in CFG['library']]
 
 
@@ -668,30 +673,61 @@ def moves(model, X, outer=()):
 
 
 def simple(f, X):
-    """Functions of the feature f without a parameter, as (node, values)."""
-    if (f(X) > 0).all():
+    """Functions of the feature f for the sums of a look inside, as (node,
+    values): powers and the logarithm, and sines and exponentials at a few
+    values of their parameter, which the fit of a candidate adjusts."""
+    u = f(X)
+    if (u > 0).all():
         nodes = [Node('pow', [f], [p], [False]) for p in (1.0, 2.0, 3.0, 0.5, -1.0, -2.0)] + [Node('log', [f])]
     else:
         nodes = [Node('pow', [f], [p], [False]) for p in (1.0, 2.0, 3.0, -1.0, -2.0)] + [Node('logabs', [f])]
+    nodes += [sine(f, X, k, phase) for k in (0.5, 0.75, 1, 1.5, 2, 3, 4) for phase in (0.0, np.pi / 2)]
+    nodes += [Node('exp', [f], [c * size_of(u) / u.std()], scale=size_of(u)) for c in (-2, -1, 1, 2)]
     with np.errstate(all='ignore'):
-        return [(node, v) for node, v in ((node, node(X)) for node in nodes) if np.isfinite(v).all()]
+        return [(node, v) for node, v in ((node, node(X)) for node in nodes if node.kind in CFG['library'])
+                if np.isfinite(v).all()]
 
 
-def sums(groups, t, s, const):
+def sums(groups, t, s, const, start=None, limit=2000):
     """Weighted least squares of the target t, with errors s, on one column of
-    each group and, with const, a constant. For every choice of columns: the
-    chi^2 with log n added per coefficient, the choice and the coefficients."""
+    each group and, with const, a constant. For each choice of columns that
+    is tried: the chi^2 with log n added per coefficient, the choice and the
+    coefficients. All choices are tried if they are at most `limit`. With
+    more, the column of one group at a time is chosen with the others kept,
+    in turn until none changes, from the choice `start` or from the column
+    of each group that is closest to the target."""
     cols = np.column_stack(groups + [np.ones(len(t))] * const) / s[:, None]
     norm = np.sqrt((cols ** 2).sum(0))
     cols, y = cols / norm, t / s
-    first = np.cumsum([0] + [g.shape[1] for g in groups])
-    pick = np.array(list(itertools.product(*[range(a, b) for a, b in zip(first, first[1:])])))
-    if const:
-        pick = np.column_stack([pick, np.full(len(pick), first[-1])])
     gram, rhs = cols.T @ cols, cols.T @ y
-    A = gram[pick[:, :, None], pick[:, None, :]] + 1e-9 * np.eye(pick.shape[1])
-    coef = np.linalg.solve(A, rhs[pick][:, :, None])[:, :, 0]
-    chi2 = y @ y - (rhs[pick] * coef).sum(1) + pick.shape[1] * np.log(len(t))
+    sizes = [g.shape[1] for g in groups]
+    first = np.cumsum([0] + sizes)
+
+    def fit(pick):
+        if const:
+            pick = np.column_stack([pick, np.full(len(pick), first[-1])])
+        A = gram[pick[:, :, None], pick[:, None, :]] + 1e-9 * np.eye(pick.shape[1])
+        coef = np.linalg.solve(A, rhs[pick][:, :, None])[:, :, 0]
+        return y @ y - (rhs[pick] * coef).sum(1) + pick.shape[1] * np.log(len(t)), pick, coef
+
+    if np.prod(sizes, dtype=float) <= limit:
+        chi2, pick, coef = fit(np.array(list(itertools.product(*[range(a, b) for a, b in zip(first, first[1:])]))))
+    else:
+        if start is None:
+            near = np.abs(rhs[:-1] - gram[:-1, -1] * rhs[-1]) / np.sqrt(1 - gram[:-1, -1] ** 2 + 1e-12) if const else np.abs(rhs)
+            start = [np.argmax(near[a:b]) for a, b in zip(first, first[1:])]
+        choice = first[:-1] + np.array(start)
+        tried = []
+        for _ in range(5):
+            before = choice.copy()
+            for j, size in enumerate(sizes):
+                trial = np.tile(choice, (size, 1))
+                trial[:, j] = first[j] + np.arange(size)
+                choice[j] = trial[np.argmin(fit(trial)[0]), j]
+                tried.append(trial)
+            if (choice == before).all():
+                break
+        chi2, pick, coef = fit(np.unique(np.vstack(tried), axis=0))
     return chi2, pick - first[:pick.shape[1]], coef / norm[pick]
 
 
@@ -719,17 +755,18 @@ def total(nodes, coef, X, const, p, free):
 def inside(model, X, y, w, n_best=2):
     """Candidates from a look inside the holes of a fitted model, as (rule, new
     model). The fit gives the values of a hole at the data. Least squares
-    finds the sum of simple functions of the inputs of the hole that is
-    closest to them, and the hole is replaced by the terms of that sum, or by
-    the sum as a factor. For a hole of two to four inputs and of one sign the
-    same is done with powers of its values, and the hole is replaced by a
-    power of the sum."""
+    finds the sum of functions of the inputs of the hole that is closest to
+    them (see simple), and the hole is replaced by the terms of that sum, or
+    by the sum as a factor. For a hole of one sign the same is done with
+    powers of its values, and the hole is replaced by a power of the sum; for
+    a hole of one input only where the sum is a constant and a function that
+    is not a power."""
     out, n = [], len(y)
     with np.errstate(all='ignore'):
         cache = [dict(free_a=True, free_u=True) for _ in model.terms]
         solved = model.solve(X, y, w, cache)
         for i, (t, c) in enumerate(zip(model.terms, cache)):
-            if solved is None or t.feats is None or len(t.feats) > 4:
+            if solved is None or t.feats is None:
                 continue
             h, err = c['K'] @ solved[1] / c['a'], np.sqrt(model.noise(n, w)) / np.abs(c['a'])
             if not np.isfinite(h).all():
@@ -746,9 +783,10 @@ def inside(model, X, y, w, n_best=2):
                 """The sums closest to the target, without a constant and with
                 one that is not small beside the sum, the closest first: (chi^2,
                 nodes, coefficients, const)."""
-                found = []
-                for const in (False, True):
-                    chi2, pick, coef = sums(groups, target, s, const)
+                found, start = [], None
+                for const in (True, False):         # the choice without a constant starts from that with one
+                    chi2, pick, coef = sums(groups, target, s, const, start)
+                    start = pick[np.argmin(chi2), :len(menu)]
                     for k in np.argsort(chi2)[:n_best]:
                         nodes = [menu[j][f][0] for j, f in enumerate(pick[k, :len(menu)])]
                         part = sum(cf * nd(X) for cf, nd in zip(coef[k], nodes))
@@ -762,7 +800,7 @@ def inside(model, X, y, w, n_best=2):
                  + [Term(t.factors, None, t.amp[0])] * (const and bool(t.factors)))
             if t.factors and (const or len(nodes) > 1):
                 emit([Term(t.factors + [total(nodes, coef, X, const, 1.0, False)], None, t.amp[0])])
-            if len(t.feats) < 2 or not ((h > 0).all() or (h < 0).all()):
+            if not ((h > 0).all() or (h < 0).all()):
                 continue
             # The hole as a power of a sum: the sum from |hole|^(1/p).
             found = []
@@ -775,7 +813,9 @@ def inside(model, X, y, w, n_best=2):
                 key = (tuple(nd.text() for nd in nodes), const)
                 value = sum(cf * nd(X) for cf, nd in zip(coef, nodes)) + (coef[-1] if const else 0)
                 node = total(nodes, coef, X, const, p, True)
-                if key not in done and len(done) < n_best and (value > 0).all() and node is not None:
+                # For one input the library has (1 + c*v)^p of a power v already.
+                if (key not in done and len(done) < n_best and (value > 0).all() and node is not None
+                        and (len(nodes) > 1 or (const and nodes[0].kind != 'pow'))):
                     done.add(key)
                     emit([Term(t.factors + [node], None, t.amp[0])])
     return out
