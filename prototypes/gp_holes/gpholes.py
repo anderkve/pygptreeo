@@ -621,6 +621,26 @@ def _full(args):
     return snap(model.fit(X, y, w, maxiter=300), X, y, w)
 
 
+def transforms(y, y_scale):
+    """The target of each function around the expression (None: no function),
+    in units of its spread, with the variance there of noise outside the
+    function (with mean 1) and of noise of 100% of the target, so that the
+    relative noise is in units of the target. Also the functions that apply,
+    as (name, offset, warp_args)."""
+    targets, outer = {None: (y, (None, y ** 2))}, []
+    for name in CFG['outer']:
+        warped = warp(name, y * y_scale)
+        if warped is not None:
+            z, jac, c = warped
+            w = np.exp(2 * (jac - jac.max()))
+            with np.errstate(divide='ignore'):
+                rel = np.exp(2 * (np.log(np.abs(y * y_scale)) + jac)) / z.var()
+            targets[name] = (z / z.std(), (w / w.mean(), rel))
+            outer.append((name, jac.sum() + len(y) * np.log(y_scale / z.std()) - CFG['node_cost'],
+                          (z.std(), c)))
+    return targets, outer
+
+
 def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, max_steps=40, workers=4,
            seed=0, verbose=True, **cfg):
     """Beam search from a single hole. Each step refines the `beam` best
@@ -634,20 +654,7 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, max_ste
     rng = np.random.default_rng(seed)
     t0 = time.time()
     d = X.shape[1]
-    # The target of each function around the expression, in units of its spread,
-    # the variance there of noise outside the function (with mean 1), and that of
-    # noise of 100% of the target, so that the relative noise is in units of the target.
-    targets, outer = {None: (y, (None, y ** 2))}, []
-    for name in CFG['outer']:
-        warped = warp(name, y * y_scale)
-        if warped is not None:
-            z, jac, c = warped
-            w = np.exp(2 * (jac - jac.max()))
-            with np.errstate(divide='ignore'):
-                rel = np.exp(2 * (np.log(np.abs(y * y_scale)) + jac)) / z.var()
-            targets[name] = (z / z.std(), (w / w.mean(), rel))
-            outer.append((name, jac.sum() + len(y) * np.log(y_scale / z.std()) - CFG['node_cost'],
-                          (z.std(), c)))
+    targets, outer = transforms(y, y_scale)
     root = Model([Term(feats=[var(j) for j in range(d)])])
     root.y_scale = y_scale
     root.fit(X, *targets[None], restarts=6, rng=rng)

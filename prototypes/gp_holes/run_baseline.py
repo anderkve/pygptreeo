@@ -1,0 +1,155 @@
+"""The search on every set of targets, with the score of the right formula
+beside each result.
+
+    python run_baseline.py NAME [--sets benchmark srsd srsd2 empirical docs] [--only TARGET ...]
+
+Writes results/baseline_NAME.json, with one entry per run, and the log
+results/baseline_NAME.txt. A call with a name that has been used goes on where
+the earlier one stopped.
+
+benchmark: the targets of run_benchmark.py, 100 points, 1% noise. The other sets
+are those of run_held_out.py. A result of benchmark is right if it has no hole
+and its rms error outside the training box is below the noise, one of srsd and
+srsd2 if it has no hole and its median relative error is below 1% for the wider
+ranges. The results of empirical and docs are judged by the form of the formula.
+
+The right formula is that of truth.py, fitted to the same data. A result that
+is not right is put down to the search if the right formula scores higher by
+more than 1, and to the score if not.
+"""
+import argparse
+import json
+import os
+
+import numpy as np
+
+import run_benchmark
+import run_held_out
+from gpholes import search
+from targets import TARGETS
+from truth import truth
+
+SEEDS = dict(benchmark=3, srsd=2, srsd2=2, empirical=3, docs=3)
+NOISE = 0.01            # of the benchmark, and the largest relative error of a right result of srsd
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def problems(which):
+    """(name, formula, seed, X, y, scale of y, test sets, inputs) for each run of
+    a set. y and the targets of the test sets are in units of the scale. inputs
+    has the numbers of the inputs that were kept, if not all were."""
+    if which == 'benchmark':
+        for target in TARGETS:
+            for seed in range(SEEDS[which]):
+                X, y, ystd, tests = run_benchmark.data(target, 100, NOISE, seed)
+                yield target[0], target[1], seed, X, y, ystd, tests, None
+    else:
+        for name, text, seed, X, y, tests, note, _ in run_held_out.problems(which, SEEDS[which]):
+            ystd = np.std(y)
+            inputs = [int(s[1:]) for s in note.split(': ')[1].split(', ')] if note else None
+            yield (name, text, seed, X, y / ystd, ystd, {k: (Xs, fs / ystd) for k, (Xs, fs) in tests.items()},
+                   inputs)
+
+
+def errors(predict, tests):
+    """The rms error and the median relative error on each test set."""
+    out = {}
+    for key, (Xs, fs) in tests.items():
+        with np.errstate(all='ignore'):
+            e = np.abs(predict(Xs) - fs)
+            rel = (e / np.abs(fs))[np.isfinite(e / np.abs(fs))]
+        out[key] = dict(rms=float(np.sqrt(np.mean(e ** 2))), rel=float(np.median(rel)) if len(rel) else np.inf)
+    return out
+
+
+def is_right(which, holes, err):
+    """Whether a result is right, or None for a set that is judged by the form."""
+    if which == 'benchmark':
+        return bool(holes == 0 and err['out']['rms'] < NOISE)
+    if which.startswith('srsd'):
+        return bool(holes == 0 and err['out']['rel'] < NOISE)
+    return None
+
+
+def run(which, X, y, ystd, tests, seed, workers):
+    """The search on one data set, as an entry of the results."""
+    t0 = sum(os.times()[:4])
+    try:
+        model, trace, info = search(X, y, y_scale=ystd, seed=seed, verbose=False, workers=workers)
+    except Exception as error:                  # a run that fails counts as not right
+        return dict(crashed=f"{type(error).__name__}: {error}", right=is_right(which, 1, None))
+    err = errors(model.predict, tests)
+    return dict(result=model.text(ystd), score=model.score, holes=model.n_holes(), key=model.key(),
+                err=err, right=is_right(which, model.n_holes(), err),
+                next=[(m.score, m.n_holes(), m.text(ystd)) for m in info['candidates'][1:]],
+                steps=len(trace) - 1, fits=info['n_fits'], seconds=info['seconds'],
+                cpu=sum(os.times()[:4]) - t0)
+
+
+def verdict(r):
+    """'right', or what a result that is not right is put down to."""
+    t = r.get('truth')
+    if r['right'] or 'crashed' in r or t is None:
+        return 'right' if r['right'] else 'crashed' if 'crashed' in r else 'no formula'
+    if t['score'] > r['score'] + 1:
+        return 'search'
+    return 'by eye' if r['right'] is None else 'score'
+
+
+def report(runs):
+    """The log of the runs, as text."""
+    lines, last = [], None
+    for key, r in runs.items():
+        which, name, seed = key.split('/')
+        if (which, name) != last:
+            lines.append(f"\n{which} {name}:  {r['target']}   [{r['n']} points, {r['d']} inputs]")
+            last = (which, name)
+        if 'crashed' in r:
+            lines.append(f"  seed {seed}: crashed: {r['crashed']}")
+            continue
+        err = '; '.join(f"{k}: rms {e['rms']:.2g}, relative {e['rel']:.2g}" for k, e in r['err'].items())
+        lines.append(f"  seed {seed}: {r['result']}")
+        lines.append(f"          score {r['score']:.1f}, holes {r['holes']}{', RIGHT' if r['right'] else ''}; "
+                     f"{err}; {r['steps']} steps, {r['fits']} fits, {r['seconds']:.0f} s")
+        lines += [f"          next {s - r['score']:+.1f}: {text}" for s, _, text in r['next'][:2]]
+        if r.get('truth'):
+            t = r['truth']
+            lines.append(f"          right formula {t['score'] - r['score']:+.1f}: {t['text']}")
+    # For each target the number of runs of each verdict, and the score of the
+    # result less that of the right formula, which has a * if it has a hole.
+    kinds = ('right', 'search', 'score', 'by eye', 'no formula', 'crashed')
+    lines.append(f"\n{'set':10s} {'target':12s} " + ' '.join(f"{k:>10s}" for k in kinds) +
+                 f" {'seconds':>8s}  result - right formula")
+    groups = {}
+    for key, r in runs.items():
+        groups.setdefault(tuple(key.split('/')[:2]), []).append(r)
+    for (which, name), rs in groups.items():
+        counts = [sum(verdict(r) == k for r in rs) for k in kinds]
+        diffs = ', '.join(f"{r['score'] - r['truth']['score']:+.1f}{'*' if r['truth']['holes'] else ''}"
+                          for r in rs if r.get('truth') and 'score' in r)
+        lines.append(f"{which:10s} {name:12s} " + ' '.join(f"{c or '':>10}" for c in counts) +
+                     f" {np.mean([r.get('seconds', np.nan) for r in rs]):8.0f}  {diffs}")
+    return '\n'.join(lines) + '\n'
+
+
+if __name__ == '__main__':
+    ap = argparse.ArgumentParser()
+    ap.add_argument('name')
+    ap.add_argument('--sets', nargs='*', default=list(SEEDS))
+    ap.add_argument('--only', nargs='*')
+    ap.add_argument('--workers', type=int, default=4)
+    a = ap.parse_args()
+    path = os.path.join(HERE, 'results', f"baseline_{a.name}")
+    runs = json.load(open(path + '.json')) if os.path.exists(path + '.json') else {}
+    for which in a.sets:
+        for name, text, seed, X, y, ystd, tests, inputs in problems(which):
+            key = f"{which}/{name}/{seed}"
+            if (key in runs and 'truth' in runs[key]) or (a.only and name not in a.only):
+                continue
+            if key not in runs:
+                runs[key] = dict(target=text, n=len(y), d=X.shape[1],
+                                 **run(which, X, y, ystd, tests, seed, a.workers))
+            runs[key]['truth'] = truth(name, X, y, ystd, inputs)
+            print(key, runs[key].get('result', runs[key].get('crashed')), flush=True)
+            json.dump(runs, open(path + '.json', 'w'), indent=1)
+            open(path + '.txt', 'w').write(report(runs))

@@ -23,6 +23,10 @@ threadpoolctl.
   data (needs `pip install pysr`).
 - `run_held_out.py`: the search or PySR on targets that PySR provides.
   `make_empirical_bench.py` writes the data of one set, `empirical_bench.json`.
+- `run_baseline.py`: the search on every set of targets, with the score of the
+  right formula beside each result.
+- `truth.py`: the right formula of each target as a model that the search can
+  write.
 - `make_plots.py`: figures of the results, drawn into `plots/` from the logs
   of the runs in `results/` (needs matplotlib).
 
@@ -33,6 +37,8 @@ python run_growth.py --target toy
 python run_series.py
 python compare_pysr.py --seconds 60
 python run_held_out.py --set empirical --code gp_holes
+python run_baseline.py NAME                  # every set, into results/baseline_NAME.*
+python truth.py                              # checks the formulas of truth.py
 python make_plots.py
 ```
 
