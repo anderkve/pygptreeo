@@ -2,6 +2,7 @@
 beside each result.
 
     python run_baseline.py NAME [--sets benchmark srsd srsd2 empirical docs] [--only TARGET ...] [--check]
+                           [--symmetry off|add|replace|first]
 
 Writes results/baseline_NAME.json, with one entry per run, and the log
 results/baseline_NAME.txt. A call with a name that has been used goes on where
@@ -84,11 +85,12 @@ def is_right(which, holes, err):
     return None
 
 
-def run(which, X, y, ystd, tests, seed, workers):
-    """The search on one data set, as an entry of the results."""
+def run(which, X, y, ystd, tests, seed, workers, **cfg):
+    """The search on one data set, as an entry of the results. cfg replaces
+    entries of the settings of the search."""
     t0 = sum(os.times()[:4])
     try:
-        model, trace, info = search(X, y, y_scale=ystd, seed=seed, verbose=False, workers=workers)
+        model, trace, info = search(X, y, y_scale=ystd, seed=seed, verbose=False, workers=workers, **cfg)
     except Exception as error:                  # a run that fails counts as not right
         return dict(crashed=f"{type(error).__name__}: {error}", right=is_right(which, 1, None))
     err = errors(model.predict, tests)
@@ -152,6 +154,7 @@ if __name__ == '__main__':
     ap.add_argument('--only', nargs='*')
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--check', action='store_true')
+    ap.add_argument('--symmetry', default='off')
     a = ap.parse_args()
     path = os.path.join(HERE, 'results', f"baseline_{a.name}")
     runs = json.load(open(path + '.json')) if os.path.exists(path + '.json') else {}
@@ -163,7 +166,7 @@ if __name__ == '__main__':
                 continue
             if key not in runs:
                 runs[key] = dict(target=text, n=len(y), d=X.shape[1],
-                                 **run(which, X, y, ystd, tests, seed, a.workers))
+                                 **run(which, X, y, ystd, tests, seed, a.workers, symmetry=a.symmetry))
             runs[key]['truth'] = truth(name, X, y, ystd, inputs)
             print(key, runs[key].get('result', runs[key].get('crashed')), flush=True)
             json.dump(runs, open(path + '.json', 'w'), indent=1)

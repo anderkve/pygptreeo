@@ -39,6 +39,7 @@ python compare_pysr.py --seconds 60
 python run_held_out.py --set empirical --code gp_holes
 python run_baseline.py NAME                  # every set, into results/baseline_NAME.*
 python run_baseline.py NAME --check          # the 41 check runs, half an hour
+python run_baseline.py NAME --check --symmetry first    # ... with the rule "symmetry"
 python truth.py                              # checks the formulas of truth.py
 python make_plots.py
 ```
@@ -59,6 +60,7 @@ functions of one input:
 | drop input, drop factor, drop term | the model without it |
 | add hole | for a model with no hole left: the model and `H(xj)`, or a hole of all inputs; kept only if it scores above the model |
 | look inside | for a hole: the sum of functions of its inputs that is closest to the values of the hole at the data, as terms or as one factor, and a power or the logarithm of such a sum |
+| symmetry | for a hole: what follows from a linear relation between its values and its derivatives at the data (below); off by default |
 | outer function | `g(m)` for a model `m` of holes only, with `g(m)` one of `exp(m)`, `log(m) + c`, `c − log(m)`, `1/m`, `√m` |
 
 The library is `u^p`, `log(u)`, `exp(c·v)`, `(1 + c·v)^p` and `sin(a + b·u)`,
@@ -512,6 +514,61 @@ With all of the above, the 41 check runs (`python run_baseline.py NAME
 --check`, in `results/baseline_check.txt`) have 33 right of the 37 with a
 rule, and the 4 empirical laws, in 940 s of search. Not right are II.11.28
 in two of its three seeds, I.30.5 and SRSD bonus.20, as before.
+
+## The symmetries of a hole
+
+Most of the rules of the table are entries of a list: a candidate for each
+input, each pair of inputs and each function of the library, with a fit for
+each. They have one thing in common. Each says that the hole obeys a linear
+relation between its values and its derivatives:
+
+| Rule | Relation |
+|---|---|
+| drop input | `∂H/∂uj = 0` |
+| merge to `uj + c·uk` | `c·∂H/∂uj = ∂H/∂uk` |
+| merge to `uj·uk^p` | `p·uj·∂H/∂uj = uk·∂H/∂uk` |
+| factor `uj^p` | `uj·∂H/∂uj = p·H` |
+| factor `exp(c·uj)` | `∂H/∂uj = c·H` |
+| factor `sin(a + b·uj)` | `∂²H/∂uj² = −b²·H` |
+| linear in `uj^p` | `uj·∂²H/∂uj² = (p − 1)·∂H/∂uj` |
+| no interaction | `∂²H/∂uj∂uk = 0` |
+
+The rule "symmetry" (`CFG['symmetry']`) finds such relations from the fit of
+a model, in place of trying each entry of the list. The fit gives the
+posterior mean of each hole at the data, and its first and second derivatives
+with respect to the inputs of the hole in closed form. The rule looks for two
+kinds of relation, in a coordinate `s` of each input: `u`, `log(u)`, `u²` or
+`1/u`.
+
+- **Of one to three inputs**, all in the same coordinate:
+  `Σ cj·∂H/∂sj = γ·H`, `= δ` or `= 0`. The hole is then `exp(γ·sj)·G`,
+  `δ·sj + G` or `G`, where `G` is a hole of one input less: of the invariants
+  `sk − (ck/cj)·sj` and the inputs that are not in the relation. In `log(u)`
+  this is the factor `uj^p` and the merge to `uk·uj^p`, in `u` the factor
+  `exp(c·uj)` and the merge to `uk + c·uj`, in `u²` e.g. a hole of
+  `x2² + c·x3²`. A relation of several inputs covers what took several steps:
+  `H + x1·∂H/∂x1 + x2·∂H/∂x2 = 0` gives `H(x1/x2)/x2` for I.6.2 at once.
+- **Of one input:** a factor `(1 + c·s)^p`, the factors `u^p·exp(c·s)`, a
+  factor `sin(a + b·u)`, and a hole that is linear in `s`, in `exp(g·s)`, in
+  `(1 + c·s)^p` or in `sin(a + b·u)`.
+
+A relation is the combination of two to four columns (the values of the
+hole, its derivatives in a coordinate, a constant) that is closest to zero;
+its residual is the smallest singular value of the columns, scaled to unit
+length. A relation is kept if its residual is below 0.3 and it does not hold
+as well, within a factor of 1.5, with a column less. Of those of several
+inputs the 6 best give a candidate for each of their inputs as the one that
+is taken out, and one candidate with all the relations that share no input.
+The coefficients of a relation are the starting values of the candidate,
+which is fitted and scored as every other candidate. The thresholds were set
+once and not tuned.
+
+`CFG['symmetry']` is `'off'` (the default), `'add'` (the rule beside the
+others), `'replace'` (the rule in place of the merges, of the factors but the
+logarithm, and of the functions that a hole is linear in) or `'first'` (as
+`'replace'`, but once the rule has nothing new for the best models, or the
+search has stopped improving, the 4 best models get the rules that were left
+out).
 
 ## Limitations, issues and ideas
 

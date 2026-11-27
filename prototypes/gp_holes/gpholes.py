@@ -24,6 +24,9 @@ CFG = dict(
     max_power=3,        # the largest integer power counted as simple
     library=('pow', 'log', 'logabs', 'exp', 'aff', 'sin'),     # functions of one input; also 'poly'
     outer=('log', 'exp', 'expneg', 'inv', 'square'),    # functions around the expression; also 'sqrt'
+    # The rule 'symmetry': 'off'; 'add'; 'replace', for it in place of the rules that it stands
+    # in for (see moves); or 'first', where the best models get those rules once it has nothing new.
+    symmetry='off',
 )
 # Values a fitted parameter is rounded to if the evidence allows (see nice).
 NICE = {
@@ -216,6 +219,11 @@ def kernel(r2):
     r = np.sqrt(5 * r2)
     e = np.exp(-r)
     return (1 + r + r * r / 3) * e, 5 / 3 * (1 + r) * e
+
+
+def kernel2(r2):
+    """The second derivative of the kernel of the holes with respect to r2."""
+    return np.exp(-0.5 * r2) / 4 if CFG['kernel'] == 'rbf' else 25 / 12 * np.exp(-np.sqrt(5 * r2))
 
 
 class Term:
@@ -585,10 +593,12 @@ def pairings(a, b, X):
     return out
 
 
-def moves(model, X, outer=()):
+def moves(model, X, outer=(), every=True):
     """All one-step refinements of a model, as (rule, new model). outer has
     the functions that can go around a model without symbolic functions, as
-    (name, offset, warp_args)."""
+    (name, offset, warp_args). Without `every`, the rules that the rule
+    'symmetry' stands in for are left out: the merges, the factors but the
+    logarithm, and the functions that a hole is linear in."""
     out = []
     if model.warp is None and model.n_nodes() == 0:
         for name, offset, args in outer:
@@ -643,14 +653,15 @@ def moves(model, X, outer=()):
             for f in lib:
                 new = copy.deepcopy(lower)
                 new.factors.append(f)
-                emit('factor', i, [new])
-                if q == 1 and f.kind != 'pow':          # ... or that function times a power
+                if every or f.kind in ('log', 'logabs', 'poly'):
+                    emit('factor', i, [new])
+                if q == 1 and f.kind != 'pow' and every:    # ... or that function times a power
                     for p in (n for n in lib if n.kind == 'pow'):
                         both = copy.deepcopy(new)
                         both.factors.append(p)
                         emit('factor', i, [both])
                 # ... plus a smaller hole (the hole is linear in that function).
-                if q > 1 or t.factors:
+                if (q > 1 or t.factors) and (every or f.kind == 'poly'):
                     emit('linear', i, [new, lower])
                 if q == 1:                              # ... plus the hole itself
                     emit('peel', i, [new, t])
@@ -659,7 +670,7 @@ def moves(model, X, outer=()):
             emit('no interaction', i, [without(j, amp=t.amp[0] - 0.35),
                                        without(k, amp=t.amp[0] - 0.35)])
             # The hole depends on inputs j and k through one combination.
-            for pair in pairings(t.feats[j], t.feats[k], X):
+            for pair in pairings(t.feats[j], t.feats[k], X) if every else ():
                 new = without(j, k)
                 new.feats = (new.feats or []) + [pair]
                 new.ls = np.append(new.ls, 0.5 * (t.ls[j] + t.ls[k]))
@@ -843,6 +854,286 @@ def inside(model, X, y, w, n_best=2):
     return out
 
 
+# The coordinates s(u) of an input in which a symmetry of a hole is a shift: s, ds/du and d2s/du2.
+COORDS = {'lin': (lambda u: u, lambda u: np.ones_like(u), lambda u: np.zeros_like(u)),
+          'log': (lambda u: np.log(np.abs(u)), lambda u: 1 / u, lambda u: -1 / u ** 2),
+          'sq': (lambda u: u ** 2, lambda u: 2 * u, lambda u: 2 * np.ones_like(u)),
+          'inv': (lambda u: 1 / u, lambda u: -1 / u ** 2, lambda u: 2 / u ** 3)}
+
+
+def coord(f, kind, X):
+    """The node of the coordinate `kind` of the feature f."""
+    if kind == 'log':
+        return Node('log' if (f(X) > 0).all() else 'logabs', [f])
+    return Node('pow', [f], [{'lin': 1.0, 'sq': 2.0, 'inv': -1.0}[kind]], [False])
+
+
+def shift(f, kind, g, X):
+    """The node of exp(g*s) for the coordinate s of the feature f: f^g for the logarithm."""
+    if kind == 'log':
+        if (f(X) > 0).all():
+            return Node('pow', [f], [g])
+        powers = np.array([1.0, 2.0, 3.0, -1.0, -2.0])
+        return Node('pow', [f], [powers[np.argmin(np.abs(powers - g))]], [False])
+    inner = f if kind == 'lin' else coord(f, kind, X)
+    size = size_of(inner(X))
+    return Node('exp', [inner], [g * size], scale=size)
+
+
+def null(*cols):
+    """The combination of the columns that is closest to zero: its residual,
+    the smallest singular value of the columns scaled to unit length, and its
+    coefficients. The residual is infinite if a column takes no part."""
+    norm = np.array([np.linalg.norm(c) for c in cols])
+    if not (np.isfinite(norm).all() and norm.all()):
+        return np.inf, None
+    A = np.column_stack(cols) / norm
+    lam, vec = np.linalg.eigh(A.T @ A)
+    v = vec[:, 0]
+    return (np.sqrt(max(lam[0], 0.0)) if np.abs(v).min() > 0.2 * np.abs(v).max() else np.inf), v / norm
+
+
+def single(h, D, D2, feats, X, most=0.3, margin=1.5):
+    """Relations between the values h of a hole at the data and its first and
+    second derivatives D and D2 with respect to one input u, for each input
+    and each coordinate s of it:
+
+        (1 + c*s) dH/ds = p*c*H             a factor (1 + c*s)^p
+        u dH/du = (p + c*u*ds/du)*H         factors u^p and exp(c*s)
+        d2H/du2 = -b^2*H                    a factor sin(a + b*u)
+        d2H/ds2 = g*dH/ds                   linear in exp(g*s), or in s for g = 0
+        (1 + c*s) d2H/ds2 = (p - 1)*c*dH/ds     linear in (1 + c*s)^p
+        d2H/du2 = -b^2*(H - d)              linear in sin(a + b*u)
+
+    Returns (residual, number of the input, nodes of the functions, whether
+    the hole is linear in their product and not the product times a smaller
+    hole). Kept are those with a residual below `most`: of each kind the best
+    coordinate of an input, of the fourth the two best, and the last only if
+    it does not hold as well, within `margin`, without d. The residual of
+    the fourth is that of the second derivative, in units of the first times
+    the spread of s."""
+    out = []
+    with np.errstate(all='ignore'):
+        for j, f in enumerate(feats):
+            u, du, d2u = f(X), D[:, j], D2[:, j]
+            # The sine, with its phase up to pi: its weight can have either sign.
+            for cols, beside in (((d2u, h), False), ((d2u, h, np.ones(len(u))), True)):
+                res, v = null(*cols)
+                k = np.sqrt(max(v[1] / v[0], 0.0)) * np.ptp(u) / (2 * np.pi) if res < most else 0
+                if 0.5 <= k <= 60 and (not beside or res * margin < null(d2u, h)[0]):
+                    b = 2 * np.pi * k / np.ptp(u)
+                    a = 0.5 * np.angle(np.exp(2j * (np.arctan2(b * (h + (v[2] / v[1] if beside else 0)), du) - b * u)).mean())
+                    out.append((res, j, [sine(f, X, k, a)], beside))
+            lines, three = [], {}
+            for kind, (s, ds, d2s) in COORDS.items():
+                sv, hs = s(u), du / ds(u)
+                hss = (d2u - du * d2s(u) / ds(u)) / ds(u) ** 2
+                if not (np.isfinite(sv).all() and np.isfinite(hs).all() and np.isfinite(hss).all() and hs.any()):
+                    continue
+                g = hss @ hs / (hs @ hs)
+                unit = sv.std() / np.linalg.norm(hs)
+                flat, bent = unit * np.linalg.norm(hss), unit * np.linalg.norm(hss - g * hs)
+                lines.append((flat, j, [coord(f, kind, X)], True) if flat < most else
+                             (bent, j, [shift(f, kind, g, X)], True))
+                if kind == 'log':
+                    continue
+                inner = f if kind == 'lin' else coord(f, kind, X)
+                top = np.abs(sv).max()
+                found = []
+                res, v = null(hs, sv * hs, h)
+                if np.isfinite(res) and (1 + v[1] / v[0] * sv > 0).all():
+                    found.append(('aff', res, [Node('aff', [inner], [v[1] / v[0] * top, -v[2] / v[1]], scale=top)], False))
+                res, v = null(hss, sv * hss, hs)
+                if np.isfinite(res) and (1 + v[1] / v[0] * sv > 0).all():
+                    found.append(('linear', res, [Node('aff', [inner], [v[1] / v[0] * top, 1 - v[2] / v[1]], scale=top)], True))
+                res, v = null(du * u, h, sv * h)
+                if np.isfinite(res) and (u > 0).all():
+                    rate = -v[2] / v[0] / {'lin': 1, 'sq': 2, 'inv': -1}[kind]
+                    found.append(('both', res, [Node('pow', [f], [-v[1] / v[0]]), shift(f, kind, rate, X)], False))
+                for name, res, nodes, beside in found:
+                    if res < min(most, three.get(name, (most,))[0]):
+                        three[name] = (res, j, nodes, beside)
+            out += list(three.values()) + [r for r in sorted(lines, key=lambda r: r[0])[:2] if r[0] < most]
+    return out
+
+
+def relations(h, D, U, n_best=6, most=0.3, margin=1.5):
+    """Linear relations between the values h of a hole at the data and its
+    derivatives D with respect to its inputs U:
+
+        sum_j c_j dH/ds_j = gamma*H + delta
+
+    for up to three inputs j, all in the same coordinate s of COORDS, and with
+    at most one of gamma and delta. The residual of a relation is the smallest
+    singular value of its columns, scaled to unit length. Kept are the
+    `n_best` relations with the smallest residuals below `most`: for each set
+    of inputs and right-hand side those of the best coordinate and of the
+    next, if it is within `margin` of the best, and not those that hold as
+    well, within `margin`, with fewer inputs or without the right-hand side.
+    Returns (residual, inputs, coordinate, c, right-hand side: None, 'H' or
+    '1', gamma or delta), the best first."""
+    n, q = U.shape
+    cols = {'H': h, '1': np.ones(n)}
+    with np.errstate(all='ignore'):
+        for j in range(q):
+            for kind, (_, ds, _) in COORDS.items():
+                if kind != 'inv' or (U[:, j] > 0).all() or (U[:, j] < 0).all():
+                    cols[j, kind] = D[:, j] / ds(U[:, j])
+    norm = {k: np.linalg.norm(v) for k, v in cols.items() if np.isfinite(v).all()}
+    names = [k for k in norm if norm[k] > 0]
+    if 'H' not in names:
+        return []
+    A = np.column_stack([cols[k] / norm[k] for k in names])
+    gram, at = A.T @ A, {k: i for i, k in enumerate(names)}
+    best = {}                                   # (inputs, right-hand side) -> the best relation
+    for size in range(1, min(q, 3) + 1):
+        for J in itertools.combinations(range(q), size):
+            for rhs in (None, 'H', '1')[size == 1:]:
+                found = []
+                for kind in [k for k in COORDS if all((j, k) in at for j in J)]:
+                    keys = [(j, kind) for j in J] + [rhs] * (rhs is not None)
+                    idx = [at[k] for k in keys]
+                    lam, vec = np.linalg.eigh(gram[np.ix_(idx, idx)])
+                    v = vec[:, 0]
+                    if np.abs(v).min() > 0.2 * np.abs(v).max():     # every column has to take part
+                        c = v / [norm[k] for k in keys]
+                        found.append((np.sqrt(max(lam[0], 0.0)), J, kind, c[:size], rhs, -c[-1] if rhs else 0.0))
+                if found:
+                    best[J, rhs] = sorted(found, key=lambda r: r[0])
+    keep = []
+    for (J, rhs), found in best.items():
+        less = [b[0][0] for (J2, rhs2), b in best.items()
+                if (J2, rhs2) != (J, rhs) and set(J2) <= set(J) and rhs2 in (rhs, None)]
+        if found[0][0] < most and all(found[0][0] * margin < b for b in less):
+            keep += [r for r in found[:2] if r[0] < min(most, margin * found[0][0])]
+    return sorted(keep, key=lambda r: r[0])[:n_best]
+
+
+def unlog(f):
+    """The feature u of a hole input log(u), or the input itself."""
+    return f.kids[0] if f.kind in ('log', 'logabs') else f
+
+
+def reduce(t, rel, pivot, X):
+    """What replaces the hole term t for a relation of `relations`, whose
+    inputs are given as nodes: the hole of one input less, with the other
+    inputs of the relation replaced by their invariants, times exp(gamma*s)
+    or with a term delta*s beside it, where s is the coordinate of the input
+    `pivot`. Returns that term, or None if nothing is left of it, and the
+    list of terms beside it; None if the nodes cannot write the relation."""
+    _, J, kind, c, rhs, g = rel
+    p, sp = J[pivot], coord(J[pivot], kind, X)
+    pos = lambda f: (f(X) > 0).all()
+    at = lambda f: next((k for k, node in enumerate(J) if node is unlog(f)), None)
+    l_p = next(l for f, l in zip(t.feats, t.ls) if at(f) == pivot)
+    feats, ls = [], []
+    for f, l in zip(t.feats, t.ls):
+        k = at(f)
+        if k is None:
+            feats.append(f), ls.append(l)
+        elif k != pivot:
+            u, r = J[k], -c[k] / c[pivot]       # the invariant is s_k + r*s_p
+            if kind == 'log':
+                if pos(p):
+                    new = Node('mono', [u, p], [r])
+                elif pos(u):
+                    new = Node('mono', [p, u], [1 / r])
+                elif 0.5 < abs(r) < 2:
+                    new = Node('mono', [u, p], [np.sign(r)], [False])
+                else:
+                    return None
+            else:
+                a, b = (u, p) if kind == 'lin' else (coord(u, kind, X), sp)
+                with np.errstate(all='ignore'):
+                    scale = size_of(b(X)) / size_of(a(X))
+                new = Node('lin', [a, b], [r * scale], scale=scale)
+            with np.errstate(all='ignore'):
+                v = new(X)
+            if not (np.isfinite(v).all() and v.std() > 0):
+                return None
+            # The hole keeps the logarithm of an input that it had.
+            feats.append(Node('log', [new]) if f is not u and (v > 0).all() else new)
+            ls.append(0.5 * (l + l_p))
+    factors, extra = list(t.factors), []
+    if rhs == 'H':
+        factors.append(shift(p, kind, g / c[pivot], X))
+    elif rhs == '1':
+        extra = [Term(t.factors + [sp], None, t.amp[0])]
+    if not feats and rhs == '1' and not t.factors:      # what is left is the constant of the model
+        return None, extra
+    return Term(factors, feats or None, t.amp[0], ls), extra
+
+
+def symmetries(model, X, y, w):
+    """Candidates from the symmetries of the holes of a fitted model, as (rule,
+    new model). The fit gives the values of a hole at the data and their
+    derivatives with respect to its inputs. A linear relation between them
+    (see relations) says that the hole is a hole of fewer inputs, times a
+    function or with a term beside it (see reduce). There is a candidate for
+    each relation and each of its inputs as the pivot, and one with all the
+    relations that share no input. The relations of one input (see single)
+    give a candidate each."""
+    out = []
+    with np.errstate(all='ignore'):
+        cache = [dict(free_a=True, free_u=True) for _ in model.terms]
+        solved = model.solve(X, y, w, cache)
+        for i, (t, c) in enumerate(zip(model.terms, cache)):
+            if solved is None or t.feats is None:
+                continue
+            b = c['a'] * solved[1]
+            h = np.exp(2 * t.amp[0]) * (c['k'] @ b)
+            if not t.factors:                   # a hole with no factor takes the constant of the model with it
+                h = h + np.exp(2 * model.hyp[0]) * solved[1].sum()
+            wl, A2 = np.exp(-2 * t.ls), np.exp(2 * t.amp[0])
+            D = -A2 * wl * (c['V'] * (c['g'] @ b)[:, None] - c['g'] @ (b[:, None] * c['V']))
+            k2 = kernel2(c['E'] @ wl)
+            D2 = A2 * np.column_stack([(4 * k2 * w_j ** 2 * c['E'][:, :, j] - c['g'] * w_j) @ b
+                                       for j, w_j in enumerate(wl)])
+            std = np.column_stack([f(X) for f in t.feats]).std(0)
+            D, D2 = D / std, D2 / std ** 2
+            # A hole in log(u) is looked at as one in u.
+            base = [unlog(f) for f in t.feats]
+            U = np.column_stack([f(X) for f in base])
+            logs = [f is not u for f, u in zip(t.feats, base)]
+            D, D2 = np.where(logs, D / U, D), np.where(logs, (D2 - D) / U ** 2, D2)
+            if not (np.isfinite(h).all() and np.isfinite(D).all() and np.isfinite(D2).all()):
+                continue
+            rels = [r[:1] + ([base[j] for j in r[1]],) + r[2:] for r in relations(h, D, U)]
+            for _, j, nodes, beside in single(h, D, D2, base, X):
+                rest = Term(t.factors, [f for k, f in enumerate(t.feats) if k != j] or None, t.amp[0],
+                            [l for k, l in enumerate(t.ls) if k != j])
+                new = [Term(t.factors + nodes, rest.feats, t.amp[0], rest.ls)]
+                # The second term of a hole that is linear in the functions; without
+                # inputs and factors it is the constant of the model.
+                if beside and (rest.feats or t.factors):
+                    new.append(rest)
+                m = copy.deepcopy(model)
+                m.terms[i:i + 1] = copy.deepcopy(new)
+                out.append(('symmetry', tidy(m)))
+
+            def emit(main, extra):
+                m = copy.deepcopy(model)
+                m.terms[i:i + 1] = copy.deepcopy([main] * (main is not None) + extra)
+                out.append(('symmetry', tidy(m)))
+
+            for rel in rels:
+                for pivot in range(len(rel[1])):
+                    new = reduce(t, rel, pivot, X)
+                    if new is not None:
+                        emit(*new)
+            # All the relations that share no input, the best first.
+            hole, beside, used, count = t, [], [], 0
+            for rel in rels:
+                if hole is None or hole.feats is None or any(f is u for f in rel[1] for u in used):
+                    continue
+                new = reduce(hole, rel, 0, X)
+                if new is not None:
+                    hole, beside, used, count = new[0], beside + new[1], used + rel[1], count + 1
+            if count > 1:
+                emit(hole, beside)
+    return out
+
+
 def snap(model, X, y, w=None):
     """Round parameters to simple values where that does not lower the score."""
     improved = True
@@ -929,7 +1220,7 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
     root.y_scale = y_scale
     root.fit(X, *targets[None], restarts=6, rng=rng)
     seen = {root.key(): root}          # structure key -> fitted model
-    tried, expanded, n_quick = {root.key()}, set(), {}
+    tried, expanded, listed, n_quick = {root.key()}, set(), set(), {}
     best_of, stale = {}, 0             # the best score of each function around the expression
     own = {w: 0 for w in targets}      # ... and how often its best model was refined
     trace, n_fits = [(root.score, root.key(), 'start')], 1
@@ -948,13 +1239,19 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
                     front.append(first)
                     own[w] += 1
             todo = list({m.key(): m for m in front if m.key() not in expanded}.values())
+            every = CFG['symmetry'] in ('off', 'add')
+            if CFG['symmetry'] == 'first' and (not todo or stale >= patience):
+                todo, every = [m for m in ranked[:beam] if m.key() not in listed], True
+                listed.update(m.key() for m in todo)
             if not todo:
                 break
             cands = []
             for m in todo:
                 expanded.add(m.key())
-                cands += [(rule, c) for rule, c in moves(m, X, outer) + inside(m, X, *targets[m.warp])
-                          if c.key() not in tried]
+                found = moves(m, X, outer, every) + inside(m, X, *targets[m.warp])
+                if CFG['symmetry'] != 'off':
+                    found += symmetries(m, X, *targets[m.warp])
+                cands += [(rule, c) for rule, c in found if c.key() not in tried]
             # A structure gets quick fits in at most two steps.
             for key in {c.key() for _, c in cands}:
                 n_quick[key] = n_quick.get(key, 0) + 1
@@ -996,7 +1293,7 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
                 trace.append((top.score, top.key(), getattr(top, 'rule', '')))
             say(f"{step:4d} {top.score:9.2f}  {top.key()}   [{len(cands)} candidates, "
                 f"{t2 - t1:.0f} + {time.time() - t2:.0f} s]")
-            if stale >= patience:
+            if stale >= patience and CFG['symmetry'] != 'first':
                 break
     best = [m.condition(X, *targets[m.warp]) for m in sorted(seen.values(), key=lambda m: -m.score)[:5]]
     return best[0], trace, dict(n_fits=n_fits, n_models=len(tried), seconds=time.time() - t0,

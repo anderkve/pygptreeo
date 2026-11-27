@@ -46,16 +46,30 @@ set needs PySR, for its selection of inputs.
 **What I would do next, in this order.**
 
 1. The full pass, with its results beside those of the README.
-2. A third SRSD sample (`make_srsd_sample.py --sample 3`), drawn before any
-   further change, as the next test that is held out.
-3. Parentheses in the text of merged inputs (Issues). The search tells
+2. Parentheses in the text of merged inputs (Issues). The search tells
    structures apart by this text, so results can change.
-4. `snap` with the best rounding in place of the first (Issues).
-5. One function of holes with symbolic terms around it,
+3. `snap` with the best rounding in place of the first (Issues).
+4. One function of holes with symbolic terms around it,
    `y = a(x)·g(H) + b(x)`, by taking `a`, `b` and `g` off the target. This is
    exact (see "A hole cannot sit inside a function").
-6. A product of two holes, and products inside the sums of the look inside
+5. A product of two holes, and products inside the sums of the look inside
    (Ideas).
+
+**Added in the session after it** (the same day). The question was whether
+the rules can come from one principle in place of a growing list. Each of
+these has a section in the README.
+
+- The rule "symmetry" (`CFG['symmetry']`, off by default): candidates from
+  linear relations between the values of a hole and its derivatives at the
+  data. With `'first'` the listed merges, factors and functions that a hole is
+  linear in are kept as a fallback only. `run_baseline.py` has `--symmetry`.
+- `run_ode.py`: a differential equation for a hole of one input. It is not
+  part of the search.
+- A third SRSD sample (`srsd_sample3.json`), drawn after the rule was
+  written. No search has been run on it yet.
+
+See "The rule symmetry" and "Representations that were weighed" below for
+what did not work.
 
 **Practical.**
 
@@ -122,6 +136,42 @@ hierarchy of holes:
   in a variational framework; deep GPs (Damianou & Lawrence 2013) and chained
   GPs (Saul et al. 2016), with variational bounds on the evidence; Laplace
   evidence with a Gauss–Newton Hessian for model selection (Immer et al. 2021).
+
+### The rule "symmetry"
+
+The rule reads the structure of a hole off its fit, so it is as good as the
+fit. Three ways in which it fell short of the listed rules on the check
+runs:
+
+- **A hole that the GP cannot fit has no relations.** Under the logarithm,
+  the hole of SRSD i.6.20b is `−(θ − θ1)²/(2σ²) − log σ`, with `σ` down to
+  0.1: it scores 268 where the formula scores 920, and no relation has a
+  residual below the threshold. The listed merge to `x1 − x2` is tried
+  without looking, and the evidence takes it. With `'first'` the listed rules
+  come in once the rule has nothing new, and the formula is found.
+- **The evidence can prefer a wrong merge.** SRSD bonus.7 is
+  `√(a·x1 − b·x2/x3²)`, with inputs over two decades and `x2` of both signs.
+  In seed 1 the hole `H(log(x1), x2/x3^0.5)` scores 313 and
+  `H(log(x1), x2/x3²)` 257: the right input is spread over four decades, and
+  a hole that is not linear in it is fitted worse. The search follows the
+  wrong merge and does not come back. Under the square the order is the other
+  way, 348 against 290, and the listed rules reach the formula there.
+- **A relation tells less apart than the evidence does.** The hole
+  `H(x1·x2)` of II.11.28 is `3/(1 − u/3) − 2`. The relation of `exp(c·u)`
+  holds within the accuracy of the second derivatives, and the fit of
+  `(1 + c·u)^p` from the values that they give ends at `(1 − 0.5·u)^−0.19`, 7
+  below the exponential. From the listed starting values, `c = ±0.5` and
+  `p = −1`, it ends at the right formula, 4.5 above the exponential.
+
+Also:
+
+- The residual of a relation does not use the uncertainty of the
+  derivatives. A Bayes factor of the relation from the posterior of the hole
+  would, and would not need the thresholds.
+- Relations of more columns have smaller residuals by chance. They are
+  limited to one coordinate for all inputs for this reason.
+- "No interaction" is still listed. Its relation is a single column, the
+  mixed second derivative, which needs a scale to be judged by.
 
 ### Other limitations
 
@@ -214,7 +264,19 @@ hierarchy of holes:
   symbolic regression code, with the GP posterior as data.
 - More from the values of a hole: products of functions of two inputs in the
   sums of the look inside, and a product of two holes where the values of a
-  hole of both inputs, on a grid, have rank one.
+  hole of both inputs, on a grid, have rank one. As a relation, a hole is a
+  product of a function of `uj` and one of `uk` where
+  `H·∂²H/∂uj∂uk = ∂H/∂uj·∂H/∂uk`.
+- For the rule "symmetry": the relations of a hole whose inputs span decades
+  from a fit of the hole in their logarithms; the listed starting values
+  beside those of a relation; a continuous coordinate `u^μ` in place of the
+  four.
+- The differential equation of a hole of one input as a rule of the search
+  (`run_ode.py`). For noisy data, relations between integrals of the hole
+  in place of its derivatives. Equations with other coefficients than
+  polynomials, e.g. `sin(u)` and `cos(u)` for the pendulum. For a hole of
+  several inputs, the same columns for one input at a time give the function
+  of that input that the hole has as a factor.
 - A hole inside a function as its values at a few knots, with a GP prior,
   fitted as an exponent is. The rest of the model stays a GP.
 - New points where the candidate formulas disagree most (active learning).
@@ -226,6 +288,37 @@ hierarchy of holes:
 - A GP over expressions as a surrogate for an expensive score, with a distance
   between the functions two expressions can represent, not between their
   syntax. Only worth it when the score is expensive.
+
+## Representations that were weighed
+
+- **Kolmogorov–Arnold.** The theorem writes any continuous function as
+  `Σ Φq(Σ φqp(xp))`, but with inner functions that are not smooth, so it says
+  nothing about formulas. What is of use is its shape, a function of a sum of
+  functions of one input each: the merges, the factors, the look inside and
+  the function around the expression are all of this shape. The rule
+  "symmetry" finds such nodes where a hole stays a hole (an input
+  `sk + c·sj`, a factor `exp(γ·s)`), with the coordinates `u`, `log(u)`,
+  `u²`, `1/u` as the functions of one input. A node with a hole below a
+  function in the interior is where the evidence stops being exact, as
+  before.
+- **EML**, `eml(x, y) = exp(x) − ln(y)` with the constant 1 (Odrzywołek,
+  arXiv:2603.21852), builds every elementary function from one operator. A
+  hole in either argument is inside `exp` or `log`, so no partial expression
+  is a GP. Its measure of simplicity is also far from that of a formula of
+  physics: multiplication is a tree of depth 8, and its own search by
+  gradient recovers formulas in 100% of runs at depth 2, 25% at depths 3 to 4
+  and under 1% at depth 5.
+- **A continuous function around the expression.** The score of the first
+  hole was computed for `z = (y^λ − 1)/λ`, with `log(y)` for `λ = 0`, for 8
+  values of `λ` from −2 to 3 and the targets of the check runs of one sign.
+  The best `λ` is that of a right formula where the function matters most
+  (`λ = 2` for I.8.14, by 122; the logarithm for SRSD i.6.20b), but not for
+  SRSD bonus.7 (`λ = −1`, with the right `λ = 2` lower by 78) or i.27.6 (flat,
+  with the right `λ = −1` lower by 21), and for products it prefers a root or
+  the logarithm, in which the hole is simpler. So the function cannot be
+  chosen from the first hole, and following several of them for some steps,
+  as the search does, is needed. This was a scratch script and is not in the
+  repository.
 
 ## Questions to discuss
 
