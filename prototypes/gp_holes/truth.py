@@ -28,7 +28,7 @@ import copy
 
 import numpy as np
 
-from gpholes import Model, Term, library, pairings, snap, transforms, var, warp
+from gpholes import Model, Term, library, nice, pairings, snap, transforms, var, warp
 
 C = 299792458.0
 FORMS = {
@@ -73,7 +73,7 @@ FORMS = {
     'i.6.20b': [('log', "T(pw(x3, -2), pw(add(x1, x2, -1), 2)), T(log(x3))"),
                 "T(exp(mul(add(x1, x2, -1), x3, -1), -0.5, 2), pw(x3, -1))"],
     'i.12.4': "T(x1, pw(x2, -2))",
-    'i.14.4': "T(x1, pw(x2, 2))",
+    'i.14.4': ["T(x1, pw(x2, 2))", ('log', "T(log(x1)), T(log(x2))")],
     'i.27.6': ('inv', "T(pw(x1, -1)), T(x2, pw(x3, -1))"),
     'i.34.27': ["T(x1)", ('log', "T(log(x1))")],
     'i.39.11': "T(x2, x3, pw(x1, -1), aff(x1, -1, -1, -1))",    # 1/(x1 - 1) = (1/x1)/(1 - 1/x1)
@@ -193,23 +193,29 @@ def models(name, X, inputs=None):
 
 
 def truth(name, X, y, y_scale, inputs=None):
-    """The alternative of the formula of a target with the best score, fitted
-    from the parameters of the formula and rounded as in the search, as an
-    entry of the results. None if there is none."""
+    """The alternative of the formula of a target with the best score, as an
+    entry of the results. None if there is none. Each is fitted from the
+    parameters of the formula and rounded as in the search, once with all
+    parameters free and once with those that have a simple value held there."""
     targets, outer = transforms(y, y_scale)
     outer = {o[0]: o[1:] for o in outer}
     best = None
     for name_outer, terms in models(name, X, inputs):
         if name_outer and name_outer not in outer:
             continue
-        m = Model(terms)
-        m.y_scale = y_scale
-        if name_outer:
-            m.warp, (m.offset, m.warp_args) = name_outer, outer[name_outer]
-        data = (X, *targets[name_outer])
-        m = snap(m.fit(*data, maxiter=300, restarts=3, rng=np.random.default_rng(0)), *data).condition(*data)
-        if best is None or m.score > best.score:
-            best = m
+        for hold in (False, True):
+            m = Model(copy.deepcopy(terms))
+            m.y_scale = y_scale
+            if name_outer:
+                m.warp, (m.offset, m.warp_args) = name_outer, outer[name_outer]
+            for node in (n for t in m.terms for n in t.nodes()) if hold else ():
+                for k in np.flatnonzero(node.free):
+                    values = nice(node, k)
+                    node.free[k] = values is None or not np.isclose(values, node.th[k]).any()
+            data = (X, *targets[name_outer])
+            m = snap(m.fit(*data, maxiter=300, restarts=3, rng=np.random.default_rng(0)), *data).condition(*data)
+            if best is None or m.score > best.score:
+                best = m
     if best is None or best.score < -1e9:           # no alternative, or none that could be fitted
         return None
     return dict(score=float(best.score), holes=best.n_holes(), key=best.key(), text=best.text(y_scale))
