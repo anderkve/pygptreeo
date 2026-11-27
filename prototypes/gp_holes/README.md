@@ -557,13 +557,14 @@ kinds of relation, in a coordinate `s` of each input: `u`, `log(u)`, `u²` or
 A relation is the combination of two to four columns (the values of the
 hole, its derivatives in a coordinate, a constant) that is closest to zero;
 its residual is the smallest singular value of the columns, scaled to unit
-length. A relation is kept if its residual is below 0.3 and it does not hold
-as well, within a factor of 1.5, with a column less. Of those of several
-inputs the 6 best give a candidate for each of their inputs as the one that
-is taken out, and one candidate with all the relations that share no input.
-The coefficients of a relation are the starting values of the candidate,
-which is fitted and scored as every other candidate. The thresholds were set
-once and not tuned.
+length. One of the first kind is kept if its residual is below 0.3 and it
+does not hold as well, within a factor of 1.5, with fewer inputs or without
+its right-hand side. The 6 best give a candidate for each of their inputs as
+the one that is taken out, and there is one candidate with all the relations
+that share no input. Of the second kind, each has a candidate for its best
+coordinate of an input if the residual there is below 0.3. The coefficients
+of a relation are the starting values of the candidate, which is fitted and
+scored as every other candidate. The thresholds were set once and not tuned.
 
 `CFG['symmetry']` is `'off'` (the default), `'add'` (the rule beside the
 others), `'replace'` (the rule in place of the merges, of the factors but the
@@ -571,6 +572,36 @@ logarithm, and of the functions that a hole is linear in) or `'first'` (as
 `'replace'`, but once the rule has nothing new for the best models, or the
 search has stopped improving, the 4 best models get the rules that were left
 out).
+
+**The 41 check runs** (`run_baseline.py NAME --check --symmetry MODE`, in
+`results/baseline_symmetry_MODE.txt`):
+
+| `CFG['symmetry']` | Right of 37 | Fits |
+|---|---|---|
+| `'off'` | 33 | 117,505 |
+| `'add'` | 33 | 102,846 |
+| `'replace'` | 29 | 25,804 |
+| `'first'` | 30 | 34,413 |
+
+- With `'replace'` the searches need 22% of the fits and with `'first'` 29%.
+  The 4 empirical laws come out the same in every mode.
+- In all three modes I.8.14 is `((x2 − x1)² + (x4 − x3)²)^0.5`, without the
+  constant under the root and with a score 6 and 7 higher, and SRSD i.27.6,
+  seed 1, is `1/(1/(x3/x2) + 1/x1)`, 6 higher. With `'first'`, SRSD ii.13.34
+  is `x1·x2·(1 − 1.22e-17·x2²)^−0.5`, the formula. Without the rule and with
+  `'add'` it is an approximation that scores 1.6 higher, `x1·x2·(1 +
+  8.5e-26·x2³)`, and with `'replace'` another that scores 7 lower.
+- The toy target comes out as `0.5·x2·((x3/x2^0.5)² + 2·sin(2·x1))`, from the
+  relation `x2·∂H/∂x2 + 0.5·x3·∂H/∂x3 = H`. This is the target, and it scores
+  2 above the plain form, which has one weight more.
+- Lost with `'replace'` and `'first'`: II.11.28 in seed 0, which becomes an
+  exponential (the other two seeds are not right in any mode), and SRSD
+  bonus.7 in both seeds. Lost with `'replace'` only: SRSD i.6.20b in seed 0,
+  where the search stops at the first hole. NOTES.md has the reasons.
+- I.18.4 is right in every mode, but with the rule its scores are lower: by
+  3 and 6 in two seeds, and by 9 in the third with `'replace'` and `'first'`.
+  Two of these results score below the right formula, by 3 and 6. Without
+  the rule no result is more than 0.3 below it.
 
 ## A differential equation for a hole of one input
 

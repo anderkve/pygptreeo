@@ -1099,23 +1099,19 @@ def symmetries(model, X, y, w):
             if not (np.isfinite(h).all() and np.isfinite(D).all() and np.isfinite(D2).all()):
                 continue
             rels = [r[:1] + ([base[j] for j in r[1]],) + r[2:] for r in relations(h, D, U)]
-            for _, j, nodes, beside in single(h, D, D2, base, X):
-                rest = Term(t.factors, [f for k, f in enumerate(t.feats) if k != j] or None, t.amp[0],
-                            [l for k, l in enumerate(t.ls) if k != j])
-                new = [Term(t.factors + nodes, rest.feats, t.amp[0], rest.ls)]
-                # The second term of a hole that is linear in the functions; without
-                # inputs and factors it is the constant of the model.
-                if beside and (rest.feats or t.factors):
-                    new.append(rest)
-                m = copy.deepcopy(model)
-                m.terms[i:i + 1] = copy.deepcopy(new)
-                out.append(('symmetry', tidy(m)))
 
             def emit(main, extra):
                 m = copy.deepcopy(model)
                 m.terms[i:i + 1] = copy.deepcopy([main] * (main is not None) + extra)
                 out.append(('symmetry', tidy(m)))
 
+            for _, j, nodes, beside in single(h, D, D2, base, X):
+                rest = Term(t.factors, [f for k, f in enumerate(t.feats) if k != j] or None, t.amp[0],
+                            [l for k, l in enumerate(t.ls) if k != j])
+                # The second term of a hole that is linear in the functions; without
+                # inputs and factors it is the constant of the model.
+                emit(Term(t.factors + nodes, rest.feats, t.amp[0], rest.ls),
+                     [rest] * (beside and bool(rest.feats or t.factors)))
             for rel in rels:
                 for pivot in range(len(rel[1])):
                     new = reduce(t, rel, pivot, X)

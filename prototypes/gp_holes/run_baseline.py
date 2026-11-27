@@ -1,7 +1,7 @@
 """The search on every set of targets, with the score of the right formula
 beside each result.
 
-    python run_baseline.py NAME [--sets benchmark srsd srsd2 empirical docs] [--only TARGET ...] [--check]
+    python run_baseline.py NAME [--sets benchmark srsd srsd2 srsd3 empirical docs] [--only TARGET ...] [--check]
                            [--symmetry off|add|replace|first]
 
 Writes results/baseline_NAME.json, with one entry per run, and the log
@@ -10,8 +10,8 @@ the earlier one stopped.
 
 benchmark: the targets of run_benchmark.py, 100 points, 1% noise. The other sets
 are those of run_held_out.py. A result of benchmark is right if it has no hole
-and its rms error outside the training box is below the noise, one of srsd and
-srsd2 if it has no hole and its median relative error is below 1% for the wider
+and its rms error outside the training box is below the noise, one of the srsd
+sets if it has no hole and its median relative error is below 1% for the wider
 ranges. The results of empirical and docs are judged by the form of the formula.
 
 With --check only the 41 runs of CHECK are done, which take about half an hour
@@ -34,7 +34,7 @@ from gpholes import search
 from targets import TARGETS
 from truth import truth
 
-SEEDS = dict(benchmark=3, srsd=2, srsd2=2, empirical=3, docs=3)
+SEEDS = dict(benchmark=3, srsd=2, srsd2=2, srsd3=2, empirical=3, docs=3)
 NOISE = 0.01            # of the benchmark, and the largest relative error of a right result of srsd
 # The check runs: the seeds of some targets of each set.
 CHECK = dict(
