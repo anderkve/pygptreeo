@@ -603,6 +603,40 @@ out).
   Two of these results score below the right formula, by 3 and 6. Without
   the rule no result is more than 0.3 below it.
 
+**A third sample of SRSD equations** (`srsd_sample3.json`,
+`run_baseline.py NAME --sets srsd3 --symmetry MODE`, in
+`results/baseline_srsd3_MODE.txt`): 15 equations, none used before, drawn
+after the rule was written and before any run on them, with 2 seeds and the
+data and the rule for a right result of the first two samples. Nothing was
+changed after these runs.
+
+| `CFG['symmetry']` | Right of 30 | Fits |
+|---|---|---|
+| `'off'` | 20 | 70,681 |
+| `'add'` | 20 | 70,976 |
+| `'first'` | 19 | 25,567 |
+
+- With `'first'` the searches need 36% of the fits. 20 of the 30 results
+  have the same score as without the rule, 3 a higher one and 7 a lower one.
+- The result that is lost is i.16.6, `(u + v)/(1 + u·v/c²)`, in seed 1: a
+  hole remains. Without the rule it is `0.998·(x1 + x2)` and a small term
+  with a sine, an approximation that counts as right.
+- i.15.3x, `(x − u·t)/√(1 − u²/c²)`, is right in every mode. Without the rule
+  it is the formula, `(x1 − x2·x3)·(1 − 1.03e-17·x2²)^−0.5`; with `'first'`
+  it is the first terms of its series, `x1 − x2·x3 − 5.6e-18·x2³·x3`, with a
+  score 11 and 16 lower.
+- bonus.4 in seed 0 is `1.42·x1^−0.5·(x2 − x3)^0.5` with `'first'`, 17 higher
+  than the result without the rule, which has two further terms under the
+  root. (The term of the formula in `L` and `r` is not visible in the data.)
+- The 10 results that are not right without the rule are not right with it
+  either. With `'first'` 4 of them score lower, by 12 to 132, and one higher.
+- With `'add'` 28 of the 30 results are the same, with as many fits: on this
+  sample, with inputs over decades, the candidates of the rule rarely win
+  against the listed ones. On the check runs `'add'` saves 12% of the fits.
+- The sample has no entries in `truth.py`, and the results were not judged
+  by eye. As before the rule for a right result counts approximations: in
+  every mode i.48.2 in seed 0 is `x1·(1 + 8.4e-26·x2³)` times a constant.
+
 ## A differential equation for a hole of one input
 
 For a hole of one input the same can be done with the columns

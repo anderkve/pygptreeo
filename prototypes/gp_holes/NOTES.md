@@ -65,8 +65,17 @@ these has a section in the README.
   linear in are kept as a fallback only. `run_baseline.py` has `--symmetry`.
 - `run_ode.py`: a differential equation for a hole of one input. It is not
   part of the search.
-- A third SRSD sample (`srsd_sample3.json`), drawn after the rule was
-  written. No search has been run on it yet.
+- A third SRSD sample (`srsd_sample3.json`, the set `srsd3` of
+  `run_baseline.py`), drawn after the rule was written and before any run on
+  it. It has been used once, for the search without the rule and with
+  `'add'` and `'first'`, and nothing was changed afterwards. It is no longer
+  held out.
+
+In short: the rule can stand in for most of the list. With `'first'` the
+check runs need 29% of the fits and the third sample 36%, and 30 of 37 and 19
+of 30 results are right, against 33 and 20 without the rule. It does not
+find more than the list does, and where a result changes it is more often
+for the worse than for the better. The default is unchanged.
 
 See "The rule symmetry" and "Representations that were weighed" below for
 what did not work.
