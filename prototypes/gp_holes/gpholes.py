@@ -13,6 +13,7 @@ from multiprocessing import Pool
 
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
+from scipy.linalg.lapack import dpotri
 from scipy.optimize import minimize
 from threadpoolctl import threadpool_limits
 
@@ -382,7 +383,8 @@ class Model:
             except (np.linalg.LinAlgError, ValueError):
                 return 1e10, np.zeros(len(p))
             alpha = cho_solve(chol, y)
-            W = cho_solve(chol, np.eye(n)) - np.outer(alpha, alpha)
+            inv = dpotri(chol[0], lower=True)[0]         # the lower triangle of the inverse
+            W = np.tril(inv) + np.tril(inv, -1).T - np.outer(alpha, alpha)
             nll = 0.5 * y @ alpha + np.log(np.diag(chol[0])).sum() + 0.5 * n * np.log(2 * np.pi)
             diag = np.diag(W)
             d = [t.grad(W, c) for t, c in zip(self.terms, cache)]
