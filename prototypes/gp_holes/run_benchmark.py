@@ -1,6 +1,9 @@
 """Run the GP-hole search on the target functions.
 
-    python run_benchmark.py [--seeds 3] [--n 100] [--noise 0.01] [--kernel matern52] [--only NAME ...]
+    python run_benchmark.py [--seeds 3] [--n 100] [--noise 0.01] [--kernel matern52] [--only NAME ...] [--local]
+
+With --local the holes are local GPs in blocks of at most 100 points (local.py),
+for more points than a single GP can take.
 """
 import argparse
 
@@ -52,7 +55,10 @@ if __name__ == '__main__':
     ap.add_argument('--power-cost', type=float, default=10.0)
     ap.add_argument('--only', nargs='*')
     ap.add_argument('--verbose', action='store_true')
+    ap.add_argument('--local', action='store_true')
     a = ap.parse_args()
+    if a.local:
+        from local import LocalModel
     summary = []
     for target in TARGETS:
         if a.only and target[0] not in a.only:
@@ -62,7 +68,7 @@ if __name__ == '__main__':
         for seed in range(a.seeds):
             text, holes, err, trace, info = run(target, a.n, a.noise, seed, a.verbose, beam=a.beam,
                                                  kernel=a.kernel, workers=a.workers, node_cost=a.node_cost,
-                                                 power_cost=a.power_cost)
+                                                 power_cost=a.power_cost, model=LocalModel if a.local else None)
             print(f"  seed {seed}: {text}\n          holes {holes}, rmse in {err['in']:.4f} "
                   f"out {err['out']:.4f}, {len(trace) - 1} steps, {info['n_fits']} fits, "
                   f"{info['seconds']:.0f} s", flush=True)

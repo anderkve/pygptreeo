@@ -316,6 +316,18 @@ class Term:
         return d_amp, d_ls, d_a, d_V
 
 
+def hole_values(t, c, alpha, sigma):
+    """The posterior mean of the hole of term t at the points of the pieces c
+    of Term.train, from alpha = K^-1 y there; the noise sigma in units of the
+    hole; and the first and second derivatives of the mean with respect to
+    the standardised inputs of the hole."""
+    b, wl, A2 = c['a'] * alpha, np.exp(-2 * t.ls), np.exp(2 * t.amp[0])
+    D = -A2 * wl * (c['V'] * (c['g'] @ b)[:, None] - c['g'] @ (b[:, None] * c['V']))
+    k2 = kernel2(c['E'] @ wl)
+    D2 = A2 * np.column_stack([(4 * k2 * w_j ** 2 * c['E'][:, :, j] - c['g'] * w_j) @ b for j, w_j in enumerate(wl)])
+    return c['K'] @ alpha / c['a'], sigma / np.abs(c['a']), D, D2
+
+
 class Model:
     """A sum of terms and a constant, with noise of the same size at every
     point and noise in proportion to the size of the target. With warp set,
@@ -388,6 +400,20 @@ class Model:
         except (np.linalg.LinAlgError, ValueError):
             return None
         return chol, cho_solve(chol, y)
+
+    def holes(self, X, y, w):
+        """What the fit says of each hole at the data: for each term None or
+        (see hole_values) the posterior mean of its hole, the noise in units
+        of the hole, and the first and second derivatives of the mean with
+        respect to the standardised inputs of the hole. Also the posterior
+        mean of the constant. (None, None) if the fit fails."""
+        cache = [dict(free_a=True, free_u=True) for _ in self.terms]
+        solved = self.solve(X, y, w, cache)
+        if solved is None:
+            return None, None
+        sigma = np.sqrt(self.noise(len(y), w))
+        return ([None if t.feats is None else hole_values(t, c, solved[1], sigma)
+                 for t, c in zip(self.terms, cache)], np.exp(2 * self.hyp[0]) * solved[1].sum())
 
     def rescale(self, X, y, w):
         """Multiply all variances by the factor that maximises the evidence,
@@ -773,16 +799,12 @@ def inside(model, X, y, w, n_best=2):
     With exponentials of its values, it is replaced by the logarithm of the
     sum. For a hole of one input these two only where the library does not
     have the result already."""
-    out, n = [], len(y)
+    out = []
     with np.errstate(all='ignore'):
-        cache = [dict(free_a=True, free_u=True) for _ in model.terms]
-        solved = model.solve(X, y, w, cache)
-        for i, (t, c) in enumerate(zip(model.terms, cache)):
-            if solved is None or t.feats is None:
+        for i, (t, values) in enumerate(zip(model.terms, model.holes(X, y, w)[0] or [])):
+            if values is None or not np.isfinite(values[0]).all():
                 continue
-            h, err = c['K'] @ solved[1] / c['a'], np.sqrt(model.noise(n, w)) / np.abs(c['a'])
-            if not np.isfinite(h).all():
-                continue
+            h, err = values[:2]
             menu = [simple(f, X) for f in t.feats]
             groups = [np.column_stack([v for _, v in m]) for m in menu]
 
@@ -1075,20 +1097,13 @@ def symmetries(model, X, y, w):
     give a candidate each."""
     out = []
     with np.errstate(all='ignore'):
-        cache = [dict(free_a=True, free_u=True) for _ in model.terms]
-        solved = model.solve(X, y, w, cache)
-        for i, (t, c) in enumerate(zip(model.terms, cache)):
-            if solved is None or t.feats is None:
+        found, const = model.holes(X, y, w)
+        for i, (t, values) in enumerate(zip(model.terms, found or [])):
+            if values is None:
                 continue
-            b = c['a'] * solved[1]
-            h = np.exp(2 * t.amp[0]) * (c['k'] @ b)
+            h, _, D, D2 = values
             if not t.factors:                   # a hole with no factor takes the constant of the model with it
-                h = h + np.exp(2 * model.hyp[0]) * solved[1].sum()
-            wl, A2 = np.exp(-2 * t.ls), np.exp(2 * t.amp[0])
-            D = -A2 * wl * (c['V'] * (c['g'] @ b)[:, None] - c['g'] @ (b[:, None] * c['V']))
-            k2 = kernel2(c['E'] @ wl)
-            D2 = A2 * np.column_stack([(4 * k2 * w_j ** 2 * c['E'][:, :, j] - c['g'] * w_j) @ b
-                                       for j, w_j in enumerate(wl)])
+                h = h + const
             std = np.column_stack([f(X) for f in t.feats]).std(0)
             D, D2 = D / std, D2 / std ** 2
             # A hole in log(u) is looked at as one in u.
@@ -1196,7 +1211,7 @@ def transforms(y, y_scale):
 
 
 def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_best=3, own_gap=10.0,
-           max_steps=40, workers=4, seed=0, verbose=True, **cfg):
+           max_steps=40, workers=4, seed=0, verbose=True, keep=5, model=None, **cfg):
     """Beam search from a single hole. Each step refines the `beam` best
     models and the best model of each function around the expression, until
     all of these have been refined or none of them has improved for `patience`
@@ -1204,15 +1219,15 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
     once, and then while it is among the `own_best` best functions, and not
     if its score is more than `own_gap` per point below the best. Returns the
     model with the best score, the trace of the best score and some counts,
-    among them the 5 best models. y should be scaled to unit variance, with
-    y_scale the factor that gives it its units back. cfg replaces entries of
-    CFG."""
+    among them the `keep` best models. y should be scaled to unit variance, with
+    y_scale the factor that gives it its units back. `model` is the class of
+    the models, Model if not given. cfg replaces entries of CFG."""
     CFG.update(cfg)
     rng = np.random.default_rng(seed)
     t0 = time.time()
     d = X.shape[1]
     targets, outer = transforms(y, y_scale)
-    root = Model([Term(feats=[var(j) for j in range(d)])])
+    root = (model or Model)([Term(feats=[var(j) for j in range(d)])])
     root.y_scale = y_scale
     root.fit(X, *targets[None], restarts=6, rng=rng)
     seen = {root.key(): root}          # structure key -> fitted model
@@ -1291,6 +1306,6 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
                 f"{t2 - t1:.0f} + {time.time() - t2:.0f} s]")
             if stale >= patience and CFG['symmetry'] != 'first':
                 break
-    best = [m.condition(X, *targets[m.warp]) for m in sorted(seen.values(), key=lambda m: -m.score)[:5]]
+    best = [m.condition(X, *targets[m.warp]) for m in sorted(seen.values(), key=lambda m: -m.score)[:keep]]
     return best[0], trace, dict(n_fits=n_fits, n_models=len(tried), seconds=time.time() - t0,
                                 candidates=best)
