@@ -321,6 +321,18 @@ What a paper needs and is not there:
    eq. 6). A free exponent then costs 2 to 4 more than an integer one near
    100 points. The 10 was set against formulas that fit within the noise,
    and a smaller cost can let more of them through.
+   Measured on the right formulas of toy, I.6.2, I.10.7 and II.11.28 (100
+   points, 1% noise), with the cost of a parameter as the logarithm of the
+   range of its bounds over `√(2π)` times its width, the width from the
+   second derivative of the evidence in that parameter alone: a free
+   exponent 6 to 8 (range 8, width 0.001 to 0.008); a rate or a frequency
+   inside `exp`, `sin` or `(1 + c·u)^p` 10 to 11 with its bounds as they
+   are, and 4 to 8 by the formula of Bartlett et al.; the weight of a
+   symbolic term 1.8; the amplitude or a length scale of a hole 3.3 to 3.9;
+   the noise 4.0; a parameter at its bound 0. BIC has 2.3 for each. So of
+   the 12.3 that a free exponent costs now, 6 to 8 follow from the data and
+   the rest is a preference for simple values, and BIC charges a rate or a
+   frequency 2 to 9 too little, which nothing makes up for.
 3. Fractions in `snap`, from the continued fraction of a parameter, as in
    AI Feynman (arXiv:1810.10525, section II.4), which rounds the parameter
    nearest to a round value first and fits the others again.
