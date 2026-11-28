@@ -594,6 +594,10 @@ out).
 | `'replace'` | 29 | 25,804 |
 | `'first'` | 30 | 34,413 |
 
+These runs are from before the text of an expression and `snap` were
+corrected. With the corrections `'off'` has the same 33 and 117,088 fits
+(`results/baseline_check.txt`).
+
 - With `'replace'` the searches need 22% of the fits and with `'first'` 29%.
   The 4 empirical laws come out the same in every mode.
 - In all three modes I.8.14 is `((x2 − x1)² + (x4 − x3)²)^0.5`, without the

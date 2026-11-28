@@ -89,6 +89,13 @@ The README has the measurements, in "Larger data sets".
   "symmetry" gives the same results as before. With the rule its path can
   differ in the last digits: `'first'` on I.37.4 takes 867 fits in place of
   865, with the same score.
+- The text of an expression has parentheses wherever it could be read in two
+  ways (`wrap`), and `snap` rounds, each time, the parameter whose rounding
+  gives the best score. The 41 check runs give the same 33 of 37 with these,
+  with 117,088 fits in place of 117,505, and the same results but for the
+  constant beside the hole of SRSD bonus.20. The runs with the rule
+  "symmetry" (`results/baseline_symmetry_*`, `baseline_srsd3_*`) are from
+  before.
 
 **Practical.**
 
@@ -124,27 +131,23 @@ the full pass and the held-out sample.
 
 **Next steps, in this order.**
 
-1. The two defects that change results (Issues): parentheses in the text of
-   merged inputs, by which the search tells structures apart, and `snap` with
-   the best rounding in place of the first. Then the 41 check runs, and
-   `results/baseline_check.*` anew.
-2. The full pass of 150 searches with that code, which no version has run:
-   1.5 to 2 hours on 4 cores, with its results beside those of the README.
-3. The first two changes of "From the literature" below, the test in closed
+1. The full pass of 150 searches, which no version has run: 1.5 to 2 hours
+   on 4 cores, with its results beside those of the README.
+2. The first two changes of "From the literature" below, the test in closed
    form for a linear term and the costs from the Fisher information, each
    judged on the check runs. They change the method, so they come before the
    held-out sample.
-4. The protocol of the comparison, written down before the data are drawn:
+3. The protocol of the comparison, written down before the data are drawn:
    the criterion, how a result with a hole counts, the seeds and the times
    of the baselines ("What a paper needs").
-5. A fourth SRSD sample (`make_srsd_sample.py --sample 4`; 52 equations are
+4. A fourth SRSD sample (`make_srsd_sample.py --sample 4`; 52 equations are
    left), drawn once the method is held fixed and run once, with the
    baselines beside it. The first three samples are spent.
-6. A learner for `GPTree(global_mean=...)` in this folder that runs the
+5. A learner for `GPTree(global_mean=...)` in this folder that runs the
    search on the coverage sample of the tree each time the number of points
    has doubled, compared with `'additive_gp'` and `'net'` on streams of up to
    5 inputs. It is a measurement of which weaknesses matter there.
-7. What the two uses both need: a check against formulas that fit within the
+6. What the two uses both need: a check against formulas that fit within the
    noise and are wrong outside the data; inputs screened before the search,
    for more than 5; and the noise of each point as given, where it is known.
 
@@ -298,9 +301,9 @@ What a paper needs and is not there:
    eq. 6). A free exponent then costs 2 to 4 more than an integer one near
    100 points. The 10 was set against formulas that fit within the noise,
    and a smaller cost can let more of them through.
-3. `snap` as in AI Feynman (arXiv:1810.10525, section II.4): the parameter
-   nearest to a round value first, the others fitted again, kept if the
-   score rises; then fractions.
+3. Fractions in `snap`, from the continued fraction of a parameter, as in
+   AI Feynman (arXiv:1810.10525, section II.4), which rounds the parameter
+   nearest to a round value first and fits the others again.
 4. For a sum of holes, kernels whose parts each integrate to zero (Lu et
    al., arXiv:2206.09861). A hole then cannot trade with a constant or with
    another hole, and the share of each in the variance orders the pairs for
@@ -576,17 +579,9 @@ Also:
   The results need a look at the formulas as well.
 - The rules, the library and the costs were developed on the benchmark
   targets, so the benchmark overstates how well the search does.
-- The text of a merged input inside another one can be read in two ways,
-  e.g. `x1/(x1*x2^0.5)/x3^0.5` for `x1/((x1·x2^0.5)/x3^0.5)`. The structures
-  of the search are told apart by this text.
 - A sine inside a sum keeps a phase of −π/2, as in
   `(1 − sin(−1.57 + 2·u))` for `1 + cos(2·u)`: `snap` rounds a phase to
   π/2 with the sign of a weight changed, and here there is no weight.
-- `snap` rounds the first parameter whose rounding raises the score, so its
-  result depends on the order of the parameters. For `(1 + c·u)^p` of
-  II.11.28 it can round `c` and keep a free exponent, 12 below the score with
-  the exponent rounded and `c` free. Trying every parameter and taking the
-  best would not depend on the order.
 
 ## Ideas
 
