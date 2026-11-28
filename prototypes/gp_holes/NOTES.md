@@ -46,6 +46,13 @@ the search as it is"). Its 41 check runs are those of
 before "A faster search" are from the search as it was then. The docs set
 needs PySR, for its selection of inputs, and is not in this pass.
 
+**Alternatives.** The search returns the models that score less than 3
+below the best (`CFG['within']`), and `run_baseline.py` counts the runs in
+which one of them is right: 116 of the 141 runs that are judged by number,
+against 113 for the result alone. `results/baseline_missed.txt` has the 32
+runs of the targets with a wrong result in the full pass, with their
+alternatives; the full pass itself has not been run with them.
+
 What to do next is in "Where to take it" below.
 
 **Added in the session after it** (the same day). The question was whether
@@ -586,6 +593,10 @@ Also:
 
 ## Ideas
 
+- The other roundings of an exponent or a coefficient as alternatives to a
+  result: `snap` keeps one, and for II.11.28 the formula is another, less
+  than 3 below the result (README, "Alternatives to the result"). A few fits
+  for each model kept, at the end of the search.
 - Models without the constant, for the evidence to decide.
 - Functions of holes in the interior by linearisation (see above).
 - A score for few points that integrates over the parameters in place of BIC.

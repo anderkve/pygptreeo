@@ -101,7 +101,10 @@ more than 10 per point below the best is left out. Every candidate gets a
 short fit of 20 iterations, from the parameters of the model it was made
 from, with all variances scaled by the factor that maximises the evidence.
 The 12 best structures, and the 3 best of each outer function, get a full
-fit. The search returns its 5 best models.
+fit. The search returns its best model and the alternatives to it: every
+model that scores less than 3 below it (`CFG['within']`, odds of about 20 to
+1), the best first. A model whose predictions at the data are those of a
+better one is the same function written in another way, and is left out.
 
 ## Results
 
@@ -867,6 +870,39 @@ each set above, from the search as it was then.
 - **Time.** A search takes 28 s on average, 18 s for half of them, and 1 to
   294 s: 3 s for one input, 12 s for two, 24 s for three, 53 s for four and
   59 s for five. 19 of the 168 results have a hole.
+
+## Alternatives to the result
+
+`run_baseline.py` judges each alternative as it judges the result, and counts
+the runs in which the result or one of its alternatives is right, also for
+other distances from the best score than 3. On the 41 check runs
+(`results/baseline_check.txt`) and on the 32 runs of the 15 targets that had
+a wrong result in the full pass (`results/baseline_missed.txt`):
+
+| Kept if within | Check runs, right of 37 | Models kept | The 32 runs, right | Models kept |
+|---|---|---|---|---|
+| the result only | 33 | 1 | 6 | 1 |
+| 1 | 33 | 1.1 | 9 | 1.5 |
+| 3 | 33 | 1.6 | 9 | 3.0 |
+| 5 | 33 | 2.9 | 11 | 5.0 |
+| 10 | 33 | 10.6 | 11 | 14.2 |
+
+- Of the 141 runs of the full pass that are judged by number, the result is
+  right in 113, and the result or an alternative within 3 in 116.
+- In two of the three runs that are gained, the result is a hole and the
+  formula is the third of the models kept, behind an approximation:
+  `x1·x2·H(x2)`, `x1·x2·(1 + 6.0e-26·x2³)` and
+  `x1·x2·(1 − 9.9e-18·x2²)^−0.5` for SRSD ii.13.34, and the same for i.48.2
+  of the third sample. The third run, and the two more within 5, have a long
+  expression that passes the rule for a right result and is not the formula
+  (bonus.1, ii.35.21).
+- For II.11.28 the alternatives are the two forms that fit within the noise,
+  `1.25·exp(0.78·x1·x2) − 0.25` and `2.14·(1 − 0.23·x1·x2)^−2 − 1.14`, 0.3
+  and 0.8 apart, and the formula is not among them: `snap` keeps one
+  rounding of the exponent, −2, and the formula has −1. Fitted to the same
+  data it scores 0.4 and 2.0 below the result.
+- Most other alternatives are the result with a hole in place of one part,
+  or with one more factor or term.
 
 ## Limitations, issues and ideas
 
