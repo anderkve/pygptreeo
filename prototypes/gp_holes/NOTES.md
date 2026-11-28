@@ -303,6 +303,13 @@ What a paper needs and is not there:
    "peel", the sum in "linear" and "drop term", in place of a short fit for
    each. Short fits are 90% of a run. It covers terms without parameters of
    their own; a function with an inner parameter needs a grid.
+   It can save a quarter of a run at most. Counted on 8 searches of the
+   check runs (27,028 fits): the candidates in which a term enters linearly
+   are 25% of the fits and 24% of their time ("factor" and "linear" for a
+   hole of one input 19%, "peel" 5%, "drop term" 1%). "Factor" and "linear"
+   for a hole of more inputs are 51%, "change input" 10%, "merge" 4% and the
+   full fits 3% (6% of the time); in these the hole stays, with another
+   kernel, and there is no closed form.
 2. The costs of a constant and of an exponent from the Fisher information,
    in place of ½·log n and 10: `log(|θ|/Δ) + log 2` with `Δ = (12/I)^½`, and
    `log c` for a natural number `c` (Bartlett et al., arXiv:2211.11461,
