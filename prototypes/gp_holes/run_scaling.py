@@ -1,7 +1,7 @@
 """The GP-hole search on larger data sets.
 
     python run_scaling.py NAME [--set benchmark|srsd|srsd2|srsd3] [--n 10000] [--noise 0.01 0.1 0.3]
-                          [--m 100] [--local 0] [--only TARGET ...] [--seeds 1]
+                          [--m 100] [--local 0] [--nbar 100] [--only TARGET ...] [--seeds 1]
 
 For each target, n points with noise are drawn, and a fifth of them is held
 out. The noise of the benchmark is of the same size at every point, in units
@@ -16,8 +16,8 @@ the target. Ways to use the other points (see bigdata.py and local.py):
     distilled   the search on the predictions of a GPTree of all the points at
                 m of them, and its 10 best models validated in the same way
     local       with --local N, in place of the three others: the search on N
-                of the points with holes of local GPs, and its 10 best models
-                validated in the same way
+                of the points with holes of local GPs in blocks of at most
+                --nbar points, and its 10 best models validated in the same way
 
 A result is right if it has no hole and, for the benchmark, its rms error
 outside the box of the data is below 1% of the spread of the target, whatever
@@ -158,11 +158,13 @@ if __name__ == '__main__':
     ap.add_argument('--n', type=int, default=10000)
     ap.add_argument('--m', type=int, default=100)
     ap.add_argument('--local', type=int, default=0)
+    ap.add_argument('--nbar', type=int, default=100)
     ap.add_argument('--noise', nargs='*', type=float, default=[0.01, 0.1, 0.3])
     ap.add_argument('--only', nargs='*')
     ap.add_argument('--seeds', type=int, default=1)
     ap.add_argument('--workers', type=int, default=4)
     a = ap.parse_args()
+    LocalModel.nbar = a.nbar
     path = os.path.join(HERE, 'results', f"scaling_{a.name}")
     runs = json.load(open(path + '.json')) if os.path.exists(path + '.json') else {}
     for name, text, noise, seed, *problem in problems(a.set, a.n, a.noise, a.seeds, a.only):

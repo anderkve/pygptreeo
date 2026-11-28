@@ -739,10 +739,18 @@ of 7 of the cases below, and validates its best models as described there
 points misses. The other 4 are not, and two of them, I.6.2 and I.37.4 at 10%
 noise, are found by the search on 100 points. So the evidence scales as
 intended, but in this first test the search does not gain from the points.
-The reasons were not studied. Two candidates are that the costs of a
-symbolic function and of a free exponent were set for 100 points and weigh
-less against the evidence of 1,000, and that blocks lower the evidence of a
-hole (NOTES.md).
+
+A second test has the same 300 points in blocks of 100 and in one block
+(`--local 300 --nbar 100` and `--nbar 300`, in
+`results/scaling_n300_blocks.txt` and `scaling_n300_one.txt`), for four
+targets at 10% noise. With one block 3 results are right and with blocks 2:
+I.6.2 ends at a hole, `H(log(x1)/x2, log(x2))`. The searches with blocks
+take 30 to 54 s, those with one block 69 to 200 s. So the blocks themselves
+can cost a result. Blocks lower the evidence of a hole, and by an amount
+that depends on how the inputs of the hole are cut, so they also change the
+order of models with different holes (NOTES.md). Another candidate, not
+tested, is that the costs of a symbolic function and of a free exponent were
+set for 100 points and weigh less against the evidence of 1,000.
 
 **A tree before the search and trees after it** (`bigdata.py`). The search
 stays on 100 points, and the other points come in at its two ends:

@@ -1,0 +1,58 @@
+{
+ "toy/10000/0.1/0": {
+  "target": "x2*sin(2*x1) + 0.5*x3^2",
+  "local": {
+   "result": "1*sin(2*x1)*(x2 - 0.00393*(x3^0.5)) + 0.5*(x3^2) + 0.00179",
+   "holes": 0,
+   "score": 429.0296925426469,
+   "error": 0.0022913065598805936,
+   "right": true,
+   "any_right": true,
+   "seconds": 83.00423431396484,
+   "fits": 2395,
+   "search_seconds": 54.456458568573
+  }
+ },
+ "I.6.2/10000/0.1/0": {
+  "target": "exp(-(x1/x2)^2/2)/(sqrt(2*pi)*x2)",
+  "local": {
+   "result": "H(log(x1)/x2, log(x2)) + 0.111",
+   "holes": 1,
+   "score": 8024.82654078702,
+   "error": 0.7048338449288607,
+   "right": false,
+   "any_right": false,
+   "seconds": 61.197006702423096,
+   "fits": 1484,
+   "search_seconds": 29.531620740890503
+  }
+ },
+ "I.37.4/10000/0.1/0": {
+  "target": "x1 + x2 + 2*sqrt(x1*x2)*cos(x3)",
+  "local": {
+   "result": "2*cos(1*x3)*(x1*x2)^0.5 + 0.995*x1 + 1*x2 + 0.0145",
+   "holes": 0,
+   "score": -396.21916465544695,
+   "error": 0.003316304886355509,
+   "right": true,
+   "any_right": true,
+   "seconds": 54.86589789390564,
+   "fits": 2528,
+   "search_seconds": 54.373697996139526
+  }
+ },
+ "I.10.7/10000/0.1/0": {
+  "target": "x1/sqrt(1 - x2^2/x3^2)",
+  "local": {
+   "result": "0.994*x1*(exp(0.59*(x2/x3)^2)) + 0.0062",
+   "holes": 0,
+   "score": 1342.6121354442187,
+   "error": 0.9935009340222346,
+   "right": false,
+   "any_right": false,
+   "seconds": 30.599806547164917,
+   "fits": 1418,
+   "search_seconds": 29.692476272583008
+  }
+ }
+}

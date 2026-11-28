@@ -213,11 +213,13 @@ Also:
 
 - **The search with local holes found less than the search on distilled
   points** in its first test, 3 of 7 results against 6 of 7 for the same
-  cases, and it lost two results that the search on 100 points has. This was
-  not studied. The costs of a symbolic function and of a free exponent are
-  fixed numbers that were set for 100 points, while differences in the
-  evidence grow with the number of points, so with 1,000 points the costs
-  hold back less. The next point may add to it.
+  cases, and it lost two results that the search on 100 points has. With the
+  same 300 points in blocks of 100 and in one block, the blocks cost one
+  result of four (I.6.2 at 10% noise), so a part of this is the blocks
+  themselves (next point). Not tested: the costs of a symbolic function and
+  of a free exponent are fixed numbers that were set for 100 points, while
+  differences in the evidence grow with the number of points, so with 1,000
+  points the costs hold back less.
 - **A search with local holes costs in proportion to the points.** With 1,000
   points a fit takes about 10 times as long as with 100, so a search of 10,000
   points would take hours. More points than about 1,000 have to come in
@@ -228,8 +230,9 @@ Also:
   covariance between points of different blocks. With the same parameters,
   the evidence of a hole of three inputs on 240 points is 48 lower in 4
   blocks than in one. A formula does not change, so with blocks a formula
-  that fits within the noise is preferred to a hole more than before. How
-  much this changes results has not been measured.
+  that fits within the noise is preferred to a hole more than before. The
+  loss also depends on how the inputs of a hole are cut, so it differs
+  between models with different holes and changes their order.
 - **One set of blocks for a model.** The blocks are the leaves of cuts
   through the inputs of all the holes of a model together, so in
   `x1·H(x2) + H(x3)` the hole `H(x2)` is also cut along `x3`, and learns
