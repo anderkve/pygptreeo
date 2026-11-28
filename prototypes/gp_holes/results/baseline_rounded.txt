@@ -1,0 +1,94 @@
+
+benchmark toy:  x2*sin(2*x1) + 0.5*x3^2   [100 points, 3 inputs]
+  seed 0: 1*sin(2*x1)*x2 + 0.499*x3^2 + 0.00201
+          score 291.4, holes 0, RIGHT; in: rms 0.0016, relative 0.0012; out: rms 0.0028, relative 0.0013; 5 steps, 3463 fits, 40 s
+          right formula +0.0: 1*x2*sin(2*x1) + 0.499*x3^2 + 0.00195
+
+benchmark I.14.3:  x1*x2*x3   [100 points, 3 inputs]
+  seed 0: 1*x2*x1*x3 + 0.00185
+          score 301.3, holes 0, RIGHT; in: rms 0.00067, relative 0.00039; out: rms 0.0012, relative 0.00041; 3 steps, 1775 fits, 16 s
+          right formula +0.0: 1*x1*x2*x3 + 0.00185
+
+benchmark I.6.2:  exp(-(x1/x2)^2/2)/(sqrt(2*pi)*x2)   [100 points, 2 inputs]
+  seed 0: 0.399*exp(-0.5*(x1/x2)^2)*(1/x2) - 1.69e-06
+          score 276.5, holes 0, RIGHT; in: rms 0.0015, relative 0.00055; out: rms 0.0016, relative 0.00056; 3 steps, 1856 fits, 17 s
+          right formula +0.0: 0.399*exp(-0.5*(x1/x2)^2)*(1/x2) - 1.74e-06
+
+benchmark I.10.7:  x1/sqrt(1 - x2^2/x3^2)   [100 points, 3 inputs]
+  seed 0: 1*x1*(1 - 1*(x2/x3)^2)^-0.5 - 0.000168
+          score 297.5, holes 0, RIGHT; in: rms 0.00037, relative 0.00015; out: rms 0.00047, relative 0.00014; 3 steps, 2665 fits, 26 s
+          right formula +0.0: 1*x1*(1 - 1*(x2/x3)^2)^-0.5 - 0.000168
+
+benchmark I.30.5:  arcsin(x1/(x2*x3))   [100 points, 3 inputs]
+  seed 0: 1/(1.01*(1/x1)*x2*x3 - 0.0689)
+          score 291.2, holes 0; in: rms 0.005, relative 0.00071; out: rms 0.29, relative 0.0014; 4 steps, 2285 fits, 20 s
+          right formula -3.6: H((x1/x2)/x3) + 1.16e-06
+
+benchmark II.11.28:  1 + x1*x2/(1 - x1*x2/3)   [100 points, 2 inputs]
+  seed 0: 2.96*(1 - 0.336*(x1*x2))^-1 - 1.96
+          score 275.3, holes 0, RIGHT; in: rms 0.0017, relative 0.00036; out: rms 0.006, relative 0.00028; 2 steps, 1203 fits, 11 s
+          alternative -0.2: 4.77*(1 - 0.422*(x1*x2))^-0.5 - 3.77
+          alternative -0.9, RIGHT: 2.06*(1 - 0.239*(x1*x2))^-2 - 1.06
+          right formula +0.0: 2.96*(1 - 0.336*(x1*x2))^-1 - 1.96
+  seed 1: 1.25*exp(0.781*(x1*x2)) - 0.251
+          score 296.7, holes 0; in: rms 0.0048, relative 0.00046; out: rms 0.082, relative 0.00056; 2 steps, 1282 fits, 12 s
+          alternative -0.8: 2.14*(1 - 0.233*(x1*x2))^-2 - 1.14
+          alternative -1.9, RIGHT: 3.03*(1 - 0.331*(x1*x2))^-1 - 2.04
+          alternative -2.7: exp(0.784*(x1*x2))*H(x2) - 0.241
+          right formula -1.9: 3.03*(1 - 0.331*(x1*x2))^-1 - 2.04
+  seed 2: 2.16*(1 - 0.231*(x1*x2))^-2 - 1.16
+          score 275.0, holes 0; in: rms 0.0029, relative 0.00031; out: rms 0.036, relative 0.00058; 2 steps, 1289 fits, 11 s
+          alternative -0.3: 3.06*(1 - 0.328*(x1*x2))^-1 - 2.06
+          alternative -0.3: 1.26*exp(0.776*(x1*x2)) - 0.263
+          alternative -1.3: 4.88*(1 - 0.415*(x1*x2))^-0.5 - 3.88
+          right formula -0.3: 3.06*(1 - 0.328*(x1*x2))^-1 - 2.06
+
+srsd i.39.11:  1 / (gamma - 1) * pr * V   [100 points, 3 inputs]
+  seed 0: 1/(-0.997*(1/x3)*(1/x2)*(1 - 1*x1) + 9.17e-06)
+          score 567.0, holes 0, RIGHT; in: rms 1.7e+02, relative 0.0032; out: rms 10, relative 0.0033; 4 steps, 4170 fits, 40 s
+          right formula +0.2: 1*x2*x3*(1/x1)*(1 - 1/x1)^-1 + 0.0167
+
+srsd ii.13.34:  rho_c_0 * v / sqrt(1 - v ** 2 / 2.99792458e8 ** 2)   [100 points, 2 inputs]
+  seed 0: 1*(x1*x2)*(1 + 1.73e-25*x2^3)^0.5 + 5.89e+30
+          score 441.1, holes 0, RIGHT; in: rms 0.015, relative 0.00079; out: rms 9.1, relative 0.0018; 4 steps, 1342 fits, 12 s
+          alternative -0.0, RIGHT: 1*(x1*x2)*(1 + 8.48e-26*x2^3) + 5.45e+30
+          alternative -0.0, RIGHT: 1*(x1*x2)*(1 + 4.2e-26*x2^3)^2 + 5.22e+30
+          alternative -0.0, RIGHT: 1*(x1*x2)*(1 - 4.11e-26*x2^3)^-2 + 4.74e+30
+          alternative -0.0, RIGHT: 1*(x1*x2)*(1 - 8.13e-26*x2^3)^-1 + 4.5e+30
+          alternative -0.0, RIGHT: 1*(x1*x2)*(1 - 1.59e-25*x2^3)^-0.5 + 3.99e+30
+          alternative -1.0: (x1*x2)*H(x2) + 5.65e+30
+          alternative -1.6, RIGHT: 0.998*x1*(1 - 1.22e-17*x2^2)^-0.5*x2 + 1.9e+31
+          alternative -1.7, RIGHT: 0.998*x1*(1 - 6.19e-18*x2^2)^-1*x2 + 1.92e+31
+          alternative -1.8, RIGHT: 0.998*x1*(1 - 3.12e-18*x2^2)^-2*x2 + 1.93e+31
+          alternative -2.1, RIGHT: 0.998*x1*(1 + 1.3e-17*x2^2)^0.5*x2 + 1.97e+31
+          right formula -1.6: 0.998*x1*x2*(1 - 1.22e-17*x2^2)^-0.5 + 1.9e+31
+
+srsd2 bonus.7:  sqrt(8 * pi * 6.67430e-11 * rho / 3 - alpha * 2.99792458e8 ** 2 / d ** 2)   [100 points, 3 inputs]
+  seed 0: sqrt(5.6e-10*x1 - 9e+16*(x2/x3^2) + 3.61e-39)
+          score 347.2, holes 0, RIGHT; in: rms 0.0011, relative 0.0015; out: rms 0.0028, relative 0.001; 3 steps, 2999 fits, 27 s
+          alternative -2.2, RIGHT: sqrt(4.13e-34*log((exp(-2.18e+50*(x2/x3^2)) + 1.36e+24*x1)) + 2.42e-39)
+          alternative -2.2, RIGHT: sqrt(-9e+16*(x2/x3^2) - 9.27e-12*log(x1)*x1 - 6.64e-39)
+          right formula +0.0: sqrt(5.6e-10*x1 - 9e+16*x2*(1/x3^2) + 3.61e-39)
+  seed 1: sqrt(5.6e-10*(x1 - 1.6e+26*(x2/x3^2)) + 2.54e-40)
+          score 366.6, holes 0, RIGHT; in: rms 0.0016, relative 0.0012; out: rms 0.0044, relative 0.0012; 4 steps, 3197 fits, 33 s
+          right formula -5.7: sqrt(5.6e-10*x1 - 8.96e+16*x2*(1/x3^2) + 2.53e-40)
+
+srsd2 bonus.20:  1 / (4 * pi) * 7.2973525693e-3 ** 2 * 6.626e-34 ** 2 / (9.10938356e-31 ** 2 * 2.99792458e8 ** 2) * (omega_0 / omega) ** 2 * (omega_0 / omega + omega / omega_0 - sin(beta) ** 2)   [100 points, 3 inputs]
+  seed 0: exp(0.337*cos(2*x3)*(1 + 0.289*log(x1/x2)^2)^-2 + H(log(x1/x2)) - 49.4)
+          score 1102.4, holes 1; in: rms 0.00077, relative 0.0047; out: rms 1.3e+02, relative 0.005; 5 steps, 4832 fits, 56 s
+          alternative -0.4: exp(0.337*cos(2*x3)*(1 + 0.29*log(x1/x2)^2)^-2 - 2.17*(1 + 0.5*log(x1/x2)^2)^-0.5 + H(log(x1/x2)) - 9.84e-06)
+          right formula -432.5: 2.48e-29*(x1/x2)^3 + 1.27e-29*(x1/x2) - 8.84e-30*(x1/x2)^2 + 1.23e-29*(x1/x2)^2*cos(1.99*x3) + 6.15e-30
+
+set        target            right     search      score     by eye no formula    crashed  kept  seconds  result - right formula
+benchmark  toy                   1                                                            1       40  -0.0
+benchmark  I.14.3                1                                                            1       16  -0.0
+benchmark  I.6.2                 1                                                            1       17  -0.0
+benchmark  I.10.7                1                                                            1       26  -0.0
+benchmark  I.30.5                                      1                                              20  +3.6*
+benchmark  II.11.28              1                     2                                      2       12  -0.0, +1.9, +0.3
+srsd       i.39.11               1                                                            1       40  -0.2
+srsd       ii.13.34              1                                                            1       12  +1.6
+srsd2      bonus.7               2                                                            2       30  -0.0, +5.7
+srsd2      bonus.20                                    1                                              56  +432.5
+
+13 runs judged by number: the result is right in 9, and the result or one of its alternatives in 10, with 2.6 models kept on average

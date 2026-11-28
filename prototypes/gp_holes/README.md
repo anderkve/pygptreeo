@@ -105,6 +105,9 @@ fit. The search returns its best model and the alternatives to it: every
 model that scores less than 3 below it (`CFG['within']`, odds of about 20 to
 1), the best first. A model whose predictions at the data are those of a
 better one is the same function written in another way, and is left out.
+At the end of the search each of these models is also tried with every
+rounded exponent, coefficient or phase at the next simple value on either
+side, and so on while the score stays within 3 of the best.
 
 ## Results
 
@@ -896,13 +899,23 @@ a wrong result in the full pass (`results/baseline_missed.txt`):
   of the third sample. The third run, and the two more within 5, have a long
   expression that passes the rule for a right result and is not the formula
   (bonus.1, ii.35.21).
-- For II.11.28 the alternatives are the two forms that fit within the noise,
-  `1.25·exp(0.78·x1·x2) − 0.25` and `2.14·(1 − 0.23·x1·x2)^−2 − 1.14`, 0.3
-  and 0.8 apart, and the formula is not among them: `snap` keeps one
-  rounding of the exponent, −2, and the formula has −1. Fitted to the same
-  data it scores 0.3 and 1.9 below the result.
+- For II.11.28 the alternatives were the two forms that fit within the
+  noise, `1.25·exp(0.78·x1·x2) − 0.25` and `2.14·(1 − 0.23·x1·x2)^−2 − 1.14`,
+  0.3 and 0.8 apart, and not the formula: `snap` keeps one rounding of the
+  exponent, −2, and the formula has −1. The table is from before the other
+  roundings were tried.
 - Most other alternatives are the result with a hole in place of one part,
   or with one more factor or term.
+
+**With the other roundings** (`results/baseline_rounded.txt`, 13 of the check
+runs, among them the 4 with a wrong result): the formula of II.11.28 is among
+the alternatives in the two seeds where the result is another form, 0.3 and
+1.9 below it, so the result or an alternative is right in 35 of the 37 check
+runs if the other 28 are as they were. The searches take 0.8% more fits. One
+result changes, to a model with the same score: for SRSD ii.13.34 the
+exponent of `(1 + c·x2³)^p` does not matter while `c·x2³` is small, and all
+six simple values of `p` are within 0.05 of each other. With the four values
+of `(1 − c·x2²)^p`, one of them the formula, that run has 10 alternatives.
 
 ## Limitations, issues and ideas
 
