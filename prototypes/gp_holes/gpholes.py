@@ -21,6 +21,7 @@ CFG = dict(
     kernel='matern52',  # kernel of the holes: 'rbf' or 'matern52'
     node_cost=3.0,      # cost in log evidence of each symbolic function in a model
     power_cost=10.0,    # ... and of each exponent that is not a simple number
+    within=3.0,         # a model that scores less than this below the best is an alternative to it
     max_power=3,        # the largest integer power counted as simple
     library=('pow', 'log', 'logabs', 'exp', 'aff', 'sin'),     # functions of one input; also 'poly'
     outer=('log', 'exp', 'expneg', 'inv', 'square'),    # functions around the expression; also 'sqrt'
@@ -1186,6 +1187,21 @@ def snap(model, X, y, w=None):
         model = best
 
 
+def distinct(models, X, y, tol=1e-3):
+    """The models, the best first, without those whose predictions at the data
+    are those of a better one, to within tol of its residuals: the same
+    function written in another way."""
+    out, preds = [], []
+    for m in models:
+        p = m.predict(X)
+        if not preds:
+            limit = tol * np.sqrt(np.mean((p - y) ** 2))
+        if all(np.sqrt(np.mean((p - q) ** 2)) > limit for q in preds):
+            out.append(m)
+            preds.append(p)
+    return out
+
+
 def _init_worker(cfg):
     # The matrices are small, so BLAS threads in each worker only compete.
     global _limit
@@ -1234,7 +1250,9 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
     once, and then while it is among the `own_best` best functions, and not
     if its score is more than `own_gap` per point below the best. Returns the
     model with the best score, the trace of the best score and some counts,
-    among them the `keep` best models. y should be scaled to unit variance, with
+    among them the `keep` best models and the alternatives: the models that
+    score less than CFG['within'] below the best, which the evidence does not
+    tell from it, the best first and each function once (see distinct). y should be scaled to unit variance, with
     y_scale the factor that gives it its units back. `model` is the class of
     the models, Model if not given. cfg replaces entries of CFG."""
     CFG.update(cfg)
@@ -1321,6 +1339,8 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
                 f"{t2 - t1:.0f} + {time.time() - t2:.0f} s]")
             if stale >= patience and CFG['symmetry'] != 'first':
                 break
-    best = [m.condition(X, *targets[m.warp]) for m in sorted(seen.values(), key=lambda m: -m.score)[:keep]]
+    ranked = sorted(seen.values(), key=lambda m: -m.score)
+    near = sum(m.score > ranked[0].score - CFG['within'] for m in ranked)
+    best = [m.condition(X, *targets[m.warp]) for m in ranked[:max(keep, near)]]
     return best[0], trace, dict(n_fits=n_fits, n_models=len(tried), seconds=time.time() - t0,
-                                candidates=best)
+                                candidates=best[:keep], alternatives=distinct(best[:near], X, y))

@@ -21,6 +21,10 @@ been tried on.
 The right formula is that of truth.py, fitted to the same data. A result that
 is not right is put down to the search if the right formula scores higher by
 more than 1, and to the score if not.
+
+The alternatives of a result are the models that score less than WITHIN below
+it. Each is judged as the result is, and the report counts the runs in which
+the result or one of its alternatives is right, also for the distances GAPS.
 """
 import argparse
 import json
@@ -30,12 +34,14 @@ import numpy as np
 
 import run_benchmark
 import run_held_out
-from gpholes import search
+from gpholes import CFG, search
 from targets import TARGETS
 from truth import truth
 
 SEEDS = dict(benchmark=3, srsd=2, srsd2=2, srsd3=2, empirical=3, docs=3)
 NOISE = 0.01            # of the benchmark, and the largest relative error of a right result of srsd
+WITHIN = CFG['within']  # how far below the score of the result an alternative can be
+GAPS = (1, 3, 5, 10)    # the distances that the report counts the alternatives for
 # The check runs: the seeds of some targets of each set.
 CHECK = dict(
     benchmark={'toy': (0,), 'I.14.3': (0,), 'I.12.2': (0,), 'I.6.2': (0,), 'I.12.11': (0,), 'I.37.4': (0, 1),
@@ -90,13 +96,16 @@ def run(which, X, y, ystd, tests, seed, workers, **cfg):
     entries of the settings of the search."""
     t0 = sum(os.times()[:4])
     try:
-        model, trace, info = search(X, y, y_scale=ystd, seed=seed, verbose=False, workers=workers, **cfg)
+        model, trace, info = search(X, y, y_scale=ystd, seed=seed, verbose=False, workers=workers,
+                                    within=max(GAPS), **cfg)
     except Exception as error:                  # a run that fails counts as not right
         return dict(crashed=f"{type(error).__name__}: {error}", right=is_right(which, 1, None))
     err = errors(model.predict, tests)
     return dict(result=model.text(ystd), score=model.score, holes=model.n_holes(), key=model.key(),
                 err=err, right=is_right(which, model.n_holes(), err),
-                next=[(m.score, m.n_holes(), m.text(ystd)) for m in info['candidates'][1:]],
+                alternatives=[(m.score, m.n_holes(), m.text(ystd),
+                               is_right(which, m.n_holes(), errors(m.predict, tests)))
+                              for m in info['alternatives'][1:]],
                 steps=len(trace) - 1, fits=info['n_fits'], seconds=info['seconds'],
                 cpu=sum(os.times()[:4]) - t0)
 
@@ -109,6 +118,11 @@ def verdict(r):
     if t['score'] > r['score'] + 1:
         return 'search'
     return 'by eye' if r['right'] is None else 'score'
+
+
+def kept(r, gap=WITHIN):
+    """The alternatives of a result that score less than gap below it."""
+    return [a for a in r.get('alternatives', []) if r['score'] - a[0] < gap]
 
 
 def report(runs):
@@ -126,15 +140,17 @@ def report(runs):
         lines.append(f"  seed {seed}: {r['result']}")
         lines.append(f"          score {r['score']:.1f}, holes {r['holes']}{', RIGHT' if r['right'] else ''}; "
                      f"{err}; {r['steps']} steps, {r['fits']} fits, {r['seconds']:.0f} s")
-        lines += [f"          next {s - r['score']:+.1f}: {text}" for s, _, text in r['next'][:2]]
+        lines += [f"          alternative {s - r['score']:+.1f}{', RIGHT' if right else ''}: {text}"
+                  for s, _, text, right in kept(r)]
         if r.get('truth'):
             t = r['truth']
             lines.append(f"          right formula {t['score'] - r['score']:+.1f}: {t['text']}")
     # For each target the number of runs of each verdict, and the score of the
     # result less that of the right formula, which has a * if it has a hole.
+    # "kept" has the runs in which the result or one of its alternatives is right.
     kinds = ('right', 'search', 'score', 'by eye', 'no formula', 'crashed')
     lines.append(f"\n{'set':10s} {'target':12s} " + ' '.join(f"{k:>10s}" for k in kinds) +
-                 f" {'seconds':>8s}  result - right formula")
+                 f" {'kept':>5s} {'seconds':>8s}  result - right formula")
     groups = {}
     for key, r in runs.items():
         groups.setdefault(tuple(key.split('/')[:2]), []).append(r)
@@ -142,8 +158,15 @@ def report(runs):
         counts = [sum(verdict(r) == k for r in rs) for k in kinds]
         diffs = ', '.join(f"{r['score'] - r['truth']['score']:+.1f}{'*' if r['truth']['holes'] else ''}"
                           for r in rs if r.get('truth') and 'score' in r)
+        among = sum(bool(r['right'] or any(a[3] for a in kept(r))) for r in rs)
         lines.append(f"{which:10s} {name:12s} " + ' '.join(f"{c or '':>10}" for c in counts) +
-                     f" {np.mean([r.get('seconds', np.nan) for r in rs]):8.0f}  {diffs}")
+                     f" {among or '':>5} {np.mean([r.get('seconds', np.nan) for r in rs]):8.0f}  {diffs}")
+    judged = [r for r in runs.values() if r['right'] is not None and 'score' in r]
+    lines.append(f"\n{len(judged)} runs judged by number: the result is right in {sum(r['right'] for r in judged)}")
+    for gap in GAPS:
+        among = sum(bool(r['right'] or any(a[3] for a in kept(r, gap))) for r in judged)
+        lines.append(f"  the result or an alternative within {gap:2d}: {among}, "
+                     f"with {np.mean([1 + len(kept(r, gap)) for r in judged]):.1f} models kept on average")
     return '\n'.join(lines) + '\n'
 
 
