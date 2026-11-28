@@ -1,0 +1,24 @@
+
+toy:  x2*sin(2*x1) + 0.5*x3^2
+  n 10000, noise 0.1, seed 0
+    local     RIGHT error 0.0017, 135 s:  1*x2*sin(2*x1) + 0.5*(x3^2) + 0.00177
+  n 10000, noise 0.3, seed 0
+    local     RIGHT error 0.0075, 172 s:  1.01*sin(2*x1)*(x2 - 0.0187*cos(2.61*x3)) + 0.499*(x3^2) + 0.00638
+
+I.37.4:  x1 + x2 + 2*sqrt(x1*x2)*cos(x3)
+  n 10000, noise 0.1, seed 0
+    local           error 0.0351, 172 s:  -5.74*cos(1*x3)*(log((1 - 0.239*(log(x1) + log(x2))))) + 1.71*cos(1*x3) + 0.995*x1 + 1*x2 + 0.0161
+  n 10000, noise 0.3, seed 0
+    local           error 1.8305, 250 s:  -1.71 - log(0.257*exp(-1.16*x2)*(exp(-0.175*(x1^2)))*(1 - 0.979*sin(-0.249 + 1.57*x3)) + H(x3) + 0.0555)
+
+I.6.2:  exp(-(x1/x2)^2/2)/(sqrt(2*pi)*x2)
+  n 10000, noise 0.1, seed 0
+    local           error 4.0169, 135 s:  0.061*(1/x2^3)*(1 - 0.0437*(x1 - x2))^-2*(x1 - 2.98*x2)^2 + 0.00859*(sin(2.65*(x1/x2))) - 0.00191
+
+I.10.7:  x1/sqrt(1 - x2^2/x3^2)
+  n 10000, noise 0.1, seed 0
+    local           error nan, 128 s:  0.976*x1*(1 - 0.1*(x2^2 + 16.1*exp(-0.333*x3)))^-0.0921 + 0.00626
+
+II.11.28:  1 + x1*x2/(1 - x1*x2/3)
+  n 10000, noise 0.01, seed 0
+    local     RIGHT error 0.0010, 70 s:  3*(1 - 0.333*(x1*x2))^-1 - 2

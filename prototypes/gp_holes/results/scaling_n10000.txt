@@ -1,0 +1,128 @@
+
+II.11.28:  1 + x1*x2/(1 - x1*x2/3)
+  n 10000, noise 0.01, seed 0
+    subsample       error 0.0547, 11 s:  1.22*(exp(0.798*(x1*x2))) - 0.213
+    validated       error 0.0201, 41 s:  2.1*(1 - 0.235*(x1*x2))^-2 - 1.1
+    distilled RIGHT error 0.0010, 50 s:  3*(1 - 0.333*(x1*x2))^-1 - 2
+  n 10000, noise 0.1, seed 0
+    subsample       error 0.0362, 9 s:  exp(0.911*x2*x1 + 0.0126)
+    validated       error 0.4479, 39 s:  H(x1*x2) + 1.43
+    distilled       error 0.0483, 68 s:  1.22*(exp(0.801*(x1*x2))) - 0.213
+  n 10000, noise 0.3, seed 0
+    subsample       error 0.0526, 7 s:  exp(0.916*x2*x1 + 0.0109)
+    validated       error 0.0370, 36 s:  1.21*(exp(0.806*(x1*x2))) - 0.212
+    distilled       error 0.0370, 67 s:  1.21*(exp(0.806*(x1*x2))) - 0.212
+
+toy:  x2*sin(2*x1) + 0.5*x3^2
+  n 10000, noise 0.1, seed 0
+    subsample RIGHT error 0.0017, 28 s:  0.5*(x3^2) + 1*sin(2*x1)*x2 + 0.00177
+    validated RIGHT error 0.0017, 57 s:  0.5*(x3^2) + 1*sin(2*x1)*x2 + 0.00177
+    distilled RIGHT error 0.0017, 69 s:  0.5*(x3^2) + 1*sin(2*x1)*x2 + 0.00177
+  n 10000, noise 0.3, seed 0
+    subsample RIGHT error 0.0050, 17 s:  1.01*sin(2*x1)*x2 + 0.499*(x3^2) + 0.0053
+    validated RIGHT error 0.0050, 55 s:  1.01*sin(2*x1)*x2 + 0.499*(x3^2) + 0.0053
+    distilled RIGHT error 0.0050, 104 s:  0.499*(x3^2) + 1.01*sin(2*x1)*x2 + 0.0053
+
+I.6.2:  exp(-(x1/x2)^2/2)/(sqrt(2*pi)*x2)
+  n 10000, noise 0.1, seed 0
+    subsample RIGHT error 0.0011, 11 s:  0.399*(exp(-0.5*(x1/x2)^2))*(1/x2) + 1.09e-05
+    validated RIGHT error 0.0011, 41 s:  0.399*(1/x2)*(exp(-0.5*(x1/x2)^2)) + 1.09e-05
+    distilled RIGHT error 0.0011, 75 s:  0.399*(exp(-0.5*(x1/x2)^2))*(1/x2) + 1.09e-05
+  n 10000, noise 0.3, seed 0
+    subsample       error 1.6297, 9 s:  (1/x2)*H(x1/x2) + 0.121
+    validated RIGHT error 0.0034, 55 s:  0.399*(1/x2)*(exp(-0.5*(x1/x2)^2)) + 3.22e-05
+    distilled RIGHT error 0.0034, 63 s:  0.399*(exp(-0.5*(x1/x2)^2))*(1/x2) + 3.22e-05
+
+I.37.4:  x1 + x2 + 2*sqrt(x1*x2)*cos(x3)
+  n 10000, noise 0.1, seed 0
+    subsample RIGHT error 0.0025, 28 s:  2*cos(1*x3)*(x1*x2)^0.5 + 0.997*(x1 + x2) + 0.0145
+    validated RIGHT error 0.0025, 62 s:  2*cos(1*x3)*(x1^0.5)*(x2^0.5) + 0.997*(x1 + x2) + 0.0145
+    distilled RIGHT error 0.0025, 101 s:  2*cos(1*x3)*(x1*x2)^0.5 + 0.997*(x1 + x2) + 0.0145
+  n 10000, noise 0.3, seed 0
+    subsample       error 2.0328, 11 s:  log(633*exp(-6.41*x3) + 0.000764) + 9.48
+    validated       error 1.9915, 38 s:  log(82.5*exp(-6.41*x3)*(x1^1.5)*(x2^0.5) + 0.000754) + 9.48
+    distilled       error 0.1031, 84 s:  1.67*cos(1*x3)*(x2^0.5)*(1 + 0.342*x1) + 0.0763*(x1^2) + 0.502*(x1 + 2*x2) + 0.702
+
+I.10.7:  x1/sqrt(1 - x2^2/x3^2)
+  n 10000, noise 0.1, seed 0
+    subsample       error 1.1463, 16 s:  0.973*x1*(1 - 0.5*(x2/x3))^-0.5 + 0.000672
+    validated       error 1.1410, 50 s:  0.946*x1*(exp(0.372*(x2/x3))) + 0.00603
+    distilled RIGHT error 0.0039, 94 s:  0.998*(1 - 1*(x2/x3)^2)^-0.5*x1 + 0.00646
+  n 10000, noise 0.3, seed 0
+    subsample       error 1.3086, 14 s:  log(0.00339*exp(1.03*x1) - 8.36e-05) + 5.72
+    validated       error 1.2618, 41 s:  1.14*x1*exp(-0.0149*x3) + 0.0214
+    distilled       error 0.0118, 115 s:  0.994*x1*(1 - 1*(x2/x3)^2)^-0.5 + 0.0194
+
+I.18.4:  (x1*x3 + x2*x4)/(x1 + x2)
+  n 10000, noise 0.1, seed 0
+    subsample RIGHT error 0.0014, 39 s:  0.999*(1 + 1*(x1/x2))^-1*(x4 - x3) + 0.999*x3 + 0.000797
+    validated RIGHT error 0.0014, 68 s:  0.999*(1 + 1*(x1/x2))^-1*(x4 - x3) + 0.999*x3 + 0.000797
+    distilled RIGHT error 0.0014, 81 s:  -0.999*(1 + 1*(x1/x2))^-1*(x3 - x4) + 0.999*x3 + 0.000797
+  n 10000, noise 0.3, seed 0
+    subsample       error 0.3360, 26 s:  -0.28*log(x1/x2^0.5)*(x4 - x3) + 0.191*(1 + 0.5*(x4 + 0.552*x3))^2 + 0.799
+    validated       error 0.1991, 57 s:  0.28*log(x1/x2^0.5)*(x3 - x4) + 0.356*x3 + 0.64*x4 + 0.0082
+    distilled       error 0.2426, 105 s:  0.99*x4 + 0.47*(x3 - x4)*x1^0.5/x2^0.5 + 0.0293
+
+II.11.28:  1 + x1*x2/(1 - x1*x2/3)
+  n 10000, noise 0.01, seed 1
+    subsample       error 0.0518, 9 s:  1.21*(exp(0.8*(x1*x2))) - 0.209
+    validated       error 0.1325, 38 s:  H(x1*x2) + 1.43
+    distilled RIGHT error 0.0003, 54 s:  3*(1 - 0.333*(x1*x2))^-1 - 2
+  n 10000, noise 0.1, seed 1
+    subsample       error 0.0535, 9 s:  1.22*(exp(0.797*(x1*x2))) - 0.219
+    validated       error 0.0535, 40 s:  1.22*(exp(0.797*(x1*x2))) - 0.219
+    distilled       error 0.0218, 49 s:  2.12*(1 - 0.235*(x1*x2))^-2 - 1.12
+  n 10000, noise 0.3, seed 1
+    subsample       error 0.0573, 8 s:  1.24*(exp(0.788*(x1*x2))) - 0.24
+    validated       error 0.0269, 38 s:  2.15*(1 - 0.232*(x1*x2))^-2 - 1.15
+    distilled       error 0.0469, 68 s:  sqrt(1.17*(exp(1.7*(x1*x2))) - 0.171)
+
+toy:  x2*sin(2*x1) + 0.5*x3^2
+  n 10000, noise 0.1, seed 1
+    subsample RIGHT error 0.0028, 32 s:  0.499*(x3^2) + 1*sin(2*x1)*x2 - 0.000656
+    validated RIGHT error 0.0028, 62 s:  0.499*(x3^2) + 1*sin(2*x1)*x2 - 0.000656
+    distilled RIGHT error 0.0028, 80 s:  1*sin(2*x1)*x2 + 0.499*(x3^2) - 0.000656
+  n 10000, noise 0.3, seed 1
+    subsample       error 0.9757, 20 s:  log(0.00477*(1 - 0.306*x3)^-2*(1 + 0.739*sin(1.46 + 1.37*x1))^2 - 0.000184) + 6.26
+    validated       error 0.1290, 56 s:  0.634*sin(2*x1)*exp(0.54*x2) + 0.498*(x3^2) - 0.00169
+    distilled RIGHT error 0.0084, 83 s:  0.999*sin(2*x1)*x2 + 0.498*(x3^2) - 0.00197
+
+I.6.2:  exp(-(x1/x2)^2/2)/(sqrt(2*pi)*x2)
+  n 10000, noise 0.1, seed 1
+    subsample RIGHT error 0.0033, 12 s:  0.399*(exp(-0.501*(x1/x2)^2))*(1/x2) + 0.000194
+    validated RIGHT error 0.0033, 42 s:  0.399*(exp(-0.501*(x1/x2)^2))*(1/x2) + 0.000194
+    distilled RIGHT error 0.0033, 37 s:  0.399*(1/x2)*(exp(-0.501*(x1/x2)^2)) + 0.000194
+  n 10000, noise 0.3, seed 1
+    subsample RIGHT error 0.0098, 9 s:  0.398*(exp(-0.503*(x1/x2)^2))*(1/x2) + 0.000581
+    validated RIGHT error 0.0098, 40 s:  0.398*(exp(-0.503*(x1/x2)^2))*(1/x2) + 0.000581
+    distilled       error nan, 22 s:  no model could be fitted
+
+I.37.4:  x1 + x2 + 2*sqrt(x1*x2)*cos(x3)
+  n 10000, noise 0.1, seed 1
+    subsample RIGHT error 0.0038, 23 s:  2*cos(1*x3)*(x2^0.5)*(x1^0.5) + 1*(x1 + x2) - 0.0204
+    validated RIGHT error 0.0038, 55 s:  2*cos(1*x3)*(x2^0.5)*(x1^0.5) + 1*(x1 + x2) - 0.0204
+    distilled RIGHT error 0.0038, 68 s:  2*cos(1*x3)*(x1^0.5)*(x2^0.5) + 1*(x1 + x2) - 0.0204
+  n 10000, noise 0.3, seed 1
+    subsample       error 2.1300, 8 s:  log(0.000261) + 11.6
+    validated       error nan, 24 s:  log(0.00131*(1 - 0.207*x3)^-2*(1/x3^3) - 0.000326) + 11.6
+    distilled       error 0.0115, 71 s:  2*cos(0.999*x3)*(x2^0.5)*(x1^0.5) + 1.01*(x1 + x2) - 0.0611
+
+I.10.7:  x1/sqrt(1 - x2^2/x3^2)
+  n 10000, noise 0.1, seed 1
+    subsample       error 1.2936, 18 s:  1*x1*(1 - 0.5*(x2/x3)^2)^-1 - 0.00637
+    validated       error 1.3451, 47 s:  0.995*x1*(exp(0.603*(x2/x3)^2)) - 0.00225
+    distilled       error 1.2220, 62 s:  1/(1*(1/x1)*(1 - 0.553*(x2/x3)^2) - 0.000331)
+  n 10000, noise 0.3, seed 1
+    subsample       error 1.6019, 14 s:  0.617 - log(0.769*exp(-1.06*x1)*(x3^0.5) + 0.000586)
+    validated       error 1.5007, 42 s:  0.923*x1*(1 + 0.5*(x2/x3)) - 0.000942
+    distilled       error 1.2828, 59 s:  0.995*x1*(1 - 0.298*(x2/x3)^2)^-2 - 0.00786
+
+I.18.4:  (x1*x3 + x2*x4)/(x1 + x2)
+  n 10000, noise 0.1, seed 1
+    subsample       error 0.0671, 32 s:  -0.231*log(x1/x2)*(x4 - x3) + 0.499*(x3 + x4) + 0.0032
+    validated       error 0.0671, 60 s:  -0.231*log(x1/x2)*(x4 - x3) + 0.499*(x3 + x4) + 0.0032
+    distilled       error 0.0518, 124 s:  1.02*(1 + 0.5*x2)^-1*(x3 - x4)*(1 - 0.0194*x1) + 1.4*(1 + 0.5*x1)^-0.5*(x4 - x3) + 0.999*x3 + 0.0036
+  n 10000, noise 0.3, seed 1
+    subsample       error 0.3502, 21 s:  H(x3, x4, (x1 - x2)) + 2.98
+    validated       error 0.3152, 79 s:  H(x3, x4, (x1 - x2)) + 2.98
+    distilled       error 0.0667, 85 s:  -0.231*log(x1/x2)*(x4 - x3) + 0.498*(x3 + x4) + 0.00984

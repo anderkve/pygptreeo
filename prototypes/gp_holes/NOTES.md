@@ -80,6 +80,33 @@ for the worse than for the better. The default is unchanged.
 See "The rule symmetry" and "Representations that were weighed" below for
 what did not work.
 
+**Added on 28 November**, for data sets of more than a few hundred points.
+The README has the measurements, in "Larger data sets".
+
+- `local.py`: `LocalModel`, a model whose holes are GPs within blocks of at
+  most 100 points, with the formula one for all points. The evidence is exact
+  for this model and its cost grows in proportion to the number of points.
+  `search(X, y, model=LocalModel)`, and `run_benchmark.py --local`.
+- `bigdata.py`: `distil`, the predictions of a GPTree of all the points as the
+  data of a search on 100 of them, and `validate`, the best models of a search
+  fitted to all the points, with a GPTree for each hole, and compared on
+  held-out points. `run_scaling.py` runs both and the search with local holes.
+  They need pygptreeo and scikit-learn, which the prototype did not need
+  before.
+- `Model.holes` gives what a fit says of each hole, for the rules "look
+  inside" and "symmetry"; `search` has `keep`, the number of models it
+  returns, and `model`, the class of its models. The search without the rule
+  "symmetry" gives the same results as before. With the rule its path can
+  differ in the last digits: `'first'` on I.37.4 takes 867 fits in place of
+  865, with the same score.
+
+What I would do next for larger data sets: `run_scaling.py` on more seeds and
+on the SRSD samples (`--set srsd3`), which have inputs over decades and noise
+in proportion to the target; then find out why the search with local holes
+loses results, starting with costs that grow with the number of points; then
+the quick fits of a search on a part of the points and only the full fits on
+all of them.
+
 **Practical.**
 
 - The prototype needs numpy, scipy and threadpoolctl; the docs set also pysr
@@ -181,6 +208,57 @@ Also:
   limited to one coordinate for all inputs for this reason.
 - "No interaction" is still listed. Its relation is a single column, the
   mixed second derivative, which needs a scale to be judged by.
+
+### Larger data sets
+
+- **The search with local holes found less than the search on distilled
+  points** in its first test, 3 of 7 results against 6 of 7 for the same
+  cases, and it lost two results that the search on 100 points has. This was
+  not studied. The costs of a symbolic function and of a free exponent are
+  fixed numbers that were set for 100 points, while differences in the
+  evidence grow with the number of points, so with 1,000 points the costs
+  hold back less. The next point may add to it.
+- **A search with local holes costs in proportion to the points.** With 1,000
+  points a fit takes about 10 times as long as with 100, so a search of 10,000
+  points would take hours. More points than about 1,000 have to come in
+  another way: through a tree before the search (`distil`), or by fitting
+  most candidates to a part of the points and only the best to all of them,
+  which has not been tried.
+- **Blocks lower the evidence of a hole.** A hole in blocks has no
+  covariance between points of different blocks. With the same parameters,
+  the evidence of a hole of three inputs on 240 points is 48 lower in 4
+  blocks than in one. A formula does not change, so with blocks a formula
+  that fits within the noise is preferred to a hole more than before. How
+  much this changes results has not been measured.
+- **One set of blocks for a model.** The blocks are the leaves of cuts
+  through the inputs of all the holes of a model together, so in
+  `x1·H(x2) + H(x3)` the hole `H(x2)` is also cut along `x3`, and learns
+  less from the points than it could. Blocks of its own for each hole would
+  make the covariance a sum of block matrices in different orders, whose
+  evidence has no cheap exact form.
+- **The blocks are made anew for each fit**, from the inputs of the holes as
+  they are at its start, so two fits of the same structure can have different
+  blocks, and their scores differ a little.
+- **A hole is predicted from one block**, the one whose points are nearest
+  in the mean, without the blending of pygptreeo in the overlap.
+- **The predictions of a tree are not independent.** In `distil` their
+  errors are smooth within a leaf, and the search takes them for noise. The
+  choice between the best models is therefore made on the points themselves
+  (`validate`).
+- **`validate` drops a model that it cannot evaluate at every point.** With
+  strong noise some targets of a positive function are not positive, and a
+  model with a logarithm, a root or an inverse around the expression is
+  dropped. A model without a hole could be fitted by least squares to the
+  targets as they are.
+- **`validate` does not refit the symbolic parameters of a model with a
+  hole**, and its score is a likelihood of held-out points with the costs of
+  the search subtracted, not an evidence. The numbers of models it compares,
+  10 and at most 2 with a hole, were set once.
+- **The noise is not given to a GPTree here.** Each leaf learns its own
+  level, through a white-noise term in its kernel. From a start at 1% of the
+  variance of the leaf's targets the fit often stays there: for points with
+  30% noise the predictions are then off by 19% of the spread, against 9%
+  from a start at 50%.
 
 ### Other limitations
 
@@ -289,6 +367,11 @@ Also:
 - A hole inside a function as its values at a few knots, with a GP prior,
   fitted as an exponent is. The rest of the model stays a GP.
 - New points where the candidate formulas disagree most (active learning).
+- For many points: the quick fits of a search on a part of the points and the
+  full fits on all of them, with local holes; the relations of the rule
+  "symmetry" from the derivatives of a tree of all the points; and in
+  pygptreeo itself, a formula as a third kind of global model, whose
+  residual the leaves fit.
 - On the pygptreeo tree: one symbolic skeleton shared by all leaves, the holes
   local to each leaf, and the summed evidence of the leaves as score. The
   global model becomes a mean, a factor and an input map.

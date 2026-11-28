@@ -8,8 +8,9 @@ i.e. plain GP regression, and applies rewrite rules that replace a hole with
 more specific structure, keeping the models with the highest score. A hole that
 remains at the end marks a part that the data or the rules could not resolve.
 
-The prototype does not use the `pygptreeo` package. It needs numpy, scipy and
-threadpoolctl.
+The search itself does not use the `pygptreeo` package. It needs numpy, scipy
+and threadpoolctl. `bigdata.py` and `run_scaling.py`, for larger data sets,
+need pygptreeo and scikit-learn as well.
 
 ## Files
 
@@ -28,6 +29,9 @@ threadpoolctl.
 - `truth.py`: the right formula of each target as a model that the search can
   write.
 - `run_ode.py`: a differential equation for a hole of one input.
+- `local.py`: a model whose holes are local GPs, for a search on more points.
+- `bigdata.py`: a tree of local GPs before the search and trees after it, for
+  many more points. `run_scaling.py` runs these on the benchmark.
 - `make_plots.py`: figures of the results, drawn into `plots/` from the logs
   of the runs in `results/` (needs matplotlib).
 
@@ -43,6 +47,8 @@ python run_baseline.py NAME --check          # the 41 check runs, half an hour
 python run_baseline.py NAME --check --symmetry first    # ... with the rule "symmetry"
 python truth.py                              # checks the formulas of truth.py
 python run_ode.py                            # equations for erf, J0 and others
+python run_benchmark.py --n 1000 --local     # holes of local GPs
+python run_scaling.py NAME                   # 10,000 points per target
 python make_plots.py
 ```
 
@@ -691,6 +697,117 @@ hole.
 
 The script is not part of the search. A hole of one input that the library
 cannot fill could be handed to it.
+
+## Larger data sets
+
+A fit of a model costs the cube of the number of points, and a search has
+thousands of fits. Two ways to use more points were tried, both with trees of
+local GPs as in pygptreeo.
+
+**Holes of local GPs in the search** (`local.py`,
+`search(X, y, model=LocalModel)`, `run_benchmark.py --local`). The points of
+a model are divided into blocks of at most 100 points, the leaves of a tree
+of cuts through the inputs of all its holes: a set of more points is cut at
+the median of the input of largest range, and a point within 5% of that
+range of the cut goes to either side (the overlap of pygptreeo). A hole has
+no covariance between points of different blocks. The weights of the symbolic
+terms and the constant stay those of the whole model, so the formula is one
+for all points and only the holes are local. The covariance of the targets is
+then a matrix of blocks plus one of low rank. The evidence and its gradient
+are exact for this model, at the cost of a Cholesky factor per block, and
+with one block for all points they are those of the search as it was.
+Nothing else of the search changes. The blocks are in the evidence of the
+prototype itself, and not GPTree objects: a GPTree fits the hyperparameters
+of every leaf, which takes 4 to 9 s for 10,000 points, and a search has
+1,000 to 7,000 fits. Here the blocks of a hole share its hyperparameters.
+
+One evaluation of the evidence and its gradient, on one core:
+
+| Points | One GP, hole of 3 inputs | Local holes | Local, no hole |
+|---|---|---|---|
+| 100 | 0.6 ms | 1.0 ms | 0.4 ms |
+| 1,000 | 74 ms | 7 ms | 0.6 ms |
+| 2,000 | 402 ms | | |
+| 3,000 | | 27 ms | 1.0 ms |
+| 10,000 | | 77 ms | 3 ms |
+
+`run_scaling.py --local 1000` runs this search on 1,000 of the 10,000 points
+of 7 of the cases below, and validates its best models as described there
+(`results/scaling_n10000_local.txt`). A search takes 54 to 172 s, against
+11 to 28 s on 100 points. 3 of the 7 results are right: the toy target at
+10% and at 30% noise, and II.11.28 at 1%, which the search on 100 of the
+points misses. The other 4 are not, and two of them, I.6.2 and I.37.4 at 10%
+noise, are found by the search on 100 points. So the evidence scales as
+intended, but in this first test the search does not gain from the points.
+The reasons were not studied. Two candidates are that the costs of a
+symbolic function and of a free exponent were set for 100 points and weigh
+less against the evidence of 1,000, and that blocks lower the evidence of a
+hole (NOTES.md).
+
+**A tree before the search and trees after it** (`bigdata.py`). The search
+stays on 100 points, and the other points come in at its two ends:
+
+- *Distil.* A GPTree of pygptreeo is fitted to all the points, and the search
+  runs on its predictions at 100 of them. The noise of the points is not
+  given, so each leaf learns its own level. With leaves of 300 points the
+  predictions are off by 5% of the spread of the target where the points have
+  noise of 30%, and by 0.3% where they have 1%; with leaves of 100 points by
+  9% and 0.4%. The tree takes 9 to 13 s for 8,000 points.
+- *Validate.* The 10 best models of the search are fitted to all the points
+  but a fifth that is held out, and the one with the best likelihood of the
+  held-out points, less the costs of the search, is the result. A model
+  without a hole is fitted by least squares. In a model with holes, each hole
+  is a GPTree of the inputs of the hole (leaves of 100 points, overlap 5%),
+  fitted to what the other terms leave of the target; at most 2 such models
+  are fitted, and every model with a hole is also tried without it.
+
+`run_scaling.py` compares three ways on 10,000 points of six targets of the
+benchmark, with 2 seeds: the search on 100 of the points, with its best model
+fitted to all ("subsample"); the same search with its 10 best models
+validated ("validated"); and the search on the distilled points, validated
+("distilled"). A result is right if it has no hole and its rms error outside
+the box of the data is below 1% of the spread of the target, whatever the
+noise. Right of 2, in `results/scaling_n10000.txt`:
+
+| Target | Noise | Subsample | Validated | Distilled |
+|---|---|---|---|---|
+| toy | 10% | 2 | 2 | 2 |
+| toy | 30% | 1 | 1 | 2 |
+| I.6.2 | 10% | 2 | 2 | 2 |
+| I.6.2 | 30% | 1 | 2 | 1 |
+| I.37.4 | 10% | 2 | 2 | 2 |
+| I.37.4 | 30% | 0 | 0 | 0 |
+| I.10.7 | 10% | 0 | 0 | 1 |
+| I.10.7 | 30% | 0 | 0 | 0 |
+| I.18.4 | 10% | 1 | 1 | 1 |
+| I.18.4 | 30% | 0 | 0 | 0 |
+| II.11.28 | 1% | 0 | 0 | 2 |
+| II.11.28 | 10% | 0 | 0 | 0 |
+| II.11.28 | 30% | 0 | 0 | 0 |
+| Right of 26 | | 9 | 10 | 13 |
+
+- The four results that only the distilled search has right are formulas
+  that the search on 100 of the points does not propose: II.11.28 at 1% noise
+  in both seeds, where that search returns an exponential; I.10.7 at 10%,
+  where it returns `x1·(1 − 0.5·x2/x3)^−0.5`; and the toy target at 30%.
+- Two further results of the distilled search are the formula with an error
+  just above the limit: `0.994·x1·(1 − (x2/x3)²)^−0.5 + 0.019` for I.10.7 at
+  30% noise (1.2%), and
+  `2·cos(x3)·x1^0.5·x2^0.5 + 1.01·(x1 + x2) − 0.06` for I.37.4 at 30%
+  (1.1%). In the other seed the result for I.37.4 at 30% is off by 10%.
+- Validation alone gains one result, I.6.2 at 30% noise, where the best model
+  of the search has a hole and the formula is among the next.
+- In one run, the distilled search for I.6.2 at 30% noise, no model could be
+  validated. All 10 are fitted to the logarithm of the target, and 25 of the
+  10,000 targets are not positive, while the predictions of the tree all
+  are.
+- A first version of the validation chose a model with a spurious hole
+  beside the right formula in three of seven runs of the distilled search:
+  the errors of the tree are smooth within a leaf, a hole fits them, and the
+  10 best models were mostly such models. Each model with a hole is
+  therefore also tried without it.
+- The search takes 17 s on average, the validation 32 s more, and the
+  distilled way 74 s in all.
 
 ## Limitations, issues and ideas
 
