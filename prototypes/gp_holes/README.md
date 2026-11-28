@@ -908,10 +908,14 @@ a wrong result in the full pass (`results/baseline_missed.txt`):
   or with one more factor or term.
 
 **With the other roundings** (`results/baseline_rounded.txt`, 13 of the check
-runs, among them the 4 with a wrong result): the formula of II.11.28 is among
-the alternatives in the two seeds where the result is another form, 0.3 and
-1.9 below it, so the result or an alternative is right in 35 of the 37 check
-runs if the other 28 are as they were. The searches take 0.8% more fits. One
+runs, among them the 4 with a wrong result): the form of II.11.28,
+`a·(1 − c·x1·x2)^−1 + b`, is among the alternatives in the two seeds where
+the result is another form, 0.3 and 1.9 below it. In one of them it passes
+the rule for a right result, `3.03·(1 − 0.331·x1·x2)^−1 − 2.04`; in the other
+its constants are too far off outside the box of the data,
+`3.06·(1 − 0.328·x1·x2)^−1 − 2.06`. So the result or an alternative is right
+in 34 of the 37 check runs if the other 28 are as they were. The searches
+take 0.8% more fits. One
 result changes, to a model with the same score: for SRSD ii.13.34 the
 exponent of `(1 + c·x2³)^p` does not matter while `c·x2³` is small, and all
 six simple values of `p` are within 0.05 of each other. With the four values
