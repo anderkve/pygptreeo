@@ -900,7 +900,7 @@ a wrong result in the full pass (`results/baseline_missed.txt`):
   `1.25·exp(0.78·x1·x2) − 0.25` and `2.14·(1 − 0.23·x1·x2)^−2 − 1.14`, 0.3
   and 0.8 apart, and the formula is not among them: `snap` keeps one
   rounding of the exponent, −2, and the formula has −1. Fitted to the same
-  data it scores 0.4 and 2.0 below the result.
+  data it scores 0.3 and 1.9 below the result.
 - Most other alternatives are the result with a hole in place of one part,
   or with one more factor or term.
 
