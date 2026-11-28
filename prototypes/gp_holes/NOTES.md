@@ -43,17 +43,7 @@ search" are from the search as it was before. The 109 runs outside the check
 runs are the only ones on which the changes have not been tried. The docs
 set needs PySR, for its selection of inputs.
 
-**What I would do next, in this order.**
-
-1. The full pass, with its results beside those of the README.
-2. Parentheses in the text of merged inputs (Issues). The search tells
-   structures apart by this text, so results can change.
-3. `snap` with the best rounding in place of the first (Issues).
-4. One function of holes with symbolic terms around it,
-   `y = a(x)·g(H) + b(x)`, by taking `a`, `b` and `g` off the target. This is
-   exact (see "A hole cannot sit inside a function").
-5. A product of two holes, and products inside the sums of the look inside
-   (Ideas).
+What to do next is in "Where to take it" below.
 
 **Added in the session after it** (the same day). The question was whether
 the rules can come from one principle in place of a growing list. Each of
@@ -100,13 +90,6 @@ The README has the measurements, in "Larger data sets".
   differ in the last digits: `'first'` on I.37.4 takes 867 fits in place of
   865, with the same score.
 
-What I would do next for larger data sets: `run_scaling.py` on more seeds and
-on the SRSD samples (`--set srsd3`), which have inputs over decades and noise
-in proportion to the target; then find out why the search with local holes
-loses results, starting with costs that grow with the number of points; then
-the quick fits of a search on a part of the points and only the full fits on
-all of them.
-
 **Practical.**
 
 - The prototype needs numpy, scipy and threadpoolctl; the docs set also pysr
@@ -118,9 +101,151 @@ all of them.
   (`results/baseline_check.json`).
 - Run times vary by 10% between runs on a shared machine. The number of fits
   is the steadier measure.
+- A search on 100 points takes about 20 s on 4 cores, 80 s of processor time,
+  and between 2 s and 2 minutes. By the number of inputs, over the 41 check
+  runs and the 30 runs of the third SRSD sample: 8 to 9 s and 1,000 to 1,300
+  fits for 2 inputs, 16 to 24 s and 2,000 to 3,000 fits for 3, 35 to 51 s and
+  4,300 to 5,600 fits for 4, and 39 to 69 s and 4,600 to 6,900 fits for 5.
+  With the rule "symmetry" as `'first'` the mean is 8 to 12 s.
 - What is under "Speed" and "The short fit cannot be much shorter" was
   measured with a copy of the search that logged every candidate of every
   step and its short fit. It is not in the repository.
+
+## Where to take it
+
+An assessment of 28 November 2026, from a discussion of what the prototype
+is for: a global model of pygptreeo, or a method of its own.
+
+**The order.** First the method on its own: the fixes and the tests below, a
+version that is then held fixed, and a fresh held-out sample. A global model
+for pygptreeo is measured on the side, with a learner outside the package,
+and built only after that. Whether a paper is worth writing is decided after
+the full pass and the held-out sample.
+
+**Next steps, in this order.**
+
+1. The two defects that change results (Issues): parentheses in the text of
+   merged inputs, by which the search tells structures apart, and `snap` with
+   the best rounding in place of the first. Then the 41 check runs, and
+   `results/baseline_check.*` anew.
+2. The full pass of 150 searches with that code, which no version has run:
+   1.5 to 2 hours on 4 cores, with its results beside those of the README.
+3. A fourth SRSD sample (`make_srsd_sample.py --sample 4`; 52 equations are
+   left), drawn before anything further is changed and run once, with PySR
+   beside it. The first three samples are spent.
+4. A learner for `GPTree(global_mean=...)` in this folder that runs the
+   search on the coverage sample of the tree each time the number of points
+   has doubled, compared with `'additive_gp'` and `'net'` on streams of up to
+   5 inputs. It is a measurement of which weaknesses matter there.
+5. What the two uses both need: a check against formulas that fit within the
+   noise and are wrong outside the data; inputs screened before the search,
+   for more than 5; and the noise of each point as given, where it is known.
+
+Later, from the list this replaces: one function of holes with symbolic
+terms around it, `y = a(x)·g(H) + b(x)`, which is exact, and a product of
+two holes (Ideas).
+
+**Why not a global model in pygptreeo yet.**
+
+- The number of inputs does not fit. The global model of pygptreeo is for
+  targets of about ten inputs, where a leaf of 100 points cannot learn the
+  shape. The search takes up to 5 and is out of reach at 30.
+- A wrong formula is used with confidence. The search prefers a formula that
+  fits within the noise to a hole, and a global model is what the tree
+  falls back on ahead of the stream.
+- The prototype is not settled: the full pass has not been run, the rules
+  and the costs were set on the benchmark, and it fits a noise level of its
+  own where pygptreeo has the noise of each point.
+
+A learner outside the package is possible as it is: `global_mean` takes an
+object of a subclass of `GlobalMeanLearner`, whose `observe` sees every point
+and publishes fitted models with a `predict`.
+
+**The method on its own.** The search needs numpy, scipy and threadpoolctl
+only, so it can be a package of its own. Its parts are known:
+
+- AI Feynman (Udrescu & Tegmark 2020, arXiv:1905.11481 and 2006.10782) fits
+  a neural network and tests it for symmetry and separability, which it uses
+  to divide the problem.
+- A Kolmogorov–Arnold network (Liu et al. 2024, arXiv:2404.19756) has spline
+  functions of one input that are replaced by symbols one at a time.
+- The search over kernels of Duvenaud et al. (2013, arXiv:1302.4922) is
+  greedy and scored by the evidence of a GP, but its result is a kernel.
+- A formula with a GP for what it leaves out is the model of Kennedy &
+  O'Hagan (2001) for a simulator. Zhu et al. (2022, "Robust equation
+  discovery considering model discrepancy") have it with a sparse Bayesian
+  choice of terms, and universal differential equations (Rackauckas et al.
+  2020, arXiv:2001.04385) with a neural network that is turned into symbols
+  afterwards.
+
+No paper was found that puts a GP prior on the part of an expression that is
+not known and scores expressions with such parts by their exact evidence.
+The search for one was short (two reviews: arXiv:2507.19540 and 2606.06567).
+What looks new:
+
+- the exact evidence of every partial expression, so that each step of the
+  search is a comparison of models;
+- a hole in the result, where the data or the rules cannot decide;
+- the rules as linear constraints on a hole (README, "The symmetries of a
+  hole"), which is a principle in place of a list;
+- about 100 points with noise, where most methods use thousands.
+
+What a paper needs and is not there:
+
+- a method that is held fixed and a held-out set that is fresh;
+- baselines that a referee accepts: PySR with the time its paper gives it and
+  not 60 s, AI Feynman, and a Bayesian method;
+- the search with a rule or a cost left out, one at a time, and fewer
+  numbers set by hand (the costs of 3 and 10, the thresholds);
+- a count of the results that pass as right and are approximations.
+
+The objection to expect is "AI Feynman with a GP". The answer is in the
+first three of the points that look new, and has to be shown on data.
+
+**Larger data sets, in the order to try** (see also "Larger data sets" under
+Limitations).
+
+1. Propose on few points and decide on all. A formula without a hole costs
+   in proportion to the points (3 ms for an evaluation at 10,000), so every
+   candidate without a hole can be fitted to all the points at each step,
+   while the short fits stay on about 100.
+2. Compress in place of taking a part, as `distil` does, which gave 13 of 26
+   against 9. Further: the error of each compressed point given to the
+   search, the residual compressed again once a formula is found, and
+   several sets of compressed points.
+3. A hole of one or two inputs as 20 to 50 basis functions. The cost is then
+   in proportion to the points, without blocks and what they do to the order
+   of models. For a hole of many inputs, each point conditioned on its
+   nearest neighbours in place of blocks. Neither has been tried.
+4. The relations of the rule "symmetry" from all the points, which costs in
+   proportion to them.
+5. A score for the size: the costs of a function and of an exponent were set
+   for 100 points. With many points the likelihood of held-out points can
+   decide.
+
+Not blocks as they are, and not a GPTree for each candidate.
+
+**Continual learning with pygptreeo.** Ideas, none of them built.
+
+- The search runs on the coverage sample of 500 points that the tree keeps
+  for its global models, in another process, each time the number of points
+  has doubled.
+- A formula is a third kind of global model, whose residual the leaves fit.
+  A result with a hole helps as well: if the hole has `x1/x2` as its input,
+  the leaves learn in that one input in place of two.
+- The stream scores the candidates. Each point is predicted before it is
+  added, and the sum of the log densities of these predictions is the
+  evidence. A few formulas can be kept, updated at each point, and dropped
+  when they fall behind.
+- A new search when the points have doubled, or when the error of the
+  formula at new points is above its noise. The residuals of the leaves show
+  where it fails.
+- A stream that moves covers a small region at first, where every function
+  looks like a polynomial: in half of the box of I.37.4 the search found the
+  formula in 0 of 8 runs. Early formulas are provisional. The few best can be
+  kept, with their disagreement as the uncertainty ahead of the data.
+- Where the formula is right to within the noise, the leaves can go, which
+  helps under a memory limit.
 
 ## Limitations
 
@@ -439,5 +564,5 @@ Also:
 - More inputs.
 - Noise levels other than 1%, and noise that is not relative.
 - PySR with tuned settings and longer runs.
-- A fresh held-out sample once the SRSD sample has been used to develop the
-  search.
+- A fresh held-out sample: the three SRSD samples have been used (see "Where
+  to take it").
