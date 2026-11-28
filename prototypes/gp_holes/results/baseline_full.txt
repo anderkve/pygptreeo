@@ -1,0 +1,20 @@
+
+benchmark toy:  x2*sin(2*x1) + 0.5*x3^2   [100 points, 3 inputs]
+  seed 0: 1*sin(2*x1)*x2 + 0.499*x3^2 + 0.00201
+          score 291.4, holes 0, RIGHT; in: rms 0.0016, relative 0.0012; out: rms 0.0028, relative 0.0013; 5 steps, 3458 fits, 37 s
+          next -3.9: x3^2*H(x1) + 1*sin(2*x1)*x2 + 0.00227
+          next -4.1: sin(2*x1)*x2*H(x3) + 0.499*x3^2 + 0.00211
+          right formula +0.0: 1*x2*sin(2*x1) + 0.499*x3^2 + 0.00195
+  seed 1: 1*sin(2*x1)*x2 + 0.5*x3^2 + 0.000118
+          score 294.5, holes 0, RIGHT; in: rms 0.00028, relative 0.00026; out: rms 0.00033, relative 0.00015; 5 steps, 2994 fits, 31 s
+          next -3.8: 1*sin(2*x1)*x2 + x3^2*H(x2) + 1.62e-05
+          next -3.8: sin(2*x1)*x2*H(x3) + 0.5*x3^2 + 0.000227
+          right formula +0.0: 1*x2*sin(2*x1) + 0.5*x3^2 + 0.000114
+  seed 2: 1*sin(2*x1)*x2 + 0.499*x3^2 + 0.00172
+          score 284.0, holes 0, RIGHT; in: rms 0.0014, relative 0.001; out: rms 0.0028, relative 0.0012; 5 steps, 3146 fits, 33 s
+          next -2.6: 1*sin(2*x1)*(x2 + 0.0156*cos(1.95*x3)) + 0.5*x3^2 + 0.00332
+          next -3.6: sin(2*x1)*x2*H(x3) + 0.5*x3^2 + 0.00128
+          right formula +0.0: 1*x2*sin(2*x1) + 0.499*x3^2 + 0.00178
+
+set        target            right     search      score     by eye no formula    crashed  seconds  result - right formula
+benchmark  toy                   3                                                              33  -0.0, -0.0, -0.0
