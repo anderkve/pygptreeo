@@ -232,7 +232,7 @@ with the original data for four of them and generated data with 1 to 20% noise
 for the others (`make_empirical_bench.py`). Six targets are logarithms, and the
 inputs are in their units, over up to eight decades. The data are fixed, so the
 3 runs differ in the seed of the search only. PySR has the settings of the
-paper, but 60 s on 4 threads in place of 50 minutes on 8 cores. "Front" counts
+paper, but 60 s on 4 threads in place of up to 1 hour on 8 cores. "Front" counts
 the runs with the law somewhere on PySR's Pareto front, which is how the paper
 counts; its own numbers are in the last column.
 
@@ -559,6 +559,11 @@ kinds of relation, in a coordinate `s` of each input: `u`, `log(u)`, `u²` or
 - **Of one input:** a factor `(1 + c·s)^p`, the factors `u^p·exp(c·s)`, a
   factor `sin(a + b·u)`, and a hole that is linear in `s`, in `exp(g·s)`, in
   `(1 + c·s)^p` or in `sin(a + b·u)`.
+
+The first kind is the affine symmetry of NestyNet III (Ibata et al.,
+arXiv:2608.21051, section 6), which finds it for a neural network fitted to
+thousands of points. Here the derivatives are those of the GP posterior, and
+a relation only proposes a candidate.
 
 A relation is the combination of two to four columns (the values of the
 hole, its derivatives in a coordinate, a constant) that is closest to zero;

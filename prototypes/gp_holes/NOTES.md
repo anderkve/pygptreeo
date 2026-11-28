@@ -130,14 +130,21 @@ the full pass and the held-out sample.
    `results/baseline_check.*` anew.
 2. The full pass of 150 searches with that code, which no version has run:
    1.5 to 2 hours on 4 cores, with its results beside those of the README.
-3. A fourth SRSD sample (`make_srsd_sample.py --sample 4`; 52 equations are
-   left), drawn before anything further is changed and run once, with PySR
-   beside it. The first three samples are spent.
-4. A learner for `GPTree(global_mean=...)` in this folder that runs the
+3. The first two changes of "From the literature" below, the test in closed
+   form for a linear term and the costs from the Fisher information, each
+   judged on the check runs. They change the method, so they come before the
+   held-out sample.
+4. The protocol of the comparison, written down before the data are drawn:
+   the criterion, how a result with a hole counts, the seeds and the times
+   of the baselines ("What a paper needs").
+5. A fourth SRSD sample (`make_srsd_sample.py --sample 4`; 52 equations are
+   left), drawn once the method is held fixed and run once, with the
+   baselines beside it. The first three samples are spent.
+6. A learner for `GPTree(global_mean=...)` in this folder that runs the
    search on the coverage sample of the tree each time the number of points
    has doubled, compared with `'additive_gp'` and `'net'` on streams of up to
    5 inputs. It is a measurement of which weaknesses matter there.
-5. What the two uses both need: a check against formulas that fit within the
+7. What the two uses both need: a check against formulas that fit within the
    noise and are wrong outside the data; inputs screened before the search,
    for more than 5; and the noise of each point as given, where it is known.
 
@@ -162,45 +169,154 @@ object of a subclass of `GlobalMeanLearner`, whose `observe` sees every point
 and publishes fitted models with a `predict`.
 
 **The method on its own.** The search needs numpy, scipy and threadpoolctl
-only, so it can be a package of its own. Its parts are known:
+only, so it can be a package of its own. The literature was read on 28
+November 2026, by agents and checked in part by hand: the report is
+`reports/Symbolic regression state of the art.md` and the reading notes are
+in `research_notes/`. The nearest published work, nearest first:
 
-- AI Feynman (Udrescu & Tegmark 2020, arXiv:1905.11481 and 2006.10782) fits
-  a neural network and tests it for symmetry and separability, which it uses
-  to divide the problem.
-- A Kolmogorov–Arnold network (Liu et al. 2024, arXiv:2404.19756) has spline
-  functions of one input that are replaced by symbols one at a time.
-- The search over kernels of Duvenaud et al. (2013, arXiv:1302.4922) is
-  greedy and scored by the evidence of a GP, but its result is a kernel.
-- A formula with a GP for what it leaves out is the model of Kennedy &
-  O'Hagan (2001) for a simulator. Zhu et al. (2022, "Robust equation
-  discovery considering model discrepancy") have it with a sparse Bayesian
-  choice of terms, and universal differential equations (Rackauckas et al.
-  2020, arXiv:2001.04385) with a neural network that is turned into symbols
-  afterwards.
+- The search over kernels of Duvenaud et al. (2013, arXiv:1302.4922) and the
+  Automatic Statistician (Lloyd et al. 2014, arXiv:1402.4304): greedy, by
+  rewrite rules, every candidate a GP that is scored by its evidence with
+  BIC. The expression is a kernel and not a formula, its base kernels have
+  one input each, and the search grows from the simplest model.
+- Zhu et al. (2022, doi:10.1016/j.ymssp.2021.108717): terms of a library plus
+  a GP plus noise, with the weights and the GP integrated out and the terms
+  chosen by the evidence. The library is fixed and linear in its weights. The
+  GP is added to the terms, has inputs chosen by hand and is never refined.
+- NestyNet III (Ibata et al., arXiv:2608.21051, a preprint of August 2026):
+  expression trees with unknown functions of symbolic inputs, which rewrite
+  rules replace step by step. The surrogate is a neural network fitted to
+  2,000 + 2,000 points without noise, and candidates are compared by loss.
+- AI Feynman (Udrescu & Tegmark 2020, arXiv:1905.11481 and 2006.10782): a
+  neural network tested for symmetry and separability, which divide the
+  problem into data sets of their own.
+- SHAREs (arXiv:2404.09788): unknown functions of one input inside
+  expressions, also in products and nested, kept in the result by design.
+  They are neural networks, fitted by gradient descent for every candidate
+  of a genetic search and scored by the fit.
+- Planas et al. (2021, doi:10.1115/1.4050746): symbolic terms for the mean of
+  an ordinary GP, found by another code on values of the GP, subtracted, and
+  the GP fitted again.
+- With one element each: NEAR (arXiv:2007.12101), a search over partial
+  programs with a network for the part that is not known; Kahlmeyer et al.
+  (arXiv:2506.19537) and DDRSR (arXiv:2608.02628), merges from ratios of
+  derivatives; SJEPA (arXiv:2608.04060, section 6.2), a formula plus a GP
+  that is integrated out, written down and not run; Liu et al. (2021,
+  doi:10.1007/s40747-020-00240-6), a GP as the surrogate of a test for
+  separability; Kennedy & O'Hagan (2001); universal differential equations
+  (arXiv:2001.04385); Kolmogorov–Arnold networks (arXiv:2404.19756).
 
 No paper was found that puts a GP prior on the part of an expression that is
-not known and scores expressions with such parts by their exact evidence.
-The search for one was short (two reviews: arXiv:2507.19540 and 2606.06567).
-What looks new:
+not known, integrates it out, and scores every partial expression of a search
+by that evidence. The readers put the chance that nothing closer exists at 75
+to 80%. Not searched: submissions under review, Google Scholar, and the
+statistics literature on the choice of semiparametric models.
 
-- the exact evidence of every partial expression, so that each step of the
-  search is a comparison of models;
-- a hole in the result, where the data or the rules cannot decide;
-- the rules as linear constraints on a hole (README, "The symmetries of a
-  hole"), which is a principle in place of a list;
-- about 100 points with noise, where most methods use thousands.
+**To check by hand:** Cohrs et al., "Semiparametric inference and equation
+discovery with the Bayesian machine scientist" (ICLR 2024 workshop,
+https://openreview.net/forum?id=7YqV4deFAc), which could not be opened from
+here. Its abstract and the code of its first author point to a symbolic
+search for the unknown part, with no GP. The question is whether a GP or a
+network is fitted inside the search, and what the score is.
+
+Not new, though the prototype came to them by itself:
+
+- The rule "symmetry". NestyNet III (section 6, eq. 8) requires
+  `∇f·(A·x + b) − α − β·f = 0`, finds the solutions as the null space of one
+  matrix by SVD, in the coordinates `x`, `log x` and `1/x`, and gets the
+  forms `exp(β·s)·H(z)` and `α·s + H(z)`. The relations of one to three
+  inputs of the rule are this equation with `A = 0`. Narrower forms are in
+  DDRSR and AI Feynman 2.0. Not found there: the relations with second
+  derivatives (a sine factor, a hole that is linear in `u^p`), derivatives
+  of a GP posterior, and relations as proposals that the evidence judges.
+  The tests of that section have exact derivatives, and the paper states
+  that the relations hold up for errors of the gradient of about 1e-3.
+- A hole in the result: SHAREs by design; the GPs that Zhu et al., Planas et
+  al. and Otte (ESANN 2013) add to a formula; and one example of NestyNet
+  III (section 11.4), by a test on held-out points. Not found: a hole inside
+  a product or behind a merged input, kept because the evidence prefers no
+  refinement of it.
+- The model class: `a·H(u)` is a GP with the kernel `a(x)·k(u, u')·a(x')`.
+
+What still looks new:
+
+- the evidence as one score for every state of the search, from plain GP
+  regression to a formula, with holes also in products and behind symbolic
+  inputs;
+- about 100 points with noise, where no method with a surrogate reports a
+  result. AI Feynman needs 100 to 1e6 points for the steps that use its
+  network, NestyNet has 4,000. Its authors set a GP aside for its cost at
+  5,000 points (arXiv:2608.05862, section 8.3), which does not bind at 100.
+
+Two objections to expect. "NestyNet or AI Feynman with a GP for the network,
+scored as in the Automatic Statistician": the answer is in the two points
+above and has to be shown on data. And the costs of 3 and 10, which decide
+between a hole and a formula: Zhu et al. and SJEPA both state that the
+evidence alone does not prefer the symbolic part where the GP fits as well.
 
 What a paper needs and is not there:
 
 - a method that is held fixed and a held-out set that is fresh;
-- baselines that a referee accepts: PySR with the time its paper gives it and
-  not 60 s, AI Feynman, and a Bayesian method;
+- symbolic recovery as the criterion: after simplification the difference or
+  the ratio to the right formula is a constant (SRBench, arXiv:2107.14351),
+  by one procedure for every code, with a look at the near misses. The
+  results then need exact exponents and constants. The error outside the
+  range of the data, the present criterion, is a second number in the
+  literature;
+- a rule, set beforehand, for how a result with a hole counts. No benchmark
+  has one;
+- baselines as published comparisons have them: PySR, Operon and one of uDSR
+  or DSO with the same operators, at the time of the search and at about one
+  hour, and 5 to 10 seeds or more. Published comparisons give 30 minutes to
+  24 hours and 5 to 30 seeds; the comparison of the README has 60 s and 3.
+  Of the family of the method: AI Feynman 2.0, or NestyNet if its code runs
+  on 100 points; the search over kernels; a Bayesian method; a plain GP;
+- recovery against the number of points, 20 to 500, with noise of 0.1%, 1%
+  and 10%, for all the codes. No such curve is published, and no benchmark
+  scores recovery at 100 noisy points;
+- for each target and noise level, whether the right formula has the best
+  score at all (`truth.py`), and how often the evidence prefers a wrong
+  refinement to the hole it came from. Above some noise no method can find
+  the formula (Fajardo-Fontiveros et al., arXiv:2204.02704), so a failure
+  there is one of the data;
 - the search with a rule or a cost left out, one at a time, and fewer
   numbers set by hand (the costs of 3 and 10, the thresholds);
-- a count of the results that pass as right and are approximations.
+- failures shown, and one target where a result with a hole is the point.
 
-The objection to expect is "AI Feynman with a GP". The answer is in the
-first three of the points that look new, and has to be shown on data.
+**From the literature, in the order to try.** None has been tried here.
+
+1. A test in closed form for a linear term beside a GP (Zhu et al., section
+   5). With `C` the covariance of the model without the term `φ`,
+   `q = φᵀC⁻¹(y − m)` and `s = φᵀC⁻¹φ`, the term raises the evidence where
+   `q² > s`. One Cholesky factor then orders every term of the library for
+   "peel", the sum in "linear" and "drop term", in place of a short fit for
+   each. Short fits are 90% of a run. It covers terms without parameters of
+   their own; a function with an inner parameter needs a grid.
+2. The costs of a constant and of an exponent from the Fisher information,
+   in place of ½·log n and 10: `log(|θ|/Δ) + log 2` with `Δ = (12/I)^½`, and
+   `log c` for a natural number `c` (Bartlett et al., arXiv:2211.11461,
+   eq. 6). A free exponent then costs 2 to 4 more than an integer one near
+   100 points. The 10 was set against formulas that fit within the noise,
+   and a smaller cost can let more of them through.
+3. `snap` as in AI Feynman (arXiv:1810.10525, section II.4): the parameter
+   nearest to a round value first, the others fitted again, kept if the
+   score rises; then fractions.
+4. For a sum of holes, kernels whose parts each integrate to zero (Lu et
+   al., arXiv:2206.09861). A hole then cannot trade with a constant or with
+   another hole, and the share of each in the variance orders the pairs for
+   "no interaction".
+5. For the rule "symmetry": relations weighted by the posterior covariance
+   of the derivatives (arXiv:2401.11825); the directions that a hole does
+   not depend on from `∫∇H∇Hᵀ` of its posterior, in closed form with an
+   interval (Wycoff et al., arXiv:1907.11572); a whole monomial from the
+   rank of the columns `uj·∂H/∂uj` (NestyNet III, section 4.3); and "no
+   interaction" on values, `H(u1, u2) − H(u1, c2) − H(c1, u2) + H(c1, c2)`,
+   which is linear in the hole and so has an exact posterior. At 100 noisy
+   points these can save fits and are not likely to find more.
+6. The units of the inputs, where they are given, to reduce the inputs
+   before the search. The baselines then need them too.
+7. For the last few models, an integral over the constants in place of BIC
+   below about 25 points (Ideas).
 
 **Larger data sets, in the order to try** (see also "Larger data sets" under
 Limitations).
@@ -221,7 +337,9 @@ Limitations).
    proportion to them.
 5. A score for the size: the costs of a function and of an exponent were set
    for 100 points. With many points the likelihood of held-out points can
-   decide.
+   decide. In the published scores the cost of the structure does not depend
+   on the number of points, and that of a constant grows with ½·log n or
+   with the Fisher information.
 
 Not blocks as they are, and not a GPTree for each candidate.
 
@@ -563,6 +681,8 @@ Also:
 - The benchmark with the polynomial in the library.
 - More inputs.
 - Noise levels other than 1%, and noise that is not relative.
-- PySR with tuned settings and longer runs.
+- PySR with tuned settings and longer runs, and the other baselines of
+  "What a paper needs".
+- Recovery against the number of points, with noise.
 - A fresh held-out sample: the three SRSD samples have been used (see "Where
   to take it").
