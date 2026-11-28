@@ -1187,6 +1187,28 @@ def snap(model, X, y, w=None):
         model = best
 
 
+def roundings(model):
+    """The model with one parameter moved to the next simple value on either
+    side and held there, for each parameter that has simple values."""
+    out = []
+    nodes = [n for t in model.terms for n in t.nodes()]
+    for a, node in enumerate(nodes):
+        for k in range(len(node.th)):
+            values = nice(node, k)
+            if values is None:
+                continue
+            values = np.sort(values)
+            v = abs(node.th[k]) if node.kind == 'sin' else node.th[k]
+            tol = 1e-6 * max(1.0, abs(v))
+            lower, higher = values[values < v - tol], values[values > v + tol]
+            for new in list(lower[-1:]) + list(higher[:1]):
+                trial = copy.deepcopy(model)
+                tn = [n for t in trial.terms for n in t.nodes()][a]
+                tn.th[k], tn.free[k] = new, False
+                out.append(trial)
+    return out
+
+
 def distinct(models, X, y, tol=1e-3):
     """The models, the best first, without those whose predictions at the data
     are those of a better one, to within tol of its residuals: the same
@@ -1252,7 +1274,9 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
     model with the best score, the trace of the best score and some counts,
     among them the `keep` best models and the alternatives: the models that
     score less than CFG['within'] below the best, which the evidence does not
-    tell from it, the best first and each function once (see distinct). y should be scaled to unit variance, with
+    tell from it, the best first and each function once (see distinct). At
+    the end the models near the best are also tried with each rounded
+    parameter at its other simple values (see roundings). y should be scaled to unit variance, with
     y_scale the factor that gives it its units back. `model` is the class of
     the models, Model if not given. cfg replaces entries of CFG."""
     CFG.update(cfg)
@@ -1339,6 +1363,24 @@ def search(X, y, y_scale=1.0, beam=4, top_k=12, patience=3, own_steps=6, own_bes
                 f"{t2 - t1:.0f} + {time.time() - t2:.0f} s]")
             if stale >= patience and CFG['symmetry'] != 'first':
                 break
+        # The other roundings of the models near the best one, and of those among them that are.
+        done = set()
+        while True:
+            top = max(m.score for m in seen.values())
+            todo = [m for m in seen.values() if m.score > top - CFG['within'] and m.key() not in done]
+            done.update(m.key() for m in todo)
+            trials = {c.key(): c for m in todo for c in roundings(m) if c.key() not in seen}
+            if not trials:
+                break
+            n_fits += len(trials)
+            tried.update(trials)
+            for m in pool.map(_full, [(c, X, targets[c.warp]) for c in trials.values()]):
+                if m.key() not in seen or m.score > seen[m.key()].score:
+                    seen[m.key()] = m
+                    m.rule = 'rounding'
+        top = max(seen.values(), key=lambda m: m.score)
+        if top.key() != trace[-1][1]:
+            trace.append((top.score, top.key(), 'rounding'))
     ranked = sorted(seen.values(), key=lambda m: -m.score)
     near = sum(m.score > ranked[0].score - CFG['within'] for m in ranked)
     best = [m.condition(X, *targets[m.warp]) for m in ranked[:max(keep, near)]]

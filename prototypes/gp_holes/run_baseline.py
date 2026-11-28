@@ -2,7 +2,7 @@
 beside each result.
 
     python run_baseline.py NAME [--sets benchmark srsd srsd2 srsd3 empirical docs] [--only TARGET ...] [--check]
-                           [--symmetry off|add|replace|first]
+                           [--symmetry off|add|replace|first] [--within 3]
 
 Writes results/baseline_NAME.json, with one entry per run, and the log
 results/baseline_NAME.txt. A call with a name that has been used goes on where
@@ -22,9 +22,9 @@ The right formula is that of truth.py, fitted to the same data. A result that
 is not right is put down to the search if the right formula scores higher by
 more than 1, and to the score if not.
 
-The alternatives of a result are the models that score less than WITHIN below
-it. Each is judged as the result is, and the report counts the runs in which
-the result or one of its alternatives is right, also for the distances GAPS.
+The alternatives of a result are the models that score less than --within
+below it. Each is judged as the result is, and the report counts the runs in
+which the result or one of its alternatives is right.
 """
 import argparse
 import json
@@ -40,8 +40,6 @@ from truth import truth
 
 SEEDS = dict(benchmark=3, srsd=2, srsd2=2, srsd3=2, empirical=3, docs=3)
 NOISE = 0.01            # of the benchmark, and the largest relative error of a right result of srsd
-WITHIN = CFG['within']  # how far below the score of the result an alternative can be
-GAPS = (1, 3, 5, 10)    # the distances that the report counts the alternatives for
 # The check runs: the seeds of some targets of each set.
 CHECK = dict(
     benchmark={'toy': (0,), 'I.14.3': (0,), 'I.12.2': (0,), 'I.6.2': (0,), 'I.12.11': (0,), 'I.37.4': (0, 1),
@@ -96,8 +94,7 @@ def run(which, X, y, ystd, tests, seed, workers, **cfg):
     entries of the settings of the search."""
     t0 = sum(os.times()[:4])
     try:
-        model, trace, info = search(X, y, y_scale=ystd, seed=seed, verbose=False, workers=workers,
-                                    within=max(GAPS), **cfg)
+        model, trace, info = search(X, y, y_scale=ystd, seed=seed, verbose=False, workers=workers, **cfg)
     except Exception as error:                  # a run that fails counts as not right
         return dict(crashed=f"{type(error).__name__}: {error}", right=is_right(which, 1, None))
     err = errors(model.predict, tests)
@@ -120,11 +117,6 @@ def verdict(r):
     return 'by eye' if r['right'] is None else 'score'
 
 
-def kept(r, gap=WITHIN):
-    """The alternatives of a result that score less than gap below it."""
-    return [a for a in r.get('alternatives', []) if r['score'] - a[0] < gap]
-
-
 def report(runs):
     """The log of the runs, as text."""
     lines, last = [], None
@@ -141,7 +133,7 @@ def report(runs):
         lines.append(f"          score {r['score']:.1f}, holes {r['holes']}{', RIGHT' if r['right'] else ''}; "
                      f"{err}; {r['steps']} steps, {r['fits']} fits, {r['seconds']:.0f} s")
         lines += [f"          alternative {s - r['score']:+.1f}{', RIGHT' if right else ''}: {text}"
-                  for s, _, text, right in kept(r)]
+                  for s, _, text, right in r['alternatives']]
         if r.get('truth'):
             t = r['truth']
             lines.append(f"          right formula {t['score'] - r['score']:+.1f}: {t['text']}")
@@ -158,15 +150,14 @@ def report(runs):
         counts = [sum(verdict(r) == k for r in rs) for k in kinds]
         diffs = ', '.join(f"{r['score'] - r['truth']['score']:+.1f}{'*' if r['truth']['holes'] else ''}"
                           for r in rs if r.get('truth') and 'score' in r)
-        among = sum(bool(r['right'] or any(a[3] for a in kept(r))) for r in rs)
+        among = sum(bool(r['right'] or any(a[3] for a in r.get('alternatives', []))) for r in rs)
         lines.append(f"{which:10s} {name:12s} " + ' '.join(f"{c or '':>10}" for c in counts) +
                      f" {among or '':>5} {np.mean([r.get('seconds', np.nan) for r in rs]):8.0f}  {diffs}")
     judged = [r for r in runs.values() if r['right'] is not None and 'score' in r]
-    lines.append(f"\n{len(judged)} runs judged by number: the result is right in {sum(r['right'] for r in judged)}")
-    for gap in GAPS:
-        among = sum(bool(r['right'] or any(a[3] for a in kept(r, gap))) for r in judged)
-        lines.append(f"  the result or an alternative within {gap:2d}: {among}, "
-                     f"with {np.mean([1 + len(kept(r, gap)) for r in judged]):.1f} models kept on average")
+    among = sum(bool(r['right'] or any(a[3] for a in r['alternatives'])) for r in judged)
+    lines.append(f"\n{len(judged)} runs judged by number: the result is right in {sum(r['right'] for r in judged)}, "
+                 f"and the result or one of its alternatives in {among}, "
+                 f"with {np.mean([1 + len(r['alternatives']) for r in judged]):.1f} models kept on average")
     return '\n'.join(lines) + '\n'
 
 
@@ -178,6 +169,7 @@ if __name__ == '__main__':
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--symmetry', default='off')
+    ap.add_argument('--within', type=float, default=CFG['within'])
     a = ap.parse_args()
     path = os.path.join(HERE, 'results', f"baseline_{a.name}")
     runs = json.load(open(path + '.json')) if os.path.exists(path + '.json') else {}
@@ -189,7 +181,8 @@ if __name__ == '__main__':
                 continue
             if key not in runs:
                 runs[key] = dict(target=text, n=len(y), d=X.shape[1],
-                                 **run(which, X, y, ystd, tests, seed, a.workers, symmetry=a.symmetry))
+                                 **run(which, X, y, ystd, tests, seed, a.workers, symmetry=a.symmetry,
+                                       within=a.within))
             runs[key]['truth'] = truth(name, X, y, ystd, inputs)
             print(key, runs[key].get('result', runs[key].get('crashed')), flush=True)
             json.dump(runs, open(path + '.json', 'w'), indent=1)
