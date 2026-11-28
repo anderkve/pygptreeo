@@ -94,11 +94,27 @@ def num(v):
     return f"{v:.3g}"
 
 
-def wrap(s):
-    """Parentheses around s if it is a sum, product or power."""
-    if s.startswith('(') or not any(c in s for c in '+-*/^ '):
-        return s
-    if s[:4] in ('exp(', 'sin(', 'cos(', 'log(') and s.endswith(')') and s.count('(') == 1:
+def enclosed(s):
+    """Whether s starts with a parenthesis that closes at its end."""
+    depth = 0
+    for i, c in enumerate(s):
+        depth += (c == '(') - (c == ')')
+        if depth == 0:
+            return i == len(s) - 1 and c == ')'
+    return False
+
+
+def unit(s):
+    """Whether s has no operation outside of parentheses."""
+    return (enclosed(s) or not any(c in s for c in '+-*/^ ')
+            or s[:3] in ('exp', 'sin', 'cos', 'log') and enclosed(s[3:]))
+
+
+def wrap(s, base=False):
+    """Parentheses around s if it is a sum, product or power. A power of a
+    unit gets them only as the base of another power."""
+    u, _, p = s.rpartition('^')
+    if unit(s) or (not base and u and unit(u) and not any(c in p for c in '()*/ ')):
         return s
     return f"({s})"
 
@@ -162,8 +178,8 @@ class Node:
             if p[0] == '-1':
                 return f"{wrap(u)}/{wrap(v)}"
             if p[0].startswith('-'):
-                return f"{wrap(u)}/{wrap(v)}^{p[0][1:]}"
-            return f"{wrap(u)}*{wrap(v)}^{p[0]}"
+                return f"{wrap(u)}/{wrap(v, True)}^{p[0][1:]}"
+            return f"{wrap(u)}*{wrap(v, True)}^{p[0]}"
         if k == 'lin':
             v = self.kids[1].text(key)
             if p[0] == '1':
@@ -177,8 +193,8 @@ class Node:
             if p[0] == '-1':
                 return f"1/{wrap(u)}"
             if p[0].startswith('-'):
-                return f"1/{wrap(u)}^{p[0][1:]}"
-            return f"{wrap(u)}^{p[0]}"
+                return f"1/{wrap(u, True)}^{p[0][1:]}"
+            return f"{wrap(u, True)}^{p[0]}"
         # c*u, written c/v if u is 1/v
         times = lambda c: f"{c}/{u[2:]}" if u.startswith('1/') else f"{c}*{wrap(u)}"
         if k == 'exp':
@@ -198,7 +214,7 @@ class Node:
         if k == 'poly':
             c = ['?' if (key and f) else num(v / self.scale ** (i + 1))
                  for i, (v, f) in enumerate(zip(self.th, self.free))]
-            terms = [f"{c[0]}*{wrap(u)}"] + [f"{ci}*{wrap(u)}^{i + 2}" for i, ci in enumerate(c[1:])]
+            terms = [f"{c[0]}*{wrap(u)}"] + [f"{ci}*{wrap(u, True)}^{i + 2}" for i, ci in enumerate(c[1:])]
             return '(' + ' + '.join(['1'] + terms).replace('+ -', '- ') + ')'
 
 
@@ -1146,10 +1162,10 @@ def symmetries(model, X, y, w):
 
 
 def snap(model, X, y, w=None):
-    """Round parameters to simple values where that does not lower the score."""
-    improved = True
-    while improved:
-        improved = False
+    """Round parameters to simple values where that raises the score: one at
+    a time, each time the parameter whose rounding gives the best score."""
+    while True:
+        best = model
         nodes = [n for t in model.terms for n in t.nodes()]
         for a, node in enumerate(nodes):
             for k in np.flatnonzero(node.free):
@@ -1163,12 +1179,11 @@ def snap(model, X, y, w=None):
                 tn.th[k] = values[np.argmin(np.abs(values - v))]
                 tn.free[k] = False
                 trial.fit(X, y, w, maxiter=100)
-                if trial.score > model.score:
-                    model, improved = trial, True
-                    break
-            if improved:
-                break
-    return model
+                if trial.score > best.score:
+                    best = trial
+        if best is model:
+            return model
+        model = best
 
 
 def _init_worker(cfg):
