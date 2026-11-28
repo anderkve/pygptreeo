@@ -949,6 +949,74 @@ srsd3 bonus.13:  1 / (4 * pi * epsilon) * q / sqrt(r ** 2 + d ** 2 - 2 * r * d *
           next -0.4: 1.45e+10*x2*(1/(x3 + x4))*exp(-0.173*x5) + 1.25e+06
           next -0.4: 1.46e+10*x2*(1/(x3 + x4))*(1 + 0.0976*x5)^-2 + 1.25e+06
 
+docs simple:  2*cos(x4) + x1^2 - 2   [100 points, 5 inputs]
+  seed 0: 1*x1^2 + 2*cos(1*x4) - 2
+          score 717.5, holes 0; in: rms 3.1e-09, relative 2.8e-09; out: rms 6.6e-09, relative 2.3e-09; 4 steps, 3499 fits, 36 s
+          next -10.1: 1*x1^2 - 5.55e-08*cos(0.322*x3) + 2*cos(1*x4) - 2
+          next -11.5: 1*x1^2 + 2*cos(1*x4) + 3.91e-09*cos(1.49*x5) - 2
+          right formula +0.0: 2*cos(1*x4) + 1*x1^2 - 2
+  seed 1: 1*x1^2 + 2*cos(1*x4) - 2
+          score 716.2, holes 0; in: rms 3e-09, relative 2.7e-09; out: rms 6.1e-09, relative 2.1e-09; 4 steps, 3000 fits, 27 s
+          next -8.9: 1*x1^2 + 2*cos(1*x4) + 2.04e-14*(1/x5^2) - 2
+          next -10.3: 1*x1^2 - 4.61e-08*cos(0.424*x2) + 2*cos(1*x4) - 2
+          right formula +0.0: 2*cos(1*x4) + 1*x1^2 - 2
+  seed 2: 1*x1^2 + 2*cos(1*x4) - 2
+          score 716.4, holes 0; in: rms 2.8e-09, relative 3.7e-09; out: rms 5.3e-09, relative 2.3e-09; 4 steps, 3895 fits, 45 s
+          next -9.3: 1*x1^2 - 9.82e-11*(1/x3^2) + 2*cos(1*x4) - 2
+          next -11.6: 1*x1^2 + 2*cos(1*x4) + 2.36e-09*sin(2.12*x5) - 2
+          right formula -0.0: 2*cos(1*x4) + 1*x1^2 - 2
+
+docs inverse:  1/x1   [100 points, 5 inputs]
+  seed 0: 1*(1/x1) + 8.62e-11
+          score 745.4, holes 0; in: rms 3e-08, relative 1.2e-09; out: rms 1e-08, relative 1.2e-09; 5 steps, 3731 fits, 23 s
+          next -8.3: 1*(1/x1)*(1 - 1.7e-14*x5^2) + 8.62e-11
+          next -8.3: 1*(1/x1)*(1 - 2.88e-11*x2^2) + 6.69e-11
+          right formula +0.0: 1*(1/x1) + 8.62e-11
+  seed 1: 1*(1/x1) - 2.66e-10
+          score 750.1, holes 0; in: rms 8.9e-09, relative 2.5e-09; out: rms 7.2e-09, relative 2.6e-09; 5 steps, 2797 fits, 19 s
+          next -7.8: (1/x1)*H(x4) + 1.16e-06
+          next -7.9: (1/x1)*H(x3) - 2.09e-06
+          right formula -0.0: 1*(1/x1) - 2.66e-10
+  seed 2: 1*(1/x1) - 5.59e-11
+          score 742.2, holes 0; in: rms 1.7e-08, relative 8.9e-10; out: rms 4.1e-09, relative 8.9e-10; 5 steps, 4403 fits, 29 s
+          next -8.3: 1*(1/x1)*(1 + 3.32e-13*x5^2) - 5.6e-11
+          next -8.5: (1/x1)*H(x5) + 3e-07
+          right formula -0.0: 1*(1/x1) - 5.59e-11
+
+docs selection:  x4^2 - x20^2 + 1.5   [300 points, 5 inputs]
+  seed 0: 1*x1^2 - 1*x5^2 + 1.5
+          score 2227.8, holes 0; in: rms 6.3e-10, relative 4.9e-10; out: rms 1.3e-09, relative 4.9e-10; 4 steps, 3130 fits, 187 s
+          next -13.1: 1*x1^2 + 9.76e-11*sin(4.22*x3) - 1*x5^2 + 1.5
+          next -13.1: 1*x1^2 + 8.28e-11*sin(3.08*x2) - 1*x5^2 + 1.5
+          right formula +0.0: 1*x1^2 - 1*x5^2 + 1.5
+  seed 1: 1*x1^2 - 1*x4^2 + 1.5
+          score 2225.7, holes 0; in: rms 6e-10, relative 4.7e-10; out: rms 1.4e-09, relative 4.7e-10; 4 steps, 3743 fits, 211 s
+          next -10.1: 1*x1^2 - 9.52e-14*(1/x2) - 1*x4^2 + 1.5
+          next -10.2: 1*x1^2 - 1*x4^2 + 1.39e-15*(1/x5^2) + 1.5
+          right formula -0.0: 1*x1^2 - 1*x4^2 + 1.5
+  seed 2: 1*x1^2 - 1*x2^2 + 1.5
+          score 2215.4, holes 0; in: rms 6.8e-10, relative 4.2e-10; out: rms 1.3e-09, relative 4.4e-10; 4 steps, 3993 fits, 235 s
+          next -10.3: 1*x1^2 - 1*x2^2 + 2.04e-15*(1/x3^2) + 1.5
+          next -13.1: 1*x1^2 - 1*x2^2 + 6.49e-12*sin(2.86*x5) + 1.5
+          right formula +0.0: 1*x1^2 - 1*x2^2 + 1.5
+
+docs denoising:  exp(x1) + x2 + x3   [100 points, 5 inputs]
+  seed 0: 1*exp(0.995*x1) + 1.01*x2 + 1*x3 + 2.08e-05
+          score 143.4, holes 0; in: rms 0.009, relative 0.0063; out: rms 0.06, relative 0.0072; 3 steps, 2634 fits, 24 s
+          next -5.0: 1.01*exp(0.994*x1) + 1.01*x2 + 1.01*x3 - 0.000112*(1/x4^2) + 6.96e-05
+          next -7.6: 1*exp(0.995*x1) + 1.01*x2 + 1*x3 + 2.42e-05*cos(0.522*x4) + 2.06e-05
+          right formula +0.0: 1*exp(0.995*x1) + 1.01*x2 + 1*x3 + 2.08e-05
+  seed 1: 0.989*exp(1*x1) + 0.995*x2 + 0.982*x3 + 3.48e-05
+          score 90.8, holes 0; in: rms 0.014, relative 0.011; out: rms 0.024, relative 0.01; 3 steps, 3651 fits, 40 s
+          next -5.3: 0.989*exp(1*x1) + 0.995*x2 + 0.982*x3 - 8.22e-05*x4 + 3.51e-05
+          next -6.7: 0.983*exp(1.01*x1) + 0.993*x2 + 0.978*x3 + 0.000664*exp(-2.02*x4) + 2.01e-05
+          right formula +0.0: 0.989*exp(1*x1) + 0.995*x2 + 0.982*x3 + 3.47e-05
+  seed 2: 1*exp(0.998*x1) + 0.981*x2 + 1*x3 - 0.000346
+          score 148.6, holes 0; in: rms 0.0091, relative 0.0084; out: rms 0.032, relative 0.0089; 3 steps, 3245 fits, 30 s
+          next -4.8: 1*exp(0.997*x1) + 0.983*x2 + 1*x3 - 0.0362*cos(2.32*x4) - 0.00192
+          next -6.9: 0.998*exp(0.998*x1) + 0.98*x2 + 1*x3 + 6.62e-05*exp(-3.4*x5) - 0.00143
+          right formula +0.0: 1*exp(0.998*x1) + 0.981*x2 + 1*x3 - 0.000346
+
 set        target            right     search      score     by eye no formula    crashed  seconds  result - right formula
 benchmark  toy                   3                                                              33  -0.0, -0.0, -0.0
 benchmark  I.14.3                3                                                              16  -0.0, -0.0, -0.0
@@ -1021,3 +1089,7 @@ srsd3      iii.7.38              2                                              
 srsd3      iii.14.14                                                         2                   5  
 srsd3      bonus.4               2                                                              56  
 srsd3      bonus.13                                                          2                  36  
+docs       simple                                                 3                             36  -0.0, -0.0, +0.0
+docs       inverse                                                3                             24  -0.0, +0.0, +0.0
+docs       selection                                              3                            211  -0.0, +0.0, -0.0
+docs       denoising                                              3                             32  -0.0, -0.0, -0.0
