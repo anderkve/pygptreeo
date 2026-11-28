@@ -1,0 +1,14 @@
+
+benchmark toy:  x2*sin(2*x1) + 0.5*x3^2   [100 points, 3 inputs]
+  seed 0: 1*sin(2*x1)*x2 + 0.499*x3^2 + 0.00201
+          score 291.4, holes 0, RIGHT; in: rms 0.0016, relative 0.0012; out: rms 0.0028, relative 0.0013; 5 steps, 3458 fits, 36 s
+          right formula +0.0: 1*x2*sin(2*x1) + 0.499*x3^2 + 0.00195
+
+set        target            right     search      score     by eye no formula    crashed  kept  seconds  result - right formula
+benchmark  toy                   1                                                            1       36  -0.0
+
+1 runs judged by number: the result is right in 1
+  the result or an alternative within  1: 1, with 1.0 models kept on average
+  the result or an alternative within  3: 1, with 1.0 models kept on average
+  the result or an alternative within  5: 1, with 5.0 models kept on average
+  the result or an alternative within 10: 1, with 22.0 models kept on average
