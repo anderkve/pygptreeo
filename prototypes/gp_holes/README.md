@@ -826,6 +826,48 @@ noise. Right of 2, in `results/scaling_n10000.txt`:
 - The search takes 17 s on average, the validation 32 s more, and the
   distilled way 74 s in all.
 
+## All the sets with the search as it is
+
+`run_baseline.py full` runs the present search on every set above but the
+examples of PySR's documentation, with the default settings: 168 searches, 78
+minutes of search on 4 cores (`results/baseline_full.txt`). "Before" is the table of
+each set above, from the search as it was then.
+
+| Set | Runs | Right | Before |
+|---|---|---|---|
+| Benchmark | 51 | 46 | 41 |
+| SRSD, first sample | 30 | 25 | 12 |
+| SRSD, second sample | 30 | 22 | 22 |
+| SRSD, third sample | 30 | 20 | 20 |
+
+- **Benchmark.** I.18.4 and I.8.14 are right in all three seeds, where they
+  were in 1 and in none. II.11.28 is right in 1 of 3: the other two results
+  are `1.25·exp(0.78·x1·x2) − 0.25` and `2.16·(1 − 0.23·x1·x2)^−2 − 1.16`,
+  which fit within the noise. For I.30.5, which has no arcsin, the result is
+  a formula and not the hole. One result that counts as right has exponents
+  that were not rounded, `x1^0.495` and `x1^0.996` (I.37.4, seed 2).
+- **The first sample** was used for most of the changes since its table. Of
+  its 5 runs that are not right, 2 are iii.15.12, which cannot be. One of
+  the right results is an approximation, as before (ii.13.34), and so is one
+  more: `(2 + x2)·x3/(x1 − 1)` for `x2·x3/(x1 − 1)`, i.39.11 in seed 1.
+- **The second and the third sample** have the same number right for every
+  equation as before.
+- **The empirical laws** come out the same in the three seeds, but for
+  Planck. By their form, 7 of the 9 are found: Hubble, Kepler (with a constant of −1 day),
+  Newton (with the exponents −1.99, 1.01 and 0.999), Schechter, Bode, the
+  ideal gas law (with a small constant inside the logarithm) and Rydberg.
+  Leavitt is an exponential, which scores 13 above the law, and the results
+  for Planck have two holes.
+- **Why a run is not right** (`truth.py`, for the benchmark and the first two
+  samples): in 13 of the 18 runs the result scores as high as the right
+  formula or higher, in 3 the search missed a right formula that scores
+  higher (I.30.5 once, ii.11.3 twice), and 2 are iii.15.12. The search also
+  misses the model with a hole that the rules can write for Planck's law,
+  which scores 132 to 136 higher than its results.
+- **Time.** A search takes 28 s on average, 18 s for half of them, and 1 to
+  294 s: 3 s for one input, 12 s for two, 24 s for three, 53 s for four and
+  59 s for five. 19 of the 168 results have a hole.
+
 ## Limitations, issues and ideas
 
 See [NOTES.md](NOTES.md).

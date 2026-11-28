@@ -36,12 +36,15 @@ the noise), I.30.5 (no arcsin in the library) and SRSD bonus.20 (see
 These runs are not a test: every change was tried on them, and some were
 made for one of them (SRSD i.6.20b, iii.10.19 and i.39.11).
 
-**Not done: the full pass.** `python run_baseline.py NAME` runs the 150
-searches of the five sets. No version of this session has run it; it should
-take about two hours on 4 cores. The tables of the README before "A faster
-search" are from the search as it was before. The 109 runs outside the check
-runs are the only ones on which the changes have not been tried. The docs
-set needs PySR, for its selection of inputs.
+**The full pass.** `python run_baseline.py NAME` runs the searches of all the
+sets. `results/baseline_full.txt` has it for the search of 28 November, with
+the two corrections of that day: 168 searches in 78 minutes on 4 cores. Right
+are 46 of 51 on the benchmark and 25, 22 and 20 of 30 on the three SRSD
+samples, and 7 of the 9 empirical laws are found (README, "All the sets with
+the search as it is"). Its 41 check runs are those of
+`results/baseline_check.txt` to the last fit. The tables of the README
+before "A faster search" are from the search as it was then. The docs set
+needs PySR, for its selection of inputs, and is not in this pass.
 
 What to do next is in "Where to take it" below.
 
@@ -131,23 +134,21 @@ the full pass and the held-out sample.
 
 **Next steps, in this order.**
 
-1. The full pass of 150 searches, which no version has run: 1.5 to 2 hours
-   on 4 cores, with its results beside those of the README.
-2. The first two changes of "From the literature" below, the test in closed
+1. The first two changes of "From the literature" below, the test in closed
    form for a linear term and the costs from the Fisher information, each
    judged on the check runs. They change the method, so they come before the
    held-out sample.
-3. The protocol of the comparison, written down before the data are drawn:
+2. The protocol of the comparison, written down before the data are drawn:
    the criterion, how a result with a hole counts, the seeds and the times
    of the baselines ("What a paper needs").
-4. A fourth SRSD sample (`make_srsd_sample.py --sample 4`; 52 equations are
+3. A fourth SRSD sample (`make_srsd_sample.py --sample 4`; 52 equations are
    left), drawn once the method is held fixed and run once, with the
    baselines beside it. The first three samples are spent.
-5. A learner for `GPTree(global_mean=...)` in this folder that runs the
+4. A learner for `GPTree(global_mean=...)` in this folder that runs the
    search on the coverage sample of the tree each time the number of points
    has doubled, compared with `'additive_gp'` and `'net'` on streams of up to
    5 inputs. It is a measurement of which weaknesses matter there.
-6. What the two uses both need: a check against formulas that fit within the
+5. What the two uses both need: a check against formulas that fit within the
    noise and are wrong outside the data; inputs screened before the search,
    for more than 5; and the noise of each point as given, where it is known.
 
@@ -163,9 +164,9 @@ two holes (Ideas).
 - A wrong formula is used with confidence. The search prefers a formula that
   fits within the noise to a hole, and a global model is what the tree
   falls back on ahead of the stream.
-- The prototype is not settled: the full pass has not been run, the rules
-  and the costs were set on the benchmark, and it fits a noise level of its
-  own where pygptreeo has the noise of each point.
+- The prototype is not settled: the rules and the costs were set on the
+  benchmark, and it fits a noise level of its own where pygptreeo has the
+  noise of each point.
 
 A learner outside the package is possible as it is: `global_mean` takes an
 object of a subclass of `GlobalMeanLearner`, whose `observe` sees every point
@@ -672,7 +673,6 @@ Also:
 
 ## Tests still to do
 
-- The full pass with the present search (see "Where the prototype stands").
 - The benchmark with the polynomial in the library.
 - More inputs.
 - Noise levels other than 1%, and noise that is not relative.
